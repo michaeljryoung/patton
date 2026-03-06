@@ -71,7 +71,7 @@ export class TerminalView {
   private disposed = false;
   private mediaQuery: MediaQueryList;
   private themeHandler: () => void;
-  private keyboardEnabled = true;
+  private keyboardEnabled = false;
 
   constructor(container: HTMLElement) {
     this.container = container;

@@ -254,17 +254,32 @@ export class Pane {
       ]);
     });
 
-    // Redirect focus from terminal → editor when terminal shouldn't have keyboard input.
-    // Handles: clicking on terminal area, OS dialogs stealing focus (screen recording permission), etc.
+    // --- Focus protection: editor is the sole keyboard input unless manual passthrough ---
+    // Three layers to prevent the terminal from stealing keystrokes:
+
+    // 1. Redirect immediately when terminal container receives focus (clicks, tab, etc.)
     this.terminalContainer.addEventListener('focusin', () => {
-      const isManual = this.modeDetector?.isManualOverride() ?? false;
-      if (!(this.mode === 'passthrough' && isManual)) {
-        // Not in manual passthrough — editor should have focus
-        requestAnimationFrame(() => this.editorInput.focus());
-      }
+      if (this.shouldEditorHaveFocus()) this.editorInput.focus();
     });
 
-    // Focus editor in editor mode (deferred to ensure it wins over xterm's internal focus grab)
+    // 2. Redirect when the OS returns focus to the app (screen recording dialog, etc.)
+    const windowFocusHandler = () => {
+      if (this.shouldEditorHaveFocus()) {
+        requestAnimationFrame(() => this.editorInput.focus());
+      }
+    };
+    window.addEventListener('focus', windowFocusHandler);
+    this.disposables.push(() => window.removeEventListener('focus', windowFocusHandler));
+
+    // 3. Safety net: periodic check ensures editor always has focus
+    const focusPoll = setInterval(() => {
+      if (this.shouldEditorHaveFocus() && !this.editorContainer.contains(document.activeElement)) {
+        this.editorInput.focus();
+      }
+    }, 300);
+    this.disposables.push(() => clearInterval(focusPoll));
+
+    // Focus editor on init (deferred to ensure it wins over xterm's internal focus grab)
     requestAnimationFrame(() => this.editorInput.focus());
   }
 
@@ -285,6 +300,12 @@ export class Pane {
   private handleTab(): void {
     if (this.ptyId === null) return;
     window.patton.pty.write(this.ptyId, '\t');
+  }
+
+  private shouldEditorHaveFocus(): boolean {
+    const isManual = this.modeDetector?.isManualOverride() ?? false;
+    // Editor should have focus unless user explicitly toggled to manual passthrough
+    return !(this.mode === 'passthrough' && isManual);
   }
 
   private handleEscape(): void {
