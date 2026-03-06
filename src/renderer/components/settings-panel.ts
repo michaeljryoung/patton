@@ -90,7 +90,7 @@ export class SettingsPanel {
     const shellInput = this.overlay.querySelector('#setting-shell') as HTMLInputElement;
 
     fontSizeInput.addEventListener('change', () => {
-      const val = parseInt(fontSizeInput.value);
+      const val = parseInt(fontSizeInput.value, 10);
       if (val >= 8 && val <= 72) {
         this.saveAndNotify({ fontSize: val });
       }
@@ -101,7 +101,7 @@ export class SettingsPanel {
     });
 
     scrollbackInput.addEventListener('change', () => {
-      const val = parseInt(scrollbackInput.value);
+      const val = parseInt(scrollbackInput.value, 10);
       if (val >= 100 && val <= 100000) {
         this.saveAndNotify({ scrollback: val });
       }

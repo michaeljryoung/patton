@@ -30,7 +30,16 @@ export class ContextMenu {
       }
     };
     this.overlay.addEventListener('mousedown', dismiss);
-    this.disposeListener = () => this.overlay.removeEventListener('mousedown', dismiss);
+
+    const keyDismiss = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') this.hide();
+    };
+    this.overlay.addEventListener('keydown', keyDismiss);
+
+    this.disposeListener = () => {
+      this.overlay.removeEventListener('mousedown', dismiss);
+      this.overlay.removeEventListener('keydown', keyDismiss);
+    };
 
     document.body.appendChild(this.overlay);
   }

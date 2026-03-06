@@ -24,11 +24,17 @@ export class PasteDialog {
     this.overlay.querySelector('.paste-dialog-confirm')!.addEventListener('click', () => this.finish(true));
     this.overlay.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') this.finish(false);
-      if (e.key === 'Enter') this.finish(true);
+      // Only confirm on Enter if the Cancel button is NOT focused
+      if (e.key === 'Enter' && !(e.target as HTMLElement)?.classList?.contains('paste-dialog-cancel')) {
+        this.finish(true);
+      }
     });
   }
 
   async confirm(text: string, lineCount: number): Promise<boolean> {
+    // If already showing, resolve the prior promise as cancelled
+    this.resolve?.(false);
+
     const msg = this.overlay.querySelector('.paste-dialog-message')!;
     const preview = this.overlay.querySelector('.paste-dialog-preview')!;
     msg.textContent = `Paste ${lineCount} lines into terminal?`;

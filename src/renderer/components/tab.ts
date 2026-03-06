@@ -54,8 +54,8 @@ export class Tab {
       onCommandDone: () => this.onCommandDone?.(),
     });
     pane.element.addEventListener('pane-split', ((e: CustomEvent) => {
-      if (e.detail === 'vertical') this.splitVertical();
-      else if (e.detail === 'horizontal') this.splitHorizontal();
+      if (e.detail === 'vertical') this.splitVertical().catch(console.error);
+      else if (e.detail === 'horizontal') this.splitHorizontal().catch(console.error);
     }) as EventListener);
     this._panes.push(pane);
     return pane;
@@ -178,7 +178,7 @@ export class Tab {
     const target = findPaneInDir(this.rootNode, this._focusedPane, direction);
     if (target) {
       this.setFocusedPane(target);
-      target.focus();
+      // focus is deferred via rAF inside setFocusedPane to allow textarea enable transition
     }
   }
 

@@ -108,6 +108,11 @@ export class SplitContainer {
   }
 
   dispose(): void {
+    if (this.dragging) {
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      this.dragging = false;
+    }
     for (const d of this.disposables) d();
     this.element.remove();
   }

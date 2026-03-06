@@ -71,7 +71,7 @@ export class HistorySearch {
     const maxItems = 12;
     const items = this.filtered.slice(0, maxItems);
     this.list.innerHTML = items.map((entry, i) => {
-      const escaped = entry.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const escaped = entry.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
       const active = i === this.selectedIndex ? 'active' : '';
       return `<div class="history-search-item ${active}" role="option" aria-selected="${i === this.selectedIndex}" data-index="${i}">${escaped}</div>`;
     }).join('');

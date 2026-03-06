@@ -8,6 +8,7 @@ export class SearchOverlay {
   private visible = false;
   private matchIndex = 0;
   private matchTotal = 0;
+  private resultDisposable?: { dispose(): void };
 
   constructor(parent: HTMLElement, searchAddon: SearchAddon) {
     this.searchAddon = searchAddon;
@@ -42,7 +43,7 @@ export class SearchOverlay {
     // Wire up search-on-type result count via the onDidChangeResults callback
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- SearchAddon types don't expose onDidChangeResults
-      (this.searchAddon as any).onDidChangeResults?.((result: { resultIndex: number; resultCount: number } | undefined) => {
+      this.resultDisposable = (this.searchAddon as any).onDidChangeResults?.((result: { resultIndex: number; resultCount: number } | undefined) => {
         if (result) {
           this.matchIndex = result.resultIndex + 1;
           this.matchTotal = result.resultCount;
@@ -127,6 +128,7 @@ export class SearchOverlay {
   }
 
   dispose(): void {
+    this.resultDisposable?.dispose();
     this.container.remove();
   }
 }
