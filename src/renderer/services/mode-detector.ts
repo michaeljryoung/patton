@@ -14,6 +14,10 @@ export class ModeDetector {
   private disposed = false;
   private lastTuiSignal = 0;
   private polling = false;
+  // Hysteresis: require multiple consecutive editor-polls before leaving passthrough.
+  // Prevents flapping when programs like Claude Code briefly spawn shell subprocesses.
+  private static readonly EDITOR_POLL_THRESHOLD = 3;
+  private consecutiveEditorPolls = 0;
 
   constructor(
     isAlternateBuffer: () => boolean,
@@ -43,12 +47,14 @@ export class ModeDetector {
     // Primary: check alternate buffer
     const isAlt = this.isAlternateBuffer();
     if (isAlt) {
+      this.consecutiveEditorPolls = 0;
       this.setMode('passthrough');
       return;
     }
 
     // Secondary: recent TUI escape sequences (cursor hide, mouse enable) within last 2s
     if (Date.now() - this.lastTuiSignal < 2000) {
+      this.consecutiveEditorPolls = 0;
       this.setMode('passthrough');
       return;
     }
@@ -62,6 +68,7 @@ export class ModeDetector {
         // (happens with fzf, some child processes). If we already know the shell,
         // this means a different process took over — switch to passthrough.
         if (raw === '__unknown__' && this.shellName) {
+          this.consecutiveEditorPolls = 0;
           this.setMode('passthrough');
           return;
         }
@@ -77,6 +84,7 @@ export class ModeDetector {
 
           // If foreground process differs from shell, an interactive program is running
           if (baseName !== this.shellName) {
+            this.consecutiveEditorPolls = 0;
             this.setMode('passthrough');
             return;
           }
@@ -86,6 +94,18 @@ export class ModeDetector {
       }
     }
 
+    // Hysteresis: when in passthrough, require multiple consecutive polls
+    // showing the shell before switching back to editor. This prevents
+    // flapping when programs like Claude Code briefly spawn subprocesses
+    // that look like the shell.
+    if (this.mode === 'passthrough') {
+      this.consecutiveEditorPolls++;
+      if (this.consecutiveEditorPolls < ModeDetector.EDITOR_POLL_THRESHOLD) {
+        return; // Stay in passthrough until threshold reached
+      }
+    }
+
+    this.consecutiveEditorPolls = 0;
     this.setMode('editor');
   }
 
