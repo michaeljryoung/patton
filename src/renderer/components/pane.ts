@@ -254,6 +254,16 @@ export class Pane {
       ]);
     });
 
+    // Redirect focus from terminal → editor when terminal shouldn't have keyboard input.
+    // Handles: clicking on terminal area, OS dialogs stealing focus (screen recording permission), etc.
+    this.terminalContainer.addEventListener('focusin', () => {
+      const isManual = this.modeDetector?.isManualOverride() ?? false;
+      if (!(this.mode === 'passthrough' && isManual)) {
+        // Not in manual passthrough — editor should have focus
+        requestAnimationFrame(() => this.editorInput.focus());
+      }
+    });
+
     // Focus editor in editor mode (deferred to ensure it wins over xterm's internal focus grab)
     requestAnimationFrame(() => this.editorInput.focus());
   }
@@ -294,18 +304,22 @@ export class Pane {
       // for vim, htop, etc. that need direct keystroke access.
       this.editorInput.hide();
       this.editorContainer.classList.remove('passthrough');
+      this.terminalView.setKeyboardEnabled(true);
       this.terminalView.focus();
     } else if (mode === 'passthrough') {
-      // Auto-detected passthrough — keep editor as the sole input.
-      // User types in Patton's editor, submit sends to the running program.
+      // Auto-detected passthrough — editor is the sole keyboard input.
+      // Terminal is display-only; keyboard blocked so clicks on terminal
+      // can't steal input. Submit sends text to the running program.
       this.editorInput.show();
       this.editorInput.focus();
       this.editorContainer.classList.add('passthrough');
+      this.terminalView.setKeyboardEnabled(false);
     } else {
       // Editor mode — normal shell usage.
       this.editorInput.show();
       this.editorInput.focus();
       this.editorContainer.classList.remove('passthrough');
+      this.terminalView.setKeyboardEnabled(false);
     }
   }
 

@@ -71,6 +71,7 @@ export class TerminalView {
   private disposed = false;
   private mediaQuery: MediaQueryList;
   private themeHandler: () => void;
+  private keyboardEnabled = true;
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -83,6 +84,16 @@ export class TerminalView {
       scrollback: DEFAULTS.SCROLLBACK,
       allowProposedApi: true,
       theme: getTheme(),
+    });
+
+    // Block keyboard input when disabled (auto-passthrough: editor is sole input)
+    this.terminal.attachCustomKeyEventHandler((event) => {
+      if (!this.keyboardEnabled) {
+        // Allow Cmd/Ctrl+C for copy even when keyboard is disabled
+        if ((event.metaKey || event.ctrlKey) && event.key === 'c') return true;
+        return false;
+      }
+      return true;
     });
 
     this.fitAddon = new FitAddon();
@@ -167,6 +178,10 @@ export class TerminalView {
 
   focus(): void {
     this.terminal.focus();
+  }
+
+  setKeyboardEnabled(enabled: boolean): void {
+    this.keyboardEnabled = enabled;
   }
 
   isAlternateBuffer(): boolean {
