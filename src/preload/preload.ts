@@ -1,0 +1,122 @@
+import { contextBridge, ipcRenderer } from 'electron';
+import { IPC } from '../shared/constants';
+import type { PattonAPI } from '../shared/types';
+
+const api: PattonAPI = {
+  pty: {
+    create: (opts) => ipcRenderer.invoke(IPC.PTY_CREATE, opts),
+    write: (id, data) => ipcRenderer.send(IPC.PTY_WRITE, id, data),
+    resize: (id, cols, rows) => ipcRenderer.send(IPC.PTY_RESIZE, id, cols, rows),
+    destroy: (id) => ipcRenderer.send(IPC.PTY_DESTROY, id),
+    getProcess: (id) => ipcRenderer.invoke(IPC.PTY_GET_PROCESS, id),
+    getDescendants: (id) => ipcRenderer.invoke(IPC.PTY_GET_DESCENDANTS, id),
+    onData: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, id: number, data: string) => callback(id, data);
+      ipcRenderer.on(IPC.PTY_DATA, listener);
+      return () => ipcRenderer.removeListener(IPC.PTY_DATA, listener);
+    },
+    onExit: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, id: number, code: number) => callback(id, code);
+      ipcRenderer.on(IPC.PTY_EXIT, listener);
+      return () => ipcRenderer.removeListener(IPC.PTY_EXIT, listener);
+    },
+    onTitle: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, id: number, title: string) => callback(id, title);
+      ipcRenderer.on(IPC.PTY_TITLE, listener);
+      return () => ipcRenderer.removeListener(IPC.PTY_TITLE, listener);
+    },
+  },
+  history: {
+    get: () => ipcRenderer.invoke(IPC.HISTORY_GET),
+    add: (command) => ipcRenderer.invoke(IPC.HISTORY_ADD, command),
+    clear: () => ipcRenderer.invoke(IPC.HISTORY_CLEAR),
+  },
+  settings: {
+    get: () => ipcRenderer.invoke(IPC.SETTINGS_GET),
+    set: (settings) => ipcRenderer.invoke(IPC.SETTINGS_SET, settings),
+  },
+  app: {
+    onNewTab: (cb) => {
+      const listener = () => cb();
+      ipcRenderer.on(IPC.APP_NEW_TAB, listener);
+      return () => ipcRenderer.removeListener(IPC.APP_NEW_TAB, listener);
+    },
+    onCloseTab: (cb) => {
+      const listener = () => cb();
+      ipcRenderer.on(IPC.APP_CLOSE_TAB, listener);
+      return () => ipcRenderer.removeListener(IPC.APP_CLOSE_TAB, listener);
+    },
+    onNextTab: (cb) => {
+      const listener = () => cb();
+      ipcRenderer.on(IPC.APP_NEXT_TAB, listener);
+      return () => ipcRenderer.removeListener(IPC.APP_NEXT_TAB, listener);
+    },
+    onPrevTab: (cb) => {
+      const listener = () => cb();
+      ipcRenderer.on(IPC.APP_PREV_TAB, listener);
+      return () => ipcRenderer.removeListener(IPC.APP_PREV_TAB, listener);
+    },
+    onSwitchTab: (cb) => {
+      const listener = (_event: Electron.IpcRendererEvent, index: number) => cb(index);
+      ipcRenderer.on(IPC.APP_SWITCH_TAB, listener);
+      return () => ipcRenderer.removeListener(IPC.APP_SWITCH_TAB, listener);
+    },
+    onClear: (cb) => {
+      const listener = () => cb();
+      ipcRenderer.on(IPC.APP_CLEAR, listener);
+      return () => ipcRenderer.removeListener(IPC.APP_CLEAR, listener);
+    },
+    onSearch: (cb) => {
+      const listener = () => cb();
+      ipcRenderer.on(IPC.APP_SEARCH, listener);
+      return () => ipcRenderer.removeListener(IPC.APP_SEARCH, listener);
+    },
+    onNewWindow: (cb) => {
+      const listener = () => cb();
+      ipcRenderer.on(IPC.APP_NEW_WINDOW, listener);
+      return () => ipcRenderer.removeListener(IPC.APP_NEW_WINDOW, listener);
+    },
+    onFontSizeUp: (cb) => {
+      const listener = () => cb();
+      ipcRenderer.on(IPC.APP_FONT_SIZE_UP, listener);
+      return () => ipcRenderer.removeListener(IPC.APP_FONT_SIZE_UP, listener);
+    },
+    onFontSizeDown: (cb) => {
+      const listener = () => cb();
+      ipcRenderer.on(IPC.APP_FONT_SIZE_DOWN, listener);
+      return () => ipcRenderer.removeListener(IPC.APP_FONT_SIZE_DOWN, listener);
+    },
+    onSplitVertical: (cb) => {
+      const listener = () => cb();
+      ipcRenderer.on(IPC.APP_SPLIT_VERTICAL, listener);
+      return () => ipcRenderer.removeListener(IPC.APP_SPLIT_VERTICAL, listener);
+    },
+    onSplitHorizontal: (cb) => {
+      const listener = () => cb();
+      ipcRenderer.on(IPC.APP_SPLIT_HORIZONTAL, listener);
+      return () => ipcRenderer.removeListener(IPC.APP_SPLIT_HORIZONTAL, listener);
+    },
+    onFocusPaneUp: (cb) => {
+      const listener = () => cb();
+      ipcRenderer.on(IPC.APP_FOCUS_PANE_UP, listener);
+      return () => ipcRenderer.removeListener(IPC.APP_FOCUS_PANE_UP, listener);
+    },
+    onFocusPaneDown: (cb) => {
+      const listener = () => cb();
+      ipcRenderer.on(IPC.APP_FOCUS_PANE_DOWN, listener);
+      return () => ipcRenderer.removeListener(IPC.APP_FOCUS_PANE_DOWN, listener);
+    },
+    onFocusPaneLeft: (cb) => {
+      const listener = () => cb();
+      ipcRenderer.on(IPC.APP_FOCUS_PANE_LEFT, listener);
+      return () => ipcRenderer.removeListener(IPC.APP_FOCUS_PANE_LEFT, listener);
+    },
+    onFocusPaneRight: (cb) => {
+      const listener = () => cb();
+      ipcRenderer.on(IPC.APP_FOCUS_PANE_RIGHT, listener);
+      return () => ipcRenderer.removeListener(IPC.APP_FOCUS_PANE_RIGHT, listener);
+    },
+  },
+};
+
+contextBridge.exposeInMainWorld('patton', api);

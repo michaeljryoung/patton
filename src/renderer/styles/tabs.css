@@ -1,0 +1,129 @@
+.tab-bar {
+  display: flex;
+  align-items: center;
+  height: 38px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  -webkit-app-region: drag;
+  padding-left: 80px; /* Space for macOS traffic lights */
+  user-select: none;
+}
+
+.tab-bar-settings {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 0 10px;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.12s, background 0.12s;
+  -webkit-app-region: no-drag;
+}
+
+.tab-bar-settings:hover {
+  color: var(--text-primary);
+  background: var(--bg-input);
+}
+
+.tab-bar-settings svg {
+  width: 14px;
+  height: 14px;
+  display: block;
+  flex-shrink: 0;
+}
+
+.tab-bar-tabs {
+  display: flex;
+  flex: 1;
+  overflow-x: auto;
+  gap: 1px;
+  height: 100%;
+  align-items: stretch;
+  -webkit-app-region: no-drag;
+}
+
+/* Hide scrollbar on tab row */
+.tab-bar-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.tab-bar-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 14px;
+  min-width: 100px;
+  max-width: 200px;
+  background: var(--bg-input);
+  border-right: 1px solid var(--border);
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-secondary);
+  transition: background 0.15s, color 0.15s, opacity 0.15s;
+  -webkit-app-region: no-drag;
+}
+
+.tab-bar-tab:hover {
+  background: var(--hover);
+}
+
+.tab-bar-tab.active {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+/* Drag-to-reorder states */
+.tab-bar-tab.dragging {
+  opacity: 0.4;
+}
+
+.tab-bar-tab.drag-over {
+  border-left: 2px solid var(--accent);
+}
+
+.tab-bar-tab-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.tab-bar-tab-close {
+  background: none;
+  border: none;
+  font-size: 14px;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px 4px;
+  line-height: 1;
+  border-radius: 3px;
+  transition: background 0.12s, color 0.12s;
+  -webkit-app-region: no-drag;
+}
+
+.tab-bar-tab-close:hover {
+  background: var(--hover-strong);
+  color: var(--text-primary);
+}
+
+.tab-bar-new {
+  background: none;
+  border: none;
+  font-size: 18px;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0 12px;
+  height: 100%;
+  transition: color 0.12s, background 0.12s;
+  -webkit-app-region: no-drag;
+}
+
+.tab-bar-new:hover {
+  color: var(--text-primary);
+  background: var(--bg-input);
+}
