@@ -94,42 +94,38 @@ export class ModeDetector {
     if (this.disposed) return;
     if (this.manualOverride) return;
 
-    // TUI-enter signals: cursor hide, mouse tracking enable
-    const enterSignals = ['\x1b[?25l', '\x1b[?1000h', '\x1b[?1002h', '\x1b[?1003h'];
-    // TUI-exit signals: cursor show, mouse tracking disable
-    const exitSignals = ['\x1b[?25h', '\x1b[?1000l', '\x1b[?1002l', '\x1b[?1003l'];
+    // Track each signal pair independently — cursor show should NOT
+    // override mouse enable since they are different features.
+    // e.g. fzf --height sends mouse enable then cursor show in the same chunk.
+    const signalPairs = [
+      { enter: '\x1b[?25l', exit: '\x1b[?25h' },   // cursor hide/show
+      { enter: '\x1b[?1000h', exit: '\x1b[?1000l' }, // basic mouse tracking
+      { enter: '\x1b[?1002h', exit: '\x1b[?1002l' }, // button-event mouse
+      { enter: '\x1b[?1003h', exit: '\x1b[?1003l' }, // any-event mouse
+    ];
 
-    let lastEnterIdx = -1;
-    let lastExitIdx = -1;
+    let anyPairEntered = false;
+    let anyExitSeen = false;
 
-    for (const sig of enterSignals) {
-      const idx = data.lastIndexOf(sig);
-      if (idx > lastEnterIdx) lastEnterIdx = idx;
-    }
-    for (const sig of exitSignals) {
-      const idx = data.lastIndexOf(sig);
-      if (idx > lastExitIdx) lastExitIdx = idx;
-    }
+    for (const { enter, exit } of signalPairs) {
+      const lastEnter = data.lastIndexOf(enter);
+      const lastExit = data.lastIndexOf(exit);
 
-    const hasEnter = lastEnterIdx !== -1;
-    const hasExit = lastExitIdx !== -1;
-
-    if (hasEnter && hasExit) {
-      // Both present — whichever comes last wins
-      if (lastExitIdx > lastEnterIdx) {
-        this.lastTuiSignal = 0;
-      } else {
-        this.lastTuiSignal = Date.now();
-        if (this.mode !== 'passthrough') {
-          this.setMode('passthrough');
-        }
+      // This pair is "entered" if its enter signal comes after its exit (or no exit)
+      if (lastEnter !== -1 && lastEnter > lastExit) {
+        anyPairEntered = true;
       }
-    } else if (hasEnter) {
+      if (lastExit !== -1 && lastExit > lastEnter) {
+        anyExitSeen = true;
+      }
+    }
+
+    if (anyPairEntered) {
       this.lastTuiSignal = Date.now();
       if (this.mode !== 'passthrough') {
         this.setMode('passthrough');
       }
-    } else if (hasExit) {
+    } else if (anyExitSeen) {
       this.lastTuiSignal = 0;
     }
   }
