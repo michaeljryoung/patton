@@ -16,21 +16,22 @@
   border-top: none;
 }
 
-.editor-container .cm-editor {
+.editor-textarea {
+  width: 100%;
+  border: none;
+  outline: none;
   background: transparent;
-}
-
-.editor-container .cm-focused {
-  outline: none !important;
-}
-
-.editor-container .cm-scroller {
-  overflow: auto;
-}
-
-.editor-container .cm-content {
+  color: var(--text-primary);
   font-family: var(--font-mono);
   font-size: 14px;
+  padding: 8px 12px 8px 16px;
+  resize: none;
+  overflow-y: hidden;
+  line-height: 1.4;
+}
+
+.editor-textarea::placeholder {
+  color: var(--text-muted);
 }
 
 /* Prompt indicator */
