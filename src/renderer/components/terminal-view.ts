@@ -182,6 +182,24 @@ export class TerminalView {
 
   setKeyboardEnabled(enabled: boolean): void {
     this.keyboardEnabled = enabled;
+    // Physically disable/enable xterm's hidden textarea to prevent ALL input paths
+    // (keyboard events, IME composition, paste) from reaching the terminal.
+    const textarea = this.container.querySelector('.xterm-helper-textarea') as HTMLTextAreaElement | null;
+    if (textarea) {
+      if (enabled) {
+        textarea.style.pointerEvents = '';
+        textarea.removeAttribute('disabled');
+        textarea.tabIndex = 0;
+      } else {
+        textarea.style.pointerEvents = 'none';
+        textarea.setAttribute('disabled', 'true');
+        textarea.tabIndex = -1;
+      }
+    }
+  }
+
+  hasFocus(): boolean {
+    return this.container.contains(document.activeElement);
   }
 
   isAlternateBuffer(): boolean {
