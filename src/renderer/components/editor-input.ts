@@ -23,7 +23,7 @@ export class EditorInput {
 
     this.textarea = document.createElement('textarea');
     this.textarea.className = 'editor-textarea';
-    this.textarea.placeholder = 'Type here — Enter sends';
+    this.textarea.placeholder = 'Editor (Enter=send)';
     this.textarea.rows = 1;
     this.textarea.spellcheck = false;
     this.textarea.autocomplete = 'off';
@@ -32,14 +32,10 @@ export class EditorInput {
     }
     container.appendChild(this.textarea);
 
-    // Auto-resize textarea to content
-    this.textarea.addEventListener('input', () => this.autoResize());
-
-    // Track Shift state for distinguishing Enter vs Shift+Enter
+    // --- LAYER 1: keydown (works in editor mode) ---
     this.textarea.addEventListener('keydown', (e) => {
       this.shiftHeld = e.shiftKey;
 
-      // Try to handle Enter via keydown (works before passthrough mode)
       if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
         e.preventDefault();
         e.stopPropagation();
@@ -92,21 +88,44 @@ export class EditorInput {
       if (e.key === 'Shift') this.shiftHeld = false;
     });
 
-    // CRITICAL FALLBACK: beforeinput catches Enter even when keydown doesn't fire.
-    // When something swallows the keydown event (observed after passthrough mode),
-    // the browser still fires beforeinput with inputType='insertLineBreak' before
-    // inserting the newline. We intercept it here and submit instead.
+    // --- LAYER 2: beforeinput (catches Enter when keydown is swallowed) ---
     this.textarea.addEventListener('beforeinput', (e) => {
       if (e.inputType === 'insertLineBreak' && !this.enterHandledByKeydown && !this.shiftHeld) {
         e.preventDefault();
         this.doSubmit();
       }
     });
+
+    // --- LAYER 3: input event (nuclear fallback — detects newline AFTER insertion) ---
+    // If both keydown and beforeinput fail to catch Enter, the newline will be
+    // inserted into the textarea. We detect it here and treat it as submit.
+    this.textarea.addEventListener('input', () => {
+      if (this.textarea.value.includes('\n')) {
+        // A newline was inserted — strip it and submit
+        const text = this.textarea.value.replace(/\n+/g, '');
+        document.title = `[INPUT-FALLBACK] ${text.substring(0, 15)} @${Date.now() % 10000}`;
+        if (text || this.textarea.value.trim() === '\n') {
+          this.callbacks.onSubmit(text);
+        }
+        this.clear();
+        return;
+      }
+      this.autoResize();
+    });
+
+    // --- Visual focus debug: bright border when textarea has focus ---
+    this.textarea.addEventListener('focus', () => {
+      this.container.style.outline = '2px solid #00ff00';
+    });
+    this.textarea.addEventListener('blur', () => {
+      this.container.style.outline = '';
+      // DEBUG: show what stole focus
+      document.title = `[BLUR] focus→${document.activeElement?.tagName}.${document.activeElement?.className?.substring(0, 20)} @${Date.now() % 10000}`;
+    });
   }
 
   private doSubmit(): void {
     const text = this.textarea.value;
-    // DEBUG: visual confirmation (remove after fix confirmed)
     document.title = `[SENT] ${text.substring(0, 20)} @${Date.now() % 10000}`;
     this.callbacks.onSubmit(text);
     this.clear();
