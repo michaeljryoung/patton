@@ -57,6 +57,15 @@ export class ModeDetector {
     if (this.getProcessName) {
       try {
         const raw = await this.getProcessName();
+
+        // '__unknown__' means node-pty can't identify the foreground process
+        // (happens with fzf, some child processes). If we already know the shell,
+        // this means a different process took over — switch to passthrough.
+        if (raw === '__unknown__' && this.shellName) {
+          this.setMode('passthrough');
+          return;
+        }
+
         // Normalize: strip path and leading dash (login shells)
         const baseName = raw.replace(/^-/, '').split('/').pop() || '';
 

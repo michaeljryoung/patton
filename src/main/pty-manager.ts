@@ -179,7 +179,11 @@ export class PtyManager {
     if (!instance) return '';
     try {
       // node-pty's process property isn't in the IPty type but exists at runtime
-      return (instance.process as unknown as { process: string }).process || '';
+      const name = (instance.process as unknown as { process: string | undefined }).process;
+      // node-pty returns undefined when it can't identify the foreground process
+      // (e.g. fzf, some child processes). Signal this distinctly from "no PTY".
+      if (name === undefined) return '__unknown__';
+      return name || '';
     } catch {
       return '';
     }

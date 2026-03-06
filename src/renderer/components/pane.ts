@@ -158,9 +158,14 @@ export class Pane {
       }
     });
 
-    // Wire terminal passthrough data → PTY
+    // Wire terminal data → PTY
+    // Always forward xterm.js data to PTY regardless of mode.
+    // In editor mode, CodeMirror captures keyboard input (not xterm.js),
+    // so the only data xterm.js generates are terminal protocol responses
+    // (e.g. cursor position DSR replies) which must reach the PTY or
+    // programs like fzf --height will block waiting for the response.
     const passthroughDispose = this.terminalView.onPassthroughData((data) => {
-      if (this.mode === 'passthrough' && this.ptyId !== null) {
+      if (this.ptyId !== null) {
         window.patton.pty.write(this.ptyId, data);
       }
     });

@@ -89,10 +89,11 @@ src/
 Feature-complete with security hardening; builds and runs successfully. Ready for distribution testing.
 
 ## Last Session
-**2026-03-06 (evening)**
-- Fixed mode detection: added foreground-process polling to ModeDetector — auto-switches to passthrough when non-shell process is running (fixes arrow keys in Claude Code, fzf, etc.)
-- Fixed all 12 ESLint errors (removed unused imports, replaced `any` types, fixed useless regex escapes, added targeted eslint-disable comments where needed)
-- ModeDetector now learns the shell name on first poll, then switches to passthrough whenever a different process takes the foreground
+**2026-03-06 (late evening)**
+- Fixed critical DSR (Device Status Report) forwarding: xterm.js terminal protocol responses (cursor position reports) are now always forwarded to the PTY regardless of mode — this was blocking `fzf --height` which needs DSR to calculate inline rendering position
+- Fixed `node-pty` process identification: `proc.process` returns `undefined` (not empty string) for processes like fzf — added `__unknown__` sentinel value so ModeDetector treats unidentifiable foreground processes as passthrough triggers
+- Result: `cc` command (fzf project picker) now works fully — renders inline, arrow keys navigate, preview panel works, Escape exits cleanly back to editor mode
+- Previous session: added foreground-process polling to ModeDetector, fixed all 12 ESLint errors
 
 ## Next Steps
 - [ ] Run `npm run make` to generate .dmg for distribution
@@ -106,6 +107,8 @@ Feature-complete with security hardening; builds and runs successfully. Ready fo
 - **Dependency pinning (no ^ or ~)**: Prevents surprise breakage from transitive updates in a desktop app where reproducibility matters more than auto-patching.
 
 ## Gotchas
+- **xterm.js onData must always forward to PTY**: In editor mode, `terminal.onData` only fires for terminal protocol responses (DSR, DA) since CodeMirror has focus. These MUST reach the PTY or programs like `fzf --height` will block forever waiting for cursor position reports. Never gate `onPassthroughData` forwarding on mode.
+- **node-pty `proc.process` returns `undefined`**: On macOS, node-pty can't identify some foreground processes (fzf, certain child processes). Returns `undefined`, not empty string. ModeDetector uses `__unknown__` sentinel to trigger passthrough.
 - **App Sandbox kills Electron**: `com.apple.security.app-sandbox` causes immediate crash with `FATAL:base/apple/mach_port_rendezvous_mac.cc` — Mach port bootstrap_check_in permission denied
 - **Self-signed certs work unsigned**: macOS codesign accepts untrusted self-signed certs — they still produce stable identity hashes for TCC, just won't pass Gatekeeper without user override
 - **`npm audit` blocks builds**: High-severity vulns in transitive devDeps (tar, tmp in electron-forge) fail `--audit-level=high`. Must use `--omit=dev` to scope to production deps
