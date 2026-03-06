@@ -49,7 +49,10 @@ src/
 ## Dual Mode System
 - **Editor Mode** — CodeMirror captures input, xterm.js is display-only
 - **Passthrough Mode** — xterm.js captures input directly (vim, ssh, htop)
-- Auto-detection: alternate screen buffer + TUI escape sequences (cursor hide, mouse enable) + foreground process name polling (any non-shell foreground → passthrough)
+- **Editor bar stays visible in both modes** — in passthrough, it serves as a compose area (submit sends text to the running program via PTY). This preserves CodeMirror text editing when using Claude Code or other TUI programs.
+- Amber accent bar indicates passthrough mode (blue = editor mode)
+- Escape key in editor returns focus to terminal for TUI keyboard shortcuts
+- Auto-detection: alternate screen buffer + TUI escape sequences (cursor hide, mouse enable, bracketed paste) + foreground process name polling (any non-shell foreground → passthrough)
 - Manual toggle: `Ctrl+Shift+P`
 
 ## Security Model
@@ -89,10 +92,13 @@ src/
 Feature-complete with security hardening; builds and runs successfully. Ready for distribution testing.
 
 ## Last Session
-**2026-03-06 (late evening)**
-- Fixed critical DSR (Device Status Report) forwarding: xterm.js terminal protocol responses (cursor position reports) are now always forwarded to the PTY regardless of mode — this was blocking `fzf --height` which needs DSR to calculate inline rendering position
-- Fixed `node-pty` process identification: `proc.process` returns `undefined` (not empty string) for processes like fzf — added `__unknown__` sentinel value so ModeDetector treats unidentifiable foreground processes as passthrough triggers
-- Result: `cc` command (fzf project picker) now works fully — renders inline, arrow keys navigate, preview panel works, Escape exits cleanly back to editor mode
+**2026-03-06 (late evening / night)**
+- Design change: editor bar now stays visible in passthrough mode as a compose area. Users keep CodeMirror text editing even when running TUI apps like Claude Code. Submit sends text to the running program via PTY.
+- Added bracketed paste mode (`\x1b[?2004l`/`\x1b[?2004h`) as instant passthrough signal — zsh disables bracketed paste when executing commands, giving zero-latency mode detection
+- Added paired TUI signal tracking — each signal pair (cursor hide/show, mouse enable/disable) tracked independently to prevent cross-pair interference
+- Added hysteresis (3 consecutive editor-polls) to prevent mode flapping when TUI apps spawn brief subprocesses
+- Fixed critical DSR forwarding: xterm.js protocol responses always forwarded to PTY regardless of mode
+- Fixed `node-pty` process identification: `proc.process` returns `undefined` for fzf — added `__unknown__` sentinel
 - Previous session: added foreground-process polling to ModeDetector, fixed all 12 ESLint errors
 
 ## Next Steps
