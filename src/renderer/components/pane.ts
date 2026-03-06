@@ -35,6 +35,7 @@ export class Pane {
   private resizeTimer: ReturnType<typeof setTimeout> | null = null;
   private callbacks: PaneCallbacks;
   private ptyExited = false;
+  private _isFocused = false;
   private pasteDialog: PasteDialog;
   private contextMenu: ContextMenu;
 
@@ -273,12 +274,12 @@ export class Pane {
 
     // 1. Redirect immediately when terminal container receives focus (clicks, tab, etc.)
     this.terminalContainer.addEventListener('focusin', () => {
-      if (this.shouldEditorHaveFocus()) this.editorInput.focus();
+      if (this._isFocused && this.shouldEditorHaveFocus()) this.editorInput.focus();
     });
 
     // 2. Redirect when the OS returns focus to the app (screen recording dialog, etc.)
     const windowFocusHandler = () => {
-      if (this.shouldEditorHaveFocus()) {
+      if (this._isFocused && this.shouldEditorHaveFocus()) {
         requestAnimationFrame(() => this.editorInput.focus());
       }
     };
@@ -286,8 +287,9 @@ export class Pane {
     this.disposables.push(() => window.removeEventListener('focus', windowFocusHandler));
 
     // 3. Safety net: periodic check ensures editor always has focus
+    //    Only runs for the focused pane to prevent split panes from fighting.
     const focusPoll = setInterval(() => {
-      if (this.shouldEditorHaveFocus() && !this.editorContainer.contains(document.activeElement)) {
+      if (this._isFocused && this.shouldEditorHaveFocus() && !this.editorContainer.contains(document.activeElement)) {
         this.editorInput.focus();
       }
     }, 300);
@@ -424,6 +426,7 @@ export class Pane {
   }
 
   setFocused(focused: boolean): void {
+    this._isFocused = focused;
     this.element.classList.toggle('focused', focused);
   }
 
