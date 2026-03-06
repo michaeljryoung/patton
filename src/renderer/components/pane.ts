@@ -38,6 +38,7 @@ export class Pane {
   private _isFocused = false;
   private pasteDialog: PasteDialog;
   private contextMenu: ContextMenu;
+  private submitTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(callbacks: PaneCallbacks) {
     this.id = `pane-${++paneIdCounter}`;
@@ -183,6 +184,11 @@ export class Pane {
       } else if (!this.terminalView.hasFocus()) {
         // Terminal doesn't have focus: data must be protocol responses (DSR etc.)
         window.patton.pty.write(this.ptyId, data);
+      // eslint-disable-next-line no-control-regex -- intentional: match terminal protocol escape sequences
+      } else if (/^\x1b\[[\d;]*[Rcn]$/.test(data) || /^\x1b\[[\d;?]*c$/.test(data)) {
+        // Always forward terminal protocol responses (DSR cursor position, device attributes)
+        // even if the terminal has focus — these are xterm.js internal responses, not user input.
+        window.patton.pty.write(this.ptyId, data);
       }
       // else: terminal has focus but shouldn't — drop user keyboard input
     });
@@ -295,7 +301,9 @@ export class Pane {
     // raw-mode programs' input parsers on subsequent messages.
     if (command) {
       window.patton.pty.write(this.ptyId, command);
-      setTimeout(() => {
+      if (this.submitTimer) clearTimeout(this.submitTimer);
+      this.submitTimer = setTimeout(() => {
+        this.submitTimer = null;
         if (this.ptyId !== null) {
           window.patton.pty.write(this.ptyId, '\r');
         }
@@ -407,7 +415,7 @@ export class Pane {
   }
 
   focus(): void {
-    if (this.mode === 'editor') {
+    if (this.shouldEditorHaveFocus()) {
       this.editorInput.focus();
     } else {
       this.terminalView.focus();
@@ -447,6 +455,7 @@ export class Pane {
 
   dispose(): void {
     if (this.resizeTimer) clearTimeout(this.resizeTimer);
+    if (this.submitTimer) clearTimeout(this.submitTimer);
     for (const d of this.disposables) d();
     if (this.ptyId !== null && !this.ptyExited) {
       window.patton.pty.destroy(this.ptyId);
