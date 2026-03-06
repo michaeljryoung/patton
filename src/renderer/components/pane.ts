@@ -295,7 +295,7 @@ export class Pane {
     if (this.ptyId === null) return;
     // DEBUG: visual confirmation in terminal (remove after fix confirmed)
     this.terminalView.write(`\r\n\x1b[33m[submit: ${command.substring(0, 40)}]\x1b[0m\r\n`);
-    window.patton.pty.write(this.ptyId, command + '\n');
+    window.patton.pty.write(this.ptyId, command + '\r');
     if (command.trim()) {
       this.historyManager.add(command);
     }
