@@ -30,6 +30,7 @@ const defaults: StoreSchema = {
     fontFamily: DEFAULTS.FONT_FAMILY,
     scrollback: DEFAULTS.SCROLLBACK,
     shell: DEFAULTS.SHELL,
+    notificationSound: DEFAULTS.NOTIFICATION_SOUND,
   },
   windowState: {
     width: 900,
@@ -123,6 +124,10 @@ export function setSettings(partial: Partial<AppSettings>): void {
     if (/^\/[a-zA-Z0-9/._-]+$/.test(s)) {
       validated.shell = s;
     }
+  }
+
+  if (partial.notificationSound !== undefined) {
+    validated.notificationSound = !!partial.notificationSound;
   }
 
   if (Object.keys(validated).length > 0) {

@@ -147,13 +147,7 @@ export class PtyManager {
   write(id: number, data: string): void {
     const instance = this.instances.get(id);
     if (instance) {
-      // DEBUG: log PTY writes (remove after fix confirmed)
-      // eslint-disable-next-line no-control-regex -- intentional: escape control chars for debug log
-      const escaped = data.replace(/\r/g, '\\r').replace(/\n/g, '\\n').replace(/[\x1b]/g, '\\e');
-      console.log(`[PTY-WRITE] id=${id} len=${data.length} data="${escaped.substring(0, 50)}"`);
       instance.process.write(data);
-    } else {
-      console.warn(`[PTY-WRITE] FAILED: no instance for id=${id}`);
     }
   }
 

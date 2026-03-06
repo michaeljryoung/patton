@@ -9,12 +9,13 @@ export class TabManager {
   private contentContainer: HTMLElement;
   private disposables: (() => void)[] = [];
   private currentFontSize: number | undefined;
+  private onCommandDone: (() => void) | null = null;
   private panesByPtyId: Map<number, Pane> = new Map();
 
   constructor(
     tabBarContainer: HTMLElement,
     contentContainer: HTMLElement,
-    options?: { onSettings?: () => void },
+    options?: { onSettings?: () => void; onCommandDone?: () => void },
   ) {
     this.contentContainer = contentContainer;
 
@@ -25,6 +26,7 @@ export class TabManager {
       onReorder: (fromId, toId) => this.reorder(fromId, toId),
       onSettings: () => options?.onSettings?.(),
     });
+    this.onCommandDone = options?.onCommandDone || null;
 
     // Listen for PTY exit — route via panesByPtyId
     this.disposables.push(
@@ -70,6 +72,7 @@ export class TabManager {
       (pane) => this.registerPane(pane),
       (pane) => this.unregisterPane(pane),
       () => this.updateTabBar(),
+      () => this.onCommandDone?.(),
     );
     this.tabs.push(tab);
     this.contentContainer.appendChild(tab.element);

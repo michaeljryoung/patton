@@ -45,6 +45,14 @@ export class SettingsPanel {
             <label class="settings-label" for="setting-shell">Shell Path</label>
             <input class="settings-input" id="setting-shell" type="text" placeholder="/bin/zsh" />
           </div>
+          <div class="settings-group settings-group-toggle">
+            <label class="settings-label" for="setting-notification-sound">Notification Sound</label>
+            <label class="settings-toggle">
+              <input type="checkbox" id="setting-notification-sound" />
+              <span class="settings-toggle-slider"></span>
+            </label>
+            <span class="settings-hint">Play a sound when a command finishes</span>
+          </div>
           <div class="shortcuts-section">
             <h3 class="shortcuts-title">Keyboard Shortcuts</h3>
             <div class="shortcuts-grid">
@@ -104,6 +112,11 @@ export class SettingsPanel {
         this.saveAndNotify({ shell: shellInput.value });
       }
     });
+
+    const notifInput = this.overlay.querySelector('#setting-notification-sound') as HTMLInputElement;
+    notifInput.addEventListener('change', () => {
+      this.saveAndNotify({ notificationSound: notifInput.checked });
+    });
   }
 
   private saveAndNotify(settings: Partial<AppSettings>): void {
@@ -117,6 +130,8 @@ export class SettingsPanel {
     (this.overlay.querySelector('#setting-font-size') as HTMLInputElement).value = String(settings.fontSize);
     (this.overlay.querySelector('#setting-scrollback') as HTMLInputElement).value = String(settings.scrollback);
     (this.overlay.querySelector('#setting-shell') as HTMLInputElement).value = settings.shell;
+
+    (this.overlay.querySelector('#setting-notification-sound') as HTMLInputElement).checked = settings.notificationSound !== false;
 
     // Match font family to select
     const select = this.overlay.querySelector('#setting-font-family') as HTMLSelectElement;

@@ -48,6 +48,7 @@ export const DEFAULTS = {
   PROMPT_IDLE_MS: 100,
   FONT_SIZE_MIN: 8,
   FONT_SIZE_MAX: 72,
+  NOTIFICATION_SOUND: true,
 } as const;
 
 export const PATTON_QUOTES = [

@@ -1,5 +1,6 @@
 import { TabManager } from '../services/tab-manager';
 import { KeybindingManager } from '../services/keybinding-manager';
+import { NotificationSound } from '../services/notification-sound';
 import { SettingsPanel } from './settings-panel';
 import { Onboarding } from './onboarding';
 import { DEFAULTS } from '../../shared/constants';
@@ -8,6 +9,7 @@ export class App {
   private tabManager: TabManager;
   private keybindingManager: KeybindingManager;
   private settingsPanel: SettingsPanel;
+  private notificationSound: NotificationSound;
   private fontSize: number = DEFAULTS.FONT_SIZE;
   private disposables: (() => void)[] = [];
 
@@ -16,14 +18,19 @@ export class App {
     const contentEl = document.getElementById('content')!;
     const appEl = document.getElementById('app')!;
 
+    this.notificationSound = new NotificationSound();
     this.tabManager = new TabManager(tabBarEl, contentEl, {
       onSettings: () => this.settingsPanel.toggle(),
+      onCommandDone: () => this.notificationSound.play(),
     });
     this.keybindingManager = new KeybindingManager(this.tabManager);
     this.settingsPanel = new SettingsPanel(appEl, (settings) => {
       if (settings.fontSize !== undefined) {
         this.fontSize = settings.fontSize;
         this.tabManager.setFontSize(this.fontSize);
+      }
+      if (settings.notificationSound !== undefined) {
+        this.notificationSound.setEnabled(settings.notificationSound);
       }
     });
 
@@ -36,6 +43,7 @@ export class App {
     const settings = await window.patton.settings.get();
     this.fontSize = settings.fontSize;
     this.tabManager.setFontSize(this.fontSize);
+    this.notificationSound.setEnabled(settings.notificationSound !== false);
 
     // Create initial tab
     await this.tabManager.createTab();
@@ -165,6 +173,7 @@ export class App {
     for (const d of this.disposables) d();
     this.keybindingManager.dispose();
     this.settingsPanel.dispose();
+    this.notificationSound.dispose();
     this.tabManager.dispose();
   }
 }

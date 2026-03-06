@@ -1,6 +1,6 @@
 .tab-bar {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   height: 38px;
   background: var(--bg-secondary);
   border-bottom: 1px solid var(--border);
@@ -39,9 +39,8 @@
   display: flex;
   flex: 1;
   overflow-x: auto;
-  gap: 1px;
   height: 100%;
-  align-items: stretch;
+  align-items: flex-end;
   -webkit-app-region: no-drag;
 }
 
@@ -55,25 +54,51 @@
   align-items: center;
   gap: 6px;
   padding: 0 14px;
-  min-width: 100px;
-  max-width: 200px;
-  background: var(--bg-input);
-  border-right: 1px solid var(--border);
+  height: calc(100% - 4px);
+  flex: 1;
+  min-width: 60px;
+  background: transparent;
   cursor: pointer;
   font-size: 12px;
   color: var(--text-secondary);
   transition: background 0.15s, color 0.15s, opacity 0.15s;
   -webkit-app-region: no-drag;
+  border-radius: 8px 8px 0 0;
+  position: relative;
 }
 
 .tab-bar-tab:hover {
   background: var(--hover);
+  color: var(--text-primary);
 }
 
 .tab-bar-tab.active {
   background: var(--bg-primary);
   color: var(--text-primary);
   font-weight: 500;
+  height: calc(100% - 2px);
+}
+
+/* Hide the parent border-bottom behind the active tab */
+.tab-bar-tab.active::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--bg-primary);
+}
+
+/* Subtle separator between inactive tabs */
+.tab-bar-tab:not(.active) + .tab-bar-tab:not(.active)::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 20%;
+  height: 60%;
+  width: 1px;
+  background: var(--border-light);
 }
 
 /* Drag-to-reorder states */
@@ -101,9 +126,15 @@
   cursor: pointer;
   padding: 2px 4px;
   line-height: 1;
-  border-radius: 3px;
+  border-radius: 4px;
   transition: background 0.12s, color 0.12s;
   -webkit-app-region: no-drag;
+  opacity: 0;
+}
+
+.tab-bar-tab:hover .tab-bar-tab-close,
+.tab-bar-tab.active .tab-bar-tab-close {
+  opacity: 1;
 }
 
 .tab-bar-tab-close:hover {

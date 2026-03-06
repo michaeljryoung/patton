@@ -23,6 +23,7 @@ export class Tab {
   private onPaneRegistered: ((pane: Pane) => void) | null = null;
   private onPaneUnregistered: ((pane: Pane) => void) | null = null;
   private onTitleChanged: (() => void) | null = null;
+  private onCommandDone: (() => void) | null = null;
   title = 'Terminal';
 
   constructor() {
@@ -50,6 +51,7 @@ export class Tab {
           this.onTitleChanged?.();
         }
       },
+      onCommandDone: () => this.onCommandDone?.(),
     });
     pane.element.addEventListener('pane-split', ((e: CustomEvent) => {
       if (e.detail === 'vertical') this.splitVertical();
@@ -63,10 +65,12 @@ export class Tab {
     onRegister: (pane: Pane) => void,
     onUnregister: (pane: Pane) => void,
     onTitleChange?: () => void,
+    onCommandDone?: () => void,
   ): void {
     this.onPaneRegistered = onRegister;
     this.onPaneUnregistered = onUnregister;
     this.onTitleChanged = onTitleChange || null;
+    this.onCommandDone = onCommandDone || null;
     // Register existing panes
     for (const pane of this._panes) {
       onRegister(pane);

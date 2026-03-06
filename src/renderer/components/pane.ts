@@ -14,6 +14,7 @@ let paneIdCounter = 0;
 export interface PaneCallbacks {
   onFocus: (pane: Pane) => void;
   onTitleChange: (pane: Pane) => void;
+  onCommandDone?: () => void;
 }
 
 export class Pane {
@@ -340,8 +341,14 @@ export class Pane {
   }
 
   private setMode(mode: InputMode): void {
+    const prevMode = this.mode;
     this.mode = mode;
     const isManual = this.modeDetector?.isManualOverride() ?? false;
+
+    // Notify when a command finishes (passthrough → editor transition)
+    if (prevMode === 'passthrough' && mode === 'editor') {
+      this.callbacks.onCommandDone?.();
+    }
 
     if (mode === 'passthrough' && isManual) {
       // User explicitly toggled passthrough (Ctrl+Shift+P) — full terminal control

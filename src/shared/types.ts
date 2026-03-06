@@ -29,6 +29,7 @@ export interface AppSettings {
   fontFamily: string;
   scrollback: number;
   shell: string;
+  notificationSound: boolean;
 }
 
 export type InputMode = 'editor' | 'passthrough';
