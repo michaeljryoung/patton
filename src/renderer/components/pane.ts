@@ -70,7 +70,7 @@ export class Pane {
       onHistoryUp: () => this.historyManager.up(this.editorInput.getValue()),
       onHistoryDown: () => this.historyManager.down(),
       onTab: () => this.handleTab(),
-      onEscape: () => this.terminalView.focus(),
+      onEscape: () => this.handleEscape(),
     });
 
     // Create search overlay
@@ -277,17 +277,35 @@ export class Pane {
     window.patton.pty.write(this.ptyId, '\t');
   }
 
+  private handleEscape(): void {
+    if (this.ptyId === null) return;
+    if (this.mode === 'passthrough') {
+      // Send Escape to the running program (e.g. exit fzf)
+      window.patton.pty.write(this.ptyId, '\x1b');
+    }
+  }
+
   private setMode(mode: InputMode): void {
     this.mode = mode;
-    // Editor bar is always visible — it's the primary input in both modes.
-    // In passthrough, TUI apps render in the terminal; the editor stays as a
-    // compose area so the user keeps CodeMirror editing for Claude Code, etc.
-    this.editorInput.show();
-    this.editorContainer.classList.toggle('passthrough', mode === 'passthrough');
-    if (mode === 'passthrough') {
+    const isManual = this.modeDetector?.isManualOverride() ?? false;
+
+    if (mode === 'passthrough' && isManual) {
+      // User explicitly toggled passthrough (Ctrl+Shift+P) — full terminal control
+      // for vim, htop, etc. that need direct keystroke access.
+      this.editorInput.hide();
+      this.editorContainer.classList.remove('passthrough');
       this.terminalView.focus();
-    } else {
+    } else if (mode === 'passthrough') {
+      // Auto-detected passthrough — keep editor as the sole input.
+      // User types in Patton's editor, submit sends to the running program.
+      this.editorInput.show();
       this.editorInput.focus();
+      this.editorContainer.classList.add('passthrough');
+    } else {
+      // Editor mode — normal shell usage.
+      this.editorInput.show();
+      this.editorInput.focus();
+      this.editorContainer.classList.remove('passthrough');
     }
   }
 

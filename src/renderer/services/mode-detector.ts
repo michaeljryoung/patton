@@ -198,6 +198,10 @@ export class ModeDetector {
     return this.mode;
   }
 
+  isManualOverride(): boolean {
+    return this.manualOverride !== null;
+  }
+
   dispose(): void {
     this.disposed = true;
     if (this.pollTimer) {
