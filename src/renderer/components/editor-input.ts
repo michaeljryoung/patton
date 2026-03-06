@@ -25,6 +25,7 @@ export class EditorInput {
   private themeCompartment = new Compartment();
   private mediaQuery: MediaQueryList | null = null;
   private themeListener: (() => void) | null = null;
+  private _enterHandler: ((e: KeyboardEvent) => void) | null = null;
 
   constructor(container: HTMLElement, callbacks: EditorInputCallbacks, fontSize?: number) {
     this.container = container;
@@ -146,14 +147,32 @@ export class EditorInput {
       },
     ]);
 
+    // Enter handler as a CodeMirror DOM event handler — runs before CM's own processing
+    const enterHandler = EditorView.domEventHandlers({
+      keydown: (event, view) => {
+        if (event.key === 'Enter' && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey) {
+          event.preventDefault();
+          event.stopPropagation();
+          const text = view.state.doc.toString();
+          callbacks.onSubmit(text);
+          view.dispatch({ changes: { from: 0, to: view.state.doc.length } });
+          container.classList.add('submitting');
+          setTimeout(() => container.classList.remove('submitting'), 250);
+          return true;
+        }
+        return false;
+      },
+    });
+
     this.view = new EditorView({
       state: EditorState.create({
         doc: '',
         extensions: [
+          enterHandler,
           submitKeymap,
           keymap.of(defaultKeymap),
           StreamLanguage.define(shell),
-          placeholder('Type a command...'),
+          placeholder('Type here, Enter to send...'),
           baseTheme,
           this.fontSizeCompartment.of(
             EditorView.theme({ '&': { fontSize: (fontSize || 14) + 'px' } })
@@ -165,21 +184,21 @@ export class EditorInput {
       parent: container,
     });
 
-    // Direct DOM handler for Enter — bypasses CodeMirror keymaps entirely.
-    // The keymap approach above should work, but this guarantees Enter always
-    // submits regardless of CodeMirror internals. Uses capture phase to fire
-    // before CodeMirror sees the event.
-    container.addEventListener('keydown', (e) => {
+    // Nuclear fallback: document-level capture handler for Enter
+    this._enterHandler = (e: KeyboardEvent) => {
       if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
-        e.preventDefault();
-        e.stopPropagation();
-        const text = this.view.state.doc.toString();
-        this.callbacks.onSubmit(text);
-        this.clear();
-        this.container.classList.add('submitting');
-        setTimeout(() => this.container.classList.remove('submitting'), 250);
+        if (container.contains(document.activeElement)) {
+          e.preventDefault();
+          e.stopPropagation();
+          const text = this.view.state.doc.toString();
+          this.callbacks.onSubmit(text);
+          this.clear();
+          container.classList.add('submitting');
+          setTimeout(() => container.classList.remove('submitting'), 250);
+        }
       }
-    }, { capture: true });
+    };
+    document.addEventListener('keydown', this._enterHandler, { capture: true });
   }
 
   focus(): void {
@@ -222,6 +241,9 @@ export class EditorInput {
   dispose(): void {
     if (this.themeListener && this.mediaQuery) {
       this.mediaQuery.removeEventListener('change', this.themeListener);
+    }
+    if (this._enterHandler) {
+      document.removeEventListener('keydown', this._enterHandler, { capture: true });
     }
     this.view.destroy();
   }
