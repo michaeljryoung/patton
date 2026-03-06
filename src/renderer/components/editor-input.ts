@@ -10,6 +10,7 @@ export interface EditorInputCallbacks {
   onHistoryUp: () => string | null;
   onHistoryDown: () => string | null;
   onTab: () => void;
+  onEscape?: () => void;
 }
 
 function isDark(): boolean {
@@ -136,6 +137,13 @@ export class EditorInput {
           return true;
         },
       },
+      {
+        key: 'Escape',
+        run: () => {
+          this.callbacks.onEscape?.();
+          return true;
+        },
+      },
     ]);
 
     this.view = new EditorView({
@@ -181,7 +189,6 @@ export class EditorInput {
 
   show(): void {
     this.container.classList.remove('hidden');
-    this.focus();
   }
 
   hide(): void {

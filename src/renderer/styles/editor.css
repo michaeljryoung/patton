@@ -46,6 +46,11 @@
   z-index: 1;
 }
 
+/* Passthrough mode indicator — amber accent bar signals "connected to running program" */
+.editor-container.passthrough::before {
+  background: #d97706;
+}
+
 /* Submit flash animation */
 @keyframes submit-flash {
   0%, 100% { background: var(--bg-tertiary); }

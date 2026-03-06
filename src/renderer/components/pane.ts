@@ -70,6 +70,7 @@ export class Pane {
       onHistoryUp: () => this.historyManager.up(this.editorInput.getValue()),
       onHistoryDown: () => this.historyManager.down(),
       onTab: () => this.handleTab(),
+      onEscape: () => this.terminalView.focus(),
     });
 
     // Create search overlay
@@ -278,11 +279,15 @@ export class Pane {
 
   private setMode(mode: InputMode): void {
     this.mode = mode;
+    // Editor bar is always visible — it's the primary input in both modes.
+    // In passthrough, TUI apps render in the terminal; the editor stays as a
+    // compose area so the user keeps CodeMirror editing for Claude Code, etc.
+    this.editorInput.show();
+    this.editorContainer.classList.toggle('passthrough', mode === 'passthrough');
     if (mode === 'passthrough') {
-      this.editorInput.hide();
       this.terminalView.focus();
     } else {
-      this.editorInput.show();
+      this.editorInput.focus();
     }
   }
 
