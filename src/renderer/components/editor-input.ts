@@ -164,6 +164,22 @@ export class EditorInput {
       }),
       parent: container,
     });
+
+    // Direct DOM handler for Enter — bypasses CodeMirror keymaps entirely.
+    // The keymap approach above should work, but this guarantees Enter always
+    // submits regardless of CodeMirror internals. Uses capture phase to fire
+    // before CodeMirror sees the event.
+    container.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault();
+        e.stopPropagation();
+        const text = this.view.state.doc.toString();
+        this.callbacks.onSubmit(text);
+        this.clear();
+        this.container.classList.add('submitting');
+        setTimeout(() => this.container.classList.remove('submitting'), 250);
+      }
+    }, { capture: true });
   }
 
   focus(): void {
