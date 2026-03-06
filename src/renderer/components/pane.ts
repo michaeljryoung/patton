@@ -152,6 +152,11 @@ export class Pane {
       this.modeDetector.onModeChange((mode) => this.setMode(mode)),
     );
 
+    // Terminal bell → notification sound
+    this.disposables.push(
+      this.terminalView.onBell(() => this.callbacks.onCommandDone?.()),
+    );
+
     // Listen for title changes via xterm.js OSC sequences (no process polling needed)
     this.terminalView.onTitleChange((title) => {
       if (title) {

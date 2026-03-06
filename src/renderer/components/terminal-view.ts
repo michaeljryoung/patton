@@ -216,6 +216,11 @@ export class TerminalView {
     return () => disposable.dispose();
   }
 
+  onBell(callback: () => void): (() => void) {
+    const disposable = this.terminal.onBell(callback);
+    return () => disposable.dispose();
+  }
+
   dispose(): void {
     this.disposed = true;
     this.mediaQuery.removeEventListener('change', this.themeHandler);
