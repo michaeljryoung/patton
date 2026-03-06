@@ -13,6 +13,7 @@ export class EditorInput {
   private callbacks: EditorInputCallbacks;
   private shiftHeld = false;
   private enterHandledByKeydown = false;
+  private debugBanner: HTMLElement;
 
   constructor(container: HTMLElement, callbacks: EditorInputCallbacks, fontSize?: number) {
     this.container = container;
@@ -21,9 +22,15 @@ export class EditorInput {
     container.setAttribute('role', 'textbox');
     container.setAttribute('aria-label', 'Command input');
 
+    // DEBUG: visible banner above textarea showing event flow
+    this.debugBanner = document.createElement('div');
+    this.debugBanner.style.cssText = 'background:#222;color:#0f0;font-size:11px;font-family:monospace;padding:2px 8px;white-space:nowrap;overflow:hidden;';
+    this.debugBanner.textContent = 'DEBUG: waiting for keypress...';
+    container.appendChild(this.debugBanner);
+
     this.textarea = document.createElement('textarea');
     this.textarea.className = 'editor-textarea';
-    this.textarea.placeholder = 'Editor (Enter=send)';
+    this.textarea.placeholder = 'Editor v3 (Enter=send)';
     this.textarea.rows = 1;
     this.textarea.spellcheck = false;
     this.textarea.autocomplete = 'off';
@@ -32,9 +39,11 @@ export class EditorInput {
     }
     container.appendChild(this.textarea);
 
-    // --- LAYER 1: keydown (works in editor mode) ---
+    // --- LAYER 1: keydown ---
     this.textarea.addEventListener('keydown', (e) => {
       this.shiftHeld = e.shiftKey;
+      this.debugBanner.textContent = `KEYDOWN: key=${e.key} shift=${e.shiftKey} code=${e.code}`;
+      this.debugBanner.style.color = '#0f0';
 
       if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
         e.preventDefault();
@@ -42,6 +51,8 @@ export class EditorInput {
         e.stopImmediatePropagation();
         this.enterHandledByKeydown = true;
         setTimeout(() => { this.enterHandledByKeydown = false; }, 100);
+        this.debugBanner.textContent = `KEYDOWN-SUBMIT: "${this.textarea.value.substring(0, 30)}"`;
+        this.debugBanner.style.color = '#ff0';
         this.doSubmit();
         return;
       }
@@ -88,22 +99,23 @@ export class EditorInput {
       if (e.key === 'Shift') this.shiftHeld = false;
     });
 
-    // --- LAYER 2: beforeinput (catches Enter when keydown is swallowed) ---
+    // --- LAYER 2: beforeinput ---
     this.textarea.addEventListener('beforeinput', (e) => {
+      this.debugBanner.textContent = `BEFOREINPUT: type=${e.inputType} handled=${this.enterHandledByKeydown} shift=${this.shiftHeld}`;
       if (e.inputType === 'insertLineBreak' && !this.enterHandledByKeydown && !this.shiftHeld) {
         e.preventDefault();
+        this.debugBanner.textContent = `BEFOREINPUT-SUBMIT: "${this.textarea.value.substring(0, 30)}"`;
+        this.debugBanner.style.color = '#f80';
         this.doSubmit();
       }
     });
 
-    // --- LAYER 3: input event (nuclear fallback — detects newline AFTER insertion) ---
-    // If both keydown and beforeinput fail to catch Enter, the newline will be
-    // inserted into the textarea. We detect it here and treat it as submit.
+    // --- LAYER 3: input event (nuclear fallback) ---
     this.textarea.addEventListener('input', () => {
       if (this.textarea.value.includes('\n')) {
-        // A newline was inserted — strip it and submit
         const text = this.textarea.value.replace(/\n+/g, '');
-        document.title = `[INPUT-FALLBACK] ${text.substring(0, 15)} @${Date.now() % 10000}`;
+        this.debugBanner.textContent = `INPUT-FALLBACK-SUBMIT: "${text.substring(0, 30)}"`;
+        this.debugBanner.style.color = '#f00';
         if (text || this.textarea.value.trim() === '\n') {
           this.callbacks.onSubmit(text);
         }
@@ -113,20 +125,19 @@ export class EditorInput {
       this.autoResize();
     });
 
-    // --- Visual focus debug: bright border when textarea has focus ---
+    // --- Visual focus indicator ---
     this.textarea.addEventListener('focus', () => {
       this.container.style.outline = '2px solid #00ff00';
     });
     this.textarea.addEventListener('blur', () => {
       this.container.style.outline = '';
-      // DEBUG: show what stole focus
-      document.title = `[BLUR] focus→${document.activeElement?.tagName}.${document.activeElement?.className?.substring(0, 20)} @${Date.now() % 10000}`;
+      this.debugBanner.textContent = `BLUR: focus went to ${document.activeElement?.tagName}.${(document.activeElement as HTMLElement)?.className?.substring(0, 30)}`;
+      this.debugBanner.style.color = '#f00';
     });
   }
 
   private doSubmit(): void {
     const text = this.textarea.value;
-    document.title = `[SENT] ${text.substring(0, 20)} @${Date.now() % 10000}`;
     this.callbacks.onSubmit(text);
     this.clear();
     this.container.classList.add('submitting');
@@ -172,5 +183,6 @@ export class EditorInput {
 
   dispose(): void {
     this.textarea.remove();
+    this.debugBanner.remove();
   }
 }
