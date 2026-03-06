@@ -1,11 +1,12 @@
 import { BrowserWindow, screen } from 'electron';
 import path from 'node:path';
 import * as store from './store';
+import type { PtyManager } from './pty-manager';
 
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
 declare const MAIN_WINDOW_VITE_NAME: string;
 
-export function createWindow(): BrowserWindow {
+export function createWindow(ptyManager?: PtyManager): BrowserWindow {
   const savedState = store.getWindowState();
 
   const window = new BrowserWindow({
@@ -58,10 +59,14 @@ export function createWindow(): BrowserWindow {
   });
 
   // --- Security: Block navigation to external URLs ---
+  // In production, only allow navigation to the app's own file:// path (not arbitrary file:// URLs)
+  const appFileOrigin = MAIN_WINDOW_VITE_DEV_SERVER_URL
+    ? undefined
+    : `file://${path.join(__dirname, '..')}`;
   window.webContents.on('will-navigate', (event, url) => {
     const allowed = [
       MAIN_WINDOW_VITE_DEV_SERVER_URL,
-      'file://',
+      appFileOrigin,
     ].filter(Boolean);
     if (!allowed.some(origin => url.startsWith(origin as string))) {
       event.preventDefault();
@@ -101,6 +106,7 @@ export function createWindow(): BrowserWindow {
   window.on('close', () => {
     if (saveTimer) clearTimeout(saveTimer);
     saveState();
+    ptyManager?.destroyByWindow(window);
   });
   window.on('resize', debouncedSave);
   window.on('move', debouncedSave);

@@ -105,6 +105,12 @@ export class PtyManager {
 
     proc.onData((data: string) => {
       instance.buffer += data;
+      // Flush immediately if buffer exceeds 256KB to prevent unbounded memory growth
+      const shouldFlushNow = instance.buffer.length > 256 * 1024;
+      if (shouldFlushNow && instance.flushTimer) {
+        clearTimeout(instance.flushTimer);
+        instance.flushTimer = null;
+      }
       if (!instance.flushTimer) {
         instance.flushTimer = setTimeout(() => {
           if (instance.buffer.length > 0 && !window.isDestroyed()) {
@@ -112,7 +118,7 @@ export class PtyManager {
             instance.buffer = '';
           }
           instance.flushTimer = null;
-        }, DEFAULTS.WRITE_COALESCE_MS);
+        }, shouldFlushNow ? 0 : DEFAULTS.WRITE_COALESCE_MS);
       }
     });
 
@@ -132,7 +138,7 @@ export class PtyManager {
         window.webContents.send(IPC.PTY_EXIT, id, exitCode);
       }
       const c = this.countByWindow.get(winId) ?? 1;
-      this.countByWindow.set(winId, c - 1);
+      this.countByWindow.set(winId, Math.max(0, c - 1));
     });
 
     return id;
@@ -194,6 +200,15 @@ export class PtyManager {
   getDescendantNames(id: number): string[] {
     // Mode detection uses foreground process polling instead
     return [];
+  }
+
+  destroyByWindow(window: BrowserWindow): void {
+    for (const [id, instance] of this.instances) {
+      if (instance.window === window) {
+        this.destroy(id);
+      }
+    }
+    this.countByWindow.delete(window.id);
   }
 
   destroyAll(): void {

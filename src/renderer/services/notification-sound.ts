@@ -45,6 +45,7 @@ export class NotificationSound {
       gain1.connect(ctx.destination);
       osc1.start(t);
       osc1.stop(t + 0.3);
+      osc1.onended = () => { gain1.disconnect(); };
 
       // Second tone (slightly higher, delayed)
       const osc2 = ctx.createOscillator();
@@ -58,6 +59,7 @@ export class NotificationSound {
       gain2.connect(ctx.destination);
       osc2.start(t + 0.1);
       osc2.stop(t + 0.5);
+      osc2.onended = () => { gain2.disconnect(); };
     } catch {
       // Audio not available — silently skip
     }

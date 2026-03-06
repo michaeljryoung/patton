@@ -36,6 +36,11 @@ const api: PattonAPI = {
     set: (settings) => ipcRenderer.invoke(IPC.SETTINGS_SET, settings),
   },
   app: {
+    onSettings: (cb) => {
+      const listener = () => cb();
+      ipcRenderer.on(IPC.APP_SETTINGS, listener);
+      return () => ipcRenderer.removeListener(IPC.APP_SETTINGS, listener);
+    },
     onNewTab: (cb) => {
       const listener = () => cb();
       ipcRenderer.on(IPC.APP_NEW_TAB, listener);

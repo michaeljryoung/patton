@@ -82,7 +82,17 @@ export class TabManager {
       tab.setFontSize(this.currentFontSize);
     }
 
-    await tab.init();
+    try {
+      await tab.init();
+    } catch (err) {
+      // Init failed (PTY creation error) — remove ghost tab
+      console.error('Tab init failed:', err);
+      const idx = this.tabs.indexOf(tab);
+      if (idx !== -1) this.tabs.splice(idx, 1);
+      tab.dispose();
+      this.updateTabBar();
+      throw err;
+    }
 
     // Register the initial pane now that it has a ptyId
     for (const pane of tab.panes) {
@@ -182,11 +192,11 @@ export class TabManager {
   }
 
   splitVertical(): void {
-    this.activeTab?.splitVertical();
+    this.activeTab?.splitVertical().catch(console.error);
   }
 
   splitHorizontal(): void {
-    this.activeTab?.splitHorizontal();
+    this.activeTab?.splitHorizontal().catch(console.error);
   }
 
   focusPaneInDirection(direction: 'up' | 'down' | 'left' | 'right'): void {

@@ -57,6 +57,12 @@ export class App {
 
   private registerAppListeners(): void {
     this.disposables.push(
+      window.patton.app.onSettings(() => {
+        this.settingsPanel.toggle();
+      }),
+    );
+
+    this.disposables.push(
       window.patton.app.onNewTab(() => {
         this.tabManager.createTab().catch(console.error);
       }),
@@ -64,7 +70,7 @@ export class App {
 
     this.disposables.push(
       window.patton.app.onCloseTab(() => {
-        this.tabManager.closeActivePane();
+        this.tabManager.closeActivePane().catch(console.error);
       }),
     );
 

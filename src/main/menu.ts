@@ -1,8 +1,9 @@
 import { app, Menu, BrowserWindow } from 'electron';
 import { IPC } from '../shared/constants';
 import { createWindow } from './window-manager';
+import type { PtyManager } from './pty-manager';
 
-export function buildMenu(): void {
+export function buildMenu(ptyManager?: PtyManager): void {
   const template: Electron.MenuItemConstructorOptions[] = [
     {
       label: app.name,
@@ -64,7 +65,7 @@ export function buildMenu(): void {
           label: 'New Window',
           accelerator: 'CmdOrCtrl+N',
           click: () => {
-            createWindow();
+            createWindow(ptyManager);
           },
         },
       ],

@@ -118,6 +118,19 @@ export class Pane {
       return;
     }
 
+    // Set up mode detector before wiring data handler so early PTY output
+    // is analysed for TUI signals immediately (not dropped until first poll).
+    this.modeDetector = new ModeDetector(
+      () => this.terminalView.isAlternateBuffer(),
+      () => this.ptyId !== null
+        ? window.patton.pty.getProcess(this.ptyId)
+        : Promise.resolve(''),
+    );
+
+    this.disposables.push(
+      this.modeDetector.onModeChange((mode) => this.setMode(mode)),
+    );
+
     // Wire PTY data → terminal (must be registered before any awaits to avoid losing initial output)
     this.disposables.push(
       window.patton.pty.onData((id, data) => {
@@ -140,18 +153,6 @@ export class Pane {
 
     // Load history
     await this.historyManager.load();
-
-    // Set up mode detector
-    this.modeDetector = new ModeDetector(
-      () => this.terminalView.isAlternateBuffer(),
-      () => this.ptyId !== null
-        ? window.patton.pty.getProcess(this.ptyId)
-        : Promise.resolve(''),
-    );
-
-    this.disposables.push(
-      this.modeDetector.onModeChange((mode) => this.setMode(mode)),
-    );
 
     // Terminal bell → notification sound
     this.disposables.push(
@@ -206,19 +207,7 @@ export class Pane {
       if (this.mode !== 'passthrough') return; // Editor handles its own paste
       e.preventDefault();
       const raw = e.clipboardData?.getData('text') || '';
-      // Strip dangerous control characters (keep \n, \t, \r, printable)
-      // eslint-disable-next-line no-control-regex -- intentional: sanitize pasted control chars
-      const sanitized = raw.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '');
-      if (!sanitized) return;
-
-      const lines = sanitized.split('\n');
-      if (lines.length >= 3) {
-        const confirmed = await this.pasteDialog.confirm(sanitized, lines.length);
-        if (!confirmed) return;
-      }
-      if (this.ptyId !== null) {
-        window.patton.pty.write(this.ptyId, sanitized);
-      }
+      await this.safePaste(raw);
     });
 
     // Right-click context menu
@@ -239,9 +228,7 @@ export class Pane {
           shortcut: '\u2318V',
           action: () => {
             navigator.clipboard.readText().then(text => {
-              if (this.ptyId !== null && text) {
-                window.patton.pty.write(this.ptyId, text);
-              }
+              if (text) this.safePaste(text);
             });
           },
         },
@@ -345,6 +332,22 @@ export class Pane {
       // Send Escape to the running program (e.g. exit fzf)
       window.patton.pty.write(this.ptyId, '\x1b');
     }
+  }
+
+  /** Sanitize pasted text and confirm multi-line pastes before writing to PTY */
+  private async safePaste(raw: string): Promise<void> {
+    if (this.ptyId === null || !raw) return;
+    // Strip dangerous control characters (keep \n, \t, \r, printable)
+    // eslint-disable-next-line no-control-regex -- intentional: sanitize pasted control chars
+    const sanitized = raw.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '');
+    if (!sanitized) return;
+
+    const lines = sanitized.split('\n');
+    if (lines.length >= 3) {
+      const confirmed = await this.pasteDialog.confirm(sanitized, lines.length);
+      if (!confirmed) return;
+    }
+    window.patton.pty.write(this.ptyId, sanitized);
   }
 
   private setMode(mode: InputMode): void {

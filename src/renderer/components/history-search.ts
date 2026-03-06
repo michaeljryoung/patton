@@ -38,7 +38,7 @@ export class HistorySearch {
     this.input.addEventListener('keydown', (e) => this.handleKey(e));
   }
 
-  show(entries: string[]): void {
+  show(entries: readonly string[]): void {
     this.entries = [...entries].reverse(); // most recent first
     this.visible = true;
     this.overlay.classList.add('visible');

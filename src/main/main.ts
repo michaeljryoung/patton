@@ -13,8 +13,8 @@ const ptyManager = new PtyManager();
 
 app.on('ready', () => {
   registerIpcHandlers(ptyManager);
-  buildMenu();
-  createWindow();
+  buildMenu(ptyManager);
+  createWindow(ptyManager);
 });
 
 app.on('window-all-closed', () => {
@@ -25,7 +25,7 @@ app.on('window-all-closed', () => {
 
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) {
-    createWindow();
+    createWindow(ptyManager);
   }
 });
 

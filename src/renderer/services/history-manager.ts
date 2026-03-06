@@ -53,7 +53,7 @@ export class HistoryManager {
     this.draft = '';
   }
 
-  getEntries(): string[] {
+  getEntries(): readonly string[] {
     return this.entries;
   }
 

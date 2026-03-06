@@ -77,8 +77,9 @@ export class ModeDetector {
         const baseName = raw.replace(/^-/, '').split('/').pop() || '';
 
         if (baseName) {
-          // Learn the shell name from the first successful poll
-          if (!this.shellName) {
+          // Learn the shell name from the first successful poll.
+          // Never learn '__unknown__' — that's our sentinel for unidentifiable processes.
+          if (!this.shellName && baseName !== '__unknown__') {
             this.shellName = baseName;
           }
 
@@ -169,9 +170,9 @@ export class ModeDetector {
   toggle(): void {
     if (this.disposed) return;
     if (this.manualOverride) {
-      // Clear override
+      // Clear override — re-detect asynchronously
       this.manualOverride = null;
-      this.detect();
+      this.detect().catch(() => {});
     } else {
       const newMode = this.mode === 'editor' ? 'passthrough' : 'editor';
       this.manualOverride = newMode;

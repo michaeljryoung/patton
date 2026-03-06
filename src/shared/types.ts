@@ -56,6 +56,7 @@ export interface PattonAPI {
     set: (settings: Partial<AppSettings>) => Promise<void>;
   };
   app: {
+    onSettings: (callback: () => void) => () => void;
     onNewTab: (callback: () => void) => () => void;
     onCloseTab: (callback: () => void) => () => void;
     onNextTab: (callback: () => void) => () => void;

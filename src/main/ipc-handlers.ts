@@ -4,28 +4,34 @@ import { PtyManager } from './pty-manager';
 import * as store from './store';
 import type { PtyCreateOptions } from '../shared/types';
 
-// --- Security: Sliding-window rate limiter ---
+// --- Security: Sliding-window rate limiter (ring buffer, O(1) operations) ---
 class RateLimiter {
-  private timestamps: number[] = [];
+  private readonly ring: number[];
+  private head = 0;
+  private count = 0;
   private readonly maxCalls: number;
   private readonly windowMs: number;
 
   constructor(maxCallsPerSecond: number) {
     this.maxCalls = maxCallsPerSecond;
     this.windowMs = 1000;
+    this.ring = new Array(maxCallsPerSecond);
   }
 
   allow(): boolean {
     const now = Date.now();
     const cutoff = now - this.windowMs;
-    // Remove timestamps outside the window
-    while (this.timestamps.length > 0 && this.timestamps[0] <= cutoff) {
-      this.timestamps.shift();
+    // Evict expired timestamps from the front of the ring
+    while (this.count > 0 && this.ring[this.head] <= cutoff) {
+      this.head = (this.head + 1) % this.maxCalls;
+      this.count--;
     }
-    if (this.timestamps.length >= this.maxCalls) {
+    if (this.count >= this.maxCalls) {
       return false;
     }
-    this.timestamps.push(now);
+    const tail = (this.head + this.count) % this.maxCalls;
+    this.ring[tail] = now;
+    this.count++;
     return true;
   }
 }
@@ -60,6 +66,11 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
       }
       if (typeof data !== 'string') {
         console.warn('[SECURITY] PTY_WRITE type validation failed', { dataType: typeof data });
+        return;
+      }
+      // Cap data size to prevent memory abuse (1MB is generous for any paste/input)
+      if (data.length > 1024 * 1024) {
+        console.warn('[SECURITY] PTY_WRITE data size limit exceeded', { size: data.length });
         return;
       }
       if (!ptyWriteLimiter.allow()) {
@@ -108,12 +119,30 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
   });
 
   ipcMain.handle(IPC.PTY_GET_PROCESS, (event, id: number) => {
-    requireOwnership(ptyManager, event, id);
+    if (typeof id !== 'number' || !Number.isFinite(id)) {
+      console.warn('[SECURITY] PTY_GET_PROCESS type validation failed', { id });
+      return '';
+    }
+    try {
+      requireOwnership(ptyManager, event, id);
+    } catch {
+      console.warn('[SECURITY] PTY ownership check failed', { channel: IPC.PTY_GET_PROCESS, id });
+      return '';
+    }
     return ptyManager.getProcessName(id);
   });
 
   ipcMain.handle(IPC.PTY_GET_DESCENDANTS, (event, id: number) => {
-    requireOwnership(ptyManager, event, id);
+    if (typeof id !== 'number' || !Number.isFinite(id)) {
+      console.warn('[SECURITY] PTY_GET_DESCENDANTS type validation failed', { id });
+      return [];
+    }
+    try {
+      requireOwnership(ptyManager, event, id);
+    } catch {
+      console.warn('[SECURITY] PTY ownership check failed', { channel: IPC.PTY_GET_DESCENDANTS, id });
+      return [];
+    }
     return ptyManager.getDescendantNames(id);
   });
 

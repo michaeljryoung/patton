@@ -16,11 +16,13 @@ export class KeybindingManager {
         return;
       }
 
-      // Ctrl+R: History search
+      // Ctrl+R: History search (only in editor mode — in manual passthrough, let terminal handle it)
       if (e.ctrlKey && !e.shiftKey && e.key === 'r') {
-        e.preventDefault();
         const tab = this.tabManager.getActiveTab();
-        tab?.showHistorySearch();
+        if (tab && tab.getMode() === 'editor') {
+          e.preventDefault();
+          tab.showHistorySearch();
+        }
         return;
       }
 
