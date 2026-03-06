@@ -292,25 +292,8 @@ export class Pane {
   }
 
   private handleSubmit(command: string): void {
-    if (this.ptyId === null) {
-      this.terminalView.write('\r\n\x1b[31m[ERROR: ptyId is null!]\x1b[0m\r\n');
-      return;
-    }
-    // DEBUG: visual confirmation in terminal (remove after fix confirmed)
-    this.terminalView.write(`\r\n\x1b[33m[submit pty=${this.ptyId} len=${command.length}: "${command.substring(0, 40)}"]\x1b[0m\r\n`);
-
-    // Send each character individually with small delays to mimic real
-    // terminal input. Programs in raw mode process characters one at a time;
-    // sending a bulk string may behave differently than individual keystrokes.
-    const chars = (command + '\r').split('');
-    chars.forEach((ch, i) => {
-      setTimeout(() => {
-        if (this.ptyId !== null) {
-          window.patton.pty.write(this.ptyId, ch);
-        }
-      }, i * 5);
-    });
-
+    if (this.ptyId === null) return;
+    window.patton.pty.write(this.ptyId, command + '\r');
     if (command.trim()) {
       this.historyManager.add(command);
     }
