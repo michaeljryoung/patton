@@ -8,23 +8,35 @@ export class ModeDetector {
   private manualOverride: InputMode | null = null;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private isAlternateBuffer: () => boolean;
+  private getProcessName: (() => Promise<string>) | null = null;
+  private shellName: string | null = null;
   private listeners: ModeChangeCallback[] = [];
   private disposed = false;
   private lastTuiSignal = 0;
+  private polling = false;
 
-  constructor(isAlternateBuffer: () => boolean) {
+  constructor(
+    isAlternateBuffer: () => boolean,
+    getProcessName?: () => Promise<string>,
+  ) {
     this.isAlternateBuffer = isAlternateBuffer;
+    this.getProcessName = getProcessName || null;
     this.startPolling();
   }
 
   private startPolling(): void {
-    this.pollTimer = setInterval(() => {
-      if (this.disposed || this.manualOverride) return;
-      this.detect();
+    this.pollTimer = setInterval(async () => {
+      if (this.disposed || this.manualOverride || this.polling) return;
+      this.polling = true;
+      try {
+        await this.detect();
+      } finally {
+        this.polling = false;
+      }
     }, DEFAULTS.PROCESS_POLL_MS);
   }
 
-  detect(): void {
+  async detect(): Promise<void> {
     if (this.disposed) return;
     if (this.manualOverride) return;
 
@@ -39,6 +51,30 @@ export class ModeDetector {
     if (Date.now() - this.lastTuiSignal < 2000) {
       this.setMode('passthrough');
       return;
+    }
+
+    // Tertiary: check foreground process name
+    if (this.getProcessName) {
+      try {
+        const raw = await this.getProcessName();
+        // Normalize: strip path and leading dash (login shells)
+        const baseName = raw.replace(/^-/, '').split('/').pop() || '';
+
+        if (baseName) {
+          // Learn the shell name from the first successful poll
+          if (!this.shellName) {
+            this.shellName = baseName;
+          }
+
+          // If foreground process differs from shell, an interactive program is running
+          if (baseName !== this.shellName) {
+            this.setMode('passthrough');
+            return;
+          }
+        }
+      } catch {
+        // Process query failed, fall through to default
+      }
     }
 
     this.setMode('editor');
@@ -97,7 +133,6 @@ export class ModeDetector {
       this.setMode('passthrough');
     } else if (!isAlt && this.mode !== 'editor') {
       // Defer to polling for non-alt check (process may still be interactive)
-      this.detect();
     }
   }
 

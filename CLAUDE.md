@@ -49,7 +49,7 @@ src/
 ## Dual Mode System
 - **Editor Mode** — CodeMirror captures input, xterm.js is display-only
 - **Passthrough Mode** — xterm.js captures input directly (vim, ssh, htop)
-- Auto-detection: alternate screen escape sequences + foreground process name polling
+- Auto-detection: alternate screen buffer + TUI escape sequences (cursor hide, mouse enable) + foreground process name polling (any non-shell foreground → passthrough)
 - Manual toggle: `Ctrl+Shift+P`
 
 ## Security Model
@@ -89,18 +89,15 @@ src/
 Feature-complete with security hardening; builds and runs successfully. Ready for distribution testing.
 
 ## Last Session
-**2026-03-06**
-- Implemented all 10 security recommendations (encrypted store, IPC rate limiting, URL validation, paste sanitization, dependency pinning, npm audit gate, history auto-expiry, security logging, removed quarantine stripping)
-- Implemented 5 UI features (tab close confirmation, right-click context menu, pane focus indicator, multi-line paste warning, first-run onboarding)
-- Upgraded TypeScript 4.5→5.7.3, ESLint 8→9 with flat config migration
-- Fixed app sandbox crash — removed sandbox entitlements (incompatible with Electron + node-pty)
-- Fixed npm audit gate — scoped to production deps only (`--omit=dev`)
+**2026-03-06 (evening)**
+- Fixed mode detection: added foreground-process polling to ModeDetector — auto-switches to passthrough when non-shell process is running (fixes arrow keys in Claude Code, fzf, etc.)
+- Fixed all 12 ESLint errors (removed unused imports, replaced `any` types, fixed useless regex escapes, added targeted eslint-disable comments where needed)
+- ModeDetector now learns the shell name on first poll, then switches to passthrough whenever a different process takes the foreground
 
 ## Next Steps
 - [ ] Run `npm run make` to generate .dmg for distribution
 - [ ] Test DMG install on a clean machine (Gatekeeper: right-click → Open)
 - [ ] Consider Apple Developer ID ($99/yr) for notarization if distributing widely
-- [ ] Fix 12 pre-existing ESLint warnings
 
 ## Decisions
 - **No App Sandbox**: Electron's multi-process Mach port IPC + node-pty shell spawning are fundamentally incompatible with `com.apple.security.app-sandbox`. Kept JIT + unsigned-memory entitlements only.

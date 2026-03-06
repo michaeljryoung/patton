@@ -41,6 +41,7 @@ export class SearchOverlay {
 
     // Wire up search-on-type result count via the onDidChangeResults callback
     try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- SearchAddon types don't expose onDidChangeResults
       (this.searchAddon as any).onDidChangeResults?.((result: { resultIndex: number; resultCount: number } | undefined) => {
         if (result) {
           this.matchIndex = result.resultIndex + 1;

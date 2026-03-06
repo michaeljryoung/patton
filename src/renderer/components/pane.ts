@@ -141,6 +141,9 @@ export class Pane {
     // Set up mode detector
     this.modeDetector = new ModeDetector(
       () => this.terminalView.isAlternateBuffer(),
+      () => this.ptyId !== null
+        ? window.patton.pty.getProcess(this.ptyId)
+        : Promise.resolve(''),
     );
 
     this.disposables.push(
@@ -183,6 +186,7 @@ export class Pane {
       e.preventDefault();
       const raw = e.clipboardData?.getData('text') || '';
       // Strip dangerous control characters (keep \n, \t, \r, printable)
+      // eslint-disable-next-line no-control-regex -- intentional: sanitize pasted control chars
       const sanitized = raw.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '');
       if (!sanitized) return;
 

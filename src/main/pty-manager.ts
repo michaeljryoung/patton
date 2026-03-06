@@ -2,6 +2,7 @@ import ptyModule from 'node-pty';
 import type { IPty } from 'node-pty';
 
 // Handle CJS/ESM interop for externalized module
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- CJS/ESM interop requires runtime check
 const pty = ((ptyModule as any).default || ptyModule) as typeof ptyModule;
 import { BrowserWindow } from 'electron';
 import { DEFAULTS, IPC } from '../shared/constants';
@@ -177,16 +178,17 @@ export class PtyManager {
     const instance = this.instances.get(id);
     if (!instance) return '';
     try {
-      return (instance.process as any).process || '';
+      // node-pty's process property isn't in the IPty type but exists at runtime
+      return (instance.process as unknown as { process: string }).process || '';
     } catch {
       return '';
     }
   }
 
   /** Scan descendant processes (children + grandchildren) for interactive program names */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- API compatibility
   getDescendantNames(id: number): string[] {
-    // Kept for API compatibility but no longer called from hot path.
-    // Mode detection now uses cursor-hide escape sequences instead.
+    // Mode detection uses foreground process polling instead
     return [];
   }
 

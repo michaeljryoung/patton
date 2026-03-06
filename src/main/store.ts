@@ -1,5 +1,6 @@
 import ElectronStore from 'electron-store';
 import { createHash } from 'node:crypto';
+import { unlinkSync } from 'node:fs';
 import { hostname, userInfo } from 'node:os';
 import { DEFAULTS } from '../shared/constants';
 import type { HistoryEntry, AppSettings, WindowState } from '../shared/types';
@@ -14,7 +15,7 @@ function getEncryptionKey(): string {
 const HISTORY_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 
 // electron-store exports default as .default when externalized by Vite
-const Store = ((ElectronStore as any).default || ElectronStore) as typeof ElectronStore;
+const Store = ((ElectronStore as unknown as Record<string, unknown>).default || ElectronStore) as typeof ElectronStore;
 
 interface StoreSchema {
   history: HistoryEntry[];
@@ -37,9 +38,9 @@ const defaults: StoreSchema = {
   },
 };
 
-let store: any;
+let store: ElectronStore<StoreSchema> | null = null;
 
-function getStore(): any {
+function getStore(): ElectronStore<StoreSchema> {
   if (!store) {
     try {
       store = new Store({ defaults, encryptionKey: getEncryptionKey() });
@@ -48,7 +49,7 @@ function getStore(): any {
       try {
         const tempStore = new Store();
         const configPath = tempStore.path;
-        require('fs').unlinkSync(configPath);
+        unlinkSync(configPath);
       } catch {
         // Ignore cleanup errors
       }
@@ -103,7 +104,7 @@ export function setSettings(partial: Partial<AppSettings>): void {
 
   if (partial.fontFamily !== undefined) {
     const f = String(partial.fontFamily);
-    if (f.length <= 200 && /^[a-zA-Z0-9\s,'"\-]+$/.test(f)) {
+    if (f.length <= 200 && /^[a-zA-Z0-9\s,'"-]+$/.test(f)) {
       validated.fontFamily = f;
     }
   }
@@ -119,7 +120,7 @@ export function setSettings(partial: Partial<AppSettings>): void {
     // Shell validation handled by pty-manager allowlist; store as-is
     // but only if it looks like a valid path
     const s = String(partial.shell);
-    if (/^\/[a-zA-Z0-9/._\-]+$/.test(s)) {
+    if (/^\/[a-zA-Z0-9/._-]+$/.test(s)) {
       validated.shell = s;
     }
   }

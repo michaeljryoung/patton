@@ -1,5 +1,3 @@
-import type { HistoryEntry } from '../../shared/types';
-
 export class HistoryManager {
   private entries: string[] = [];
   private cursor = -1;
