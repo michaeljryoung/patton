@@ -1,6 +1,6 @@
 import { EditorView, keymap, placeholder } from '@codemirror/view';
 import { EditorState, Compartment } from '@codemirror/state';
-import { defaultKeymap } from '@codemirror/commands';
+// defaultKeymap deliberately not imported — its Enter handler overrides our submit
 import { StreamLanguage } from '@codemirror/language';
 import { shell } from '@codemirror/legacy-modes/mode/shell';
 
@@ -25,7 +25,7 @@ export class EditorInput {
   private themeCompartment = new Compartment();
   private mediaQuery: MediaQueryList | null = null;
   private themeListener: (() => void) | null = null;
-  private _enterHandler: ((e: KeyboardEvent) => void) | null = null;
+  private _enterHandler: ((e: Event) => void) | null = null;
 
   constructor(container: HTMLElement, callbacks: EditorInputCallbacks, fontSize?: number) {
     this.container = container;
@@ -147,32 +147,16 @@ export class EditorInput {
       },
     ]);
 
-    // Enter handler as a CodeMirror DOM event handler — runs before CM's own processing
-    const enterHandler = EditorView.domEventHandlers({
-      keydown: (event, view) => {
-        if (event.key === 'Enter' && !event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey) {
-          event.preventDefault();
-          event.stopPropagation();
-          const text = view.state.doc.toString();
-          callbacks.onSubmit(text);
-          view.dispatch({ changes: { from: 0, to: view.state.doc.length } });
-          container.classList.add('submitting');
-          setTimeout(() => container.classList.remove('submitting'), 250);
-          return true;
-        }
-        return false;
-      },
-    });
-
     this.view = new EditorView({
       state: EditorState.create({
         doc: '',
         extensions: [
-          enterHandler,
           submitKeymap,
-          keymap.of(defaultKeymap),
+          // NOTE: defaultKeymap deliberately removed — its Enter handler
+          // (insertNewlineAndIndent) was overriding our submit handler.
+          // Shift+Enter for newlines is in submitKeymap above.
           StreamLanguage.define(shell),
-          placeholder('Type here, Enter to send...'),
+          placeholder('Enter=send, Shift+Enter=newline'),
           baseTheme,
           this.fontSizeCompartment.of(
             EditorView.theme({ '&': { fontSize: (fontSize || 14) + 'px' } })
@@ -184,21 +168,21 @@ export class EditorInput {
       parent: container,
     });
 
-    // Nuclear fallback: document-level capture handler for Enter
-    this._enterHandler = (e: KeyboardEvent) => {
-      if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
-        if (container.contains(document.activeElement)) {
-          e.preventDefault();
-          e.stopPropagation();
-          const text = this.view.state.doc.toString();
-          this.callbacks.onSubmit(text);
-          this.clear();
-          container.classList.add('submitting');
-          setTimeout(() => container.classList.remove('submitting'), 250);
-        }
+    // Catch Enter at the beforeinput level — this is the event that actually
+    // causes text insertion. If keydown handlers fail, this catches it.
+    this._enterHandler = (e: Event) => {
+      const ie = e as InputEvent;
+      if (ie.inputType === 'insertParagraph' || ie.inputType === 'insertLineBreak') {
+        e.preventDefault();
+        e.stopPropagation();
+        const text = this.view.state.doc.toString();
+        this.callbacks.onSubmit(text);
+        this.clear();
+        container.classList.add('submitting');
+        setTimeout(() => container.classList.remove('submitting'), 250);
       }
     };
-    document.addEventListener('keydown', this._enterHandler, { capture: true });
+    container.addEventListener('beforeinput', this._enterHandler, { capture: true });
   }
 
   focus(): void {
@@ -243,7 +227,7 @@ export class EditorInput {
       this.mediaQuery.removeEventListener('change', this.themeListener);
     }
     if (this._enterHandler) {
-      document.removeEventListener('keydown', this._enterHandler, { capture: true });
+      this.container.removeEventListener('beforeinput', this._enterHandler, { capture: true });
     }
     this.view.destroy();
   }
