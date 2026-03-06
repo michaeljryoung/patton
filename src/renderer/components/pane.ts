@@ -428,6 +428,14 @@ export class Pane {
   setFocused(focused: boolean): void {
     this._isFocused = focused;
     this.element.classList.toggle('focused', focused);
+    // Physically disable the unfocused pane's editor textarea so it
+    // can't steal keyboard focus. This is the definitive fix for split
+    // pane focus fighting — boolean checks in event handlers aren't enough.
+    if (focused) {
+      this.editorInput.setInteractive(true);
+    } else {
+      this.editorInput.setInteractive(false);
+    }
   }
 
   clear(): void {

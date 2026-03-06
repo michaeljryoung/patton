@@ -120,6 +120,19 @@ export class EditorInput {
     this.textarea.style.fontSize = size + 'px';
   }
 
+  /** Physically enable/disable the textarea to prevent unfocused panes from stealing keyboard focus. */
+  setInteractive(interactive: boolean): void {
+    if (interactive) {
+      this.textarea.removeAttribute('disabled');
+      this.textarea.tabIndex = 0;
+      this.textarea.style.pointerEvents = '';
+    } else {
+      this.textarea.setAttribute('disabled', 'true');
+      this.textarea.tabIndex = -1;
+      this.textarea.style.pointerEvents = 'none';
+    }
+  }
+
   dispose(): void {
     this.textarea.remove();
   }

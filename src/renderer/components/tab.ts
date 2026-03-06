@@ -82,6 +82,9 @@ export class Tab {
     this._focusedPane.setFocused(false);
     this._focusedPane = pane;
     this._focusedPane.setFocused(true);
+    // Explicitly focus after enabling — the textarea was disabled so the
+    // browser won't auto-focus it from the click that triggered this switch.
+    requestAnimationFrame(() => pane.focus());
     this.title = pane.title;
   }
 
