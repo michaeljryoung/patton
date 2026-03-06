@@ -293,6 +293,8 @@ export class Pane {
 
   private handleSubmit(command: string): void {
     if (this.ptyId === null) return;
+    // DEBUG: visual confirmation in terminal (remove after fix confirmed)
+    this.terminalView.write(`\r\n\x1b[33m[submit: ${command.substring(0, 40)}]\x1b[0m\r\n`);
     window.patton.pty.write(this.ptyId, command + '\n');
     if (command.trim()) {
       this.historyManager.add(command);

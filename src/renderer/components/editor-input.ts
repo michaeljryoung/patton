@@ -11,6 +11,7 @@ export class EditorInput {
   private textarea: HTMLTextAreaElement;
   private container: HTMLElement;
   private callbacks: EditorInputCallbacks;
+  private captureHandler: (e: KeyboardEvent) => void;
 
   constructor(container: HTMLElement, callbacks: EditorInputCallbacks, fontSize?: number) {
     this.container = container;
@@ -21,7 +22,7 @@ export class EditorInput {
 
     this.textarea = document.createElement('textarea');
     this.textarea.className = 'editor-textarea';
-    this.textarea.placeholder = 'Enter to send, Shift+Enter for newline';
+    this.textarea.placeholder = 'Type here, Enter sends';
     this.textarea.rows = 1;
     this.textarea.spellcheck = false;
     this.textarea.autocomplete = 'off';
@@ -33,16 +34,31 @@ export class EditorInput {
     // Auto-resize textarea to content
     this.textarea.addEventListener('input', () => this.autoResize());
 
-    this.textarea.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    // PRIMARY: window-level capture handler for Enter.
+    // Fires FIRST in the entire event chain — before the event reaches
+    // any element. This guarantees Enter submits regardless of what
+    // else might intercept it (xterm.js, Electron, other listeners).
+    this.captureHandler = (e: KeyboardEvent) => {
+      if (e.key === 'Enter' && !e.shiftKey
+          && document.activeElement === this.textarea) {
         e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
         const text = this.textarea.value;
+        // DEBUG: show submit in window title (remove after fix confirmed)
+        document.title = `[SENT] ${text.substring(0, 20)} @${Date.now() % 10000}`;
         this.callbacks.onSubmit(text);
         this.clear();
         container.classList.add('submitting');
         setTimeout(() => container.classList.remove('submitting'), 250);
-        return;
       }
+    };
+    window.addEventListener('keydown', this.captureHandler, true);
+
+    // SECONDARY: textarea-level handler for non-Enter keys
+    this.textarea.addEventListener('keydown', (e) => {
+      // Enter is handled by the capture handler above
+      if (e.key === 'Enter') return;
 
       if (e.key === 'ArrowUp' && this.textarea.selectionStart === 0) {
         const prev = this.callbacks.onHistoryUp();
@@ -121,6 +137,7 @@ export class EditorInput {
   }
 
   dispose(): void {
+    window.removeEventListener('keydown', this.captureHandler, true);
     this.textarea.remove();
   }
 }
