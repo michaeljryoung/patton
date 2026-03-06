@@ -293,6 +293,12 @@ export class Pane {
 
   private handleSubmit(command: string): void {
     if (this.ptyId === null) return;
+
+    // In passthrough mode, don't send empty Enter — raw-mode programs
+    // (Claude Code, etc.) can get confused by stray carriage returns.
+    // In editor mode (shell), empty Enter is harmless (shows new prompt).
+    if (!command && this.mode === 'passthrough') return;
+
     window.patton.pty.write(this.ptyId, command + '\r');
     if (command.trim()) {
       this.historyManager.add(command);
