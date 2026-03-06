@@ -103,22 +103,37 @@ export class Tab {
     await this.split('horizontal');
   }
 
+  private splitting = false;
   private async split(direction: SplitDirection): Promise<void> {
-    const newPane = this.createPaneInstance();
+    if (this.splitting) return; // Prevent concurrent splits
+    this.splitting = true;
+    try {
+      const newPane = this.createPaneInstance();
 
-    // Update tree
-    this.rootNode = splitPaneInTree(this.rootNode, this._focusedPane, newPane, direction);
+      // Update tree
+      this.rootNode = splitPaneInTree(this.rootNode, this._focusedPane, newPane, direction);
 
-    // Initialize the new pane's PTY and register for PTY routing
-    await newPane.init();
-    this.onPaneRegistered?.(newPane);
+      // Initialize the new pane's PTY and register for PTY routing
+      await newPane.init();
+      this.onPaneRegistered?.(newPane);
 
-    // Re-render DOM (after PTY init so the pane is ready)
-    this.renderTree();
+      // Set focus state BEFORE re-rendering so the focus protection
+      // layers know which pane is active immediately after DOM rebuild.
+      this.setFocusedPane(newPane);
 
-    // Focus the new pane
-    this.setFocusedPane(newPane);
-    newPane.focus();
+      // Re-render DOM (after PTY init so the pane is ready)
+      this.renderTree();
+
+      // Fit all panes immediately (don't wait for 100ms resize debounce)
+      for (const pane of this._panes) {
+        pane.show();
+      }
+
+      // Focus the new pane after DOM is rebuilt
+      requestAnimationFrame(() => newPane.focus());
+    } finally {
+      this.splitting = false;
+    }
   }
 
   closePane(target?: Pane): void {
@@ -139,11 +154,20 @@ export class Tab {
     pane.dispose();
 
     this.rootNode = newRoot;
-    this.renderTree();
 
+    // Set focus BEFORE DOM rebuild so focus protection works immediately
     if (wasClosingFocused && this._panes.length > 0) {
       this.setFocusedPane(this._panes[0]);
-      this._focusedPane.focus();
+    }
+
+    this.renderTree();
+
+    // Fit remaining panes and restore focus after DOM rebuild
+    for (const pane of this._panes) {
+      pane.show();
+    }
+    if (wasClosingFocused) {
+      requestAnimationFrame(() => this._focusedPane.focus());
     }
   }
 
