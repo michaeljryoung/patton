@@ -8,6 +8,7 @@
   "scripts": {
     "start": "electron-forge start",
     "package": "npm audit --omit=dev --audit-level=high && electron-forge package",
+    "install-app": "electron-forge package",
     "make": "electron-forge make",
     "publish": "electron-forge publish",
     "lint": "eslint .",
