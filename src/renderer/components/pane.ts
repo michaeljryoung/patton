@@ -293,7 +293,22 @@ export class Pane {
 
   private handleSubmit(command: string): void {
     if (this.ptyId === null) return;
-    window.patton.pty.write(this.ptyId, command + '\r');
+
+    // Send text and Enter as separate writes with a small gap.
+    // In a real terminal, text arrives character-by-character and Enter
+    // arrives separately. Sending them as one bulk string can confuse
+    // raw-mode programs' input parsers on subsequent messages.
+    if (command) {
+      window.patton.pty.write(this.ptyId, command);
+      setTimeout(() => {
+        if (this.ptyId !== null) {
+          window.patton.pty.write(this.ptyId, '\r');
+        }
+      }, 10);
+    } else {
+      window.patton.pty.write(this.ptyId, '\r');
+    }
+
     if (command.trim()) {
       this.historyManager.add(command);
     }
