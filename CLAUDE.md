@@ -92,14 +92,12 @@ src/
 Feature-complete with security hardening; builds and runs successfully. Ready for distribution testing.
 
 ## Last Session
-**2026-03-06 (late evening / night)**
-- Design change: editor bar now stays visible in passthrough mode as a compose area. Users keep CodeMirror text editing even when running TUI apps like Claude Code. Submit sends text to the running program via PTY.
-- Added bracketed paste mode (`\x1b[?2004l`/`\x1b[?2004h`) as instant passthrough signal — zsh disables bracketed paste when executing commands, giving zero-latency mode detection
-- Added paired TUI signal tracking — each signal pair (cursor hide/show, mouse enable/disable) tracked independently to prevent cross-pair interference
-- Added hysteresis (3 consecutive editor-polls) to prevent mode flapping when TUI apps spawn brief subprocesses
-- Fixed critical DSR forwarding: xterm.js protocol responses always forwarded to PTY regardless of mode
-- Fixed `node-pty` process identification: `proc.process` returns `undefined` for fzf — added `__unknown__` sentinel
-- Previous session: added foreground-process polling to ModeDetector, fixed all 12 ESLint errors
+**2026-03-06 (continued)**
+- Ran comprehensive `/debug-project` scan — found and fixed 28 bugs across 15 files
+- HIGH: PTY orphan leak on macOS window close (added `destroyByWindow`), context menu paste bypass (extracted `safePaste()`), dead APP_SETTINGS IPC (wired preload+renderer), floating promises in split/close
+- MEDIUM: mode-detector `__unknown__` shell learning, mode-detector ordering (create before data handler), ghost tab cleanup on init failure, history `getEntries()` returns readonly, Ctrl+R mode-aware, write-coalesce 256KB cap, PTY_WRITE 1MB limit, store `userInfo()` container crash, store corruption recovery, `setWindowState` key pollution
+- LOW: GainNode disconnect, RateLimiter ring buffer, file:// nav scope, countByWindow floor, toggle() floating promise, PTY_GET_PROCESS validation, reload/devtools production gate, startup error handling, before-quit error handling
+- Previous: editor bar as compose area, bracketed paste detection, TUI signal pairs, hysteresis, DSR forwarding, process identification
 
 ## Next Steps
 - [ ] Run `npm run make` to generate .dmg for distribution

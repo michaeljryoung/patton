@@ -1,13 +1,21 @@
+import { app } from 'electron';
 import ElectronStore from 'electron-store';
 import { createHash } from 'node:crypto';
-import { unlinkSync } from 'node:fs';
+import { existsSync, unlinkSync } from 'node:fs';
+import { join } from 'node:path';
 import { hostname, userInfo } from 'node:os';
 import { DEFAULTS } from '../shared/constants';
 import type { HistoryEntry, AppSettings, WindowState } from '../shared/types';
 
-// --- Security: Machine-specific encryption key for electron-store ---
+// Machine-binding key for electron-store (obfuscation, not encryption against local attackers)
 function getEncryptionKey(): string {
-  const raw = `${hostname()}:${userInfo().username}`;
+  let username: string;
+  try {
+    username = userInfo().username;
+  } catch {
+    username = process.env.USER || 'unknown';
+  }
+  const raw = `${hostname()}:${username}`;
   return createHash('sha256').update(raw).digest('hex');
 }
 
@@ -48,9 +56,10 @@ function getStore(): ElectronStore<StoreSchema> {
     } catch (err) {
       console.warn('[SECURITY] Store corrupted, resetting', err);
       try {
-        const tempStore = new Store();
-        const configPath = tempStore.path;
-        unlinkSync(configPath);
+        // Compute config path directly — don't create a tempStore (it would fail
+        // parsing the encrypted file as plain JSON).
+        const configPath = join(app.getPath('userData'), 'config.json');
+        if (existsSync(configPath)) unlinkSync(configPath);
       } catch {
         // Ignore cleanup errors
       }
@@ -149,5 +158,9 @@ export function setWindowState(state: WindowState): void {
   }
   if (state.x !== undefined && !Number.isFinite(state.x)) return;
   if (state.y !== undefined && !Number.isFinite(state.y)) return;
-  getStore().set('windowState', state);
+  // Construct clean object to prevent arbitrary key pollution from IPC payloads
+  const clean: WindowState = { width: w, height: h, isMaximized: !!state.isMaximized };
+  if (state.x !== undefined) clean.x = state.x;
+  if (state.y !== undefined) clean.y = state.y;
+  getStore().set('windowState', clean);
 }

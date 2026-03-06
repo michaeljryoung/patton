@@ -116,8 +116,10 @@ export function buildMenu(ptyManager?: PtyManager): void {
           },
         },
         { type: 'separator' },
-        { role: 'reload' },
-        { role: 'toggleDevTools' },
+        ...(!app.isPackaged ? [
+          { role: 'reload' as const },
+          { role: 'toggleDevTools' as const },
+        ] : []),
         { role: 'togglefullscreen' },
       ],
     },

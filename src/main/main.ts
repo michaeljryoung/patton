@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, dialog } from 'electron';
 import started from 'electron-squirrel-startup';
 import { PtyManager } from './pty-manager';
 import { registerIpcHandlers } from './ipc-handlers';
@@ -12,9 +12,15 @@ if (started) {
 const ptyManager = new PtyManager();
 
 app.on('ready', () => {
-  registerIpcHandlers(ptyManager);
-  buildMenu(ptyManager);
-  createWindow(ptyManager);
+  try {
+    registerIpcHandlers(ptyManager);
+    buildMenu(ptyManager);
+    createWindow(ptyManager);
+  } catch (err) {
+    console.error('Fatal error during app startup:', err);
+    dialog.showErrorBox('Patton', `Failed to start: ${err instanceof Error ? err.message : String(err)}`);
+    app.quit();
+  }
 });
 
 app.on('window-all-closed', () => {
@@ -30,5 +36,9 @@ app.on('activate', () => {
 });
 
 app.on('before-quit', () => {
-  ptyManager.destroyAll();
+  try {
+    ptyManager.destroyAll();
+  } catch (err) {
+    console.error('[SECURITY] PTY cleanup failed', err);
+  }
 });
