@@ -117,11 +117,16 @@ export class ModeDetector {
     // Track each signal pair independently — cursor show should NOT
     // override mouse enable since they are different features.
     // e.g. fzf --height sends mouse enable then cursor show in the same chunk.
+    //
+    // Bracketed paste is key: zsh sends \x1b[?2004l when executing a command
+    // and \x1b[?2004h when the prompt returns. This gives us instant detection
+    // of command execution without polling delays.
     const signalPairs = [
       { enter: '\x1b[?25l', exit: '\x1b[?25h' },   // cursor hide/show
       { enter: '\x1b[?1000h', exit: '\x1b[?1000l' }, // basic mouse tracking
       { enter: '\x1b[?1002h', exit: '\x1b[?1002l' }, // button-event mouse
       { enter: '\x1b[?1003h', exit: '\x1b[?1003l' }, // any-event mouse
+      { enter: '\x1b[?2004l', exit: '\x1b[?2004h' }, // bracketed paste off/on (command running/prompt)
     ];
 
     let anyPairEntered = false;
