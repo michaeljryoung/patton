@@ -29,6 +29,18 @@ export function buildMenu(ptyManager?: PtyManager): void {
       ],
     },
     {
+      label: 'File',
+      submenu: [
+        {
+          label: 'Save Terminal Output...',
+          accelerator: 'CmdOrCtrl+S',
+          click: (_item, window) => {
+            (window as BrowserWindow | undefined)?.webContents.send(IPC.APP_SAVE_TERMINAL);
+          },
+        },
+      ],
+    },
+    {
       label: 'Shell',
       submenu: [
         {
@@ -58,6 +70,14 @@ export function buildMenu(ptyManager?: PtyManager): void {
           accelerator: 'CmdOrCtrl+Shift+D',
           click: (_item, window) => {
             (window as BrowserWindow | undefined)?.webContents.send(IPC.APP_SPLIT_HORIZONTAL);
+          },
+        },
+        { type: 'separator' },
+        {
+          label: 'Broadcast Input',
+          accelerator: 'CmdOrCtrl+Shift+B',
+          click: (_item, window) => {
+            (window as BrowserWindow | undefined)?.webContents.send(IPC.APP_BROADCAST_INPUT);
           },
         },
         { type: 'separator' },

@@ -1,6 +1,9 @@
 import { Tab } from '../components/tab';
 import { Pane } from '../components/pane';
 import { TabBar } from '../components/tab-bar';
+import { HistoryManager } from './history-manager';
+import type { SessionState } from '../../shared/types';
+import type { ITheme } from '@xterm/xterm';
 
 export class TabManager {
   private tabs: Tab[] = [];
@@ -9,13 +12,17 @@ export class TabManager {
   private contentContainer: HTMLElement;
   private disposables: (() => void)[] = [];
   private currentFontSize: number | undefined;
-  private onCommandDone: (() => void) | null = null;
+  private currentFontFamily: string | undefined;
+  private currentScrollback: number | undefined;
+  private onCommandDone: ((tabId: string, tabTitle: string) => void) | null = null;
   private panesByPtyId: Map<number, Pane> = new Map();
+  private currentShell: string | undefined;
+  private sharedHistory: HistoryManager = new HistoryManager();
 
   constructor(
     tabBarContainer: HTMLElement,
     contentContainer: HTMLElement,
-    options?: { onSettings?: () => void; onCommandDone?: () => void },
+    options?: { onSettings?: () => void; onCommandDone?: (tabId: string, tabTitle: string) => void },
   ) {
     this.contentContainer = contentContainer;
 
@@ -25,6 +32,7 @@ export class TabManager {
       onNew: () => { this.createTab().catch(console.error); },
       onReorder: (fromId, toId) => this.reorder(fromId, toId),
       onSettings: () => options?.onSettings?.(),
+      onRename: (id, name) => this.renameTab(id, name),
     });
     this.onCommandDone = options?.onCommandDone || null;
 
@@ -59,6 +67,15 @@ export class TabManager {
     }
   }
 
+  setShell(shell: string): void {
+    this.currentShell = shell;
+  }
+
+  /** Pre-load shared history so panes don't each make an IPC call. */
+  async loadHistory(): Promise<void> {
+    await this.sharedHistory.load();
+  }
+
   setFontSize(size: number): void {
     this.currentFontSize = size;
     for (const tab of this.tabs) {
@@ -66,20 +83,54 @@ export class TabManager {
     }
   }
 
+  setFontFamily(family: string): void {
+    this.currentFontFamily = family;
+    for (const tab of this.tabs) {
+      tab.setFontFamily(family);
+    }
+  }
+
+  setScrollback(lines: number): void {
+    this.currentScrollback = lines;
+    for (const tab of this.tabs) {
+      tab.setScrollback(lines);
+    }
+  }
+
+  setCopyOnSelect(enabled: boolean): void {
+    for (const tab of this.tabs) {
+      tab.setCopyOnSelect(enabled);
+    }
+  }
+
+  setTerminalTheme(theme: ITheme | null): void {
+    for (const tab of this.tabs) {
+      tab.setTerminalTheme(theme);
+    }
+  }
+
   async createTab(): Promise<Tab> {
     const tab = new Tab();
+    if (this.currentShell) tab.setShell(this.currentShell);
+    tab.setHistoryManager(this.sharedHistory);
     tab.setRegistrationCallbacks(
       (pane) => this.registerPane(pane),
       (pane) => this.unregisterPane(pane),
       () => this.updateTabBar(),
-      () => this.onCommandDone?.(),
+      () => this.onCommandDone?.(tab.id, tab.title),
     );
     this.tabs.push(tab);
     this.contentContainer.appendChild(tab.element);
 
-    // Apply current font size to new tab before init
+    // Apply current settings to new tab before init
     if (this.currentFontSize !== undefined) {
       tab.setFontSize(this.currentFontSize);
+    }
+    if (this.currentFontFamily !== undefined) {
+      tab.setFontFamily(this.currentFontFamily);
+    }
+    if (this.currentScrollback !== undefined) {
+      tab.setScrollback(this.currentScrollback);
     }
 
     try {
@@ -134,6 +185,14 @@ export class TabManager {
     const idx = this.tabs.indexOf(this.activeTab);
     const prevIdx = (idx - 1 + this.tabs.length) % this.tabs.length;
     this.switchToId(this.tabs[prevIdx].id);
+  }
+
+  renameTab(id: string, name: string): void {
+    const tab = this.tabs.find(t => t.id === id);
+    if (tab) {
+      tab.setCustomTitle(name);
+      this.updateTabBar();
+    }
   }
 
   // --- Tab reordering ---
@@ -209,6 +268,90 @@ export class TabManager {
 
   getTabCount(): number {
     return this.tabs.length;
+  }
+
+  isActiveTab(tabId: string): boolean {
+    return this.activeTab?.id === tabId;
+  }
+
+  async saveSession(): Promise<void> {
+    try {
+      const tabStates = await Promise.all(this.tabs.map(t => t.serializeTree()));
+      const activeIdx = this.activeTab ? this.tabs.indexOf(this.activeTab) : 0;
+      const session: SessionState = {
+        tabs: tabStates,
+        activeTabIndex: Math.max(0, activeIdx),
+      };
+      await window.patton.session.set(session);
+    } catch (err) {
+      console.warn('Failed to save session:', err);
+    }
+  }
+
+  async restoreSession(): Promise<boolean> {
+    try {
+      const session = await window.patton.session.get();
+      if (!session || !session.tabs || session.tabs.length === 0) return false;
+
+      for (const tabState of session.tabs) {
+        const tab = await Tab.createFromSession(tabState, () => ({
+          onFocus: () => {},
+          onTitleChange: () => {},
+          onCommandDone: () => {},
+        }));
+
+        if (this.currentShell) tab.setShell(this.currentShell);
+        tab.setHistoryManager(this.sharedHistory);
+        tab.setRegistrationCallbacks(
+          (pane) => this.registerPane(pane),
+          (pane) => this.unregisterPane(pane),
+          () => this.updateTabBar(),
+          () => this.onCommandDone?.(tab.id, tab.title),
+        );
+        this.tabs.push(tab);
+        this.contentContainer.appendChild(tab.element);
+
+        if (this.currentFontSize !== undefined) {
+          tab.setFontSize(this.currentFontSize);
+        }
+        if (this.currentFontFamily !== undefined) {
+          tab.setFontFamily(this.currentFontFamily);
+        }
+        if (this.currentScrollback !== undefined) {
+          tab.setScrollback(this.currentScrollback);
+        }
+
+        // Initialize all panes (creates PTYs)
+        await tab.init();
+
+        // Register panes for PTY routing
+        for (const pane of tab.panes) {
+          this.registerPane(pane);
+        }
+
+        // Render the split tree if it has splits
+        if (tab.panes.length > 1) {
+          // Force tree re-render by calling show
+          tab.show();
+          tab.hide();
+        }
+      }
+
+      // Switch to the previously active tab
+      const activeIdx = Math.min(session.activeTabIndex, this.tabs.length - 1);
+      if (this.tabs.length > 0) {
+        this.switchToId(this.tabs[Math.max(0, activeIdx)].id);
+      }
+
+      // Clear saved session after successful restore
+      await window.patton.session.set(null);
+      return true;
+    } catch (err) {
+      console.warn('Session restore failed:', err);
+      // Clear stale session to prevent repeated partial restores
+      await window.patton.session.set(null).catch(() => {});
+      return false;
+    }
   }
 
   private updateTabBar(): void {

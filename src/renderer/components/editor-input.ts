@@ -120,6 +120,10 @@ export class EditorInput {
     this.textarea.style.fontSize = size + 'px';
   }
 
+  setFontFamily(family: string): void {
+    this.textarea.style.fontFamily = family;
+  }
+
   /** Physically enable/disable the textarea to prevent unfocused panes from stealing keyboard focus. */
   setInteractive(interactive: boolean): void {
     if (interactive) {

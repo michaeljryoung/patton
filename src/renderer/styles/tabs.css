@@ -107,7 +107,7 @@
 }
 
 .tab-bar-tab.drag-over {
-  border-left: 2px solid var(--accent);
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 
 .tab-bar-tab-title {
@@ -115,7 +115,21 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  pointer-events: none;
+  pointer-events: auto;
+}
+
+.tab-bar-tab-rename {
+  flex: 1;
+  min-width: 40px;
+  max-width: 100%;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  font-size: 12px;
+  font-family: var(--font-ui);
+  padding: 1px 4px;
+  outline: none;
 }
 
 .tab-bar-tab-close {

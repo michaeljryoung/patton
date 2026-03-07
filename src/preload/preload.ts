@@ -10,6 +10,7 @@ const api: PattonAPI = {
     destroy: (id) => ipcRenderer.send(IPC.PTY_DESTROY, id),
     getProcess: (id) => ipcRenderer.invoke(IPC.PTY_GET_PROCESS, id),
     getDescendants: (id) => ipcRenderer.invoke(IPC.PTY_GET_DESCENDANTS, id),
+    getCwd: (id) => ipcRenderer.invoke(IPC.PTY_GET_CWD, id),
     onData: (callback) => {
       const listener = (_event: Electron.IpcRendererEvent, id: number, data: string) => callback(id, data);
       ipcRenderer.on(IPC.PTY_DATA, listener);
@@ -34,6 +35,16 @@ const api: PattonAPI = {
   settings: {
     get: () => ipcRenderer.invoke(IPC.SETTINGS_GET),
     set: (settings) => ipcRenderer.invoke(IPC.SETTINGS_SET, settings),
+  },
+  session: {
+    get: () => ipcRenderer.invoke(IPC.SESSION_GET),
+    set: (session) => ipcRenderer.invoke(IPC.SESSION_SET, session),
+  },
+  editor: {
+    openFile: (filePath) => ipcRenderer.invoke(IPC.APP_OPEN_IN_EDITOR, filePath),
+  },
+  terminal: {
+    saveOutput: (content, defaultName) => ipcRenderer.invoke(IPC.APP_SAVE_TERMINAL, content, defaultName),
   },
   app: {
     onSettings: (cb) => {
@@ -121,7 +132,23 @@ const api: PattonAPI = {
       ipcRenderer.on(IPC.APP_FOCUS_PANE_RIGHT, listener);
       return () => ipcRenderer.removeListener(IPC.APP_FOCUS_PANE_RIGHT, listener);
     },
+    onSaveTerminal: (cb) => {
+      const listener = () => cb();
+      ipcRenderer.on(IPC.APP_SAVE_TERMINAL, listener);
+      return () => ipcRenderer.removeListener(IPC.APP_SAVE_TERMINAL, listener);
+    },
+    onBroadcastInput: (cb) => {
+      const listener = () => cb();
+      ipcRenderer.on(IPC.APP_BROADCAST_INPUT, listener);
+      return () => ipcRenderer.removeListener(IPC.APP_BROADCAST_INPUT, listener);
+    },
+    onSwitchTabById: (cb) => {
+      const listener = (_event: Electron.IpcRendererEvent, id: string) => cb(id);
+      ipcRenderer.on(IPC.APP_SWITCH_TAB + ':id', listener);
+      return () => ipcRenderer.removeListener(IPC.APP_SWITCH_TAB + ':id', listener);
+    },
   },
+  notify: (title, body, tabId) => ipcRenderer.send(IPC.APP_NOTIFY, title, body, tabId),
 };
 
 contextBridge.exposeInMainWorld('patton', api);

@@ -30,9 +30,39 @@ export interface AppSettings {
   scrollback: number;
   shell: string;
   notificationSound: boolean;
+  notificationSoundType: string;
+  copyOnSelect: boolean;
+  globalHotkey: string;
+  theme: string;
+  startupCommand: string;
 }
 
 export type InputMode = 'editor' | 'passthrough';
+
+export interface SessionPaneState {
+  cwd: string;
+}
+
+export interface SessionSplitState {
+  type: 'split';
+  direction: 'vertical' | 'horizontal';
+  ratio: number;
+  children: [SessionTreeNode, SessionTreeNode];
+}
+
+export type SessionTreeNode = SessionPaneState | SessionSplitState;
+
+export interface SessionTabState {
+  title?: string;
+  customTitle?: boolean;
+  tree: SessionTreeNode;
+  focusedPaneIndex: number;
+}
+
+export interface SessionState {
+  tabs: SessionTabState[];
+  activeTabIndex: number;
+}
 
 export interface PattonAPI {
   pty: {
@@ -42,6 +72,7 @@ export interface PattonAPI {
     destroy: (id: number) => void;
     getProcess: (id: number) => Promise<string>;
     getDescendants: (id: number) => Promise<string[]>;
+    getCwd: (id: number) => Promise<string>;
     onData: (callback: (id: number, data: string) => void) => () => void;
     onExit: (callback: (id: number, code: number) => void) => () => void;
     onTitle: (callback: (id: number, title: string) => void) => () => void;
@@ -54,6 +85,16 @@ export interface PattonAPI {
   settings: {
     get: () => Promise<AppSettings>;
     set: (settings: Partial<AppSettings>) => Promise<void>;
+  };
+  session: {
+    get: () => Promise<SessionState | null>;
+    set: (session: SessionState | null) => Promise<void>;
+  };
+  editor: {
+    openFile: (filePath: string) => Promise<void>;
+  };
+  terminal: {
+    saveOutput: (content: string, defaultName: string) => Promise<string | null>;
   };
   app: {
     onSettings: (callback: () => void) => () => void;
@@ -73,7 +114,11 @@ export interface PattonAPI {
     onFocusPaneDown: (callback: () => void) => () => void;
     onFocusPaneLeft: (callback: () => void) => () => void;
     onFocusPaneRight: (callback: () => void) => () => void;
+    onSaveTerminal: (callback: () => void) => () => void;
+    onBroadcastInput: (callback: () => void) => () => void;
+    onSwitchTabById: (callback: (id: string) => void) => () => void;
   };
+  notify: (title: string, body: string, tabId: string) => void;
 }
 
 declare global {

@@ -89,15 +89,15 @@ src/
 ---
 
 ## Status
-Feature-complete with security hardening; builds and runs successfully. Ready for distribution testing.
+Feature-complete with performance optimizations; builds and runs. Ready for distribution testing.
 
 ## Last Session
-**2026-03-06 (continued)**
-- Ran comprehensive `/debug-project` scan — found and fixed 28 bugs across 15 files
-- HIGH: PTY orphan leak on macOS window close (added `destroyByWindow`), context menu paste bypass (extracted `safePaste()`), dead APP_SETTINGS IPC (wired preload+renderer), floating promises in split/close
-- MEDIUM: mode-detector `__unknown__` shell learning, mode-detector ordering (create before data handler), ghost tab cleanup on init failure, history `getEntries()` returns readonly, Ctrl+R mode-aware, write-coalesce 256KB cap, PTY_WRITE 1MB limit, store `userInfo()` container crash, store corruption recovery, `setWindowState` key pollution
-- LOW: GainNode disconnect, RateLimiter ring buffer, file:// nav scope, countByWindow floor, toggle() floating promise, PTY_GET_PROCESS validation, reload/devtools production gate, startup error handling, before-quit error handling
-- Previous: editor bar as compose area, bracketed paste detection, TUI signal pairs, hysteresis, DSR forwarding, process identification
+**2026-03-07**
+- Added notification sound selection (Chime/Bugle/Bullet) with Web Audio API synthesis and settings dropdown with live preview
+- Added startup command setting (runs on first tab of fresh launch only, not on session restore)
+- Fixed settings panel dropdown disappearing (300ms focus poll in pane.ts was stealing focus — added `Pane.isOverlayFocused()` guard)
+- Fixed settings panel speed (eliminated all IPC from `show()` — cached settings at startup, kept in sync via `saveAndNotify()`)
+- Implemented 9 performance optimizations: shell path passed down (no per-pane IPC), shared HistoryManager, CWD/mode-detector polling gated on pane focus, parallelized startup (`Promise.all` for settings+history), parallelized pane init, `show:false` on BrowserWindow, lazy ImageAddon via dynamic import, CSS containment on `.pane`
 
 ## Next Steps
 - [ ] Run `npm run make` to generate .dmg for distribution
@@ -109,6 +109,9 @@ Feature-complete with security hardening; builds and runs successfully. Ready fo
 - **Self-signed cert ("Patton Dev Signing")**: Provides stable code identity hash for TCC permission persistence across rebuilds. Not Apple-trusted, so recipients must right-click → Open.
 - **Audit gate scoped to production**: Dev dependency vulnerabilities (electron-forge toolchain) are build-time only and don't affect the distributed app. `--omit=dev` prevents false build failures.
 - **Dependency pinning (no ^ or ~)**: Prevents surprise breakage from transitive updates in a desktop app where reproducibility matters more than auto-patching.
+- **Shared HistoryManager**: One instance per TabManager, shared across all panes. Each pane's up/down cursor is independent (per-pane state), but the entry list and IPC load happen once. Avoids N IPC calls on restore.
+- **Lazy ImageAddon via dynamic import**: `@xterm/addon-image` allocates a 16MB pixel buffer. Deferred via `import()` + `requestAnimationFrame` so first paint isn't blocked. If image protocol data arrives before load completes, it's benignly dropped (no crash).
+- **Notification sounds synthesized, not files**: Web Audio API oscillators/noise buffers for all 3 sounds. No audio file dependencies, zero network, instant playback. Bullet = white noise crack + low-freq whoosh.
 
 ## Gotchas
 - **xterm.js onData must always forward to PTY**: In editor mode, `terminal.onData` only fires for terminal protocol responses (DSR, DA) since CodeMirror has focus. These MUST reach the PTY or programs like `fzf --height` will block forever waiting for cursor position reports. Never gate `onPassthroughData` forwarding on mode.
@@ -118,3 +121,5 @@ Feature-complete with security hardening; builds and runs successfully. Ready fo
 - **`npm audit` blocks builds**: High-severity vulns in transitive devDeps (tar, tmp in electron-forge) fail `--audit-level=high`. Must use `--omit=dev` to scope to production deps
 - **Electron 40 + TS 5.x**: Menu click handler receives `BaseWindow` not `BrowserWindow` — must cast to access `webContents`
 - **ESLint 9 flat config**: Old `.eslintrc.json` format completely unsupported. `--ext` flag removed. Must use `eslint.config.mjs` with explicit globals
+- **Focus poll steals from native `<select>` dropdowns**: The 300ms focus-protection poll in pane.ts grabs focus back to the editor textarea. Any overlay (settings, paste dialog, search) with native inputs must be guarded by `Pane.isOverlayFocused()` checking `document.activeElement.closest('[role="dialog"], .search-overlay, .paste-dialog-overlay')`.
+- **Settings panel IPC on open causes visible lag**: `await window.patton.settings.get()` in `show()` takes 50-100ms. Must cache settings in memory (loaded at startup, updated on every save) and make `show()` synchronous.

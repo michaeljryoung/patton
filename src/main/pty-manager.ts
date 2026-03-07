@@ -5,6 +5,8 @@ import type { IPty } from 'node-pty';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- CJS/ESM interop requires runtime check
 const pty = ((ptyModule as any).default || ptyModule) as typeof ptyModule;
 import { BrowserWindow } from 'electron';
+import { execFile } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { DEFAULTS, IPC } from '../shared/constants';
 import type { PtyCreateOptions } from '../shared/types';
 
@@ -171,12 +173,16 @@ export class PtyManager {
     const instance = this.instances.get(id);
     if (instance) {
       if (instance.flushTimer) clearTimeout(instance.flushTimer);
-      instance.process.kill();
+      // Clean up map and counter BEFORE kill() — if kill() throws, resources are still freed
       this.instances.delete(id);
-      // Fix counter leak: decrement when explicitly destroyed
       const winId = instance.window.id;
       const c = this.countByWindow.get(winId) || 1;
       this.countByWindow.set(winId, Math.max(0, c - 1));
+      try {
+        instance.process.kill();
+      } catch {
+        // Process already dead or permission error — cleanup already done above
+      }
     }
   }
 
@@ -200,6 +206,32 @@ export class PtyManager {
   getDescendantNames(id: number): string[] {
     // Mode detection uses foreground process polling instead
     return [];
+  }
+
+  /** Get the current working directory of the PTY's process via lsof */
+  getCwd(id: number): Promise<string> {
+    const instance = this.instances.get(id);
+    if (!instance) return Promise.resolve('');
+    try {
+      const pid = instance.process.pid;
+      return new Promise((resolve) => {
+        execFile('lsof', ['-p', String(pid), '-Fn', '-a', '-d', 'cwd'], { timeout: 2000 }, (err, stdout) => {
+          if (err || !stdout) { resolve(''); return; }
+          // lsof output: lines starting with 'n' contain the path
+          const lines = stdout.split('\n');
+          for (const line of lines) {
+            if (line.startsWith('n/')) {
+              const dir = line.slice(1);
+              resolve(existsSync(dir) ? dir : '');
+              return;
+            }
+          }
+          resolve('');
+        });
+      });
+    } catch {
+      return Promise.resolve('');
+    }
   }
 
   destroyByWindow(window: BrowserWindow): void {

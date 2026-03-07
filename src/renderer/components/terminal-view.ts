@@ -4,6 +4,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { SearchAddon } from '@xterm/addon-search';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { DEFAULTS } from '../../shared/constants';
+import type { ITheme } from '@xterm/xterm';
 
 const LIGHT_THEME = {
   background: '#ffffff',
@@ -72,6 +73,8 @@ export class TerminalView {
   private mediaQuery: MediaQueryList;
   private themeHandler: () => void;
   private keyboardEnabled = false;
+  private copyOnSelectEnabled = false;
+  private customTheme: ITheme | null = null;
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -113,9 +116,42 @@ export class TerminalView {
       }
     }));
 
-    // Listen for system theme changes
+    // Lazy-load image addon after first paint to avoid blocking startup
+    let imageAddonLoaded = false;
+    requestAnimationFrame(() => {
+      if (!imageAddonLoaded && !this.disposed) {
+        import('@xterm/addon-image').then(({ ImageAddon }) => {
+          if (this.disposed) return;
+          imageAddonLoaded = true;
+          this.terminal.loadAddon(new ImageAddon({
+            enableSizeReports: true,
+            sixelSupport: true,
+            sixelScrolling: true,
+            sixelPaletteLimit: 4096,
+            iipSupport: true,
+            storageLimit: 128,
+            pixelLimit: 16777216,
+          }));
+        }).catch(() => { /* Image addon not available */ });
+      }
+    });
+
+    // Copy-on-select: auto-copy to clipboard when text is selected
+    this.terminal.onSelectionChange(() => {
+      if (!this.copyOnSelectEnabled) return;
+      const sel = this.terminal.getSelection();
+      if (sel) {
+        navigator.clipboard.writeText(sel).catch(() => {});
+      }
+    });
+
+    // Listen for system theme changes (only applies when no custom theme is active)
     this.mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-    this.themeHandler = () => { this.terminal.options.theme = getTheme(); };
+    this.themeHandler = () => {
+      if (!this.customTheme) {
+        this.terminal.options.theme = getTheme();
+      }
+    };
     this.mediaQuery.addEventListener('change', this.themeHandler);
   }
 
@@ -214,6 +250,45 @@ export class TerminalView {
   onTitleChange(callback: (title: string) => void): (() => void) {
     const disposable = this.terminal.onTitleChange(callback);
     return () => disposable.dispose();
+  }
+
+  /** Get all content from the terminal scrollback buffer as plain text */
+  getScrollbackContent(): string {
+    const buffer = this.terminal.buffer.active;
+    const lines: string[] = [];
+    for (let i = 0; i < buffer.length; i++) {
+      const line = buffer.getLine(i);
+      if (line) {
+        lines.push(line.translateToString(true));
+      }
+    }
+    // Trim trailing empty lines
+    while (lines.length > 0 && lines[lines.length - 1].trim() === '') {
+      lines.pop();
+    }
+    return lines.join('\n');
+  }
+
+  setCopyOnSelect(enabled: boolean): void {
+    this.copyOnSelectEnabled = enabled;
+  }
+
+  setCustomTheme(theme: ITheme | null): void {
+    this.customTheme = theme;
+    if (theme) {
+      this.terminal.options.theme = theme;
+    } else {
+      this.terminal.options.theme = getTheme();
+    }
+  }
+
+  setFontFamily(family: string): void {
+    this.terminal.options.fontFamily = family;
+    this.fit();
+  }
+
+  setScrollback(lines: number): void {
+    this.terminal.options.scrollback = lines;
   }
 
   onBell(callback: () => void): (() => void) {

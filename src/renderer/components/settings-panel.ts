@@ -5,6 +5,7 @@ export class SettingsPanel {
   private overlay: HTMLElement;
   private visible = false;
   private onSettingsChanged: (settings: Partial<AppSettings>) => void;
+  private cachedSettings: AppSettings | null = null;
 
   constructor(container: HTMLElement, onSettingsChanged: (settings: Partial<AppSettings>) => void) {
     this.onSettingsChanged = onSettingsChanged;
@@ -12,6 +13,7 @@ export class SettingsPanel {
     this.overlay = document.createElement('div');
     this.overlay.className = 'settings-overlay';
     this.overlay.setAttribute('role', 'dialog');
+    this.overlay.setAttribute('aria-modal', 'true');
     this.overlay.setAttribute('aria-label', 'Settings');
 
     this.overlay.innerHTML = `
@@ -45,6 +47,18 @@ export class SettingsPanel {
             <label class="settings-label" for="setting-shell">Shell Path</label>
             <input class="settings-input" id="setting-shell" type="text" placeholder="/bin/zsh" />
           </div>
+          <div class="settings-group">
+            <label class="settings-label" for="setting-theme">Color Theme</label>
+            <select class="settings-input" id="setting-theme">
+              <option value="system">System (Auto)</option>
+              <option value="dracula">Dracula</option>
+              <option value="nord">Nord</option>
+              <option value="solarized-dark">Solarized Dark</option>
+              <option value="one-dark">One Dark</option>
+              <option value="monokai">Monokai</option>
+              <option value="tokyo-night">Tokyo Night</option>
+            </select>
+          </div>
           <div class="settings-group settings-group-toggle">
             <label class="settings-label" for="setting-notification-sound">Notification Sound</label>
             <label class="settings-toggle">
@@ -52,6 +66,27 @@ export class SettingsPanel {
               <span class="settings-toggle-slider"></span>
             </label>
             <span class="settings-hint">Play a sound when a command finishes</span>
+          </div>
+          <div class="settings-group">
+            <label class="settings-label" for="setting-notification-sound-type">Notification Sound Type</label>
+            <select class="settings-input" id="setting-notification-sound-type">
+              <option value="chime">Chime</option>
+              <option value="bugle">Bugle</option>
+              <option value="bullet">Bullet</option>
+            </select>
+          </div>
+          <div class="settings-group settings-group-toggle">
+            <label class="settings-label" for="setting-copy-on-select">Copy on Select</label>
+            <label class="settings-toggle">
+              <input type="checkbox" id="setting-copy-on-select" />
+              <span class="settings-toggle-slider"></span>
+            </label>
+            <span class="settings-hint">Auto-copy selected text to clipboard</span>
+          </div>
+          <div class="settings-group">
+            <label class="settings-label" for="setting-startup-command">Startup Command</label>
+            <input class="settings-input" id="setting-startup-command" type="text" placeholder="e.g., claude" />
+            <span class="settings-hint">Run this command when Patton launches (first tab only)</span>
           </div>
           <div class="shortcuts-section">
             <h3 class="shortcuts-title">Keyboard Shortcuts</h3>
@@ -100,6 +135,11 @@ export class SettingsPanel {
       this.saveAndNotify({ fontFamily: fontFamilyInput.value });
     });
 
+    const themeInput = this.overlay.querySelector('#setting-theme') as HTMLSelectElement;
+    themeInput.addEventListener('change', () => {
+      this.saveAndNotify({ theme: themeInput.value });
+    });
+
     scrollbackInput.addEventListener('change', () => {
       const val = parseInt(scrollbackInput.value, 10);
       if (val >= 100 && val <= 100000) {
@@ -117,33 +157,64 @@ export class SettingsPanel {
     notifInput.addEventListener('change', () => {
       this.saveAndNotify({ notificationSound: notifInput.checked });
     });
+
+    const copyOnSelectInput = this.overlay.querySelector('#setting-copy-on-select') as HTMLInputElement;
+    copyOnSelectInput.addEventListener('change', () => {
+      this.saveAndNotify({ copyOnSelect: copyOnSelectInput.checked });
+    });
+
+    const soundTypeInput = this.overlay.querySelector('#setting-notification-sound-type') as HTMLSelectElement;
+    soundTypeInput.addEventListener('change', () => {
+      this.saveAndNotify({ notificationSoundType: soundTypeInput.value });
+    });
+
+    const startupCommandInput = this.overlay.querySelector('#setting-startup-command') as HTMLInputElement;
+    startupCommandInput.addEventListener('change', () => {
+      this.saveAndNotify({ startupCommand: startupCommandInput.value });
+    });
   }
 
   private saveAndNotify(settings: Partial<AppSettings>): void {
     window.patton.settings.set(settings).catch(console.error);
+    if (this.cachedSettings) {
+      Object.assign(this.cachedSettings, settings);
+    }
     this.onSettingsChanged(settings);
   }
 
-  async show(): Promise<void> {
-    // Load current settings
-    const settings = await window.patton.settings.get();
+  /** Pre-load settings into cache so show() is instant. Call from App.init(). */
+  loadSettings(settings: AppSettings): void {
+    this.cachedSettings = { ...settings };
+  }
+
+  show(): void {
+    // Use cached settings for instant open — no IPC on the critical path
+    if (this.cachedSettings) {
+      this.populateValues(this.cachedSettings);
+    }
+    this.visible = true;
+    this.overlay.classList.add('visible');
+    (this.overlay.querySelector('#setting-font-size') as HTMLInputElement).focus();
+  }
+
+  private populateValues(settings: AppSettings): void {
     (this.overlay.querySelector('#setting-font-size') as HTMLInputElement).value = String(settings.fontSize);
     (this.overlay.querySelector('#setting-scrollback') as HTMLInputElement).value = String(settings.scrollback);
     (this.overlay.querySelector('#setting-shell') as HTMLInputElement).value = settings.shell;
 
     (this.overlay.querySelector('#setting-notification-sound') as HTMLInputElement).checked = settings.notificationSound !== false;
+    (this.overlay.querySelector('#setting-notification-sound-type') as HTMLSelectElement).value = settings.notificationSoundType || 'chime';
+    (this.overlay.querySelector('#setting-copy-on-select') as HTMLInputElement).checked = settings.copyOnSelect === true;
+    (this.overlay.querySelector('#setting-startup-command') as HTMLInputElement).value = settings.startupCommand || '';
 
-    // Match font family to select
+    (this.overlay.querySelector('#setting-theme') as HTMLSelectElement).value = settings.theme || 'system';
+
     const select = this.overlay.querySelector('#setting-font-family') as HTMLSelectElement;
     const options = Array.from(select.options);
     const match = options.find(o => o.value === settings.fontFamily);
     if (match) {
       select.value = match.value;
     }
-
-    this.visible = true;
-    this.overlay.classList.add('visible');
-    (this.overlay.querySelector('#setting-font-size') as HTMLInputElement).focus();
   }
 
   hide(): void {
@@ -159,7 +230,7 @@ export class SettingsPanel {
     if (this.visible) {
       this.hide();
     } else {
-      this.show().catch(console.error);
+      this.show();
     }
   }
 

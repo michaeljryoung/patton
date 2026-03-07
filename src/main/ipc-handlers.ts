@@ -1,8 +1,9 @@
-import { ipcMain, BrowserWindow } from 'electron';
+import { ipcMain, BrowserWindow, dialog, Notification } from 'electron';
+import { execFile } from 'node:child_process';
 import { IPC } from '../shared/constants';
 import { PtyManager } from './pty-manager';
 import * as store from './store';
-import type { PtyCreateOptions } from '../shared/types';
+import type { PtyCreateOptions, SessionState } from '../shared/types';
 
 // --- Security: Sliding-window rate limiter (ring buffer, O(1) operations) ---
 class RateLimiter {
@@ -176,5 +177,104 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
       return;
     }
     store.setSettings(settings);
+  });
+
+  // --- Session restore ---
+  ipcMain.handle(IPC.SESSION_GET, () => {
+    return store.getSession();
+  });
+
+  ipcMain.handle(IPC.SESSION_SET, (_event, session: SessionState | null) => {
+    store.setSession(session);
+  });
+
+  // --- Open file in editor (VS Code) ---
+  ipcMain.handle(IPC.APP_OPEN_IN_EDITOR, (_event, filePath: string) => {
+    if (typeof filePath !== 'string' || filePath.length > 1000) return;
+    // Security: validate strict path:line:col format (no shell metacharacters, no traversal)
+    if (!/^[/a-zA-Z0-9._\-@]+(?::[0-9]+(?::[0-9]+)?)?$/.test(filePath)) return;
+    // Security: reject directory traversal
+    if (/(?:^|\/)\.\.(?:\/|$)/.test(filePath)) return;
+    // Security: must start with / (absolute path required from renderer)
+    if (!filePath.startsWith('/')) return;
+    execFile('code', ['--goto', filePath], { timeout: 5000 }, (err) => {
+      if (err) console.warn('Failed to open in editor:', err.message);
+    });
+  });
+
+  // --- Save terminal output to file ---
+  ipcMain.handle(IPC.APP_SAVE_TERMINAL, async (event, content: string, defaultName: string) => {
+    if (typeof content !== 'string' || typeof defaultName !== 'string') return null;
+    // Security: cap content size at 100MB to prevent memory exhaustion
+    if (content.length > 100 * 1024 * 1024) return null;
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (!window) return null;
+    const result = await dialog.showSaveDialog(window, {
+      defaultPath: defaultName,
+      filters: [
+        { name: 'Text Files', extensions: ['txt'] },
+        { name: 'All Files', extensions: ['*'] },
+      ],
+    });
+    if (result.canceled || !result.filePath) return null;
+    try {
+      const { writeFile } = await import('node:fs/promises');
+      await writeFile(result.filePath, content, 'utf-8');
+      return result.filePath;
+    } catch (err) {
+      console.warn('Failed to save terminal output:', (err as Error).message);
+      return null;
+    }
+  });
+
+  // --- Get PTY working directory ---
+  const getCwdLimiter = new RateLimiter(10); // lsof is expensive; cap at 10/s
+  ipcMain.handle(IPC.PTY_GET_CWD, (event, id: number) => {
+    if (typeof id !== 'number' || !Number.isFinite(id)) {
+      return '';
+    }
+    if (!getCwdLimiter.allow()) {
+      console.warn('[SECURITY] Rate limit exceeded', { channel: IPC.PTY_GET_CWD });
+      return '';
+    }
+    try {
+      requireOwnership(ptyManager, event, id);
+    } catch {
+      return '';
+    }
+    return ptyManager.getCwd(id);
+  });
+
+  // --- Native notification ---
+  // Store references to prevent GC (known Electron bug)
+  const activeNotifications: Set<Notification> = new Set();
+  ipcMain.on(IPC.APP_NOTIFY, (event, title: string, body: string, tabId: string) => {
+    if (typeof title !== 'string' || typeof body !== 'string') return;
+    if (!Notification.isSupported()) return;
+
+    // Security: capture window reference NOW, not in the click handler
+    // (event.sender/webContents may be destroyed by the time notification is clicked)
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win) return;
+
+    const notif = new Notification({ title, body, silent: true });
+    activeNotifications.add(notif);
+
+    notif.on('click', () => {
+      if (!win.isDestroyed()) {
+        win.show();
+        win.focus();
+        if (tabId && !win.webContents.isDestroyed()) {
+          win.webContents.send(IPC.APP_SWITCH_TAB + ':id', tabId);
+        }
+      }
+      activeNotifications.delete(notif);
+    });
+
+    notif.on('close', () => {
+      activeNotifications.delete(notif);
+    });
+
+    notif.show();
   });
 }

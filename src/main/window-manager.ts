@@ -10,6 +10,7 @@ export function createWindow(ptyManager?: PtyManager): BrowserWindow {
   const savedState = store.getWindowState();
 
   const window = new BrowserWindow({
+    show: false, // Defer show until ready-to-show to prevent white flash
     width: savedState.width,
     height: savedState.height,
     x: savedState.x,
@@ -27,6 +28,11 @@ export function createWindow(ptyManager?: PtyManager): BrowserWindow {
       webSecurity: true,
       allowRunningInsecureContent: false,
     },
+  });
+
+  // Show window once renderer is painted (avoids white flash)
+  window.once('ready-to-show', () => {
+    window.show();
   });
 
   // Validate window position is on a visible display

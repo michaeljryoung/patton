@@ -45,20 +45,12 @@ export class SplitContainer {
   }
 
   private applyRatio(): void {
-    const pct1 = `calc(${this.ratio * 100}% - 2px)`;
-    const pct2 = `calc(${(1 - this.ratio) * 100}% - 2px)`;
-
-    if (this.direction === 'vertical') {
-      this.firstChild.style.width = pct1;
-      this.firstChild.style.height = '100%';
-      this.secondChild.style.width = pct2;
-      this.secondChild.style.height = '100%';
-    } else {
-      this.firstChild.style.height = pct1;
-      this.firstChild.style.width = '100%';
-      this.secondChild.style.height = pct2;
-      this.secondChild.style.width = '100%';
-    }
+    // Use flex shorthand to override any `flex: 1` from CSS class rules.
+    // flex: 0 0 <basis> sets exact size with no grow/shrink.
+    const basis1 = `calc(${this.ratio * 100}% - 2px)`;
+    const basis2 = `calc(${(1 - this.ratio) * 100}% - 2px)`;
+    this.firstChild.style.flex = `0 0 ${basis1}`;
+    this.secondChild.style.flex = `0 0 ${basis2}`;
   }
 
   private setupDrag(): void {

@@ -1,6 +1,7 @@
 import { TabManager } from '../services/tab-manager';
 import { KeybindingManager } from '../services/keybinding-manager';
 import { NotificationSound } from '../services/notification-sound';
+import { getThemeById, applyThemeToCSS, clearThemeCSS } from '../services/themes';
 import { SettingsPanel } from './settings-panel';
 import { Onboarding } from './onboarding';
 import { DEFAULTS } from '../../shared/constants';
@@ -21,7 +22,13 @@ export class App {
     this.notificationSound = new NotificationSound();
     this.tabManager = new TabManager(tabBarEl, contentEl, {
       onSettings: () => this.settingsPanel.toggle(),
-      onCommandDone: () => this.notificationSound.play(),
+      onCommandDone: (tabId, tabTitle) => {
+        this.notificationSound.play();
+        // Send native notification for background tabs
+        if (!this.tabManager.isActiveTab(tabId) || document.hidden) {
+          window.patton.notify('Patton', `Command finished in ${tabTitle}`, tabId);
+        }
+      },
     });
     this.keybindingManager = new KeybindingManager(this.tabManager);
     this.settingsPanel = new SettingsPanel(appEl, (settings) => {
@@ -29,30 +36,116 @@ export class App {
         this.fontSize = settings.fontSize;
         this.tabManager.setFontSize(this.fontSize);
       }
+      if (settings.fontFamily !== undefined) {
+        this.tabManager.setFontFamily(settings.fontFamily);
+      }
+      if (settings.scrollback !== undefined) {
+        this.tabManager.setScrollback(settings.scrollback);
+      }
       if (settings.notificationSound !== undefined) {
         this.notificationSound.setEnabled(settings.notificationSound);
+      }
+      if (settings.notificationSoundType !== undefined) {
+        this.notificationSound.setType(settings.notificationSoundType);
+        this.notificationSound.playPreview();
+      }
+      if (settings.copyOnSelect !== undefined) {
+        this.tabManager.setCopyOnSelect(settings.copyOnSelect);
+      }
+      if (settings.theme !== undefined) {
+        this.applyTheme(settings.theme);
       }
     });
 
     this.registerAppListeners();
     this.registerSettingsShortcut();
+
+    // Handle notification clicks → switch to tab
+    this.disposables.push(
+      window.patton.app.onSwitchTabById((id) => {
+        this.tabManager.switchToId(id);
+      }),
+    );
+
+    // Cmd+Shift+B: Toggle broadcast input
+    this.disposables.push(
+      window.patton.app.onBroadcastInput(() => {
+        const tab = this.tabManager.getActiveTab();
+        tab?.toggleBroadcastInput();
+      }),
+    );
+
+    // Cmd+S: Save terminal output
+    this.disposables.push(
+      window.patton.app.onSaveTerminal(() => {
+        const tab = this.tabManager.getActiveTab();
+        if (!tab) return;
+        const content = tab.getScrollbackContent();
+        if (!content) return;
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        const tabName = tab.title.replace(/[^a-zA-Z0-9-_]/g, '_');
+        const defaultName = `patton-${tabName}-${timestamp}.txt`;
+        window.patton.terminal.saveOutput(content, defaultName).catch(console.error);
+      }),
+    );
   }
 
   async init(): Promise<void> {
-    // Load settings
-    const settings = await window.patton.settings.get();
+    // Load settings and history in parallel (two independent IPC calls)
+    const [settings] = await Promise.all([
+      window.patton.settings.get(),
+      this.tabManager.loadHistory(),
+    ]);
     this.fontSize = settings.fontSize;
     this.tabManager.setFontSize(this.fontSize);
-    this.notificationSound.setEnabled(settings.notificationSound !== false);
-
-    // Create initial tab
-    await this.tabManager.createTab();
-
-    // Show onboarding on first run
-    if (Onboarding.shouldShow()) {
-      const onboarding = new Onboarding(document.getElementById('app')!);
-      onboarding.show();
+    if (settings.fontFamily) {
+      this.tabManager.setFontFamily(settings.fontFamily);
     }
+    if (settings.scrollback) {
+      this.tabManager.setScrollback(settings.scrollback);
+    }
+    if (settings.shell) {
+      this.tabManager.setShell(settings.shell);
+    }
+    this.notificationSound.setEnabled(settings.notificationSound !== false);
+    if (settings.notificationSoundType) {
+      this.notificationSound.setType(settings.notificationSoundType);
+    }
+    this.tabManager.setCopyOnSelect(settings.copyOnSelect === true);
+    this.settingsPanel.loadSettings(settings);
+    if (settings.theme && settings.theme !== 'system') {
+      this.applyTheme(settings.theme);
+    }
+
+    // Try to restore previous session
+    const restored = await this.tabManager.restoreSession();
+
+    if (!restored) {
+      // Create initial tab
+      const firstTab = await this.tabManager.createTab();
+
+      // Show onboarding on first run
+      if (Onboarding.shouldShow()) {
+        const onboarding = new Onboarding(document.getElementById('app')!);
+        onboarding.show();
+      }
+
+      // Execute startup command on fresh launch (first tab only)
+      // Small delay to let the shell initialize before sending input
+      if (settings.startupCommand && firstTab.ptyId !== null) {
+        const ptyId = firstTab.ptyId;
+        const cmd = settings.startupCommand;
+        setTimeout(() => {
+          window.patton.pty.write(ptyId, cmd + '\r');
+        }, 300);
+      }
+    }
+
+    // Save session on window unload (app close)
+    window.addEventListener('beforeunload', () => {
+      // Synchronous: fire and forget — the main process handles persistence
+      this.tabManager.saveSession().catch(() => {});
+    });
   }
 
   private registerAppListeners(): void {
@@ -155,6 +248,19 @@ export class App {
         this.tabManager.focusPaneInDirection('right');
       }),
     );
+  }
+
+  private applyTheme(themeId: string): void {
+    if (themeId === 'system') {
+      clearThemeCSS();
+      this.tabManager.setTerminalTheme(null);
+    } else {
+      const theme = getThemeById(themeId);
+      if (theme) {
+        applyThemeToCSS(theme);
+        this.tabManager.setTerminalTheme(theme.terminal);
+      }
+    }
   }
 
   private applyFontSize(): void {

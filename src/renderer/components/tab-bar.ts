@@ -4,6 +4,7 @@ export interface TabBarCallbacks {
   onNew: () => void;
   onReorder: (fromId: string, toId: string) => void;
   onSettings: () => void;
+  onRename: (id: string, name: string) => void;
 }
 
 interface TabHeaderInfo {
@@ -106,6 +107,12 @@ export class TabBar {
       titleSpan.textContent = tab.title;
       el.appendChild(titleSpan);
 
+      // Double-click to rename
+      titleSpan.addEventListener('dblclick', (e) => {
+        e.stopPropagation();
+        this.startRename(el, titleSpan, tab.id);
+      });
+
       if (tabs.length > 1) {
         const closeBtn = document.createElement('button');
         closeBtn.className = 'tab-bar-tab-close';
@@ -135,6 +142,39 @@ export class TabBar {
 
       this.tabsContainer.appendChild(el);
     }
+  }
+
+  private startRename(tabEl: HTMLElement, titleSpan: HTMLElement, tabId: string): void {
+    const input = document.createElement('input');
+    input.className = 'tab-bar-tab-rename';
+    input.type = 'text';
+    input.value = titleSpan.textContent || '';
+    input.maxLength = 100;
+    input.setAttribute('aria-label', 'Rename tab');
+
+    const commit = () => {
+      const name = input.value.trim();
+      if (name && name !== titleSpan.textContent) {
+        this.callbacks.onRename(tabId, name);
+      }
+      input.replaceWith(titleSpan);
+    };
+
+    const cancel = () => {
+      input.replaceWith(titleSpan);
+    };
+
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); commit(); }
+      if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+      e.stopPropagation();
+    });
+    input.addEventListener('blur', commit);
+    input.addEventListener('click', (e) => e.stopPropagation());
+
+    titleSpan.replaceWith(input);
+    input.select();
+    input.focus();
   }
 
   dispose(): void {

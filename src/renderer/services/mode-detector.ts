@@ -12,6 +12,7 @@ export class ModeDetector {
   private shellName: string | null = null;
   private listeners: ModeChangeCallback[] = [];
   private disposed = false;
+  private paused = false;
   private lastTuiSignal = 0;
   private polling = false;
   // Hysteresis: require multiple consecutive editor-polls before leaving passthrough.
@@ -30,7 +31,7 @@ export class ModeDetector {
 
   private startPolling(): void {
     this.pollTimer = setInterval(async () => {
-      if (this.disposed || this.manualOverride || this.polling) return;
+      if (this.disposed || this.paused || this.manualOverride || this.polling) return;
       this.polling = true;
       try {
         await this.detect();
@@ -201,6 +202,11 @@ export class ModeDetector {
 
   isManualOverride(): boolean {
     return this.manualOverride !== null;
+  }
+
+  /** Pause process-name polling (unfocused pane — saves IPC + lsof calls). */
+  setPaused(paused: boolean): void {
+    this.paused = paused;
   }
 
   dispose(): void {

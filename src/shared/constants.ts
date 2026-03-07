@@ -33,6 +33,15 @@ export const IPC = {
   APP_FOCUS_PANE_DOWN: 'app:focus-pane-down',
   APP_FOCUS_PANE_LEFT: 'app:focus-pane-left',
   APP_FOCUS_PANE_RIGHT: 'app:focus-pane-right',
+
+  SESSION_GET: 'session:get',
+  SESSION_SET: 'session:set',
+  PTY_GET_CWD: 'pty:get-cwd',
+
+  APP_OPEN_IN_EDITOR: 'app:open-in-editor',
+  APP_SAVE_TERMINAL: 'app:save-terminal',
+  APP_BROADCAST_INPUT: 'app:broadcast-input',
+  APP_NOTIFY: 'app:notify',
 } as const;
 
 export const DEFAULTS = {
@@ -49,6 +58,8 @@ export const DEFAULTS = {
   FONT_SIZE_MIN: 8,
   FONT_SIZE_MAX: 72,
   NOTIFICATION_SOUND: true,
+  NOTIFICATION_SOUND_TYPE: 'chime' as const,
+  STARTUP_COMMAND: '' as const,
 } as const;
 
 export const PATTON_QUOTES = [

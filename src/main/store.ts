@@ -5,7 +5,7 @@ import { existsSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { hostname, userInfo } from 'node:os';
 import { DEFAULTS } from '../shared/constants';
-import type { HistoryEntry, AppSettings, WindowState } from '../shared/types';
+import type { HistoryEntry, AppSettings, WindowState, SessionState } from '../shared/types';
 
 // Machine-binding key for electron-store (obfuscation, not encryption against local attackers)
 function getEncryptionKey(): string {
@@ -29,6 +29,7 @@ interface StoreSchema {
   history: HistoryEntry[];
   settings: AppSettings;
   windowState: WindowState;
+  session: SessionState | null;
 }
 
 const defaults: StoreSchema = {
@@ -39,12 +40,18 @@ const defaults: StoreSchema = {
     scrollback: DEFAULTS.SCROLLBACK,
     shell: DEFAULTS.SHELL,
     notificationSound: DEFAULTS.NOTIFICATION_SOUND,
+    notificationSoundType: DEFAULTS.NOTIFICATION_SOUND_TYPE,
+    copyOnSelect: false,
+    globalHotkey: 'Control+`',
+    theme: 'system',
+    startupCommand: DEFAULTS.STARTUP_COMMAND,
   },
   windowState: {
     width: 900,
     height: 600,
     isMaximized: false,
   },
+  session: null,
 };
 
 let store: ElectronStore<StoreSchema> | null = null;
@@ -139,6 +146,38 @@ export function setSettings(partial: Partial<AppSettings>): void {
     validated.notificationSound = !!partial.notificationSound;
   }
 
+  if (partial.notificationSoundType !== undefined) {
+    const t = String(partial.notificationSoundType);
+    if (['chime', 'bugle', 'bullet'].includes(t)) {
+      validated.notificationSoundType = t;
+    }
+  }
+
+  if (partial.copyOnSelect !== undefined) {
+    validated.copyOnSelect = !!partial.copyOnSelect;
+  }
+
+  if (partial.globalHotkey !== undefined) {
+    const h = String(partial.globalHotkey);
+    if (h.length <= 50 && /^[a-zA-Z0-9+`]+$/.test(h)) {
+      validated.globalHotkey = h;
+    }
+  }
+
+  if (partial.theme !== undefined) {
+    const t = String(partial.theme);
+    if (t.length <= 50 && /^[a-zA-Z0-9-]+$/.test(t)) {
+      validated.theme = t;
+    }
+  }
+
+  if (partial.startupCommand !== undefined) {
+    const s = String(partial.startupCommand);
+    if (s.length <= 1000 && /^[\x20-\x7E]*$/.test(s)) {
+      validated.startupCommand = s;
+    }
+  }
+
   if (Object.keys(validated).length > 0) {
     const s = getStore();
     const current = s.get('settings', defaults.settings);
@@ -148,6 +187,54 @@ export function setSettings(partial: Partial<AppSettings>): void {
 
 export function getWindowState(): WindowState {
   return getStore().get('windowState', defaults.windowState);
+}
+
+export function getSession(): SessionState | null {
+  return getStore().get('session', null);
+}
+
+// --- Security: Deep validation for session tree nodes ---
+function isValidTreeNode(node: unknown, depth = 0): boolean {
+  // Guard against deeply nested structures (max 10 levels of splits)
+  if (depth > 10) return false;
+  if (!node || typeof node !== 'object') return false;
+
+  const obj = node as Record<string, unknown>;
+
+  // Split node
+  if (obj.type === 'split') {
+    if (obj.direction !== 'vertical' && obj.direction !== 'horizontal') return false;
+    if (typeof obj.ratio !== 'number' || obj.ratio < 0 || obj.ratio > 1) return false;
+    if (!Array.isArray(obj.children) || obj.children.length !== 2) return false;
+    return isValidTreeNode(obj.children[0], depth + 1) && isValidTreeNode(obj.children[1], depth + 1);
+  }
+
+  // Pane node (no 'type' property): must have 'cwd' string
+  if ('type' in obj) return false; // unknown type
+  if (typeof obj.cwd !== 'string' || obj.cwd.length > 4096) return false;
+  return true;
+}
+
+export function setSession(session: SessionState | null): void {
+  if (session === null) {
+    getStore().set('session', null);
+    return;
+  }
+  // Basic validation: must have tabs array with at least one tab
+  if (!session || !Array.isArray(session.tabs) || session.tabs.length === 0) return;
+  if (session.tabs.length > 100) return; // sanity cap
+  if (typeof session.activeTabIndex !== 'number' || session.activeTabIndex < 0) return;
+  if (session.activeTabIndex >= session.tabs.length) return;
+
+  // Deep-validate each tab's tree
+  for (const tab of session.tabs) {
+    if (!tab || typeof tab !== 'object') return;
+    if (typeof tab.focusedPaneIndex !== 'number' || tab.focusedPaneIndex < 0) return;
+    if (tab.title !== undefined && (typeof tab.title !== 'string' || tab.title.length > 500)) return;
+    if (!tab.tree || !isValidTreeNode(tab.tree)) return;
+  }
+
+  getStore().set('session', session);
 }
 
 export function setWindowState(state: WindowState): void {

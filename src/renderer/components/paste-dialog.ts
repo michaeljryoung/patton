@@ -5,6 +5,9 @@ export class PasteDialog {
   constructor(container: HTMLElement) {
     this.overlay = document.createElement('div');
     this.overlay.className = 'paste-dialog-overlay';
+    this.overlay.setAttribute('role', 'dialog');
+    this.overlay.setAttribute('aria-modal', 'true');
+    this.overlay.setAttribute('aria-label', 'Paste confirmation');
     this.overlay.innerHTML = `
       <div class="paste-dialog">
         <div class="paste-dialog-header">Paste Warning</div>
@@ -43,7 +46,7 @@ export class PasteDialog {
     const shown = lines.slice(0, 6).join('\n');
     preview.textContent = shown + (lines.length > 6 ? '\n...' : '');
     this.overlay.classList.add('visible');
-    (this.overlay.querySelector('.paste-dialog-confirm') as HTMLElement).focus();
+    (this.overlay.querySelector('.paste-dialog-cancel') as HTMLElement).focus();
 
     return new Promise<boolean>((resolve) => {
       this.resolve = resolve;

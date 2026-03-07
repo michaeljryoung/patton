@@ -81,6 +81,36 @@ export function closePane(
   return tree;
 }
 
+/** Swap two panes in the tree (mutates in place). Returns true if swap succeeded. */
+export function swapPanes(
+  tree: SplitTreeNode,
+  paneA: Pane,
+  paneB: Pane,
+): boolean {
+  if (paneA === paneB) return false;
+
+  // Find both parents and their child indices
+  type Location = { parent: SplitNode; index: 0 | 1 };
+  function findLocation(node: SplitTreeNode, target: Pane): Location | null {
+    if (isPane(node)) return null;
+    if (node.children[0] === target) return { parent: node, index: 0 };
+    if (node.children[1] === target) return { parent: node, index: 1 };
+    return findLocation(node.children[0], target) || findLocation(node.children[1], target);
+  }
+
+  // Handle case where one pane IS the root (single pane can't be in a split)
+  if (isPane(tree)) return false;
+
+  const locA = findLocation(tree, paneA);
+  const locB = findLocation(tree, paneB);
+  if (!locA || !locB) return false;
+
+  // Swap references in their parent nodes
+  locA.parent.children[locA.index] = paneB;
+  locB.parent.children[locB.index] = paneA;
+  return true;
+}
+
 /** Get all panes in the tree (left-to-right / top-to-bottom order). */
 export function getAllPanes(tree: SplitTreeNode): Pane[] {
   if (isPane(tree)) return [tree];

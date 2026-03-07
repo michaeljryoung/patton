@@ -29,6 +29,7 @@
   border-radius: 12px;
   box-shadow: 0 8px 32px var(--shadow);
   width: 420px;
+  max-width: 90vw;
   max-height: 80vh;
   overflow-y: auto;
 }
@@ -241,6 +242,7 @@ select.settings-input {
   border-radius: 10px;
   box-shadow: 0 8px 32px var(--shadow);
   width: 420px;
+  max-width: 90vw;
   max-height: 60vh;
   overflow: hidden;
 }
@@ -274,7 +276,8 @@ select.settings-input {
   max-height: 160px;
   overflow-y: auto;
   white-space: pre-wrap;
-  word-break: break-all;
+  overflow-wrap: break-word;
+  word-break: normal;
   margin: 0;
 }
 
@@ -339,6 +342,7 @@ select.settings-input {
   border-radius: 14px;
   box-shadow: 0 12px 40px var(--shadow);
   width: 440px;
+  max-width: 90vw;
   padding: 28px 32px;
   text-align: center;
 }
