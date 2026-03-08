@@ -93,3 +93,17 @@ out/
 
 # Local code signing certs (private keys)
 build/signing/
+*.pem
+*.p12
+*.key
+
+# Personal dev tool configs
+.serena/
+CLAUDE.md
+
+# Editor configs
+.vscode/
+.idea/
+
+# Build output
+dist/
