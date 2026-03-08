@@ -36,6 +36,7 @@ export interface AppSettings {
   theme: string;
   startupCommand: string;
   opacity: number;
+  restoreSession: boolean;
 }
 
 export type InputMode = 'editor' | 'passthrough';

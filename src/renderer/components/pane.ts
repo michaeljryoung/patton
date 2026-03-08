@@ -47,11 +47,7 @@ export class Pane {
   private submitTimer: ReturnType<typeof setTimeout> | null = null;
   private initialCwd: string | undefined;
   private currentCwd = '';
-  // Idle detection: fire notification when output burst is followed by silence
-  private idleTimer: ReturnType<typeof setTimeout> | null = null;
-  private outputSinceNotify = 0;
-  private static readonly IDLE_MS = 3000; // Silence threshold
-  private static readonly MIN_OUTPUT = 50; // Minimum chars to count as "activity"
+
 
   constructor(callbacks: PaneCallbacks) {
     this.id = `pane-${++paneIdCounter}`;
@@ -96,6 +92,9 @@ export class Pane {
       onHistoryDown: () => this.historyManager.down(),
       onTab: () => this.handleTab(),
       onEscape: () => this.handleEscape(),
+      onPassthroughInput: (data) => {
+        if (this.ptyId !== null) window.patton.pty.write(this.ptyId, data);
+      },
     });
 
     // Create search overlay
@@ -170,19 +169,6 @@ export class Pane {
           this.terminalView.write(data);
           this.modeDetector?.checkData(data);
           this.modeDetector?.checkBuffer();
-          // Idle detection: track output bursts in passthrough mode.
-          // When a TUI program (Claude, etc.) produces output then goes silent,
-          // fire the notification so the user knows it finished.
-          if (this.mode === 'passthrough') {
-            this.outputSinceNotify += data.length;
-            if (this.idleTimer) clearTimeout(this.idleTimer);
-            this.idleTimer = setTimeout(() => {
-              if (this.outputSinceNotify >= Pane.MIN_OUTPUT) {
-                this.outputSinceNotify = 0;
-                this.callbacks.onCommandDone?.();
-              }
-            }, Pane.IDLE_MS);
-          }
         }
       }),
     );
@@ -438,10 +424,6 @@ export class Pane {
     this.mode = mode;
     const isManual = this.modeDetector?.isManualOverride() ?? false;
 
-    // Reset idle detection on mode change
-    this.outputSinceNotify = 0;
-    if (this.idleTimer) { clearTimeout(this.idleTimer); this.idleTimer = null; }
-
     // Notify when a command finishes (passthrough → editor transition)
     if (prevMode === 'passthrough' && mode === 'editor') {
       this.callbacks.onCommandDone?.();
@@ -451,6 +433,7 @@ export class Pane {
       // User explicitly toggled passthrough (Ctrl+Shift+P) — full terminal control
       // for vim, htop, etc. that need direct keystroke access.
       this.editorInput.hide();
+      this.editorInput.setPassthroughMode(false);
       this.editorContainer.classList.remove('passthrough');
       this.terminalView.setKeyboardEnabled(true);
       this.terminalView.focus();
@@ -458,13 +441,16 @@ export class Pane {
       // Auto-detected passthrough — editor is the sole keyboard input.
       // Terminal is display-only; keyboard blocked so clicks on terminal
       // can't steal input. Submit sends text to the running program.
+      // Arrow keys forwarded to PTY when textarea is empty (for TUI selectors).
       this.editorInput.show();
+      this.editorInput.setPassthroughMode(true);
       this.editorInput.focus();
       this.editorContainer.classList.add('passthrough');
       this.terminalView.setKeyboardEnabled(false);
     } else {
       // Editor mode — normal shell usage.
       this.editorInput.show();
+      this.editorInput.setPassthroughMode(false);
       this.editorInput.focus();
       this.editorContainer.classList.remove('passthrough');
       this.terminalView.setKeyboardEnabled(false);
@@ -645,7 +631,6 @@ export class Pane {
   dispose(): void {
     if (this.resizeTimer) clearTimeout(this.resizeTimer);
     if (this.submitTimer) clearTimeout(this.submitTimer);
-    if (this.idleTimer) clearTimeout(this.idleTimer);
     for (const d of this.disposables) d();
     if (this.ptyId !== null && !this.ptyExited) {
       window.patton.pty.destroy(this.ptyId);

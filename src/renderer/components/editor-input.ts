@@ -5,12 +5,14 @@ export interface EditorInputCallbacks {
   onHistoryDown: () => string | null;
   onTab: () => void;
   onEscape?: () => void;
+  onPassthroughInput?: (data: string) => void;
 }
 
 export class EditorInput {
   private textarea: HTMLTextAreaElement;
   private container: HTMLElement;
   private callbacks: EditorInputCallbacks;
+  private _passthroughMode = false;
 
   constructor(container: HTMLElement, callbacks: EditorInputCallbacks, fontSize?: number) {
     this.container = container;
@@ -45,6 +47,11 @@ export class EditorInput {
       }
 
       if (e.key === 'ArrowUp' && this.textarea.selectionStart === 0) {
+        if (this._passthroughMode && !this.textarea.value) {
+          this.callbacks.onPassthroughInput?.('\x1b[A');
+          e.preventDefault();
+          return;
+        }
         const prev = this.callbacks.onHistoryUp();
         if (prev !== null) {
           this.setValue(prev);
@@ -54,6 +61,11 @@ export class EditorInput {
       }
 
       if (e.key === 'ArrowDown' && this.textarea.selectionStart === this.textarea.value.length) {
+        if (this._passthroughMode && !this.textarea.value) {
+          this.callbacks.onPassthroughInput?.('\x1b[B');
+          e.preventDefault();
+          return;
+        }
         const next = this.callbacks.onHistoryDown();
         if (next !== null) {
           this.setValue(next);
@@ -125,6 +137,13 @@ export class EditorInput {
   }
 
   /** Physically enable/disable the textarea to prevent unfocused panes from stealing keyboard focus. */
+  setPassthroughMode(enabled: boolean): void {
+    this._passthroughMode = enabled;
+    this.textarea.placeholder = enabled
+      ? 'Type here, Enter to send (arrows → PTY)'
+      : 'Enter to send, Shift+Enter for newline';
+  }
+
   setInteractive(interactive: boolean): void {
     if (interactive) {
       this.textarea.removeAttribute('disabled');

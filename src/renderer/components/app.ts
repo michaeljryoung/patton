@@ -136,27 +136,33 @@ export class App {
     if (settings.shell) this.quickTerminal.setShell(settings.shell);
     this.quickTerminal.setHistoryManager(this.tabManager['sharedHistory']);
 
-    // Try to restore previous session
-    const restored = await this.tabManager.restoreSession();
+    // Try to restore previous session (if enabled)
+    // Restore previous session if enabled, otherwise start fresh
+    const restored = settings.restoreSession !== false
+      ? await this.tabManager.restoreSession()
+      : false;
 
     if (!restored) {
-      // Create initial tab
-      const firstTab = await this.tabManager.createTab();
+      await this.tabManager.createTab();
 
       // Show onboarding on first run
       if (Onboarding.shouldShow()) {
         const onboarding = new Onboarding(document.getElementById('app')!);
         onboarding.show();
       }
+    }
 
-      // Execute startup command on fresh launch (first tab only)
-      // Small delay to let the shell initialize before sending input
-      if (settings.startupCommand && firstTab.ptyId !== null) {
-        const ptyId = firstTab.ptyId;
+    // Execute startup command in the active tab (restored or fresh).
+    // Restore only recovers tab layout + scrollback — all PTYs are fresh shells,
+    // so the startup command is always safe to run.
+    if (settings.startupCommand) {
+      const activeTab = this.tabManager.getActiveTab();
+      const ptyId = activeTab?.ptyId ?? null;
+      if (ptyId !== null) {
         const cmd = settings.startupCommand;
         setTimeout(() => {
           window.patton.pty.write(ptyId, cmd + '\r');
-        }, 300);
+        }, 500);
       }
     }
 

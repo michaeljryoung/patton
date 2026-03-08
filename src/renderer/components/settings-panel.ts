@@ -107,7 +107,15 @@ export class SettingsPanel {
           <div class="settings-group">
             <label class="settings-label" for="setting-startup-command">Startup Command</label>
             <input class="settings-input" id="setting-startup-command" type="text" placeholder="e.g., claude" />
-            <span class="settings-hint">Run this command when Patton launches (first tab only)</span>
+            <span class="settings-hint">Run this command when Patton launches (fresh tabs only)</span>
+          </div>
+          <div class="settings-group settings-group-toggle">
+            <label class="settings-label" for="setting-restore-session">Restore Session</label>
+            <label class="settings-toggle">
+              <input type="checkbox" id="setting-restore-session" />
+              <span class="settings-toggle-slider"></span>
+            </label>
+            <span class="settings-hint">Reopen tabs from your last session on launch</span>
           </div>
           <div class="shortcuts-section">
             <h3 class="shortcuts-title">Keyboard Shortcuts</h3>
@@ -207,6 +215,11 @@ export class SettingsPanel {
     startupCommandInput.addEventListener('change', () => {
       this.saveAndNotify({ startupCommand: startupCommandInput.value });
     });
+
+    const restoreSessionInput = this.overlay.querySelector('#setting-restore-session') as HTMLInputElement;
+    restoreSessionInput.addEventListener('change', () => {
+      this.saveAndNotify({ restoreSession: restoreSessionInput.checked });
+    });
   }
 
   private saveAndNotify(settings: Partial<AppSettings>): void {
@@ -241,6 +254,7 @@ export class SettingsPanel {
     (this.overlay.querySelector('#setting-notification-sound-type') as HTMLSelectElement).value = settings.notificationSoundType || 'chime';
     (this.overlay.querySelector('#setting-copy-on-select') as HTMLInputElement).checked = settings.copyOnSelect === true;
     (this.overlay.querySelector('#setting-startup-command') as HTMLInputElement).value = settings.startupCommand || '';
+    (this.overlay.querySelector('#setting-restore-session') as HTMLInputElement).checked = settings.restoreSession !== false;
 
     (this.overlay.querySelector('#setting-theme') as HTMLSelectElement).value = settings.theme || 'system';
 

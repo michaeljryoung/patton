@@ -46,6 +46,7 @@ const defaults: StoreSchema = {
     theme: 'system',
     startupCommand: DEFAULTS.STARTUP_COMMAND,
     opacity: 1.0,
+    restoreSession: true,
   },
   windowState: {
     width: 900,
@@ -177,6 +178,10 @@ export function setSettings(partial: Partial<AppSettings>): void {
     if (s.length <= 1000 && /^[\x20-\x7E]*$/.test(s)) {
       validated.startupCommand = s;
     }
+  }
+
+  if (partial.restoreSession !== undefined) {
+    validated.restoreSession = !!partial.restoreSession;
   }
 
   if (partial.opacity !== undefined) {
