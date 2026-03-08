@@ -296,6 +296,49 @@ export class TerminalView {
     return () => disposable.dispose();
   }
 
+  /** Heuristic prompt detection: lines starting with common prompt patterns */
+  private isPromptLine(line: string): boolean {
+    const trimmed = line.trimStart();
+    if (!trimmed) return false;
+    // Common prompt endings: $, %, >, #, ❯, ➜, λ, →
+    // Also match user@host:path$ patterns and (venv) prefixes
+    return /^(\([^)]+\)\s*)?(\S+[@:]\S+\s*)?[%$#>❯➜λ→]\s*/.test(trimmed) ||
+           /^(\([^)]+\)\s*)?[a-zA-Z0-9._-]+\s*[%$#>❯➜λ→]\s/.test(trimmed);
+  }
+
+  /** Find prompt lines in the terminal buffer and jump to them */
+  jumpToPrompt(direction: 'up' | 'down'): void {
+    const buffer = this.terminal.buffer.active;
+    const currentViewport = buffer.viewportY;
+    const cursorRow = buffer.cursorY + buffer.viewportY;
+
+    if (direction === 'up') {
+      // Search upward from current viewport position
+      for (let i = currentViewport - 1; i >= 0; i--) {
+        const line = buffer.getLine(i);
+        if (line && this.isPromptLine(line.translateToString(true))) {
+          // Scroll so the prompt line is near the top of viewport
+          const scrollTarget = Math.max(0, i - 1);
+          this.terminal.scrollToLine(scrollTarget);
+          return;
+        }
+      }
+    } else {
+      // Search downward from current viewport position
+      const startFrom = currentViewport + this.terminal.rows;
+      for (let i = startFrom; i < buffer.length; i++) {
+        const line = buffer.getLine(i);
+        if (line && this.isPromptLine(line.translateToString(true))) {
+          const scrollTarget = Math.max(0, i - 1);
+          this.terminal.scrollToLine(scrollTarget);
+          return;
+        }
+      }
+      // If no prompt found below, scroll to bottom
+      this.terminal.scrollToBottom();
+    }
+  }
+
   dispose(): void {
     this.disposed = true;
     this.mediaQuery.removeEventListener('change', this.themeHandler);

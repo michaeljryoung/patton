@@ -45,6 +45,7 @@ const defaults: StoreSchema = {
     globalHotkey: 'Control+`',
     theme: 'system',
     startupCommand: DEFAULTS.STARTUP_COMMAND,
+    opacity: 1.0,
   },
   windowState: {
     width: 900,
@@ -175,6 +176,13 @@ export function setSettings(partial: Partial<AppSettings>): void {
     const s = String(partial.startupCommand);
     if (s.length <= 1000 && /^[\x20-\x7E]*$/.test(s)) {
       validated.startupCommand = s;
+    }
+  }
+
+  if (partial.opacity !== undefined) {
+    const n = Number(partial.opacity);
+    if (!isNaN(n) && n >= 0.3 && n <= 1.0) {
+      validated.opacity = Math.round(n * 100) / 100; // Round to 2 decimal places
     }
   }
 

@@ -147,8 +147,44 @@ const api: PattonAPI = {
       ipcRenderer.on(IPC.APP_SWITCH_TAB + ':id', listener);
       return () => ipcRenderer.removeListener(IPC.APP_SWITCH_TAB + ':id', listener);
     },
+    onSplitZoom: (cb) => {
+      const listener = () => cb();
+      ipcRenderer.on(IPC.APP_SPLIT_ZOOM, listener);
+      return () => ipcRenderer.removeListener(IPC.APP_SPLIT_ZOOM, listener);
+    },
+    onFloatOnTop: (cb) => {
+      const listener = () => cb();
+      ipcRenderer.on(IPC.APP_FLOAT_ON_TOP, listener);
+      return () => ipcRenderer.removeListener(IPC.APP_FLOAT_ON_TOP, listener);
+    },
+    onUndoClose: (cb) => {
+      const listener = () => cb();
+      ipcRenderer.on(IPC.APP_UNDO_CLOSE, listener);
+      return () => ipcRenderer.removeListener(IPC.APP_UNDO_CLOSE, listener);
+    },
+    onCommandPalette: (cb) => {
+      const listener = () => cb();
+      ipcRenderer.on(IPC.APP_COMMAND_PALETTE, listener);
+      return () => ipcRenderer.removeListener(IPC.APP_COMMAND_PALETTE, listener);
+    },
+    onPromptJumpUp: (cb) => {
+      const listener = () => cb();
+      ipcRenderer.on(IPC.APP_PROMPT_JUMP_UP, listener);
+      return () => ipcRenderer.removeListener(IPC.APP_PROMPT_JUMP_UP, listener);
+    },
+    onPromptJumpDown: (cb) => {
+      const listener = () => cb();
+      ipcRenderer.on(IPC.APP_PROMPT_JUMP_DOWN, listener);
+      return () => ipcRenderer.removeListener(IPC.APP_PROMPT_JUMP_DOWN, listener);
+    },
+    onQuickTerminal: (cb) => {
+      const listener = () => cb();
+      ipcRenderer.on(IPC.APP_QUICK_TERMINAL, listener);
+      return () => ipcRenderer.removeListener(IPC.APP_QUICK_TERMINAL, listener);
+    },
   },
   notify: (title, body, tabId) => ipcRenderer.send(IPC.APP_NOTIFY, title, body, tabId),
+  setOpacity: (opacity) => ipcRenderer.send(IPC.APP_SET_OPACITY, opacity),
 };
 
 contextBridge.exposeInMainWorld('patton', api);

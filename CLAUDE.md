@@ -33,11 +33,13 @@ src/
 │   │   ├── editor-input.ts   # CodeMirror wrapper (keybindings, submit flash)
 │   │   ├── search-overlay.ts # Cmd+F search with match count + animations
 │   │   ├── settings-panel.ts # Settings UI + keyboard shortcuts reference
+│   │   ├── command-palette.ts# Cmd+Shift+P searchable action list
+│   │   ├── quick-terminal.ts # Drop-down terminal (quake-style)
 │   │   ├── paste-dialog.ts   # Multi-line paste confirmation
 │   │   ├── context-menu.ts   # Right-click context menu
 │   │   └── onboarding.ts     # First-run welcome overlay
 │   └── services/
-│       ├── tab-manager.ts    # Tab lifecycle + switching + reorder
+│       ├── tab-manager.ts    # Tab lifecycle + switching + reorder + undo close
 │       ├── mode-detector.ts  # Editor ↔ Passthrough auto-detection
 │       ├── history-manager.ts
 │       └── keybinding-manager.ts
@@ -92,7 +94,20 @@ src/
 Feature-complete with performance optimizations; builds and runs. Ready for distribution testing.
 
 ## Last Session
-**2026-03-07**
+**2026-03-07 (session 3)**
+- Implemented 10 UI/UX improvements inspired by Ghostty, focused on Claude Code users:
+  1. **Split Zoom** (`Cmd+Shift+Enter`): Toggle focused pane to fullscreen within a tab
+  2. **Command Palette** (`Cmd+Shift+P`): Searchable action list with fuzzy filtering, arrow keys, 20 actions
+  3. **Undo Close Terminal** (`Cmd+Shift+T`): Ring buffer (max 10) saves CWD + scrollback + title, reopens as new tab with dimmed scrollback
+  4. **Prompt Jumping** (`Cmd+Shift+Up/Down`): Heuristic prompt detection (regex matching $, %, >, #, ❯, ➜, λ, →, user@host) to navigate shell prompts in scrollback
+  5. **Quick Terminal**: Drop-down quake-style terminal panel (50vh height, slides from top, own PTY, lazy init)
+  6. **Background Opacity**: Settings slider (30-100%), `BrowserWindow.setOpacity()`, live preview
+  7. **Synchronized Rendering**: Already working via `allowProposedApi: true` — no changes needed
+  8. **Window Float on Top**: Checkbox in Window menu, `BrowserWindow.setAlwaysOnTop()`
+  9. **CWD Inheritance**: New tabs/splits inherit CWD from focused pane
+  10. **13 New Themes**: Catppuccin Mocha/Latte, Gruvbox Dark/Light, Rosé Pine/Dawn, Kanagawa, GitHub Dark/Light, Everforest Dark, Horizon, Ayu Dark/Light (19 total)
+
+**2026-03-07 (session 2)**
 - Added notification sound selection (Chime/Bugle/Bullet) with Web Audio API synthesis and settings dropdown with live preview
 - Added startup command setting (runs on first tab of fresh launch only, not on session restore)
 - Fixed settings panel dropdown disappearing (300ms focus poll in pane.ts was stealing focus — added `Pane.isOverlayFocused()` guard)

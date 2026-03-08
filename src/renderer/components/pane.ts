@@ -536,6 +536,10 @@ export class Pane {
     this.terminalView.setCustomTheme(theme);
   }
 
+  jumpToPrompt(direction: 'up' | 'down'): void {
+    this.terminalView.jumpToPrompt(direction);
+  }
+
   private setupDragHandle(handle: HTMLElement): void {
     let dragging = false;
     let overlay: HTMLElement | null = null;
@@ -628,6 +632,10 @@ export class Pane {
     } else {
       this.editorInput.setInteractive(false);
     }
+  }
+
+  getCwd(): string {
+    return this.currentCwd;
   }
 
   clear(): void {

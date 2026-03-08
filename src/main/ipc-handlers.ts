@@ -245,6 +245,16 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
     return ptyManager.getCwd(id);
   });
 
+  // --- Set window opacity ---
+  ipcMain.on(IPC.APP_SET_OPACITY, (event, opacity: number) => {
+    if (typeof opacity !== 'number' || !Number.isFinite(opacity)) return;
+    const clamped = Math.max(0.3, Math.min(1.0, opacity));
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (window && !window.isDestroyed()) {
+      window.setOpacity(clamped);
+    }
+  });
+
   // --- Native notification ---
   // Store references to prevent GC (known Electron bug)
   const activeNotifications: Set<Notification> = new Set();

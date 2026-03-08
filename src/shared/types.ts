@@ -35,6 +35,7 @@ export interface AppSettings {
   globalHotkey: string;
   theme: string;
   startupCommand: string;
+  opacity: number;
 }
 
 export type InputMode = 'editor' | 'passthrough';
@@ -117,8 +118,16 @@ export interface PattonAPI {
     onSaveTerminal: (callback: () => void) => () => void;
     onBroadcastInput: (callback: () => void) => () => void;
     onSwitchTabById: (callback: (id: string) => void) => () => void;
+    onSplitZoom: (callback: () => void) => () => void;
+    onFloatOnTop: (callback: () => void) => () => void;
+    onUndoClose: (callback: () => void) => () => void;
+    onCommandPalette: (callback: () => void) => () => void;
+    onPromptJumpUp: (callback: () => void) => () => void;
+    onPromptJumpDown: (callback: () => void) => () => void;
+    onQuickTerminal: (callback: () => void) => () => void;
   };
   notify: (title: string, body: string, tabId: string) => void;
+  setOpacity: (opacity: number) => void;
 }
 
 declare global {

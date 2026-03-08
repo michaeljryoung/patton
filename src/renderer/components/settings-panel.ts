@@ -57,6 +57,19 @@ export class SettingsPanel {
               <option value="one-dark">One Dark</option>
               <option value="monokai">Monokai</option>
               <option value="tokyo-night">Tokyo Night</option>
+              <option value="catppuccin-mocha">Catppuccin Mocha</option>
+              <option value="catppuccin-latte">Catppuccin Latte</option>
+              <option value="gruvbox-dark">Gruvbox Dark</option>
+              <option value="gruvbox-light">Gruvbox Light</option>
+              <option value="rose-pine">Rosé Pine</option>
+              <option value="rose-pine-dawn">Rosé Pine Dawn</option>
+              <option value="kanagawa">Kanagawa</option>
+              <option value="github-dark">GitHub Dark</option>
+              <option value="github-light">GitHub Light</option>
+              <option value="everforest-dark">Everforest Dark</option>
+              <option value="horizon">Horizon</option>
+              <option value="ayu-dark">Ayu Dark</option>
+              <option value="ayu-light">Ayu Light</option>
             </select>
           </div>
           <div class="settings-group settings-group-toggle">
@@ -84,6 +97,14 @@ export class SettingsPanel {
             <span class="settings-hint">Auto-copy selected text to clipboard</span>
           </div>
           <div class="settings-group">
+            <label class="settings-label" for="setting-opacity">Window Opacity</label>
+            <div class="settings-range-row">
+              <input class="settings-range" id="setting-opacity" type="range" min="30" max="100" step="5" />
+              <span class="settings-range-value" id="setting-opacity-value">100%</span>
+            </div>
+            <span class="settings-hint">Make the window semi-transparent to see content behind it</span>
+          </div>
+          <div class="settings-group">
             <label class="settings-label" for="setting-startup-command">Startup Command</label>
             <input class="settings-input" id="setting-startup-command" type="text" placeholder="e.g., claude" />
             <span class="settings-hint">Run this command when Patton launches (first tab only)</span>
@@ -99,6 +120,10 @@ export class SettingsPanel {
               <kbd>\u2318K</kbd><span>Clear terminal</span>
               <kbd>\u2318F</kbd><span>Find</span>
               <kbd>\u2318,</kbd><span>Settings</span>
+              <kbd>\u2318\u21E7\u23CE</kbd><span>Zoom split</span>
+              <kbd>\u2318\u21E7T</kbd><span>Reopen closed tab</span>
+              <kbd>\u2318\u21E7P</kbd><span>Command palette</span>
+              <kbd>\u2318\u21E7\u2191\u2193</kbd><span>Jump between prompts</span>
               <kbd>\u2303\u21E7P</kbd><span>Toggle passthrough</span>
               <kbd>\u2303R</kbd><span>History search</span>
             </div>
@@ -168,6 +193,16 @@ export class SettingsPanel {
       this.saveAndNotify({ notificationSoundType: soundTypeInput.value });
     });
 
+    const opacityInput = this.overlay.querySelector('#setting-opacity') as HTMLInputElement;
+    const opacityValue = this.overlay.querySelector('#setting-opacity-value') as HTMLSpanElement;
+    opacityInput.addEventListener('input', () => {
+      const pct = parseInt(opacityInput.value, 10);
+      opacityValue.textContent = `${pct}%`;
+      const opacity = pct / 100;
+      window.patton.setOpacity(opacity);
+      this.saveAndNotify({ opacity });
+    });
+
     const startupCommandInput = this.overlay.querySelector('#setting-startup-command') as HTMLInputElement;
     startupCommandInput.addEventListener('change', () => {
       this.saveAndNotify({ startupCommand: startupCommandInput.value });
@@ -208,6 +243,10 @@ export class SettingsPanel {
     (this.overlay.querySelector('#setting-startup-command') as HTMLInputElement).value = settings.startupCommand || '';
 
     (this.overlay.querySelector('#setting-theme') as HTMLSelectElement).value = settings.theme || 'system';
+
+    const opacityPct = Math.round((settings.opacity ?? 1.0) * 100);
+    (this.overlay.querySelector('#setting-opacity') as HTMLInputElement).value = String(opacityPct);
+    (this.overlay.querySelector('#setting-opacity-value') as HTMLSpanElement).textContent = `${opacityPct}%`;
 
     const select = this.overlay.querySelector('#setting-font-family') as HTMLSelectElement;
     const options = Array.from(select.options);

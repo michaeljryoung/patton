@@ -42,6 +42,15 @@ export const IPC = {
   APP_SAVE_TERMINAL: 'app:save-terminal',
   APP_BROADCAST_INPUT: 'app:broadcast-input',
   APP_NOTIFY: 'app:notify',
+
+  APP_SPLIT_ZOOM: 'app:split-zoom',
+  APP_FLOAT_ON_TOP: 'app:float-on-top',
+  APP_UNDO_CLOSE: 'app:undo-close',
+  APP_COMMAND_PALETTE: 'app:command-palette',
+  APP_PROMPT_JUMP_UP: 'app:prompt-jump-up',
+  APP_PROMPT_JUMP_DOWN: 'app:prompt-jump-down',
+  APP_QUICK_TERMINAL: 'app:quick-terminal',
+  APP_SET_OPACITY: 'app:set-opacity',
 } as const;
 
 export const DEFAULTS = {

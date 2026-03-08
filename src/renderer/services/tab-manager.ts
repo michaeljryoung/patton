@@ -5,6 +5,12 @@ import { HistoryManager } from './history-manager';
 import type { SessionState } from '../../shared/types';
 import type { ITheme } from '@xterm/xterm';
 
+interface ClosedPaneState {
+  cwd: string;
+  scrollback: string;
+  title: string;
+}
+
 export class TabManager {
   private tabs: Tab[] = [];
   private activeTab: Tab | null = null;
@@ -18,6 +24,10 @@ export class TabManager {
   private panesByPtyId: Map<number, Pane> = new Map();
   private currentShell: string | undefined;
   private sharedHistory: HistoryManager = new HistoryManager();
+  private closedPanes: ClosedPaneState[] = [];
+  private static readonly MAX_CLOSED = 10;
+  private currentCopyOnSelect = false;
+  private currentTerminalTheme: ITheme | null = null;
 
   constructor(
     tabBarContainer: HTMLElement,
@@ -98,19 +108,23 @@ export class TabManager {
   }
 
   setCopyOnSelect(enabled: boolean): void {
+    this.currentCopyOnSelect = enabled;
     for (const tab of this.tabs) {
       tab.setCopyOnSelect(enabled);
     }
   }
 
   setTerminalTheme(theme: ITheme | null): void {
+    this.currentTerminalTheme = theme;
     for (const tab of this.tabs) {
       tab.setTerminalTheme(theme);
     }
   }
 
-  async createTab(): Promise<Tab> {
-    const tab = new Tab();
+  async createTab(cwd?: string): Promise<Tab> {
+    // Inherit CWD from active tab's focused pane if not specified
+    const inheritCwd = cwd || this.getActiveCwd();
+    const tab = new Tab(inheritCwd);
     if (this.currentShell) tab.setShell(this.currentShell);
     tab.setHistoryManager(this.sharedHistory);
     tab.setRegistrationCallbacks(
@@ -219,6 +233,11 @@ export class TabManager {
       if (!proceed) return;
     }
 
+    // Save pane state for undo before disposing
+    for (const pane of tab.panes) {
+      this.saveClosedPane(pane);
+    }
+
     tab.dispose();
     this.tabs.splice(idx, 1);
 
@@ -246,16 +265,22 @@ export class TabManager {
     if (this.activeTab.panes.length <= 1) {
       await this.closeById(this.activeTab.id);
     } else {
+      // Save focused pane state before closing it
+      this.saveClosedPane(this.activeTab.focusedPane);
       this.activeTab.closePane();
     }
   }
 
   splitVertical(): void {
-    this.activeTab?.splitVertical().catch(console.error);
+    this.activeTab?.splitVertical(this.getActiveCwd()).catch(console.error);
   }
 
   splitHorizontal(): void {
-    this.activeTab?.splitHorizontal().catch(console.error);
+    this.activeTab?.splitHorizontal(this.getActiveCwd()).catch(console.error);
+  }
+
+  private getActiveCwd(): string | undefined {
+    return this.activeTab?.focusedPane?.getCwd() || undefined;
   }
 
   focusPaneInDirection(direction: 'up' | 'down' | 'left' | 'right'): void {
@@ -352,6 +377,53 @@ export class TabManager {
       await window.patton.session.set(null).catch(() => {});
       return false;
     }
+  }
+
+  private saveClosedPane(pane: Pane): void {
+    const state: ClosedPaneState = {
+      cwd: pane.getCwd() || '',
+      scrollback: pane.getScrollbackContent() || '',
+      title: pane.title || 'Terminal',
+    };
+    this.closedPanes.push(state);
+    if (this.closedPanes.length > TabManager.MAX_CLOSED) {
+      this.closedPanes.shift();
+    }
+  }
+
+  /** Reopen the most recently closed pane as a new tab */
+  async reopenClosed(): Promise<void> {
+    const state = this.closedPanes.pop();
+    if (!state) return;
+
+    const tab = await this.createTab(state.cwd || undefined);
+    // Write the saved scrollback content to the new terminal
+    if (state.scrollback) {
+      const focusedPane = tab.focusedPane;
+      // Write scrollback as dimmed text so it's visually distinct from new output
+      focusedPane.terminalView.write(
+        `\x1b[2m${state.scrollback.replace(/\n/g, '\r\n')}\x1b[0m\r\n`
+      );
+    }
+    if (state.title && state.title !== 'Terminal') {
+      tab.setCustomTitle(state.title);
+    }
+  }
+
+  hasClosedPanes(): boolean {
+    return this.closedPanes.length > 0;
+  }
+
+  // ---- Split zoom ----
+
+  toggleZoom(): void {
+    this.activeTab?.toggleZoom();
+  }
+
+  // ---- Prompt jumping ----
+
+  jumpToPrompt(direction: 'up' | 'down'): void {
+    this.activeTab?.jumpToPrompt(direction);
   }
 
   private updateTabBar(): void {

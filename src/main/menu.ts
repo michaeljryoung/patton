@@ -72,6 +72,13 @@ export function buildMenu(ptyManager?: PtyManager): void {
             (window as BrowserWindow | undefined)?.webContents.send(IPC.APP_SPLIT_HORIZONTAL);
           },
         },
+        {
+          label: 'Zoom Split',
+          accelerator: 'CmdOrCtrl+Shift+Enter',
+          click: (_item, window) => {
+            (window as BrowserWindow | undefined)?.webContents.send(IPC.APP_SPLIT_ZOOM);
+          },
+        },
         { type: 'separator' },
         {
           label: 'Broadcast Input',
@@ -86,6 +93,13 @@ export function buildMenu(ptyManager?: PtyManager): void {
           accelerator: 'CmdOrCtrl+N',
           click: () => {
             createWindow(ptyManager);
+          },
+        },
+        {
+          label: 'Reopen Closed Tab',
+          accelerator: 'CmdOrCtrl+Shift+T',
+          click: (_item, window) => {
+            (window as BrowserWindow | undefined)?.webContents.send(IPC.APP_UNDO_CLOSE);
           },
         },
       ],
@@ -136,6 +150,35 @@ export function buildMenu(ptyManager?: PtyManager): void {
           },
         },
         { type: 'separator' },
+        {
+          label: 'Jump to Previous Prompt',
+          accelerator: 'CmdOrCtrl+Shift+Up',
+          click: (_item, window) => {
+            (window as BrowserWindow | undefined)?.webContents.send(IPC.APP_PROMPT_JUMP_UP);
+          },
+        },
+        {
+          label: 'Jump to Next Prompt',
+          accelerator: 'CmdOrCtrl+Shift+Down',
+          click: (_item, window) => {
+            (window as BrowserWindow | undefined)?.webContents.send(IPC.APP_PROMPT_JUMP_DOWN);
+          },
+        },
+        { type: 'separator' },
+        {
+          label: 'Command Palette',
+          accelerator: 'CmdOrCtrl+Shift+P',
+          click: (_item, window) => {
+            (window as BrowserWindow | undefined)?.webContents.send(IPC.APP_COMMAND_PALETTE);
+          },
+        },
+        {
+          label: 'Quick Terminal',
+          click: (_item, window) => {
+            (window as BrowserWindow | undefined)?.webContents.send(IPC.APP_QUICK_TERMINAL);
+          },
+        },
+        { type: 'separator' },
         ...(!app.isPackaged ? [
           { role: 'reload' as const },
           { role: 'toggleDevTools' as const },
@@ -171,6 +214,18 @@ export function buildMenu(ptyManager?: PtyManager): void {
             (window as BrowserWindow | undefined)?.webContents.send(IPC.APP_SWITCH_TAB, i);
           },
         })),
+        { type: 'separator' },
+        {
+          label: 'Float on Top',
+          type: 'checkbox',
+          checked: false,
+          click: (item, window) => {
+            const win = window as BrowserWindow | undefined;
+            if (win) {
+              win.setAlwaysOnTop(item.checked);
+            }
+          },
+        },
         { type: 'separator' },
         { role: 'front' as const },
       ],

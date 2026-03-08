@@ -30,10 +30,11 @@ export class Tab {
   title = 'Terminal';
   private _customTitle = false;
   private _broadcastInput = false;
+  private _zoomed = false;
   private _shell: string | undefined;
   private _historyManager: HistoryManager | undefined;
 
-  constructor() {
+  constructor(initialCwd?: string) {
     this.id = `tab-${++tabIdCounter}`;
 
     // Create DOM structure
@@ -42,8 +43,8 @@ export class Tab {
     this.element.id = this.id;
     this.element.setAttribute('role', 'tabpanel');
 
-    // Create the initial pane
-    const pane = this.createPaneInstance();
+    // Create the initial pane (inherit CWD if provided)
+    const pane = this.createPaneInstance(initialCwd);
     this._focusedPane = pane;
     this.rootNode = pane;
     this.element.appendChild(pane.element);
@@ -162,20 +163,22 @@ export class Tab {
 
   // ---- Split operations ----
 
-  async splitVertical(): Promise<void> {
-    await this.split('vertical');
+  async splitVertical(cwd?: string): Promise<void> {
+    await this.split('vertical', cwd);
   }
 
-  async splitHorizontal(): Promise<void> {
-    await this.split('horizontal');
+  async splitHorizontal(cwd?: string): Promise<void> {
+    await this.split('horizontal', cwd);
   }
 
   private splitting = false;
-  private async split(direction: SplitDirection): Promise<void> {
+  private async split(direction: SplitDirection, cwd?: string): Promise<void> {
     if (this.splitting) return; // Prevent concurrent splits
     this.splitting = true;
     try {
-      const newPane = this.createPaneInstance();
+      // Use provided CWD (from focused pane) or fall back to focused pane's CWD
+      const inheritedCwd = cwd || this._focusedPane.getCwd() || undefined;
+      const newPane = this.createPaneInstance(inheritedCwd);
 
       // Update tree
       this.rootNode = splitPaneInTree(this.rootNode, this._focusedPane, newPane, direction);
@@ -380,6 +383,64 @@ export class Tab {
     for (const pane of this._panes) {
       pane.setTerminalTheme(theme);
     }
+  }
+
+  // ---- Split zoom ----
+
+  toggleZoom(): void {
+    if (this._panes.length <= 1) return; // Nothing to zoom if single pane
+    this._zoomed = !this._zoomed;
+
+    if (this._zoomed) {
+      // Hide all panes except the focused one
+      for (const pane of this._panes) {
+        if (pane !== this._focusedPane) {
+          pane.element.style.display = 'none';
+        }
+      }
+      // Hide split containers' dividers
+      const dividers = this.element.querySelectorAll('.split-divider');
+      for (const d of dividers) {
+        (d as HTMLElement).style.display = 'none';
+      }
+      // Make the focused pane fill everything
+      this._focusedPane.element.style.flex = '1';
+      this._focusedPane.element.style.display = 'flex';
+      // Hide split-container chrome but keep structure
+      const containers = this.element.querySelectorAll('.split-container');
+      for (const c of containers) {
+        (c as HTMLElement).style.display = 'flex';
+      }
+    } else {
+      // Restore: show all panes and dividers
+      for (const pane of this._panes) {
+        pane.element.style.display = 'flex';
+        pane.element.style.flex = '';
+      }
+      const dividers = this.element.querySelectorAll('.split-divider');
+      for (const d of dividers) {
+        (d as HTMLElement).style.display = '';
+      }
+    }
+
+    // Refit all visible panes
+    requestAnimationFrame(() => {
+      for (const pane of this._panes) {
+        if (!this._zoomed || pane === this._focusedPane) {
+          pane.show();
+        }
+      }
+    });
+  }
+
+  get isZoomed(): boolean {
+    return this._zoomed;
+  }
+
+  // ---- Prompt jumping ----
+
+  jumpToPrompt(direction: 'up' | 'down'): void {
+    this._focusedPane.jumpToPrompt(direction);
   }
 
   clear(): void {

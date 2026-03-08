@@ -3,6 +3,8 @@ import { KeybindingManager } from '../services/keybinding-manager';
 import { NotificationSound } from '../services/notification-sound';
 import { getThemeById, applyThemeToCSS, clearThemeCSS } from '../services/themes';
 import { SettingsPanel } from './settings-panel';
+import { CommandPalette } from './command-palette';
+import { QuickTerminal } from './quick-terminal';
 import { Onboarding } from './onboarding';
 import { DEFAULTS } from '../../shared/constants';
 
@@ -10,6 +12,8 @@ export class App {
   private tabManager: TabManager;
   private keybindingManager: KeybindingManager;
   private settingsPanel: SettingsPanel;
+  private commandPalette: CommandPalette;
+  private quickTerminal: QuickTerminal;
   private notificationSound: NotificationSound;
   private fontSize: number = DEFAULTS.FONT_SIZE;
   private disposables: (() => void)[] = [];
@@ -56,6 +60,12 @@ export class App {
         this.applyTheme(settings.theme);
       }
     });
+
+    this.commandPalette = new CommandPalette(appEl, (actionId) => {
+      this.executeAction(actionId);
+    });
+
+    this.quickTerminal = new QuickTerminal(appEl);
 
     this.registerAppListeners();
     this.registerSettingsShortcut();
@@ -116,6 +126,15 @@ export class App {
     if (settings.theme && settings.theme !== 'system') {
       this.applyTheme(settings.theme);
     }
+
+    // Apply window opacity
+    if (settings.opacity !== undefined && settings.opacity < 1.0) {
+      window.patton.setOpacity(settings.opacity);
+    }
+
+    // Configure quick terminal
+    if (settings.shell) this.quickTerminal.setShell(settings.shell);
+    this.quickTerminal.setHistoryManager(this.tabManager['sharedHistory']);
 
     // Try to restore previous session
     const restored = await this.tabManager.restoreSession();
@@ -248,6 +267,147 @@ export class App {
         this.tabManager.focusPaneInDirection('right');
       }),
     );
+
+    // Split zoom: Cmd+Shift+Enter
+    this.disposables.push(
+      window.patton.app.onSplitZoom(() => {
+        this.tabManager.toggleZoom();
+      }),
+    );
+
+    // Reopen closed tab: Cmd+Shift+T
+    this.disposables.push(
+      window.patton.app.onUndoClose(() => {
+        this.tabManager.reopenClosed().catch(console.error);
+      }),
+    );
+
+    // Command palette: Cmd+Shift+P
+    this.disposables.push(
+      window.patton.app.onCommandPalette(() => {
+        this.commandPalette.toggle(this.getPaletteActions());
+      }),
+    );
+
+    // Prompt jumping: Cmd+Shift+Up/Down
+    this.disposables.push(
+      window.patton.app.onPromptJumpUp(() => {
+        this.tabManager.jumpToPrompt('up');
+      }),
+    );
+
+    this.disposables.push(
+      window.patton.app.onPromptJumpDown(() => {
+        this.tabManager.jumpToPrompt('down');
+      }),
+    );
+
+    // Quick terminal
+    this.disposables.push(
+      window.patton.app.onQuickTerminal(() => {
+        this.quickTerminal.toggle().catch(console.error);
+      }),
+    );
+  }
+
+  private getPaletteActions(): { label: string; shortcut?: string; action: string }[] {
+    return [
+      { label: 'New Tab', shortcut: '\u2318T', action: 'new-tab' },
+      { label: 'Close Pane', shortcut: '\u2318W', action: 'close-pane' },
+      { label: 'Split Pane Right', shortcut: '\u2318D', action: 'split-vertical' },
+      { label: 'Split Pane Down', shortcut: '\u2318\u21E7D', action: 'split-horizontal' },
+      { label: 'Zoom Split', shortcut: '\u2318\u21E7\u23CE', action: 'zoom-split' },
+      { label: 'Reopen Closed Tab', shortcut: '\u2318\u21E7T', action: 'undo-close' },
+      { label: 'Find', shortcut: '\u2318F', action: 'search' },
+      { label: 'Clear Terminal', shortcut: '\u2318K', action: 'clear' },
+      { label: 'Increase Font Size', shortcut: '\u2318=', action: 'font-up' },
+      { label: 'Decrease Font Size', shortcut: '\u2318-', action: 'font-down' },
+      { label: 'Next Tab', shortcut: '\u2318\u21E7]', action: 'next-tab' },
+      { label: 'Previous Tab', shortcut: '\u2318\u21E7[', action: 'prev-tab' },
+      { label: 'Toggle Passthrough', shortcut: '\u2303\u21E7P', action: 'toggle-passthrough' },
+      { label: 'History Search', shortcut: '\u2303R', action: 'history-search' },
+      { label: 'Jump to Previous Prompt', shortcut: '\u2318\u21E7\u2191', action: 'prompt-up' },
+      { label: 'Jump to Next Prompt', shortcut: '\u2318\u21E7\u2193', action: 'prompt-down' },
+      { label: 'Broadcast Input', shortcut: '\u2318\u21E7B', action: 'broadcast' },
+      { label: 'Quick Terminal', action: 'quick-terminal' },
+      { label: 'Save Terminal Output', shortcut: '\u2318S', action: 'save-terminal' },
+      { label: 'Settings', shortcut: '\u2318,', action: 'settings' },
+    ];
+  }
+
+  private executeAction(actionId: string): void {
+    const tab = this.tabManager.getActiveTab();
+    switch (actionId) {
+      case 'new-tab':
+        this.tabManager.createTab().catch(console.error);
+        break;
+      case 'close-pane':
+        this.tabManager.closeActivePane().catch(console.error);
+        break;
+      case 'split-vertical':
+        this.tabManager.splitVertical();
+        break;
+      case 'split-horizontal':
+        this.tabManager.splitHorizontal();
+        break;
+      case 'zoom-split':
+        this.tabManager.toggleZoom();
+        break;
+      case 'undo-close':
+        this.tabManager.reopenClosed().catch(console.error);
+        break;
+      case 'search':
+        tab?.searchOverlay.toggle();
+        break;
+      case 'clear':
+        tab?.clear();
+        break;
+      case 'font-up':
+        this.fontSize = Math.min(this.fontSize + 2, DEFAULTS.FONT_SIZE_MAX);
+        this.applyFontSize();
+        break;
+      case 'font-down':
+        this.fontSize = Math.max(this.fontSize - 2, DEFAULTS.FONT_SIZE_MIN);
+        this.applyFontSize();
+        break;
+      case 'next-tab':
+        this.tabManager.nextTab();
+        break;
+      case 'prev-tab':
+        this.tabManager.prevTab();
+        break;
+      case 'toggle-passthrough':
+        tab?.togglePassthrough();
+        break;
+      case 'history-search':
+        tab?.showHistorySearch();
+        break;
+      case 'prompt-up':
+        this.tabManager.jumpToPrompt('up');
+        break;
+      case 'prompt-down':
+        this.tabManager.jumpToPrompt('down');
+        break;
+      case 'broadcast':
+        tab?.toggleBroadcastInput();
+        break;
+      case 'quick-terminal':
+        this.quickTerminal.toggle().catch(console.error);
+        break;
+      case 'save-terminal': {
+        if (!tab) break;
+        const content = tab.getScrollbackContent();
+        if (!content) break;
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        const tabName = tab.title.replace(/[^a-zA-Z0-9-_]/g, '_');
+        const defaultName = `patton-${tabName}-${timestamp}.txt`;
+        window.patton.terminal.saveOutput(content, defaultName).catch(console.error);
+        break;
+      }
+      case 'settings':
+        this.settingsPanel.toggle();
+        break;
+    }
   }
 
   private applyTheme(themeId: string): void {
@@ -285,6 +445,8 @@ export class App {
     for (const d of this.disposables) d();
     this.keybindingManager.dispose();
     this.settingsPanel.dispose();
+    this.commandPalette.dispose();
+    this.quickTerminal.dispose();
     this.notificationSound.dispose();
     this.tabManager.dispose();
   }
