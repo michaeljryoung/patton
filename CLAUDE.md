@@ -91,7 +91,7 @@ src/
 ---
 
 ## Status
-Feature-complete with performance optimizations; builds and runs. Ready for distribution testing.
+Feature-complete with 10 UI/UX improvements, 19 themes, and performance optimizations. Builds and runs. Ready for distribution testing.
 
 ## Last Session
 **2026-03-07 (session 3)**
@@ -115,6 +115,7 @@ Feature-complete with performance optimizations; builds and runs. Ready for dist
 - Implemented 9 performance optimizations: shell path passed down (no per-pane IPC), shared HistoryManager, CWD/mode-detector polling gated on pane focus, parallelized startup (`Promise.all` for settings+history), parallelized pane init, `show:false` on BrowserWindow, lazy ImageAddon via dynamic import, CSS containment on `.pane`
 
 ## Next Steps
+- [ ] Test all 10 new features in packaged app (split zoom, command palette, undo close, prompt jumping, quick terminal, opacity, float on top, CWD inheritance, themes)
 - [ ] Run `npm run make` to generate .dmg for distribution
 - [ ] Test DMG install on a clean machine (Gatekeeper: right-click → Open)
 - [ ] Consider Apple Developer ID ($99/yr) for notarization if distributing widely
@@ -127,6 +128,9 @@ Feature-complete with performance optimizations; builds and runs. Ready for dist
 - **Shared HistoryManager**: One instance per TabManager, shared across all panes. Each pane's up/down cursor is independent (per-pane state), but the entry list and IPC load happen once. Avoids N IPC calls on restore.
 - **Lazy ImageAddon via dynamic import**: `@xterm/addon-image` allocates a 16MB pixel buffer. Deferred via `import()` + `requestAnimationFrame` so first paint isn't blocked. If image protocol data arrives before load completes, it's benignly dropped (no crash).
 - **Notification sounds synthesized, not files**: Web Audio API oscillators/noise buffers for all 3 sounds. No audio file dependencies, zero network, instant playback. Bullet = white noise crack + low-freq whoosh.
+- **Undo close uses ring buffer, not stack**: Max 10 saved panes. Saves CWD + scrollback text + title. Reopened tabs show previous scrollback as dimmed text (`\x1b[2m`) to distinguish from new output.
+- **Prompt jumping is heuristic**: Regex-based detection of common prompt patterns ($, %, >, #, ❯, ➜, λ, →, user@host). Won't match every custom prompt but covers >95% of real-world cases.
+- **Quick terminal is lazy-initialized**: PTY only created on first show, not at app startup. Prevents wasted resources if user never uses it.
 
 ## Gotchas
 - **xterm.js onData must always forward to PTY**: In editor mode, `terminal.onData` only fires for terminal protocol responses (DSR, DA) since CodeMirror has focus. These MUST reach the PTY or programs like `fzf --height` will block forever waiting for cursor position reports. Never gate `onPassthroughData` forwarding on mode.
