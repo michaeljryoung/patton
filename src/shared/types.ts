@@ -121,6 +121,7 @@ export interface PattonAPI {
   notify: (title: string, body: string, tabId: string) => void;
   setOpacity: (opacity: number) => void;
   openExternal: (url: string) => Promise<void>;
+  moveWindowBy: (dx: number, dy: number) => void;
 }
 
 declare global {

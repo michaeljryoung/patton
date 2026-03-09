@@ -52,6 +52,7 @@ export const IPC = {
   APP_SAVE_TERMINAL_MENU: 'app:save-terminal-menu',
   APP_SWITCH_TAB_BY_ID: 'app:switch-tab-by-id',
   APP_OPEN_EXTERNAL: 'app:open-external',
+  WINDOW_MOVE_BY: 'window:move-by',
 } as const;
 
 export const DEFAULTS = {

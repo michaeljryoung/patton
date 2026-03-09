@@ -176,6 +176,7 @@ const api: PattonAPI = {
   notify: (title, body, tabId) => ipcRenderer.send(IPC.APP_NOTIFY, title, body, tabId),
   setOpacity: (opacity) => ipcRenderer.send(IPC.APP_SET_OPACITY, opacity),
   openExternal: (url) => ipcRenderer.invoke(IPC.APP_OPEN_EXTERNAL, url),
+  moveWindowBy: (dx, dy) => ipcRenderer.send(IPC.WINDOW_MOVE_BY, dx, dy),
 };
 
 contextBridge.exposeInMainWorld('patton', api);

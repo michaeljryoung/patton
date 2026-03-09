@@ -132,19 +132,52 @@ export class TabBar {
         el.appendChild(closeBtn);
       }
 
-      // Click to select
-      el.addEventListener('click', () => {
-        this.callbacks.onSelect(tab.id);
-      });
-
-      // --- Middle-click to close ---
+      // --- Window drag / click-to-select ---
+      // Left-click on tab body (not grip/close) drags the window if moved,
+      // or selects the tab if released without moving.
       el.addEventListener('mousedown', (e) => {
+        // Middle-click to close
         if (e.button === 1) {
           e.preventDefault();
           if (tabs.length > 1) {
             this.callbacks.onClose(tab.id);
           }
+          return;
         }
+        if (e.button !== 0) return;
+        // Don't intercept grip or close button
+        if ((e.target as HTMLElement).closest('.tab-bar-tab-grip, .tab-bar-tab-close')) return;
+
+        let dragging = false;
+        const startX = e.screenX;
+        const startY = e.screenY;
+        let lastX = startX;
+        let lastY = startY;
+
+        const onMove = (me: MouseEvent) => {
+          const dx = me.screenX - lastX;
+          const dy = me.screenY - lastY;
+          if (!dragging) {
+            // Start dragging only after a 5px threshold
+            if (Math.abs(me.screenX - startX) < 5 && Math.abs(me.screenY - startY) < 5) return;
+            dragging = true;
+          }
+          lastX = me.screenX;
+          lastY = me.screenY;
+          window.patton.moveWindowBy(dx, dy);
+        };
+
+        const onUp = () => {
+          document.removeEventListener('mousemove', onMove);
+          document.removeEventListener('mouseup', onUp);
+          if (!dragging) {
+            // No drag occurred — treat as click to select
+            this.callbacks.onSelect(tab.id);
+          }
+        };
+
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
       });
 
       this.tabsContainer.appendChild(el);

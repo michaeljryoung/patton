@@ -63,7 +63,7 @@
   font-size: 12px;
   color: var(--text-secondary);
   transition: background 0.15s, color 0.15s, opacity 0.15s;
-  -webkit-app-region: drag;
+  -webkit-app-region: no-drag;
   border-radius: 8px 8px 0 0;
   position: relative;
 }
@@ -138,8 +138,6 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   pointer-events: auto;
-  -webkit-app-region: no-drag;
-  cursor: pointer;
 }
 
 .tab-bar-tab-rename {

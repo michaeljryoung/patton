@@ -323,4 +323,15 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
       // Invalid URL, ignore
     }
   });
+
+  // --- Programmatic window drag (tab bar uses this instead of -webkit-app-region) ---
+  ipcMain.on(IPC.WINDOW_MOVE_BY, (event, dx: number, dy: number) => {
+    if (typeof dx !== 'number' || typeof dy !== 'number') return;
+    if (!Number.isFinite(dx) || !Number.isFinite(dy)) return;
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (win) {
+      const [x, y] = win.getPosition();
+      win.setPosition(Math.round(x + dx), Math.round(y + dy));
+    }
+  });
 }
