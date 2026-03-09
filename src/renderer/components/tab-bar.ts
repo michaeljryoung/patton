@@ -63,26 +63,33 @@ export class TabBar {
       el.setAttribute('tabindex', tab.active ? '0' : '-1');
       el.setAttribute('aria-label', tab.title);
 
-      // --- Drag-to-reorder ---
-      el.draggable = true;
-      el.addEventListener('dragstart', (e) => {
-        this.draggedId = tab.id;
-        e.dataTransfer!.effectAllowed = 'move';
-        e.dataTransfer!.setData('text/plain', tab.id);
-        el.classList.add('dragging');
-      });
-      el.addEventListener('dragend', () => {
-        this.draggedId = null;
-        el.classList.remove('dragging');
-        // Clean up all drag-over states
-        this.tabsContainer.querySelectorAll('.drag-over').forEach(
-          el => el.classList.remove('drag-over'),
-        );
-      });
+      // --- Drag grip for tab reordering (only this small handle initiates drag) ---
+      if (tabs.length > 1) {
+        const grip = document.createElement('span');
+        grip.className = 'tab-bar-tab-grip';
+        grip.textContent = '\u2847'; // ⡇ braille dots as grip indicator
+        grip.draggable = true;
+        grip.addEventListener('dragstart', (e) => {
+          e.stopPropagation();
+          this.draggedId = tab.id;
+          e.dataTransfer!.effectAllowed = 'move';
+          e.dataTransfer!.setData('text/plain', tab.id);
+          el.classList.add('dragging');
+        });
+        grip.addEventListener('dragend', () => {
+          this.draggedId = null;
+          el.classList.remove('dragging');
+          this.tabsContainer.querySelectorAll('.drag-over').forEach(
+            el => el.classList.remove('drag-over'),
+          );
+        });
+        el.appendChild(grip);
+      }
+
+      // --- Drop target for reordering (the whole tab accepts drops) ---
       el.addEventListener('dragover', (e) => {
         e.preventDefault();
         e.dataTransfer!.dropEffect = 'move';
-        // Highlight drop target
         this.tabsContainer.querySelectorAll('.drag-over').forEach(
           el => el.classList.remove('drag-over'),
         );

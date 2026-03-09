@@ -170,9 +170,10 @@ export class PtyManager {
       if (script && existsSync(script)) {
         injected = true;
         // Wait for shell init to complete, then source silently + display quote.
+        // stty -echo suppresses command echo so raw escape codes aren't visible.
         setTimeout(() => {
           if (this.instances.has(id)) {
-            proc.write(` source "${script}" && clear && printf $'${quoteFmt}'\r`);
+            proc.write(` stty -echo; source "${script}" && clear && printf $'${quoteFmt}'; stty echo\r`);
           }
         }, 500);
       }
@@ -181,7 +182,7 @@ export class PtyManager {
     if (!injected) {
       setTimeout(() => {
         if (this.instances.has(id)) {
-          proc.write(` printf $'${quoteFmt}'\r`);
+          proc.write(` stty -echo; printf $'${quoteFmt}'; stty echo\r`);
         }
       }, 300);
     }
