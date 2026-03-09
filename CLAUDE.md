@@ -104,20 +104,21 @@ npm audit --omit=dev --audit-level=high
 ---
 
 ## Status
-Feature-complete, distributed. Public GitHub release with DMG installer.
+Feature-complete, distributed. Automated CI/CD pipeline with auto-versioning.
 
 ## Last Session
 **2026-03-09 (session 8)**
-- Added automatic release pipeline: every push to main triggers CI to auto-bump version, build DMG, publish GitHub release, and update Homebrew cask
-- Version source of truth is git tags, not package.json — CI never commits back to main
-- Bump heuristic: patch (<=500 lines), minor (>500 lines), major (BREAKING: commit prefix)
+- Added automatic release pipeline (`.github/workflows/release.yml`): every push to main auto-bumps version, builds DMG on macos-14, creates GitHub release, updates Homebrew cask
+- Version source of truth is git tags, not package.json — CI creates tag + release without committing back to main (no `git pull` needed)
+- Bump heuristic: patch (<=500 lines), minor (>500 lines), major (`BREAKING:` commit prefix), minor (`feat:` prefix)
+- First automated release v1.1.0 published successfully — full pipeline verified end-to-end
 - README made version-agnostic (download link → /releases/latest, checksum → releases page)
-- Manual fallback: `npm run release [-- patch|minor|major]`
 
 ## Next Steps
-- [ ] Test all features in packaged app end-to-end
-- [ ] Test DMG install on a clean machine (right-click → Open for Gatekeeper)
+- [ ] Test CI-built DMG install on a clean machine (right-click → Open for Gatekeeper)
+- [ ] Verify `brew tap michaeljryoung/patton && brew install --cask patton` installs v1.1.0
 - [ ] Consider Apple Developer ID ($99/yr) for notarization if distributing widely
+- [ ] Rotate HOMEBREW_PAT (token was exposed in chat — already revoked and replaced)
 
 ## Decisions
 - **No App Sandbox**: Electron's multi-process Mach port IPC + node-pty shell spawning are fundamentally incompatible with `com.apple.security.app-sandbox`. Kept JIT + unsigned-memory entitlements only.
@@ -133,6 +134,8 @@ Feature-complete, distributed. Public GitHub release with DMG installer.
 - **Always-passthrough over dual-mode**: The ModeDetector required 20+ bug-fix commits. Unreliable heuristics, focus management bugs, and two competing input targets are eliminated entirely. Terminal works like any native terminal; compose panel is purely additive.
 - **Shell integration via PTY write**: After 500ms delay, writes ` source "/path/to/script" && clear\r` to PTY. Leading space avoids shell history, `clear` hides the command. Simpler and more reliable than exec/ZDOTDIR approaches which caused double-spawn or silent failures.
 - **Startup command runs regardless of restore**: All restored PTYs are fresh shells (session restore only recovers tab layout + dimmed scrollback), so the startup command is always safe to inject.
+- **Version in tags, not package.json**: CI computes the next version from `git describe --tags`, sets package.json temporarily for the build, then creates a tag + release without committing back to main. Avoids divergence (no `git pull` needed after CI runs).
+- **CI builds skip code signing**: `CSC_IDENTITY_AUTO_DISCOVERY: "false"` disables signing in CI. Unsigned DMGs still work with Gatekeeper workaround (same UX as self-signed). Homebrew `brew install` strips quarantine automatically.
 
 ## Gotchas
 - **App Sandbox kills Electron**: `com.apple.security.app-sandbox` causes immediate crash with `FATAL:base/apple/mach_port_rendezvous_mac.cc` — Mach port bootstrap_check_in permission denied
