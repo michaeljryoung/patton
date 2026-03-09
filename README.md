@@ -118,7 +118,7 @@ After downloading the DMG, you can verify its integrity:
 shasum -a 256 Patton-1.0.0-arm64.dmg
 ```
 
-Expected: `c187896eb6f32d430cace264194420fc47f80e64ded1ecf1a4676fe1984b8f1d`
+Expected: `2b7bbf37319366faf78c909972b10ca889c0b99295c8ead48e1f75ac13527837`
 
 ## Development
 
