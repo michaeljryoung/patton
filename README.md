@@ -1,11 +1,54 @@
 # Patton
 
-A modern terminal emulator for macOS that replaces readline input with a proper text editor (CodeMirror) while keeping all terminal functionality via automatic passthrough mode. Built for developers who use Claude Code and other CLI tools that benefit from rich text editing.
+A modern terminal emulator for macOS with split panes, tabs, a compose panel for drafting multi-line input, and 19 color themes. Built for developers who use Claude Code and other CLI tools.
+
+## Download
+
+**[Download Patton v1.0.0 (DMG, Apple Silicon)](https://github.com/michaeljryoung/patton/releases/download/v1.0.0/Patton-1.0.0-arm64.dmg)**
+
+> Patton is self-signed (not notarized by Apple). See [macOS Gatekeeper](#macos-gatekeeper) below for first-launch instructions.
+
+### Install via Homebrew
+
+```bash
+brew tap michaeljryoung/patton
+brew install --cask patton
+```
+
+Homebrew automatically clears the quarantine flag — no Gatekeeper workaround needed.
+
+## macOS Gatekeeper
+
+Since Patton is self-signed, macOS will block it on first launch. Choose one of these methods:
+
+**Method 1: Right-click to open (easiest)**
+
+1. Right-click `Patton.app` in Finder
+2. Select **Open**
+3. Click **Open** in the dialog
+
+This only needs to be done once.
+
+**Method 2: Remove quarantine flag**
+
+```bash
+xattr -cr /Applications/Patton.app
+```
+
+Then open the app normally. This clears the macOS quarantine attribute entirely.
+
+**Method 3: System Settings**
+
+1. Try to open Patton normally (it will be blocked)
+2. Go to **System Settings > Privacy & Security**
+3. Scroll down — you'll see "Patton was blocked"
+4. Click **Open Anyway**
 
 ## Features
 
-- **Dual Mode System** -- Automatically switches between a full CodeMirror editor and raw terminal passthrough based on what's running (vim, ssh, htop, Claude Code)
-- **Split Panes** -- Vertical and horizontal splits with drag-to-resize dividers
+- **Always-Passthrough Terminal** -- Full terminal input at all times (xterm.js), no mode switching
+- **Compose Panel** -- Expandable multi-line editor for drafting commands (`Cmd+E`)
+- **Split Panes** -- Vertical and horizontal splits with drag-to-resize dividers (up to 5 per tab)
 - **Tabs** -- Drag-to-reorder, middle-click close, tab renaming
 - **Command Palette** -- Quick access to all actions via fuzzy search (`Cmd+Shift+P`)
 - **Quick Terminal** -- Drop-down terminal panel that slides from the top of the window
@@ -20,6 +63,7 @@ A modern terminal emulator for macOS that replaces readline input with a proper 
 - **Find** -- In-terminal search with match highlighting (`Cmd+F`)
 - **Copy on Select** -- Optional auto-copy to clipboard
 - **CWD Inheritance** -- New tabs and splits inherit the current directory
+- **Shell Integration** -- Optional OSC 133 prompt markers for zsh and bash
 
 ## Keyboard Shortcuts
 
@@ -34,22 +78,22 @@ A modern terminal emulator for macOS that replaces readline input with a proper 
 | `Cmd+Shift+T` | Reopen closed tab |
 | `Cmd+Shift+P` | Command palette |
 | `Cmd+Shift+Up/Down` | Jump between prompts |
+| `Cmd+E` | Toggle compose panel |
 | `Cmd+K` | Clear terminal |
 | `Cmd+F` | Find |
 | `Cmd+,` | Settings |
 | `Cmd+=` / `Cmd+-` | Font size up / down |
-| `Ctrl+Shift+P` | Toggle passthrough mode |
 | `Ctrl+R` | History search |
 
 ## Installation
 
-### Prerequisites
+### Download DMG
 
-- macOS (Apple Silicon or Intel)
-- [Node.js](https://nodejs.org/) v20+
-- npm v10+
+Grab the latest release from the [Releases page](https://github.com/michaeljryoung/patton/releases). Open the DMG, drag Patton to Applications, then follow the [Gatekeeper instructions](#macos-gatekeeper) above.
 
 ### Build from Source
+
+**Prerequisites:** macOS, [Node.js](https://nodejs.org/) v20+, npm v10+
 
 ```bash
 git clone https://github.com/michaeljryoung/patton.git
@@ -66,15 +110,15 @@ To create a DMG installer:
 npm run make
 ```
 
-### macOS Gatekeeper
+### Verify Download (optional)
 
-Since Patton is self-signed, macOS will block it on first launch. To open it:
+After downloading the DMG, you can verify its integrity:
 
-1. Right-click `Patton.app` in Finder
-2. Select **Open**
-3. Click **Open** in the dialog
+```bash
+shasum -a 256 Patton-1.0.0-arm64.dmg
+```
 
-This only needs to be done once.
+Expected: `c187896eb6f32d430cace264194420fc47f80e64ded1ecf1a4676fe1984b8f1d`
 
 ## Development
 
@@ -89,9 +133,8 @@ npm run lint     # Run ESLint
 
 - [Electron](https://www.electronjs.org/) v40
 - [xterm.js](https://xtermjs.org/) v6 with WebGL rendering
-- [CodeMirror](https://codemirror.net/) 6
-- [node-pty](https://github.com/niccholas/node-pty) for PTY management
-- [electron-store](https://github.com/niccholas/electron-store) for persistent settings
+- [node-pty](https://github.com/microsoft/node-pty) for PTY management
+- [electron-store](https://github.com/sindresorhus/electron-store) for persistent settings
 - TypeScript + Vite via [Electron Forge](https://www.electronforge.io/)
 
 ## Architecture
@@ -101,11 +144,19 @@ src/
 ├── main/           # Electron main process (PTY, IPC, menus, settings store)
 ├── preload/        # contextBridge API (type-safe IPC bridge)
 ├── renderer/       # UI components, services, styles
-│   ├── components/ # Tab, Pane, Editor, Terminal, Settings, Command Palette, etc.
-│   ├── services/   # Tab manager, mode detector, history, keybindings
+│   ├── components/ # Tab, Terminal, Compose Panel, Settings, Command Palette, etc.
+│   ├── services/   # Tab manager, history, keybindings
 │   └── styles/     # CSS with design tokens + auto dark/light mode
 └── shared/         # IPC channel constants + shared TypeScript types
 ```
+
+## Security
+
+See [SECURITY.md](SECURITY.md) for the security model and how to report vulnerabilities.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

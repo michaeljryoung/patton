@@ -107,3 +107,6 @@ CLAUDE.md
 
 # Build output
 dist/
+
+# Loose design assets (source icons, etc.)
+patton-icon-*.png
