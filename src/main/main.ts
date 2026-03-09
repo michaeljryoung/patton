@@ -27,13 +27,14 @@ app.on('ready', () => {
     createWindow(ptyManager);
     const hotkey = settings.globalHotkey || 'Control+`';
     try {
-      globalShortcut.register(hotkey, () => {
+      const registered = globalShortcut.register(hotkey, () => {
         const windows = BrowserWindow.getAllWindows();
         if (windows.length === 0) {
           createWindow(ptyManager);
           return;
         }
-        const win = windows[0];
+        // Use focused window, or fall back to most recent
+        const win = BrowserWindow.getFocusedWindow() || windows[0];
         if (win.isFocused()) {
           win.hide();
         } else {
@@ -41,6 +42,9 @@ app.on('ready', () => {
           win.focus();
         }
       });
+      if (!registered) {
+        console.warn('Failed to register global hotkey — already in use:', hotkey);
+      }
     } catch (err) {
       console.warn('Failed to register global hotkey:', err);
     }

@@ -129,8 +129,8 @@ const api: PattonAPI = {
     },
     onSaveTerminal: (cb) => {
       const listener = () => cb();
-      ipcRenderer.on(IPC.APP_SAVE_TERMINAL, listener);
-      return () => ipcRenderer.removeListener(IPC.APP_SAVE_TERMINAL, listener);
+      ipcRenderer.on(IPC.APP_SAVE_TERMINAL_MENU, listener);
+      return () => ipcRenderer.removeListener(IPC.APP_SAVE_TERMINAL_MENU, listener);
     },
     onBroadcastInput: (cb) => {
       const listener = () => cb();
@@ -139,8 +139,8 @@ const api: PattonAPI = {
     },
     onSwitchTabById: (cb) => {
       const listener = (_event: Electron.IpcRendererEvent, id: string) => cb(id);
-      ipcRenderer.on(IPC.APP_SWITCH_TAB + ':id', listener);
-      return () => ipcRenderer.removeListener(IPC.APP_SWITCH_TAB + ':id', listener);
+      ipcRenderer.on(IPC.APP_SWITCH_TAB_BY_ID, listener);
+      return () => ipcRenderer.removeListener(IPC.APP_SWITCH_TAB_BY_ID, listener);
     },
     onSplitZoom: (cb) => {
       const listener = () => cb();
@@ -175,6 +175,7 @@ const api: PattonAPI = {
   },
   notify: (title, body, tabId) => ipcRenderer.send(IPC.APP_NOTIFY, title, body, tabId),
   setOpacity: (opacity) => ipcRenderer.send(IPC.APP_SET_OPACITY, opacity),
+  openExternal: (url) => ipcRenderer.invoke(IPC.APP_OPEN_EXTERNAL, url),
 };
 
 contextBridge.exposeInMainWorld('patton', api);

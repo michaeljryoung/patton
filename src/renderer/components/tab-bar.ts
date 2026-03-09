@@ -152,7 +152,11 @@ export class TabBar {
     input.maxLength = 100;
     input.setAttribute('aria-label', 'Rename tab');
 
+    let committed = false;
+
     const commit = () => {
+      if (committed) return;
+      committed = true;
       const name = input.value.trim();
       if (name && name !== titleSpan.textContent) {
         this.callbacks.onRename(tabId, name);
@@ -161,6 +165,8 @@ export class TabBar {
     };
 
     const cancel = () => {
+      if (committed) return;
+      committed = true;
       input.replaceWith(titleSpan);
     };
 

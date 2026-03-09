@@ -5,6 +5,9 @@ export class Onboarding {
   constructor(container: HTMLElement) {
     this.overlay = document.createElement('div');
     this.overlay.className = 'onboarding-overlay';
+    this.overlay.setAttribute('role', 'dialog');
+    this.overlay.setAttribute('aria-modal', 'true');
+    this.overlay.setAttribute('aria-label', 'Welcome to Patton');
     this.overlay.innerHTML = `
       <div class="onboarding-panel">
         <h2 class="onboarding-title">Welcome to Patton</h2>

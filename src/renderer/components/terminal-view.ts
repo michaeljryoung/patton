@@ -97,11 +97,11 @@ export class TerminalView {
     this.terminal.loadAddon(this.fitAddon);
     this.terminal.loadAddon(this.searchAddon);
     this.terminal.loadAddon(new WebLinksAddon((_event, uri) => {
-      // Security: Only allow http/https links, block javascript:, data:, etc.
+      // Security: Only allow http/https links via main process shell.openExternal
       try {
         const url = new URL(uri);
         if (url.protocol === 'http:' || url.protocol === 'https:') {
-          window.open(uri);
+          window.patton.openExternal(uri).catch(() => {});
         }
       } catch {
         // Invalid URL, ignore

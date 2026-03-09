@@ -229,14 +229,16 @@ export class Pane {
     this.disposables.push(() => resizeObserver.disconnect());
 
     // Security: Intercept paste to sanitize and warn on multi-line
-    this.terminalContainer.addEventListener('paste', async (e) => {
+    const pasteHandler = async (e: ClipboardEvent) => {
       e.preventDefault();
       const raw = e.clipboardData?.getData('text') || '';
       await this.safePaste(raw);
-    });
+    };
+    this.terminalContainer.addEventListener('paste', pasteHandler as EventListener);
+    this.disposables.push(() => this.terminalContainer.removeEventListener('paste', pasteHandler as EventListener));
 
     // Right-click context menu
-    this.element.addEventListener('contextmenu', (e) => {
+    const contextMenuHandler = (e: MouseEvent) => {
       e.preventDefault();
       const hasSelection = !!this.terminalView.terminal.getSelection();
       this.contextMenu.show(e.clientX, e.clientY, [
@@ -284,7 +286,9 @@ export class Pane {
           },
         },
       ]);
-    });
+    };
+    this.element.addEventListener('contextmenu', contextMenuHandler);
+    this.disposables.push(() => this.element.removeEventListener('contextmenu', contextMenuHandler));
 
     // OSC 133 shell integration: visual feedback on compose bar + command-done notification
     let wasRunning = false;

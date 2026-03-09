@@ -24,7 +24,7 @@ export interface AppSettings {
   scrollback: number;
   shell: string;
   notificationSound: boolean;
-  notificationSoundType: string;
+  notificationSoundType: 'chime' | 'bugle' | 'bullet';
   copyOnSelect: boolean;
   globalHotkey: string;
   theme: string;
@@ -120,6 +120,7 @@ export interface PattonAPI {
   };
   notify: (title: string, body: string, tabId: string) => void;
   setOpacity: (opacity: number) => void;
+  openExternal: (url: string) => Promise<void>;
 }
 
 declare global {

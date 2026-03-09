@@ -10,6 +10,7 @@ export class NotificationSound {
   private audioCtx: AudioContext | null = null;
   private lastPlayTime = 0;
   private warmupDone = false;
+  private warmupHandler: (() => void) | null = null;
   private static readonly COOLDOWN_MS = 2000; // Don't ding more than once per 2s
 
   constructor() {
@@ -28,7 +29,9 @@ export class NotificationSound {
       } catch { /* Audio not available */ }
       document.removeEventListener('click', warmup);
       document.removeEventListener('keydown', warmup);
+      this.warmupHandler = null;
     };
+    this.warmupHandler = warmup;
     document.addEventListener('click', warmup);
     document.addEventListener('keydown', warmup);
   }
@@ -218,6 +221,11 @@ export class NotificationSound {
   }
 
   dispose(): void {
+    if (this.warmupHandler) {
+      document.removeEventListener('click', this.warmupHandler);
+      document.removeEventListener('keydown', this.warmupHandler);
+      this.warmupHandler = null;
+    }
     this.audioCtx?.close().catch(() => {});
     this.audioCtx = null;
   }

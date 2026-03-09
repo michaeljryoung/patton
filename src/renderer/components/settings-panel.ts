@@ -174,7 +174,7 @@ export class SettingsPanel {
 
     listen(fontSizeInput, 'change', () => {
       const val = parseInt(fontSizeInput.value, 10);
-      if (val >= 8 && val <= 72) {
+      if (val >= DEFAULTS.FONT_SIZE_MIN && val <= DEFAULTS.FONT_SIZE_MAX) {
         this.saveAndNotify({ fontSize: val });
       }
     });

@@ -38,7 +38,7 @@ export class FileLinkProvider implements ILinkProvider {
       };
 
       // Extract just the file path (strip :line:col or (line,col))
-      const filePath = fullMatch.replace(/[:(/][\d,):]+$/, '').replace(/[:(]$/, '');
+      const filePath = fullMatch.replace(/(?::\d+(?::\d+)?|\(\d+,\d+\))$/, '');
 
       links.push({
         range,

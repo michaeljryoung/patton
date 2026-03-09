@@ -31,14 +31,34 @@ export class ContextMenu {
     };
     this.overlay.addEventListener('mousedown', dismiss);
 
-    const keyDismiss = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') this.hide();
+    const keyHandler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { this.hide(); return; }
+      const items = this.menu.querySelectorAll('.context-menu-item');
+      if (items.length === 0) return;
+      const focused = this.menu.querySelector('.context-menu-item.focused');
+      let idx = focused ? Array.from(items).indexOf(focused) : -1;
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        idx = (idx + 1) % items.length;
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        idx = idx <= 0 ? items.length - 1 : idx - 1;
+      } else if (e.key === 'Enter' && focused) {
+        e.preventDefault();
+        (focused as HTMLElement).click();
+        return;
+      } else {
+        return;
+      }
+      for (const item of items) item.classList.remove('focused');
+      items[idx].classList.add('focused');
+      (items[idx] as HTMLElement).focus();
     };
-    this.overlay.addEventListener('keydown', keyDismiss);
+    this.overlay.addEventListener('keydown', keyHandler);
 
     this.disposeListener = () => {
       this.overlay.removeEventListener('mousedown', dismiss);
-      this.overlay.removeEventListener('keydown', keyDismiss);
+      this.overlay.removeEventListener('keydown', keyHandler);
     };
 
     document.body.appendChild(this.overlay);
@@ -56,6 +76,7 @@ export class ContextMenu {
       const el = document.createElement('div');
       el.className = 'context-menu-item';
       el.setAttribute('role', 'menuitem');
+      el.setAttribute('tabindex', '-1');
 
       const label = document.createElement('span');
       label.textContent = item.label;

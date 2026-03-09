@@ -306,10 +306,15 @@ export class PtyManager {
   }
 
   destroyByWindow(window: BrowserWindow): void {
+    // Collect IDs first to avoid modifying map during iteration
+    const idsToDestroy: number[] = [];
     for (const [id, instance] of this.instances) {
       if (instance.window === window) {
-        this.destroy(id);
+        idsToDestroy.push(id);
       }
+    }
+    for (const id of idsToDestroy) {
+      this.destroy(id);
     }
     this.countByWindow.delete(window.id);
   }

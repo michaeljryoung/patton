@@ -1,4 +1,4 @@
-import { ipcMain, BrowserWindow, dialog, Notification } from 'electron';
+import { ipcMain, BrowserWindow, dialog, Notification, shell } from 'electron';
 import { execFile } from 'node:child_process';
 import { IPC } from '../shared/constants';
 import { PtyManager } from './pty-manager';
@@ -152,9 +152,14 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
     return store.getHistory();
   });
 
+  const historyAddLimiter = new RateLimiter(20);
   ipcMain.handle(IPC.HISTORY_ADD, (_event, command: string) => {
     if (typeof command !== 'string' || command.length > 10000) {
       console.warn('[SECURITY] HISTORY_ADD type validation failed', { type: typeof command });
+      return;
+    }
+    if (!historyAddLimiter.allow()) {
+      console.warn('[SECURITY] Rate limit exceeded', { channel: IPC.HISTORY_ADD });
       return;
     }
     store.addHistory(command);
@@ -268,8 +273,9 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
   });
 
   // --- Native notification ---
-  // Store references to prevent GC (known Electron bug)
+  // Store references to prevent GC (known Electron bug), cap at 50 to bound memory
   const activeNotifications: Set<Notification> = new Set();
+  const MAX_ACTIVE_NOTIFICATIONS = 50;
   ipcMain.on(IPC.APP_NOTIFY, (event, title: string, body: string, tabId: string) => {
     if (typeof title !== 'string' || typeof body !== 'string') return;
     if (!Notification.isSupported()) return;
@@ -279,6 +285,11 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win) return;
 
+    // Evict oldest if at capacity
+    if (activeNotifications.size >= MAX_ACTIVE_NOTIFICATIONS) {
+      const oldest = activeNotifications.values().next().value;
+      if (oldest) activeNotifications.delete(oldest);
+    }
     const notif = new Notification({ title, body, silent: true });
     activeNotifications.add(notif);
 
@@ -287,7 +298,7 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
         win.show();
         win.focus();
         if (tabId && !win.webContents.isDestroyed()) {
-          win.webContents.send(IPC.APP_SWITCH_TAB + ':id', tabId);
+          win.webContents.send(IPC.APP_SWITCH_TAB_BY_ID, tabId);
         }
       }
       activeNotifications.delete(notif);
@@ -298,5 +309,18 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
     });
 
     notif.show();
+  });
+
+  // --- Open external URL (for terminal link clicks) ---
+  ipcMain.handle(IPC.APP_OPEN_EXTERNAL, (_event, url: string) => {
+    if (typeof url !== 'string' || url.length > 2048) return;
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+        shell.openExternal(url).catch(() => {});
+      }
+    } catch {
+      // Invalid URL, ignore
+    }
   });
 }

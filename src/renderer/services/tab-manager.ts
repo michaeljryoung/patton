@@ -146,6 +146,12 @@ export class TabManager {
     if (this.currentScrollback !== undefined) {
       tab.setScrollback(this.currentScrollback);
     }
+    if (this.currentCopyOnSelect) {
+      tab.setCopyOnSelect(this.currentCopyOnSelect);
+    }
+    if (this.currentTerminalTheme) {
+      tab.setTerminalTheme(this.currentTerminalTheme);
+    }
 
     try {
       await tab.init();
@@ -265,11 +271,11 @@ export class TabManager {
   }
 
   splitVertical(): void {
-    this.activeTab?.splitVertical(this.getActiveCwd()).catch(console.error);
+    this.activeTab?.splitVertical(this.getActiveCwd())?.catch(console.error);
   }
 
   splitHorizontal(): void {
-    this.activeTab?.splitHorizontal(this.getActiveCwd()).catch(console.error);
+    this.activeTab?.splitHorizontal(this.getActiveCwd())?.catch(console.error);
   }
 
   private getActiveCwd(): string | undefined {
@@ -342,6 +348,12 @@ export class TabManager {
           }
           if (this.currentScrollback !== undefined) {
             tab.setScrollback(this.currentScrollback);
+          }
+          if (this.currentCopyOnSelect) {
+            tab.setCopyOnSelect(this.currentCopyOnSelect);
+          }
+          if (this.currentTerminalTheme) {
+            tab.setTerminalTheme(this.currentTerminalTheme);
           }
 
           // Initialize all panes (creates PTYs)

@@ -35,7 +35,7 @@ export function buildMenu(ptyManager?: PtyManager): void {
           label: 'Save Terminal Output...',
           accelerator: 'CmdOrCtrl+S',
           click: (_item, window) => {
-            (window as BrowserWindow | undefined)?.webContents.send(IPC.APP_SAVE_TERMINAL);
+            (window as BrowserWindow | undefined)?.webContents.send(IPC.APP_SAVE_TERMINAL_MENU);
           },
         },
       ],

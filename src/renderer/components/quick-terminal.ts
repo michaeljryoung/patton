@@ -13,6 +13,7 @@ export class QuickTerminal {
   private initialized = false;
   private shell: string | undefined;
   private historyManager: HistoryManager | undefined;
+  private onCommandDone: (() => void) | null = null;
   private container: HTMLElement;
   private disposables: (() => void)[] = [];
 
@@ -55,6 +56,10 @@ export class QuickTerminal {
 
   setHistoryManager(hm: HistoryManager): void {
     this.historyManager = hm;
+  }
+
+  setOnCommandDone(cb: () => void): void {
+    this.onCommandDone = cb;
   }
 
   async toggle(): Promise<void> {
@@ -110,6 +115,7 @@ export class QuickTerminal {
       ...(this.historyManager ? { historyManager: this.historyManager } : {}),
       onFocus: () => {},
       onTitleChange: () => {},
+      onCommandDone: () => this.onCommandDone?.(),
     });
 
     this.panel.appendChild(this.pane.element);

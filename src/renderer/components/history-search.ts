@@ -12,6 +12,7 @@ export class HistorySearch {
   private selectedIndex = 0;
   private visible = false;
   private callbacks: HistorySearchCallbacks;
+  private disposables: (() => void)[] = [];
 
   constructor(container: HTMLElement, callbacks: HistorySearchCallbacks) {
     this.callbacks = callbacks;
@@ -34,8 +35,14 @@ export class HistorySearch {
     this.input = this.overlay.querySelector('.history-search-input')!;
     this.list = this.overlay.querySelector('.history-search-list')!;
 
-    this.input.addEventListener('input', () => this.filter());
-    this.input.addEventListener('keydown', (e) => this.handleKey(e));
+    const inputHandler = () => this.filter();
+    const keyHandler = (e: KeyboardEvent) => this.handleKey(e);
+    this.input.addEventListener('input', inputHandler);
+    this.input.addEventListener('keydown', keyHandler);
+    this.disposables.push(
+      () => this.input.removeEventListener('input', inputHandler),
+      () => this.input.removeEventListener('keydown', keyHandler),
+    );
   }
 
   show(entries: readonly string[]): void {
@@ -120,6 +127,7 @@ export class HistorySearch {
   }
 
   dispose(): void {
+    for (const d of this.disposables) d();
     this.overlay.remove();
   }
 }

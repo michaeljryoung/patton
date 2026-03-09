@@ -83,11 +83,15 @@ export function createWindow(ptyManager?: PtyManager): BrowserWindow {
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
 
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
-    window.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
+    window.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL).catch((err) => {
+      console.error('Failed to load dev server URL:', err);
+    });
   } else {
     window.loadFile(
       path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`)
-    );
+    ).catch((err) => {
+      console.error('Failed to load app file:', err);
+    });
   }
 
   // Save window state (debounced for resize/move, immediate on close)

@@ -39,12 +39,15 @@ export class App {
       if (settings.fontSize !== undefined) {
         this.fontSize = settings.fontSize;
         this.tabManager.setFontSize(this.fontSize);
+        this.quickTerminal.setFontSize(this.fontSize);
       }
       if (settings.fontFamily !== undefined) {
         this.tabManager.setFontFamily(settings.fontFamily);
+        this.quickTerminal.setFontFamily(settings.fontFamily);
       }
       if (settings.scrollback !== undefined) {
         this.tabManager.setScrollback(settings.scrollback);
+        this.quickTerminal.setScrollback(settings.scrollback);
       }
       if (settings.notificationSound !== undefined) {
         this.notificationSound.setEnabled(settings.notificationSound);
@@ -135,6 +138,9 @@ export class App {
     // Configure quick terminal
     if (settings.shell) this.quickTerminal.setShell(settings.shell);
     this.quickTerminal.setHistoryManager(this.tabManager['sharedHistory']);
+    this.quickTerminal.setFontSize(this.fontSize);
+    if (settings.fontFamily) this.quickTerminal.setFontFamily(settings.fontFamily);
+    if (settings.scrollback) this.quickTerminal.setScrollback(settings.scrollback);
 
     // Try to restore previous session (if enabled)
     // Restore previous session if enabled, otherwise start fresh

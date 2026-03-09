@@ -3,7 +3,7 @@ import ElectronStore from 'electron-store';
 import { createHash } from 'node:crypto';
 import { existsSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
-import { hostname, userInfo } from 'node:os';
+import { homedir, userInfo } from 'node:os';
 import { DEFAULTS } from '../shared/constants';
 import type { HistoryEntry, AppSettings, WindowState, SessionState } from '../shared/types';
 
@@ -15,7 +15,8 @@ function getEncryptionKey(): string {
   } catch {
     username = process.env.USER || 'unknown';
   }
-  const raw = `${hostname()}:${username}`;
+  const home = homedir() || '/unknown';
+  const raw = `${home}:${username}`;
   return createHash('sha256').update(raw).digest('hex');
 }
 

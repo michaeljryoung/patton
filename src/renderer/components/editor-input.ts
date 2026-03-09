@@ -11,6 +11,7 @@ export class EditorInput {
   private textarea: HTMLTextAreaElement;
   private container: HTMLElement;
   private callbacks: EditorInputCallbacks;
+  private disposables: (() => void)[] = [];
 
   constructor(container: HTMLElement, callbacks: EditorInputCallbacks, fontSize?: number) {
     this.container = container;
@@ -31,23 +32,27 @@ export class EditorInput {
     container.appendChild(this.textarea);
 
     // Auto-resize textarea to content
-    this.textarea.addEventListener('input', () => this.autoResize());
+    const inputHandler = () => this.autoResize();
+    this.textarea.addEventListener('input', inputHandler);
+    this.disposables.push(() => this.textarea.removeEventListener('input', inputHandler));
 
     // Intercept paste to bypass macOS IME composition state.
     // Direct textarea.value assignment bypasses Chromium's input state machine,
     // leaving a phantom composition that swallows the next Enter keydown.
     // execCommand('insertText') goes through the proper editing pipeline,
     // correctly terminating any IME composition state.
-    this.textarea.addEventListener('paste', (e) => {
+    const pasteHandler = (e: ClipboardEvent) => {
       e.preventDefault();
       const text = e.clipboardData?.getData('text') || '';
       if (!text) return;
       this.textarea.focus();
       document.execCommand('insertText', false, text);
       this.autoResize();
-    });
+    };
+    this.textarea.addEventListener('paste', pasteHandler as EventListener);
+    this.disposables.push(() => this.textarea.removeEventListener('paste', pasteHandler as EventListener));
 
-    this.textarea.addEventListener('keydown', (e) => {
+    const keydownHandler = (e: KeyboardEvent) => {
       if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
         e.preventDefault();
         const text = this.textarea.value;
@@ -107,7 +112,9 @@ export class EditorInput {
         e.preventDefault();
         return;
       }
-    });
+    };
+    this.textarea.addEventListener('keydown', keydownHandler);
+    this.disposables.push(() => this.textarea.removeEventListener('keydown', keydownHandler));
   }
 
   private autoResize(): void {
@@ -144,6 +151,7 @@ export class EditorInput {
   }
 
   dispose(): void {
+    for (const d of this.disposables) d();
     this.textarea.remove();
   }
 }

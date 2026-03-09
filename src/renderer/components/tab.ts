@@ -143,15 +143,6 @@ export class Tab {
     return this._broadcastInput;
   }
 
-  /** Write data to all panes in this tab (for broadcast mode) */
-  broadcastWrite(data: string): void {
-    for (const pane of this._panes) {
-      if (pane.ptyId !== null) {
-        window.patton.pty.write(pane.ptyId, data);
-      }
-    }
-  }
-
   setCustomTitle(name: string): void {
     this.title = name;
     this._customTitle = true;

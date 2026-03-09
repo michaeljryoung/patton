@@ -47,10 +47,11 @@ export class KeybindingManager {
       }
     };
 
-    document.addEventListener('keydown', this.handler);
+    // Capture phase so we intercept before xterm's own keydown handler
+    document.addEventListener('keydown', this.handler, true);
   }
 
   dispose(): void {
-    document.removeEventListener('keydown', this.handler);
+    document.removeEventListener('keydown', this.handler, true);
   }
 }
