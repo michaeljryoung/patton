@@ -56,9 +56,8 @@ app.on('ready', () => {
 });
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit();
-  }
+  // Always quit when all windows close — terminal apps don't stay in dock windowless
+  app.quit();
 });
 
 app.on('activate', () => {
