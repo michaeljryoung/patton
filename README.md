@@ -4,7 +4,7 @@ A modern terminal emulator for macOS with split panes, tabs, a compose panel for
 
 ## Download
 
-**[Download Patton v1.0.0 (DMG, Apple Silicon)](https://github.com/michaeljryoung/patton/releases/download/v1.0.0/Patton-1.0.0-arm64.dmg)**
+**[Download Patton (DMG, Apple Silicon)](https://github.com/michaeljryoung/patton/releases/latest)**
 
 > Patton is self-signed (not notarized by Apple). See [macOS Gatekeeper](#macos-gatekeeper) below for first-launch instructions.
 
@@ -112,13 +112,13 @@ npm run make
 
 ### Verify Download (optional)
 
-After downloading the DMG, you can verify its integrity:
+Each release includes SHA-256 checksums in the release notes. After downloading the DMG, verify its integrity:
 
 ```bash
-shasum -a 256 Patton-1.0.0-arm64.dmg
+shasum -a 256 Patton-*.dmg
 ```
 
-Expected: `2b7bbf37319366faf78c909972b10ca889c0b99295c8ead48e1f75ac13527837`
+Compare the output against the checksum listed on the [Releases page](https://github.com/michaeljryoung/patton/releases).
 
 ## Development
 

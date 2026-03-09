@@ -1,0 +1,157 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    # Skip [no-release] commits
+    if: "!contains(github.event.head_commit.message, '[no-release]')"
+    runs-on: macos-14
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm ci
+
+      - name: Compute next version
+        id: version
+        run: |
+          # Get last release tag (source of truth for version)
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+
+          if [ -z "$LAST_TAG" ]; then
+            LAST_VERSION=$(node -p "require('./package.json').version")
+            echo "No previous tag — using package.json version: $LAST_VERSION"
+          else
+            LAST_VERSION="${LAST_TAG#v}"
+            echo "Last tag: $LAST_TAG ($LAST_VERSION)"
+          fi
+
+          # Determine bump type
+          BUMP="patch"
+
+          if [ -n "$LAST_TAG" ]; then
+            COMMITS=$(git log "$LAST_TAG"..HEAD --pretty=format:"%s")
+
+            if echo "$COMMITS" | grep -qiE "^BREAKING[ :(]|BREAKING CHANGE"; then
+              BUMP="major"
+              echo "BREAKING commit found"
+            elif echo "$COMMITS" | grep -qiE "^feat[ :(]"; then
+              BUMP="minor"
+              echo "feat commit found"
+            else
+              TOTAL=$(git diff --numstat "$LAST_TAG"..HEAD | awk '{s+=$1+$2} END {print s+0}')
+              echo "Lines changed since $LAST_TAG: $TOTAL"
+              if [ "$TOTAL" -gt 500 ]; then
+                BUMP="minor"
+              fi
+            fi
+          fi
+
+          # Compute new version
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$LAST_VERSION"
+          case "$BUMP" in
+            major) NEW="$((MAJOR+1)).0.0" ;;
+            minor) NEW="$MAJOR.$((MINOR+1)).0" ;;
+            patch) NEW="$MAJOR.$MINOR.$((PATCH+1))" ;;
+          esac
+
+          echo "bump=$BUMP" >> "$GITHUB_OUTPUT"
+          echo "new=$NEW" >> "$GITHUB_OUTPUT"
+          echo "Version: $LAST_VERSION -> $NEW ($BUMP)"
+
+      - name: Set version for build
+        run: npm version "${{ steps.version.outputs.new }}" --no-git-tag-version --allow-same-version
+
+      - name: Build DMG
+        run: npm run make
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+      - name: Collect artifacts
+        id: dmg
+        run: |
+          DMG=$(find out/make -name "*.dmg" -type f | head -1)
+          echo "path=$DMG" >> "$GITHUB_OUTPUT"
+          echo "name=$(basename "$DMG")" >> "$GITHUB_OUTPUT"
+          echo "sha256=$(shasum -a 256 "$DMG" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+
+      - name: Create tag + GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ steps.version.outputs.new }}"
+          DMG_NAME="${{ steps.dmg.outputs.name }}"
+          SHA256="${{ steps.dmg.outputs.sha256 }}"
+
+          git tag -a "v$VERSION" -m "Release v$VERSION"
+          git push origin "v$VERSION"
+
+          cat > release-notes.md << EOF
+          ## Patton v$VERSION
+
+          ### Checksums
+          | File | SHA-256 |
+          |------|---------|
+          | $DMG_NAME | \`$SHA256\` |
+          EOF
+
+          gh release create "v$VERSION" \
+            "${{ steps.dmg.outputs.path }}" \
+            --title "Patton v$VERSION" \
+            --notes-file release-notes.md
+
+      - name: Update Homebrew cask
+        env:
+          HOMEBREW_PAT: ${{ secrets.HOMEBREW_PAT }}
+        run: |
+          if [ -z "$HOMEBREW_PAT" ]; then
+            echo "HOMEBREW_PAT not set — skipping cask update"
+            exit 0
+          fi
+
+          VERSION="${{ steps.version.outputs.new }}"
+          SHA256="${{ steps.dmg.outputs.sha256 }}"
+
+          git clone "https://x-access-token:${HOMEBREW_PAT}@github.com/michaeljryoung/homebrew-patton.git" homebrew-cask
+          cd homebrew-cask
+          mkdir -p Casks
+
+          cat > Casks/patton.rb << EOF
+          cask "patton" do
+            version "$VERSION"
+            sha256 "$SHA256"
+
+            url "https://github.com/michaeljryoung/patton/releases/download/v#{version}/Patton-#{version}-arm64.dmg"
+            name "Patton"
+            desc "Terminal emulator with compose panel, split panes, and tabs"
+            homepage "https://github.com/michaeljryoung/patton"
+
+            depends_on arch: :arm64
+
+            app "Patton.app"
+
+            zap trash: [
+              "~/Library/Application Support/Patton",
+              "~/Library/Preferences/com.electron.patton.plist",
+            ]
+          end
+          EOF
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Casks/patton.rb
+          git diff --cached --quiet || (git commit -m "Update patton to $VERSION" && git push)

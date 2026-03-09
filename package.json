@@ -12,7 +12,8 @@
     "make": "electron-forge make",
     "publish": "electron-forge publish",
     "lint": "eslint .",
-    "audit": "npm audit --omit=dev --audit-level=high"
+    "audit": "npm audit --omit=dev --audit-level=high",
+    "release": "bash scripts/release.sh"
   },
   "keywords": ["terminal", "electron", "xterm", "codemirror", "split-panes"],
   "author": "Michael Young",
