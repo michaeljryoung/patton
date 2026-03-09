@@ -41,7 +41,7 @@
   overflow-x: auto;
   height: 100%;
   align-items: flex-end;
-  /* Inherit drag from .tab-bar — empty space between tabs drags the window */
+  -webkit-app-region: no-drag;
 }
 
 /* Hide scrollbar on tab row */

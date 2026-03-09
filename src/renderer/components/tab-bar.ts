@@ -41,6 +41,33 @@ export class TabBar {
     this.tabsContainer.setAttribute('role', 'tablist');
     this.container.appendChild(this.tabsContainer);
 
+    // Window drag from empty space in the tabs container
+    this.tabsContainer.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+      // Only handle clicks on the container itself, not on child tabs
+      if ((e.target as HTMLElement).closest('.tab-bar-tab')) return;
+      let dragging = false;
+      let lastX = e.screenX;
+      let lastY = e.screenY;
+      const startX = e.screenX;
+      const startY = e.screenY;
+      const onMove = (me: MouseEvent) => {
+        if (!dragging && Math.abs(me.screenX - startX) < 5 && Math.abs(me.screenY - startY) < 5) return;
+        dragging = true;
+        const dx = me.screenX - lastX;
+        const dy = me.screenY - lastY;
+        lastX = me.screenX;
+        lastY = me.screenY;
+        window.patton.moveWindowBy(dx, dy);
+      };
+      const onUp = () => {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+
     const newBtn = document.createElement('button');
     newBtn.className = 'tab-bar-new';
     newBtn.textContent = '+';
