@@ -9,7 +9,7 @@ import { execFile } from 'node:child_process';
 import { existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { DEFAULTS, IPC } from '../shared/constants';
+import { DEFAULTS, IPC, PATTON_QUOTES } from '../shared/constants';
 import type { PtyCreateOptions } from '../shared/types';
 
 // --- Security: Environment variable allowlist ---
@@ -162,10 +162,15 @@ export class PtyManager {
         script = join(resDir, 'shell-integration-bash.sh');
       }
       if (script && existsSync(script)) {
-        // Wait for shell init to complete, then source silently
+        // Wait for shell init to complete, then source silently.
+        // Re-display a Patton quote after clear (clear wipes the one pane.ts wrote pre-PTY).
         setTimeout(() => {
           if (this.instances.has(id)) {
-            proc.write(` source "${script}" && clear\r`);
+            const quote = PATTON_QUOTES[Math.floor(Math.random() * PATTON_QUOTES.length)];
+            // Escape for $'...' shell syntax: backslashes and single quotes
+            const escaped = quote.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+            const quoteFmt = `\\n  \\033[1m"\\033[3m${escaped}\\033[0m\\033[1m"\\033[0m\\n  \\033[2m— General George S. Patton\\033[0m\\n\\n`;
+            proc.write(` source "${script}" && clear && printf $'${quoteFmt}'\r`);
           }
         }, 500);
       }

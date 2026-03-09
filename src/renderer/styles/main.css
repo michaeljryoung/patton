@@ -384,3 +384,28 @@ input:focus-visible {
   color: var(--text-muted);
   font-family: var(--font-ui);
 }
+
+/* --- Toast notification --- */
+.toast-notification {
+  position: absolute;
+  top: 40px;
+  left: 50%;
+  transform: translateX(-50%) translateY(-8px);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-family: var(--font-ui);
+  box-shadow: 0 4px 16px var(--shadow);
+  z-index: 3000;
+  opacity: 0;
+  transition: opacity 0.2s, transform 0.2s;
+  pointer-events: none;
+}
+
+.toast-notification.visible {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}

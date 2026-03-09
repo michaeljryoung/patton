@@ -13,6 +13,7 @@ import {
 } from './split-tree';
 import type { SessionTreeNode, SessionTabState, SessionPaneState } from '../../shared/types';
 import type { ITheme } from '@xterm/xterm';
+import { DEFAULTS } from '../../shared/constants';
 
 let tabIdCounter = 0;
 
@@ -174,6 +175,10 @@ export class Tab {
   private splitting = false;
   private async split(direction: SplitDirection, cwd?: string): Promise<void> {
     if (this.splitting) return; // Prevent concurrent splits
+    if (this._panes.length >= DEFAULTS.MAX_PANES_PER_TAB) {
+      this.showToast(`Maximum ${DEFAULTS.MAX_PANES_PER_TAB} panes per tab`);
+      return;
+    }
     this.splitting = true;
     try {
       // Use provided CWD (from focused pane) or fall back to focused pane's CWD
@@ -536,6 +541,19 @@ export class Tab {
     }
 
     return tab;
+  }
+
+
+  private showToast(message: string): void {
+    const toast = document.createElement('div');
+    toast.className = 'toast-notification';
+    toast.textContent = message;
+    this.element.appendChild(toast);
+    requestAnimationFrame(() => toast.classList.add('visible'));
+    setTimeout(() => {
+      toast.classList.remove('visible');
+      setTimeout(() => toast.remove(), 300);
+    }, 2000);
   }
 
   dispose(): void {

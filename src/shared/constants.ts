@@ -65,6 +65,7 @@ export const DEFAULTS = {
   NOTIFICATION_SOUND: true,
   NOTIFICATION_SOUND_TYPE: 'chime' as const,
   STARTUP_COMMAND: '' as const,
+  MAX_PANES_PER_TAB: 5,
 } as const;
 
 export const PATTON_QUOTES = [
