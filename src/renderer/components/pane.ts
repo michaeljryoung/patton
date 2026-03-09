@@ -158,22 +158,30 @@ export class Pane {
 
     // Wire PTY data → terminal (unconditional — no mode checking)
     // Activity-based idle detection: when terminal output stops for 3s after
-    // being active, fire onCommandDone. This catches tool completions in
-    // long-running processes like Claude Code (where OSC 133 markers don't fire).
+    // being active AND output spanned 10s+, fire onCommandDone. This catches
+    // tool completions in long-running processes like Claude Code (where OSC 133
+    // markers don't fire) without false-firing on brief output bursts.
     let idleTimer: ReturnType<typeof setTimeout> | null = null;
     let hadActivity = false;
+    let activityStartTime = 0;
     const IDLE_THRESHOLD_MS = 3000;
+    const MIN_ACTIVE_DURATION_MS = 10_000;
 
     this.disposables.push(
       window.patton.pty.onData((id, data) => {
         if (id === this.ptyId) {
           this.terminalView.write(data);
           hadActivity = true;
+          if (!activityStartTime) activityStartTime = Date.now();
           if (idleTimer) clearTimeout(idleTimer);
           idleTimer = setTimeout(() => {
             if (hadActivity) {
+              const duration = Date.now() - activityStartTime;
               hadActivity = false;
-              this.callbacks.onCommandDone?.();
+              activityStartTime = 0;
+              if (duration >= MIN_ACTIVE_DURATION_MS) {
+                this.callbacks.onCommandDone?.();
+              }
             }
             idleTimer = null;
           }, IDLE_THRESHOLD_MS);
