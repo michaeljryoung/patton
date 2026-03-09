@@ -107,14 +107,12 @@ npm audit --omit=dev --audit-level=high
 Feature-complete, distributed. Public GitHub release with DMG installer.
 
 ## Last Session
-**2026-03-09 (session 7)**
-- Fixed 33 issues from debug scan (3 CRITICAL, 12 HIGH, 10 MEDIUM, 8 LOW): CWD validation, scrollback cap, session save resilience, double-submit race, memory leaks across 7 UI components (disposables pattern), ownership-before-rate-limit, store corruption recovery, SESSION_SET type guard, dead code removal
-- Fixed notification sounds: bullet redesigned for laptop speakers, trigger wired to OSC 133 command-finished
-- Fixed shell integration injection: replaced exec/ZDOTDIR approaches with simple PTY write after 500ms delay
-- Compose panel hidden when collapsed (was showing thin bar)
-- Cmd+W on last tab now closes app instead of opening new tab
-- Created GitHub Release v1.0.0 with DMG: https://github.com/michaeljryoung/patton/releases/tag/v1.0.0
-- Made repo public
+**2026-03-09 (session 8)**
+- Added automatic release pipeline: every push to main triggers CI to auto-bump version, build DMG, publish GitHub release, and update Homebrew cask
+- Version source of truth is git tags, not package.json — CI never commits back to main
+- Bump heuristic: patch (<=500 lines), minor (>500 lines), major (BREAKING: commit prefix)
+- README made version-agnostic (download link → /releases/latest, checksum → releases page)
+- Manual fallback: `npm run release [-- patch|minor|major]`
 
 ## Next Steps
 - [ ] Test all features in packaged app end-to-end
