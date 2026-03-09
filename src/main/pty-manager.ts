@@ -153,7 +153,7 @@ export class PtyManager {
 
     // Inject shell integration by sourcing the script after shell init.
     // Quote is displayed instantly in the renderer (pane.ts), so PTY side just
-    // silently sources shell integration and clears shell login noise.
+    // silently sources shell integration (no clear — would erase the pre-PTY quote).
     if (this.shellIntegrationEnabled) {
       const resDir = getResourcesPath();
       let script = '';
@@ -165,7 +165,7 @@ export class PtyManager {
       if (script && existsSync(script)) {
         setTimeout(() => {
           if (this.instances.has(id)) {
-            proc.write(` stty -echo; source "${script}" && clear; stty echo\r`);
+            proc.write(` stty -echo; source "${script}"; stty echo\r`);
           }
         }, 500);
       }
