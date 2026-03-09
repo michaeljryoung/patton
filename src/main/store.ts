@@ -47,7 +47,7 @@ const defaults: StoreSchema = {
     theme: 'system',
     startupCommand: DEFAULTS.STARTUP_COMMAND,
     opacity: 1.0,
-    restoreSession: true,
+    restoreSession: false,
     shellIntegration: true,
   },
   windowState: {
