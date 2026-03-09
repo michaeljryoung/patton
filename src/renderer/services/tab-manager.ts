@@ -235,7 +235,7 @@ export class TabManager {
     this.tabs.splice(idx, 1);
 
     if (this.tabs.length === 0) {
-      await this.createTab();
+      window.close();
       return;
     }
 
