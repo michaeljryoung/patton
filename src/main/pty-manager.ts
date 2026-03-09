@@ -9,7 +9,7 @@ import { execFile } from 'node:child_process';
 import { existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { DEFAULTS, IPC, PATTON_QUOTES } from '../shared/constants';
+import { DEFAULTS, IPC } from '../shared/constants';
 import type { PtyCreateOptions } from '../shared/types';
 
 // --- Security: Environment variable allowlist ---
@@ -151,14 +151,9 @@ export class PtyManager {
     this.instances.set(id, instance);
     this.countByWindow.set(winId, current + 1);
 
-    // Build the welcome quote (displayed once after shell init).
-    const quote = PATTON_QUOTES[Math.floor(Math.random() * PATTON_QUOTES.length)];
-    const escaped = quote.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-    const quoteFmt = `\\n  \\033[1m"\\033[3m${escaped}\\033[0m\\033[1m"\\033[0m\\n  \\033[2m— General George S. Patton\\033[0m\\n\\n`;
-
     // Inject shell integration by sourcing the script after shell init.
-    // Written to PTY as a hidden command (leading space avoids history in most shells).
-    let injected = false;
+    // Quote is displayed instantly in the renderer (pane.ts), so PTY side just
+    // silently sources shell integration and clears shell login noise.
     if (this.shellIntegrationEnabled) {
       const resDir = getResourcesPath();
       let script = '';
@@ -168,23 +163,12 @@ export class PtyManager {
         script = join(resDir, 'shell-integration-bash.sh');
       }
       if (script && existsSync(script)) {
-        injected = true;
-        // Wait for shell init to complete, then source silently + display quote.
-        // stty -echo suppresses command echo so raw escape codes aren't visible.
         setTimeout(() => {
           if (this.instances.has(id)) {
-            proc.write(` stty -echo; source "${script}" && clear && printf $'${quoteFmt}'; stty echo\r`);
+            proc.write(` stty -echo; source "${script}" && clear; stty echo\r`);
           }
         }, 500);
       }
-    }
-    // Fallback: display quote without shell integration (no clear needed)
-    if (!injected) {
-      setTimeout(() => {
-        if (this.instances.has(id)) {
-          proc.write(` stty -echo; printf $'${quoteFmt}'; stty echo\r`);
-        }
-      }, 300);
     }
 
     proc.onData((data: string) => {
