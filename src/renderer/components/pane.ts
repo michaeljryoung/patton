@@ -6,7 +6,7 @@ import { PasteDialog } from './paste-dialog';
 import { ContextMenu } from './context-menu';
 import { HistoryManager } from '../services/history-manager';
 import { FileLinkProvider } from '../services/file-link-provider';
-import { PATTON_QUOTES } from '../../shared/constants';
+
 import type { ITheme } from '@xterm/xterm';
 
 let paneIdCounter = 0;
@@ -133,10 +133,6 @@ export class Pane {
       new FileLinkProvider(this.terminalView.terminal, () => this.currentCwd),
     );
     this.disposables.push(() => linkDisposable.dispose());
-
-    // Display a random Patton quote
-    const quote = PATTON_QUOTES[Math.floor(Math.random() * PATTON_QUOTES.length)];
-    this.terminalView.write(`\r\n  \x1b[1m"\x1b[3m${quote}\x1b[0m\x1b[1m"\x1b[0m\r\n  \x1b[2m— General George S. Patton\x1b[0m\r\n\r\n`);
 
     // Create PTY (shell path passed down from App to avoid per-pane IPC)
     const dims = this.terminalView.getDimensions();

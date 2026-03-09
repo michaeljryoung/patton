@@ -122,9 +122,9 @@ export class TabManager {
   }
 
   async createTab(cwd?: string): Promise<Tab> {
-    // Inherit CWD from active tab's focused pane if not specified
-    const inheritCwd = cwd || this.getActiveCwd();
-    const tab = new Tab(inheritCwd);
+    // Only use explicitly provided CWD (e.g. session restore, reopen closed).
+    // New tabs (Cmd+T / +) start at home directory.
+    const tab = new Tab(cwd);
     if (this.currentShell) tab.setShell(this.currentShell);
     tab.setHistoryManager(this.sharedHistory);
     tab.setRegistrationCallbacks(
