@@ -74,11 +74,12 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
         console.warn('[SECURITY] PTY_WRITE data size limit exceeded', { size: data.length });
         return;
       }
+      // Ownership check BEFORE rate limit to prevent rate limit consumption by unauthorized callers
+      requireOwnership(ptyManager, event, id);
       if (!ptyWriteLimiter.allow()) {
         console.warn('[SECURITY] Rate limit exceeded', { channel: IPC.PTY_WRITE });
         return;
       }
-      requireOwnership(ptyManager, event, id);
       ptyManager.write(id, data);
     } catch {
       console.warn('[SECURITY] PTY ownership check failed', { channel: IPC.PTY_WRITE, id });
@@ -177,6 +178,10 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
       return;
     }
     store.setSettings(settings);
+    // Propagate shell integration toggle to pty manager (affects new PTYs only)
+    if ('shellIntegration' in settings) {
+      ptyManager.shellIntegrationEnabled = !!settings.shellIntegration;
+    }
   });
 
   // --- Session restore ---
@@ -185,6 +190,13 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
   });
 
   ipcMain.handle(IPC.SESSION_SET, (_event, session: SessionState | null) => {
+    // Type guard: allow null or valid object with tabs array
+    if (session !== null) {
+      if (!session || typeof session !== 'object' || !Array.isArray(session.tabs)) {
+        console.warn('[SECURITY] SESSION_SET type validation failed', { type: typeof session });
+        return;
+      }
+    }
     store.setSession(session);
   });
 

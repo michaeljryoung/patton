@@ -4,9 +4,11 @@ import type { IPty } from 'node-pty';
 // Handle CJS/ESM interop for externalized module
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- CJS/ESM interop requires runtime check
 const pty = ((ptyModule as any).default || ptyModule) as typeof ptyModule;
-import { BrowserWindow } from 'electron';
+import { app, BrowserWindow } from 'electron';
 import { execFile } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
 import { DEFAULTS, IPC } from '../shared/constants';
 import type { PtyCreateOptions } from '../shared/types';
 
@@ -32,7 +34,15 @@ const SAFE_ENV_KEYS = new Set([
   'GPG_TTY',
 ]);
 
-function getSafeEnv(): Record<string, string> {
+/** Resolve the resources directory (works in both dev and packaged mode) */
+function getResourcesPath(): string {
+  if (app.isPackaged) {
+    return join(process.resourcesPath, 'resources');
+  }
+  return join(app.getAppPath(), 'resources');
+}
+
+function getSafeEnv(shellIntegration = true): Record<string, string> {
   const safe: Record<string, string> = {};
   for (const key of SAFE_ENV_KEYS) {
     if (process.env[key]) {
@@ -41,6 +51,10 @@ function getSafeEnv(): Record<string, string> {
   }
   safe.TERM = 'xterm-256color';
   safe.COLORTERM = 'truecolor';
+  if (shellIntegration) {
+    safe.PATTON_SHELL_INTEGRATION = '1';
+    safe.PATTON_SHELL_INTEGRATION_DIR = getResourcesPath();
+  }
   return safe;
 }
 
@@ -51,6 +65,35 @@ const ALLOWED_SHELLS = new Set([
   '/usr/local/bin/bash', '/usr/local/bin/zsh', '/usr/local/bin/fish',
   '/opt/homebrew/bin/bash', '/opt/homebrew/bin/zsh', '/opt/homebrew/bin/fish',
 ]);
+
+// --- Security: CWD path validation ---
+const ALLOWED_CWD_PREFIXES = ['/Users', '/home', '/tmp', '/var/folders'];
+
+function validateCwd(cwd: string | undefined): string {
+  if (!cwd || typeof cwd !== 'string') return homedir() || '/';
+  if (!cwd.startsWith('/')) return homedir() || '/';
+  // Reject path traversal
+  if (/(?:^|\/)\.\.(?:\/|$)/.test(cwd)) return homedir() || '/';
+  // Validate against allowed prefixes (HOME always allowed)
+  const home = homedir() || '/Users';
+  const allowed = [home, ...ALLOWED_CWD_PREFIXES];
+  if (!allowed.some(prefix => cwd.startsWith(prefix))) {
+    console.warn('[SECURITY] CWD rejected — outside allowed prefixes', { cwd });
+    return home;
+  }
+  // Verify path exists and is a directory
+  try {
+    const stat = statSync(cwd);
+    if (!stat.isDirectory()) {
+      console.warn('[SECURITY] CWD rejected — not a directory', { cwd });
+      return home;
+    }
+  } catch {
+    console.warn('[SECURITY] CWD rejected — path does not exist', { cwd });
+    return home;
+  }
+  return cwd;
+}
 
 function validateShell(shell: string): string {
   if (ALLOWED_SHELLS.has(shell)) return shell;
@@ -71,6 +114,7 @@ export class PtyManager {
   private instances = new Map<number, PtyInstance>();
   private nextId = 1;
   private countByWindow = new Map<number, number>();
+  shellIntegrationEnabled = true;
 
   create(window: BrowserWindow, opts?: PtyCreateOptions): number {
     // --- Security: Rate limit PTY creation ---
@@ -83,16 +127,18 @@ export class PtyManager {
 
     const id = this.nextId++;
     const shell = validateShell(opts?.shell || process.env.SHELL || DEFAULTS.SHELL);
-    const cwd = (opts?.cwd && typeof opts.cwd === 'string' && opts.cwd.startsWith('/'))
-      ? opts.cwd
-      : (process.env.HOME || '/');
+    const cwd = validateCwd(opts?.cwd);
 
-    const proc = pty.spawn(shell, ['--login'], {
+    const shellBase = shell.split('/').pop() || '';
+    const safeEnv = getSafeEnv(this.shellIntegrationEnabled);
+    const shellArgs: string[] = ['--login'];
+
+    const proc = pty.spawn(shell, shellArgs, {
       name: 'xterm-256color',
       cols: opts?.cols || DEFAULTS.COLS,
       rows: opts?.rows || DEFAULTS.ROWS,
       cwd,
-      env: getSafeEnv(),
+      env: safeEnv,
     });
 
     const instance: PtyInstance = {
@@ -104,6 +150,26 @@ export class PtyManager {
 
     this.instances.set(id, instance);
     this.countByWindow.set(winId, current + 1);
+
+    // Inject shell integration by sourcing the script after shell init.
+    // Written to PTY as a hidden command (leading space avoids history in most shells).
+    if (this.shellIntegrationEnabled) {
+      const resDir = getResourcesPath();
+      let script = '';
+      if (shellBase === 'zsh') {
+        script = join(resDir, 'shell-integration-zsh.zsh');
+      } else if (shellBase === 'bash') {
+        script = join(resDir, 'shell-integration-bash.sh');
+      }
+      if (script && existsSync(script)) {
+        // Wait for shell init to complete, then source silently
+        setTimeout(() => {
+          if (this.instances.has(id)) {
+            proc.write(` source "${script}" && clear\r`);
+          }
+        }, 500);
+      }
+    }
 
     proc.onData((data: string) => {
       instance.buffer += data;
@@ -139,7 +205,7 @@ export class PtyManager {
       if (!window.isDestroyed()) {
         window.webContents.send(IPC.PTY_EXIT, id, exitCode);
       }
-      const c = this.countByWindow.get(winId) ?? 1;
+      const c = this.countByWindow.get(winId) ?? 0;
       this.countByWindow.set(winId, Math.max(0, c - 1));
     });
 
@@ -176,7 +242,7 @@ export class PtyManager {
       // Clean up map and counter BEFORE kill() — if kill() throws, resources are still freed
       this.instances.delete(id);
       const winId = instance.window.id;
-      const c = this.countByWindow.get(winId) || 1;
+      const c = this.countByWindow.get(winId) ?? 0;
       this.countByWindow.set(winId, Math.max(0, c - 1));
       try {
         instance.process.kill();

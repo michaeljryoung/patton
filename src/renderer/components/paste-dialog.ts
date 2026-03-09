@@ -1,6 +1,7 @@
 export class PasteDialog {
   private overlay: HTMLElement;
   private resolve: ((paste: boolean) => void) | null = null;
+  private disposables: (() => void)[] = [];
 
   constructor(container: HTMLElement) {
     this.overlay = document.createElement('div');
@@ -23,15 +24,26 @@ export class PasteDialog {
     `;
     container.appendChild(this.overlay);
 
-    this.overlay.querySelector('.paste-dialog-cancel')!.addEventListener('click', () => this.finish(false));
-    this.overlay.querySelector('.paste-dialog-confirm')!.addEventListener('click', () => this.finish(true));
-    this.overlay.addEventListener('keydown', (e) => {
+    const cancelBtn = this.overlay.querySelector('.paste-dialog-cancel') as HTMLElement;
+    const confirmBtn = this.overlay.querySelector('.paste-dialog-confirm') as HTMLElement;
+    const cancelHandler = () => this.finish(false);
+    const confirmHandler = () => this.finish(true);
+    cancelBtn.addEventListener('click', cancelHandler);
+    confirmBtn.addEventListener('click', confirmHandler);
+    this.disposables.push(
+      () => cancelBtn.removeEventListener('click', cancelHandler),
+      () => confirmBtn.removeEventListener('click', confirmHandler),
+    );
+
+    const keydownHandler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') this.finish(false);
       // Only confirm on Enter if the Cancel button is NOT focused
       if (e.key === 'Enter' && !(e.target as HTMLElement)?.classList?.contains('paste-dialog-cancel')) {
         this.finish(true);
       }
-    });
+    };
+    this.overlay.addEventListener('keydown', keydownHandler);
+    this.disposables.push(() => this.overlay.removeEventListener('keydown', keydownHandler));
   }
 
   async confirm(text: string, lineCount: number): Promise<boolean> {
@@ -60,6 +72,7 @@ export class PasteDialog {
   }
 
   dispose(): void {
+    for (const d of this.disposables) d();
     this.overlay.remove();
   }
 }

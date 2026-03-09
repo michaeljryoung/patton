@@ -167,10 +167,12 @@ export class App {
     }
 
     // Save session on window unload (app close)
-    window.addEventListener('beforeunload', () => {
+    const beforeUnloadHandler = () => {
       // Synchronous: fire and forget — the main process handles persistence
       this.tabManager.saveSession().catch(() => {});
-    });
+    };
+    window.addEventListener('beforeunload', beforeUnloadHandler);
+    this.disposables.push(() => window.removeEventListener('beforeunload', beforeUnloadHandler));
   }
 
   private registerAppListeners(): void {
@@ -330,7 +332,7 @@ export class App {
       { label: 'Decrease Font Size', shortcut: '\u2318-', action: 'font-down' },
       { label: 'Next Tab', shortcut: '\u2318\u21E7]', action: 'next-tab' },
       { label: 'Previous Tab', shortcut: '\u2318\u21E7[', action: 'prev-tab' },
-      { label: 'Toggle Passthrough', shortcut: '\u2303\u21E7P', action: 'toggle-passthrough' },
+      { label: 'Toggle Compose Panel', shortcut: '\u2318E', action: 'toggle-compose' },
       { label: 'History Search', shortcut: '\u2303R', action: 'history-search' },
       { label: 'Jump to Previous Prompt', shortcut: '\u2318\u21E7\u2191', action: 'prompt-up' },
       { label: 'Jump to Next Prompt', shortcut: '\u2318\u21E7\u2193', action: 'prompt-down' },
@@ -382,8 +384,8 @@ export class App {
       case 'prev-tab':
         this.tabManager.prevTab();
         break;
-      case 'toggle-passthrough':
-        tab?.togglePassthrough();
+      case 'toggle-compose':
+        tab?.toggleCompose();
         break;
       case 'history-search':
         tab?.showHistorySearch();

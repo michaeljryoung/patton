@@ -9,6 +9,7 @@ export class SearchOverlay {
   private matchIndex = 0;
   private matchTotal = 0;
   private resultDisposable?: { dispose(): void };
+  private disposables: (() => void)[] = [];
 
   constructor(parent: HTMLElement, searchAddon: SearchAddon) {
     this.searchAddon = searchAddon;
@@ -33,7 +34,9 @@ export class SearchOverlay {
     closeBtn.className = 'search-close';
     closeBtn.textContent = '\u00d7';
     closeBtn.setAttribute('aria-label', 'Close search');
-    closeBtn.addEventListener('click', () => this.hide());
+    const closeHandler = () => this.hide();
+    closeBtn.addEventListener('click', closeHandler);
+    this.disposables.push(() => closeBtn.removeEventListener('click', closeHandler));
 
     this.container.appendChild(this.input);
     this.container.appendChild(this.countDisplay);
@@ -58,11 +61,11 @@ export class SearchOverlay {
       // Older xterm SearchAddon without onDidChangeResults
     }
 
-    this.input.addEventListener('input', () => {
-      this.search();
-    });
+    const inputHandler = () => { this.search(); };
+    this.input.addEventListener('input', inputHandler);
+    this.disposables.push(() => this.input.removeEventListener('input', inputHandler));
 
-    this.input.addEventListener('keydown', (e) => {
+    const keydownHandler = (e: KeyboardEvent) => {
       if (e.key === 'Enter' && e.shiftKey) {
         e.preventDefault();
         this.searchAddon.findPrevious(this.input.value);
@@ -73,7 +76,9 @@ export class SearchOverlay {
         e.preventDefault();
         this.hide();
       }
-    });
+    };
+    this.input.addEventListener('keydown', keydownHandler);
+    this.disposables.push(() => this.input.removeEventListener('keydown', keydownHandler));
   }
 
   private search(): void {
@@ -128,6 +133,7 @@ export class SearchOverlay {
   }
 
   dispose(): void {
+    for (const d of this.disposables) d();
     this.resultDisposable?.dispose();
     this.container.remove();
   }

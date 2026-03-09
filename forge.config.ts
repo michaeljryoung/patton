@@ -32,6 +32,7 @@ const config: ForgeConfig = {
     asar: {
       unpack: '**/{*.node,node-pty/**/*}',
     },
+    extraResource: ['./resources'],
   },
   hooks: {
     postPackage: async (_forgeConfig, packageResult) => {

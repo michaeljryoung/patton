@@ -6,6 +6,7 @@ export class SettingsPanel {
   private visible = false;
   private onSettingsChanged: (settings: Partial<AppSettings>) => void;
   private cachedSettings: AppSettings | null = null;
+  private disposables: (() => void)[] = [];
 
   constructor(container: HTMLElement, onSettingsChanged: (settings: Partial<AppSettings>) => void) {
     this.onSettingsChanged = onSettingsChanged;
@@ -117,6 +118,14 @@ export class SettingsPanel {
             </label>
             <span class="settings-hint">Reopen tabs from your last session on launch</span>
           </div>
+          <div class="settings-group settings-group-toggle">
+            <label class="settings-label" for="setting-shell-integration">Shell Integration</label>
+            <label class="settings-toggle">
+              <input type="checkbox" id="setting-shell-integration" />
+              <span class="settings-toggle-slider"></span>
+            </label>
+            <span class="settings-hint">Inject OSC 133 markers for prompt detection (new tabs only)</span>
+          </div>
           <div class="shortcuts-section">
             <h3 class="shortcuts-title">Keyboard Shortcuts</h3>
             <div class="shortcuts-grid">
@@ -132,7 +141,7 @@ export class SettingsPanel {
               <kbd>\u2318\u21E7T</kbd><span>Reopen closed tab</span>
               <kbd>\u2318\u21E7P</kbd><span>Command palette</span>
               <kbd>\u2318\u21E7\u2191\u2193</kbd><span>Jump between prompts</span>
-              <kbd>\u2303\u21E7P</kbd><span>Toggle passthrough</span>
+              <kbd>\u2318E</kbd><span>Compose panel</span>
               <kbd>\u2303R</kbd><span>History search</span>
             </div>
           </div>
@@ -142,12 +151,18 @@ export class SettingsPanel {
 
     container.appendChild(this.overlay);
 
+    // Helper to register and track event listeners for cleanup
+    const listen = <K extends keyof HTMLElementEventMap>(el: HTMLElement, event: K, handler: (e: HTMLElementEventMap[K]) => void) => {
+      el.addEventListener(event, handler);
+      this.disposables.push(() => el.removeEventListener(event, handler));
+    };
+
     // Close handlers
-    this.overlay.querySelector('.settings-close')!.addEventListener('click', () => this.hide());
-    this.overlay.querySelector('.settings-backdrop')!.addEventListener('click', () => this.hide());
+    listen(this.overlay.querySelector('.settings-close') as HTMLElement, 'click', () => this.hide());
+    listen(this.overlay.querySelector('.settings-backdrop') as HTMLElement, 'click', () => this.hide());
 
     // Escape key
-    this.overlay.addEventListener('keydown', (e) => {
+    listen(this.overlay, 'keydown', (e) => {
       if (e.key === 'Escape') this.hide();
     });
 
@@ -157,53 +172,53 @@ export class SettingsPanel {
     const scrollbackInput = this.overlay.querySelector('#setting-scrollback') as HTMLInputElement;
     const shellInput = this.overlay.querySelector('#setting-shell') as HTMLInputElement;
 
-    fontSizeInput.addEventListener('change', () => {
+    listen(fontSizeInput, 'change', () => {
       const val = parseInt(fontSizeInput.value, 10);
       if (val >= 8 && val <= 72) {
         this.saveAndNotify({ fontSize: val });
       }
     });
 
-    fontFamilyInput.addEventListener('change', () => {
+    listen(fontFamilyInput, 'change', () => {
       this.saveAndNotify({ fontFamily: fontFamilyInput.value });
     });
 
     const themeInput = this.overlay.querySelector('#setting-theme') as HTMLSelectElement;
-    themeInput.addEventListener('change', () => {
+    listen(themeInput, 'change', () => {
       this.saveAndNotify({ theme: themeInput.value });
     });
 
-    scrollbackInput.addEventListener('change', () => {
+    listen(scrollbackInput, 'change', () => {
       const val = parseInt(scrollbackInput.value, 10);
       if (val >= 100 && val <= 100000) {
         this.saveAndNotify({ scrollback: val });
       }
     });
 
-    shellInput.addEventListener('change', () => {
+    listen(shellInput, 'change', () => {
       if (shellInput.value.startsWith('/')) {
         this.saveAndNotify({ shell: shellInput.value });
       }
     });
 
     const notifInput = this.overlay.querySelector('#setting-notification-sound') as HTMLInputElement;
-    notifInput.addEventListener('change', () => {
+    listen(notifInput, 'change', () => {
       this.saveAndNotify({ notificationSound: notifInput.checked });
     });
 
     const copyOnSelectInput = this.overlay.querySelector('#setting-copy-on-select') as HTMLInputElement;
-    copyOnSelectInput.addEventListener('change', () => {
+    listen(copyOnSelectInput, 'change', () => {
       this.saveAndNotify({ copyOnSelect: copyOnSelectInput.checked });
     });
 
     const soundTypeInput = this.overlay.querySelector('#setting-notification-sound-type') as HTMLSelectElement;
-    soundTypeInput.addEventListener('change', () => {
+    listen(soundTypeInput, 'change', () => {
       this.saveAndNotify({ notificationSoundType: soundTypeInput.value });
     });
 
     const opacityInput = this.overlay.querySelector('#setting-opacity') as HTMLInputElement;
     const opacityValue = this.overlay.querySelector('#setting-opacity-value') as HTMLSpanElement;
-    opacityInput.addEventListener('input', () => {
+    listen(opacityInput, 'input', () => {
       const pct = parseInt(opacityInput.value, 10);
       opacityValue.textContent = `${pct}%`;
       const opacity = pct / 100;
@@ -212,13 +227,18 @@ export class SettingsPanel {
     });
 
     const startupCommandInput = this.overlay.querySelector('#setting-startup-command') as HTMLInputElement;
-    startupCommandInput.addEventListener('change', () => {
+    listen(startupCommandInput, 'change', () => {
       this.saveAndNotify({ startupCommand: startupCommandInput.value });
     });
 
     const restoreSessionInput = this.overlay.querySelector('#setting-restore-session') as HTMLInputElement;
-    restoreSessionInput.addEventListener('change', () => {
+    listen(restoreSessionInput, 'change', () => {
       this.saveAndNotify({ restoreSession: restoreSessionInput.checked });
+    });
+
+    const shellIntegrationInput = this.overlay.querySelector('#setting-shell-integration') as HTMLInputElement;
+    listen(shellIntegrationInput, 'change', () => {
+      this.saveAndNotify({ shellIntegration: shellIntegrationInput.checked });
     });
   }
 
@@ -255,6 +275,7 @@ export class SettingsPanel {
     (this.overlay.querySelector('#setting-copy-on-select') as HTMLInputElement).checked = settings.copyOnSelect === true;
     (this.overlay.querySelector('#setting-startup-command') as HTMLInputElement).value = settings.startupCommand || '';
     (this.overlay.querySelector('#setting-restore-session') as HTMLInputElement).checked = settings.restoreSession !== false;
+    (this.overlay.querySelector('#setting-shell-integration') as HTMLInputElement).checked = settings.shellIntegration !== false;
 
     (this.overlay.querySelector('#setting-theme') as HTMLSelectElement).value = settings.theme || 'system';
 
@@ -288,6 +309,7 @@ export class SettingsPanel {
   }
 
   dispose(): void {
+    for (const d of this.disposables) d();
     this.overlay.remove();
   }
 }

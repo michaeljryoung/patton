@@ -162,12 +162,12 @@ export class NotificationSound {
     }
   }
 
-  /** Bullet crack — sharp white-noise bang followed by a low-frequency whoosh tail. */
+  /** Bullet crack — sharp white-noise bang followed by a mid-frequency whoosh tail. */
   private scheduleBullet(ctx: AudioContext): void {
     const t = ctx.currentTime;
 
-    // Layer 1: Short burst of white noise (the "crack")
-    const bufferSize = ctx.sampleRate * 0.08; // 80ms of noise
+    // Layer 1: Wider burst of white noise (the "crack") — highpass to cut mud
+    const bufferSize = Math.floor(ctx.sampleRate * 0.12); // 120ms of noise
     const noiseBuffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
     const data = noiseBuffer.getChannelData(0);
     for (let i = 0; i < bufferSize; i++) {
@@ -176,33 +176,45 @@ export class NotificationSound {
     const noise = ctx.createBufferSource();
     noise.buffer = noiseBuffer;
     const noiseGain = ctx.createGain();
-    noiseGain.gain.setValueAtTime(0.25, t);
-    noiseGain.gain.exponentialRampToValueAtTime(0.001, t + 0.08);
-    // Bandpass filter to shape the crack
+    noiseGain.gain.setValueAtTime(0.5, t);
+    noiseGain.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
+    // Highpass filter — keeps the crack punchy on laptop speakers
     const filter = ctx.createBiquadFilter();
-    filter.type = 'bandpass';
-    filter.frequency.setValueAtTime(3000, t);
-    filter.Q.setValueAtTime(0.8, t);
+    filter.type = 'highpass';
+    filter.frequency.setValueAtTime(800, t);
     noise.connect(filter);
     filter.connect(noiseGain);
     noiseGain.connect(ctx.destination);
     noise.start(t);
-    noise.stop(t + 0.08);
+    noise.stop(t + 0.12);
     noise.onended = () => { noiseGain.disconnect(); filter.disconnect(); };
 
-    // Layer 2: Low-frequency whoosh tail (descending pitch)
+    // Layer 2: Mid-frequency whoosh tail (descending pitch, stays audible on laptop speakers)
     const osc = ctx.createOscillator();
     const oscGain = ctx.createGain();
     osc.type = 'sine';
-    osc.frequency.setValueAtTime(200, t);
-    osc.frequency.exponentialRampToValueAtTime(40, t + 0.25);
-    oscGain.gain.setValueAtTime(0.12, t);
-    oscGain.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
+    osc.frequency.setValueAtTime(400, t);
+    osc.frequency.exponentialRampToValueAtTime(120, t + 0.3);
+    oscGain.gain.setValueAtTime(0.2, t);
+    oscGain.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
     osc.connect(oscGain);
     oscGain.connect(ctx.destination);
     osc.start(t);
-    osc.stop(t + 0.25);
+    osc.stop(t + 0.3);
     osc.onended = () => { oscGain.disconnect(); };
+
+    // Layer 3: Transient click for initial attack presence
+    const click = ctx.createOscillator();
+    const clickGain = ctx.createGain();
+    click.type = 'square';
+    click.frequency.setValueAtTime(1200, t);
+    clickGain.gain.setValueAtTime(0.3, t);
+    clickGain.gain.exponentialRampToValueAtTime(0.001, t + 0.02);
+    click.connect(clickGain);
+    clickGain.connect(ctx.destination);
+    click.start(t);
+    click.stop(t + 0.02);
+    click.onended = () => { clickGain.disconnect(); };
   }
 
   dispose(): void {

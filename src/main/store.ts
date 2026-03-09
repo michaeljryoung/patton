@@ -47,6 +47,7 @@ const defaults: StoreSchema = {
     startupCommand: DEFAULTS.STARTUP_COMMAND,
     opacity: 1.0,
     restoreSession: true,
+    shellIntegration: true,
   },
   windowState: {
     width: 900,
@@ -63,16 +64,23 @@ function getStore(): ElectronStore<StoreSchema> {
     try {
       store = new Store({ defaults, encryptionKey: getEncryptionKey() });
     } catch (err) {
-      console.warn('[SECURITY] Store corrupted, resetting', err);
-      try {
-        // Compute config path directly — don't create a tempStore (it would fail
-        // parsing the encrypted file as plain JSON).
-        const configPath = join(app.getPath('userData'), 'config.json');
-        if (existsSync(configPath)) unlinkSync(configPath);
-      } catch {
-        // Ignore cleanup errors
+      // Only delete store on parse/decrypt errors — not on permission/disk errors
+      const errCode = (err as NodeJS.ErrnoException).code;
+      const isCorruption = !errCode || errCode === 'ERR_CRYPTO_INVALID_IV' || errCode === 'ERR_OSSL_BAD_DECRYPT';
+      if (isCorruption || (err instanceof SyntaxError)) {
+        console.warn('[SECURITY] Store corrupted, resetting', err);
+        try {
+          const configPath = join(app.getPath('userData'), 'config.json');
+          if (existsSync(configPath)) unlinkSync(configPath);
+        } catch {
+          // Ignore cleanup errors
+        }
+        store = new Store({ defaults, encryptionKey: getEncryptionKey() });
+      } else {
+        console.error('[SECURITY] Store init failed (not corruption, not resetting)', err);
+        // Re-throw non-corruption errors (EACCES, ENOSPC, etc.)
+        throw err;
       }
-      store = new Store({ defaults, encryptionKey: getEncryptionKey() });
     }
   }
   return store;
@@ -184,6 +192,10 @@ export function setSettings(partial: Partial<AppSettings>): void {
     validated.restoreSession = !!partial.restoreSession;
   }
 
+  if (partial.shellIntegration !== undefined) {
+    validated.shellIntegration = !!partial.shellIntegration;
+  }
+
   if (partial.opacity !== undefined) {
     const n = Number(partial.opacity);
     if (!isNaN(n) && n >= 0.3 && n <= 1.0) {
@@ -224,7 +236,7 @@ function isValidTreeNode(node: unknown, depth = 0): boolean {
 
   // Pane node (no 'type' property): must have 'cwd' string
   if ('type' in obj) return false; // unknown type
-  if (typeof obj.cwd !== 'string' || obj.cwd.length > 4096) return false;
+  if (typeof obj.cwd !== 'string' || Buffer.byteLength(obj.cwd, 'utf-8') > 4096) return false;
   return true;
 }
 

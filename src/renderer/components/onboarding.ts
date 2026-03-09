@@ -1,5 +1,6 @@
 export class Onboarding {
   private overlay: HTMLElement;
+  private disposables: (() => void)[] = [];
 
   constructor(container: HTMLElement) {
     this.overlay = document.createElement('div');
@@ -7,27 +8,27 @@ export class Onboarding {
     this.overlay.innerHTML = `
       <div class="onboarding-panel">
         <h2 class="onboarding-title">Welcome to Patton</h2>
-        <p class="onboarding-subtitle">A terminal with a built-in text editor for input.</p>
+        <p class="onboarding-subtitle">A terminal with a built-in compose panel for drafting commands.</p>
         <div class="onboarding-features">
-          <div class="onboarding-feature">
-            <span class="onboarding-icon">&#9998;</span>
-            <div>
-              <strong>Editor Mode</strong>
-              <p>Type commands in the editor bar at the bottom. Press <kbd>Enter</kbd> to run, <kbd>Shift+Enter</kbd> for multi-line.</p>
-            </div>
-          </div>
           <div class="onboarding-feature">
             <span class="onboarding-icon">&#9654;</span>
             <div>
-              <strong>Passthrough Mode</strong>
-              <p>When you run vim, ssh, or other TUI apps, Patton auto-switches to direct terminal input.</p>
+              <strong>Full Terminal</strong>
+              <p>Works like any native terminal. Type directly, run vim, ssh, or any TUI app — no mode switching needed.</p>
+            </div>
+          </div>
+          <div class="onboarding-feature">
+            <span class="onboarding-icon">&#9998;</span>
+            <div>
+              <strong>Compose Panel</strong>
+              <p>Press <kbd>\u2318E</kbd> to open a text editor for drafting multi-line commands. <kbd>Enter</kbd> sends, <kbd>Esc</kbd> dismisses.</p>
             </div>
           </div>
           <div class="onboarding-feature">
             <span class="onboarding-icon">&#8984;</span>
             <div>
               <strong>Key Shortcuts</strong>
-              <p><kbd>\u2318D</kbd> split pane &middot; <kbd>\u2318T</kbd> new tab &middot; <kbd>\u2318,</kbd> settings &middot; <kbd>\u2303\u21E7P</kbd> toggle mode</p>
+              <p><kbd>\u2318D</kbd> split pane &middot; <kbd>\u2318T</kbd> new tab &middot; <kbd>\u2318,</kbd> settings &middot; <kbd>\u2318\u21E7P</kbd> command palette</p>
             </div>
           </div>
         </div>
@@ -36,14 +37,17 @@ export class Onboarding {
     `;
     container.appendChild(this.overlay);
 
-    this.overlay.querySelector('.onboarding-dismiss')!.addEventListener('click', () => {
-      this.dismiss();
-    });
+    const dismissBtn = this.overlay.querySelector('.onboarding-dismiss') as HTMLElement;
+    const clickHandler = () => { this.dismiss(); };
+    dismissBtn.addEventListener('click', clickHandler);
+    this.disposables.push(() => dismissBtn.removeEventListener('click', clickHandler));
 
     // Also dismiss on Escape
-    this.overlay.addEventListener('keydown', (e) => {
+    const keydownHandler = (e: KeyboardEvent) => {
       if (e.key === 'Escape' || e.key === 'Enter') this.dismiss();
-    });
+    };
+    this.overlay.addEventListener('keydown', keydownHandler);
+    this.disposables.push(() => this.overlay.removeEventListener('keydown', keydownHandler));
   }
 
   show(): void {
@@ -55,7 +59,10 @@ export class Onboarding {
     this.overlay.classList.remove('visible');
     // Mark as shown in localStorage (persists across sessions)
     localStorage.setItem('patton-onboarding-shown', '1');
-    setTimeout(() => this.overlay.remove(), 200);
+    setTimeout(() => {
+      for (const d of this.disposables) d();
+      this.overlay.remove();
+    }, 200);
   }
 
   static shouldShow(): boolean {
@@ -63,6 +70,7 @@ export class Onboarding {
   }
 
   dispose(): void {
+    for (const d of this.disposables) d();
     this.overlay.remove();
   }
 }

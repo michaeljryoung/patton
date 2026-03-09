@@ -18,12 +18,13 @@ const ptyManager = new PtyManager();
 
 app.on('ready', () => {
   try {
+    // Apply shell integration setting before any PTYs are created
+    const settings = getSettings();
+    ptyManager.shellIntegrationEnabled = settings.shellIntegration !== false;
+
     registerIpcHandlers(ptyManager);
     buildMenu(ptyManager);
     createWindow(ptyManager);
-
-    // Register global hotkey to toggle window visibility
-    const settings = getSettings();
     const hotkey = settings.globalHotkey || 'Control+`';
     try {
       globalShortcut.register(hotkey, () => {

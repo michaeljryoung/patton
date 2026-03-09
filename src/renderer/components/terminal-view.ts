@@ -63,6 +63,8 @@ function getTheme() {
   return LIGHT_THEME;
 }
 
+export type PromptState = 'prompt' | 'command' | 'idle';
+
 export class TerminalView {
   readonly terminal: Terminal;
   readonly fitAddon: FitAddon;
@@ -72,9 +74,9 @@ export class TerminalView {
   private disposed = false;
   private mediaQuery: MediaQueryList;
   private themeHandler: () => void;
-  private keyboardEnabled = false;
   private copyOnSelectEnabled = false;
   private customTheme: ITheme | null = null;
+  private promptListeners: ((state: PromptState) => void)[] = [];
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -87,16 +89,6 @@ export class TerminalView {
       scrollback: DEFAULTS.SCROLLBACK,
       allowProposedApi: true,
       theme: getTheme(),
-    });
-
-    // Block keyboard input when disabled (auto-passthrough: editor is sole input)
-    this.terminal.attachCustomKeyEventHandler((event) => {
-      if (!this.keyboardEnabled) {
-        // Allow Cmd/Ctrl+C for copy even when keyboard is disabled
-        if ((event.metaKey || event.ctrlKey) && event.key === 'c') return true;
-        return false;
-      }
-      return true;
     });
 
     this.fitAddon = new FitAddon();
@@ -153,6 +145,36 @@ export class TerminalView {
       }
     };
     this.mediaQuery.addEventListener('change', this.themeHandler);
+
+    // Register OSC 133 handler for shell integration (prompt detection)
+    // Sub-commands: A = prompt start, B = prompt ready, C = pre-execution, D = finished
+    this.terminal.parser.registerOscHandler(133, (data) => {
+      const cmd = data.charAt(0);
+      switch (cmd) {
+        case 'A': // Prompt start
+        case 'B': // Prompt ready (user can type)
+          this.notifyPromptState('prompt');
+          break;
+        case 'C': // Command execution starting
+          this.notifyPromptState('command');
+          break;
+        case 'D': // Command finished
+          this.notifyPromptState('idle');
+          break;
+      }
+      return true; // handled
+    });
+  }
+
+  private notifyPromptState(state: PromptState): void {
+    for (const cb of this.promptListeners) cb(state);
+  }
+
+  onPromptState(callback: (state: PromptState) => void): () => void {
+    this.promptListeners.push(callback);
+    return () => {
+      this.promptListeners = this.promptListeners.filter(l => l !== callback);
+    };
   }
 
   mount(): void {
@@ -216,33 +238,11 @@ export class TerminalView {
     this.terminal.focus();
   }
 
-  setKeyboardEnabled(enabled: boolean): void {
-    this.keyboardEnabled = enabled;
-    // Physically disable/enable xterm's hidden textarea to prevent ALL input paths
-    // (keyboard events, IME composition, paste) from reaching the terminal.
-    const textarea = this.container.querySelector('.xterm-helper-textarea') as HTMLTextAreaElement | null;
-    if (textarea) {
-      if (enabled) {
-        textarea.style.pointerEvents = '';
-        textarea.removeAttribute('disabled');
-        textarea.tabIndex = 0;
-      } else {
-        textarea.style.pointerEvents = 'none';
-        textarea.setAttribute('disabled', 'true');
-        textarea.tabIndex = -1;
-      }
-    }
-  }
-
-  hasFocus(): boolean {
-    return this.container.contains(document.activeElement);
-  }
-
   isAlternateBuffer(): boolean {
     return this.terminal.buffer.active.type === 'alternate';
   }
 
-  onPassthroughData(callback: (data: string) => void): (() => void) {
+  onTerminalData(callback: (data: string) => void): (() => void) {
     const disposable = this.terminal.onData(callback);
     return () => disposable.dispose();
   }
@@ -310,8 +310,6 @@ export class TerminalView {
   jumpToPrompt(direction: 'up' | 'down'): void {
     const buffer = this.terminal.buffer.active;
     const currentViewport = buffer.viewportY;
-    const cursorRow = buffer.cursorY + buffer.viewportY;
-
     if (direction === 'up') {
       // Search upward from current viewport position
       for (let i = currentViewport - 1; i >= 0; i--) {
@@ -341,6 +339,7 @@ export class TerminalView {
 
   dispose(): void {
     this.disposed = true;
+    this.promptListeners = [];
     this.mediaQuery.removeEventListener('change', this.themeHandler);
     this.terminal.dispose();
   }

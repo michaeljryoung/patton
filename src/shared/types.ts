@@ -5,12 +5,6 @@ export interface PtyCreateOptions {
   rows?: number;
 }
 
-export interface PtyResizeOptions {
-  id: number;
-  cols: number;
-  rows: number;
-}
-
 export interface HistoryEntry {
   command: string;
   timestamp: number;
@@ -37,9 +31,8 @@ export interface AppSettings {
   startupCommand: string;
   opacity: number;
   restoreSession: boolean;
+  shellIntegration: boolean;
 }
-
-export type InputMode = 'editor' | 'passthrough';
 
 export interface SessionPaneState {
   cwd: string;
@@ -107,7 +100,6 @@ export interface PattonAPI {
     onSwitchTab: (callback: (index: number) => void) => () => void;
     onClear: (callback: () => void) => () => void;
     onSearch: (callback: () => void) => () => void;
-    onNewWindow: (callback: () => void) => () => void;
     onFontSizeUp: (callback: () => void) => () => void;
     onFontSizeDown: (callback: () => void) => () => void;
     onSplitVertical: (callback: () => void) => () => void;
@@ -120,7 +112,6 @@ export interface PattonAPI {
     onBroadcastInput: (callback: () => void) => () => void;
     onSwitchTabById: (callback: (id: string) => void) => () => void;
     onSplitZoom: (callback: () => void) => () => void;
-    onFloatOnTop: (callback: () => void) => () => void;
     onUndoClose: (callback: () => void) => () => void;
     onCommandPalette: (callback: () => void) => () => void;
     onPromptJumpUp: (callback: () => void) => () => void;

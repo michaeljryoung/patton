@@ -226,13 +226,6 @@ export class TabManager {
 
     const tab = this.tabs[idx];
 
-    // Check if any pane has an active process (passthrough mode = TUI running)
-    const hasActiveProcess = tab.panes.some(p => p.getMode() === 'passthrough');
-    if (hasActiveProcess) {
-      const proceed = window.confirm('A process is still running in this tab. Close anyway?');
-      if (!proceed) return;
-    }
-
     // Save pane state for undo before disposing
     for (const pane of tab.panes) {
       this.saveClosedPane(pane);
@@ -301,11 +294,19 @@ export class TabManager {
 
   async saveSession(): Promise<void> {
     try {
-      const tabStates = await Promise.all(this.tabs.map(t => t.serializeTree()));
+      const results = await Promise.allSettled(this.tabs.map(t => t.serializeTree()));
+      const tabStates = results
+        .filter((r): r is PromiseFulfilledResult<ReturnType<Tab['serializeTree']> extends Promise<infer T> ? T : never> => r.status === 'fulfilled')
+        .map(r => r.value);
+      if (tabStates.length === 0) {
+        console.warn('Failed to save session: no tabs serialized successfully');
+        return;
+      }
+      // Adjust active index if some tabs failed serialization
       const activeIdx = this.activeTab ? this.tabs.indexOf(this.activeTab) : 0;
       const session: SessionState = {
         tabs: tabStates,
-        activeTabIndex: Math.max(0, activeIdx),
+        activeTabIndex: Math.min(Math.max(0, activeIdx), tabStates.length - 1),
       };
       await window.patton.session.set(session);
     } catch (err) {
@@ -319,46 +320,47 @@ export class TabManager {
       if (!session || !session.tabs || session.tabs.length === 0) return false;
 
       for (const tabState of session.tabs) {
-        const tab = await Tab.createFromSession(tabState, () => ({
-          onFocus: () => {},
-          onTitleChange: () => {},
-          onCommandDone: () => {},
-        }));
+        try {
+          const tab = await Tab.createFromSession(tabState);
 
-        if (this.currentShell) tab.setShell(this.currentShell);
-        tab.setHistoryManager(this.sharedHistory);
-        tab.setRegistrationCallbacks(
-          (pane) => this.registerPane(pane),
-          (pane) => this.unregisterPane(pane),
-          () => this.updateTabBar(),
-          () => this.onCommandDone?.(tab.id, tab.title),
-        );
-        this.tabs.push(tab);
-        this.contentContainer.appendChild(tab.element);
+          if (this.currentShell) tab.setShell(this.currentShell);
+          tab.setHistoryManager(this.sharedHistory);
+          tab.setRegistrationCallbacks(
+            (pane) => this.registerPane(pane),
+            (pane) => this.unregisterPane(pane),
+            () => this.updateTabBar(),
+            () => this.onCommandDone?.(tab.id, tab.title),
+          );
+          this.tabs.push(tab);
+          this.contentContainer.appendChild(tab.element);
 
-        if (this.currentFontSize !== undefined) {
-          tab.setFontSize(this.currentFontSize);
-        }
-        if (this.currentFontFamily !== undefined) {
-          tab.setFontFamily(this.currentFontFamily);
-        }
-        if (this.currentScrollback !== undefined) {
-          tab.setScrollback(this.currentScrollback);
-        }
+          if (this.currentFontSize !== undefined) {
+            tab.setFontSize(this.currentFontSize);
+          }
+          if (this.currentFontFamily !== undefined) {
+            tab.setFontFamily(this.currentFontFamily);
+          }
+          if (this.currentScrollback !== undefined) {
+            tab.setScrollback(this.currentScrollback);
+          }
 
-        // Initialize all panes (creates PTYs)
-        await tab.init();
+          // Initialize all panes (creates PTYs)
+          await tab.init();
 
-        // Register panes for PTY routing
-        for (const pane of tab.panes) {
-          this.registerPane(pane);
-        }
+          // Register panes for PTY routing
+          for (const pane of tab.panes) {
+            this.registerPane(pane);
+          }
 
-        // Render the split tree if it has splits
-        if (tab.panes.length > 1) {
-          // Force tree re-render by calling show
-          tab.show();
-          tab.hide();
+          // Render the split tree if it has splits
+          if (tab.panes.length > 1) {
+            // Force tree re-render by calling show
+            tab.show();
+            tab.hide();
+          }
+        } catch (tabErr) {
+          console.warn('Failed to restore individual tab, skipping:', tabErr);
+          // Continue restoring other tabs — don't lose the entire session
         }
       }
 
@@ -368,9 +370,9 @@ export class TabManager {
         this.switchToId(this.tabs[Math.max(0, activeIdx)].id);
       }
 
-      // Clear saved session after successful restore
+      // Clear saved session after restore attempt
       await window.patton.session.set(null);
-      return true;
+      return this.tabs.length > 0;
     } catch (err) {
       console.warn('Session restore failed:', err);
       // Clear stale session to prevent repeated partial restores
@@ -379,10 +381,17 @@ export class TabManager {
     }
   }
 
+  private static readonly MAX_SCROLLBACK_BYTES = 100 * 1024; // 100KB cap for closed pane scrollback
+
   private saveClosedPane(pane: Pane): void {
+    let scrollback = pane.getScrollbackContent() || '';
+    // Cap scrollback to prevent IPC payload overflow (1MB IPC limit)
+    if (scrollback.length > TabManager.MAX_SCROLLBACK_BYTES) {
+      scrollback = scrollback.slice(-TabManager.MAX_SCROLLBACK_BYTES);
+    }
     const state: ClosedPaneState = {
       cwd: pane.getCwd() || '',
-      scrollback: pane.getScrollbackContent() || '',
+      scrollback,
       title: pane.title || 'Terminal',
     };
     this.closedPanes.push(state);

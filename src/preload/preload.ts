@@ -87,11 +87,6 @@ const api: PattonAPI = {
       ipcRenderer.on(IPC.APP_SEARCH, listener);
       return () => ipcRenderer.removeListener(IPC.APP_SEARCH, listener);
     },
-    onNewWindow: (cb) => {
-      const listener = () => cb();
-      ipcRenderer.on(IPC.APP_NEW_WINDOW, listener);
-      return () => ipcRenderer.removeListener(IPC.APP_NEW_WINDOW, listener);
-    },
     onFontSizeUp: (cb) => {
       const listener = () => cb();
       ipcRenderer.on(IPC.APP_FONT_SIZE_UP, listener);
@@ -151,11 +146,6 @@ const api: PattonAPI = {
       const listener = () => cb();
       ipcRenderer.on(IPC.APP_SPLIT_ZOOM, listener);
       return () => ipcRenderer.removeListener(IPC.APP_SPLIT_ZOOM, listener);
-    },
-    onFloatOnTop: (cb) => {
-      const listener = () => cb();
-      ipcRenderer.on(IPC.APP_FLOAT_ON_TOP, listener);
-      return () => ipcRenderer.removeListener(IPC.APP_FLOAT_ON_TOP, listener);
     },
     onUndoClose: (cb) => {
       const listener = () => cb();

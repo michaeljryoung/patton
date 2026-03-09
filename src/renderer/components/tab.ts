@@ -11,7 +11,7 @@ import {
   type SplitTreeNode,
   type SplitDirection,
 } from './split-tree';
-import type { InputMode, SessionTreeNode, SessionTabState, SessionPaneState } from '../../shared/types';
+import type { SessionTreeNode, SessionTabState, SessionPaneState } from '../../shared/types';
 import type { ITheme } from '@xterm/xterm';
 
 let tabIdCounter = 0;
@@ -330,12 +330,8 @@ export class Tab {
     this._focusedPane.setProcessName(name);
   }
 
-  getMode(): InputMode {
-    return this._focusedPane.getMode();
-  }
-
-  togglePassthrough(): void {
-    this._focusedPane.togglePassthrough();
+  toggleCompose(): void {
+    this._focusedPane.toggleCompose();
   }
 
   showHistorySearch(): void {
@@ -479,11 +475,6 @@ export class Tab {
   /** Restore a tab from serialized session state (creates panes and splits) */
   static async createFromSession(
     state: SessionTabState,
-    makeCallbacks: () => {
-      onFocus: (p: Pane) => void;
-      onTitleChange: (p: Pane) => void;
-      onCommandDone: () => void;
-    },
   ): Promise<Tab> {
     const tab = new Tab();
 

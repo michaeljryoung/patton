@@ -14,6 +14,7 @@ export class QuickTerminal {
   private shell: string | undefined;
   private historyManager: HistoryManager | undefined;
   private container: HTMLElement;
+  private disposables: (() => void)[] = [];
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -28,20 +29,24 @@ export class QuickTerminal {
     container.appendChild(this.overlay);
 
     // Close on backdrop click
-    this.overlay.addEventListener('mousedown', (e) => {
+    const mousedownHandler = (e: MouseEvent) => {
       if (e.target === this.overlay) {
         this.hide();
       }
-    });
+    };
+    this.overlay.addEventListener('mousedown', mousedownHandler);
+    this.disposables.push(() => this.overlay.removeEventListener('mousedown', mousedownHandler));
 
     // Close on Escape
-    this.overlay.addEventListener('keydown', (e) => {
+    const keydownHandler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault();
         e.stopPropagation();
         this.hide();
       }
-    });
+    };
+    this.overlay.addEventListener('keydown', keydownHandler);
+    this.disposables.push(() => this.overlay.removeEventListener('keydown', keydownHandler));
   }
 
   setShell(shell: string): void {
@@ -124,6 +129,7 @@ export class QuickTerminal {
   }
 
   dispose(): void {
+    for (const d of this.disposables) d();
     this.pane?.dispose();
     this.overlay.remove();
   }

@@ -14,6 +14,7 @@ export class CommandPalette {
   private actions: PaletteAction[] = [];
   private filteredActions: PaletteAction[] = [];
   private selectedIndex = 0;
+  private disposables: (() => void)[] = [];
 
   constructor(container: HTMLElement, onAction: (actionId: string) => void) {
     this.onAction = onAction;
@@ -26,7 +27,9 @@ export class CommandPalette {
 
     const backdrop = document.createElement('div');
     backdrop.className = 'command-palette-backdrop';
-    backdrop.addEventListener('click', () => this.hide());
+    const backdropHandler = () => this.hide();
+    backdrop.addEventListener('click', backdropHandler);
+    this.disposables.push(() => backdrop.removeEventListener('click', backdropHandler));
 
     this.panel = document.createElement('div');
     this.panel.className = 'command-palette-panel';
@@ -50,12 +53,12 @@ export class CommandPalette {
     container.appendChild(this.overlay);
 
     // Input filtering
-    this.input.addEventListener('input', () => {
-      this.filterAndRender();
-    });
+    const inputHandler = () => { this.filterAndRender(); };
+    this.input.addEventListener('input', inputHandler);
+    this.disposables.push(() => this.input.removeEventListener('input', inputHandler));
 
     // Keyboard navigation
-    this.input.addEventListener('keydown', (e) => {
+    const keydownHandler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault();
         this.hide();
@@ -69,23 +72,29 @@ export class CommandPalette {
         e.preventDefault();
         this.executeSelected();
       }
-    });
+    };
+    this.input.addEventListener('keydown', keydownHandler);
+    this.disposables.push(() => this.input.removeEventListener('keydown', keydownHandler));
 
     // Click handling
-    this.list.addEventListener('click', (e) => {
+    const clickHandler = (e: MouseEvent) => {
       const item = (e.target as HTMLElement).closest('.command-palette-item');
       if (item) {
         const index = parseInt(item.getAttribute('data-index') || '0', 10);
         this.executeAction(this.filteredActions[index]);
       }
-    });
+    };
+    this.list.addEventListener('click', clickHandler);
+    this.disposables.push(() => this.list.removeEventListener('click', clickHandler));
 
     // Close on escape from anywhere in the overlay
-    this.overlay.addEventListener('keydown', (e) => {
+    const overlayKeydownHandler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         this.hide();
       }
-    });
+    };
+    this.overlay.addEventListener('keydown', overlayKeydownHandler);
+    this.disposables.push(() => this.overlay.removeEventListener('keydown', overlayKeydownHandler));
   }
 
   show(actions: PaletteAction[]): void {
@@ -121,6 +130,7 @@ export class CommandPalette {
   }
 
   dispose(): void {
+    for (const d of this.disposables) d();
     this.overlay.remove();
   }
 

@@ -1,3 +1,4 @@
+/* --- Compose panel (collapsed by default, expanded via Cmd+E) --- */
 .editor-container {
   position: relative;
   border-top: 1px solid var(--border-light);
@@ -8,12 +9,18 @@
   transition: max-height 0.2s ease, opacity 0.2s ease, min-height 0.2s ease;
 }
 
-.editor-container.hidden {
-  max-height: 0;
+/* Collapsed state: fully hidden */
+.editor-container.collapsed {
   min-height: 0;
-  opacity: 0;
+  max-height: 0;
   overflow: hidden;
   border-top: none;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.editor-container.collapsed .editor-textarea {
+  pointer-events: none;
 }
 
 .editor-textarea {
@@ -34,7 +41,7 @@
   color: var(--text-muted);
 }
 
-/* Prompt indicator */
+/* Accent bar on left edge */
 .editor-container::before {
   content: '';
   position: absolute;
@@ -47,11 +54,6 @@
   z-index: 1;
 }
 
-/* Passthrough mode indicator — amber accent bar signals "connected to running program" */
-.editor-container.passthrough::before {
-  background: #d97706;
-}
-
 /* Submit flash animation */
 @keyframes submit-flash {
   0%, 100% { background: var(--bg-tertiary); }
@@ -60,6 +62,20 @@
 
 .editor-container.submitting {
   animation: submit-flash 0.25s ease-out;
+}
+
+/* OSC 133 shell integration: prompt-ready glow */
+.editor-container.prompt-ready::before {
+  background: #22c55e;
+  box-shadow: 0 0 6px rgba(34, 197, 94, 0.4);
+}
+
+/* OSC 133 shell integration: command running — dim the bar */
+.editor-container.command-running {
+  opacity: 0.5;
+}
+.editor-container.command-running::before {
+  background: var(--text-muted);
 }
 
 /* --- History search (Ctrl+R) --- */

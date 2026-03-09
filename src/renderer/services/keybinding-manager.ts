@@ -8,21 +8,19 @@ export class KeybindingManager {
     this.tabManager = tabManager;
 
     this.handler = (e: KeyboardEvent) => {
-      // Ctrl+Shift+P: Toggle passthrough mode
-      if (e.ctrlKey && e.shiftKey && e.key === 'P') {
+      // Cmd+E: Toggle compose panel
+      if (e.metaKey && !e.shiftKey && !e.ctrlKey && e.key === 'e') {
         e.preventDefault();
         const tab = this.tabManager.getActiveTab();
-        tab?.togglePassthrough();
+        tab?.toggleCompose();
         return;
       }
 
-      // Ctrl+R: History search (only in editor mode — in manual passthrough, let terminal handle it)
+      // Ctrl+R: History search
       if (e.ctrlKey && !e.shiftKey && e.key === 'r') {
+        e.preventDefault();
         const tab = this.tabManager.getActiveTab();
-        if (tab && tab.getMode() === 'editor') {
-          e.preventDefault();
-          tab.showHistorySearch();
-        }
+        tab?.showHistorySearch();
         return;
       }
 
