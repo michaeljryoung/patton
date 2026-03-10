@@ -131,7 +131,28 @@ export class PtyManager {
 
     const shellBase = shell.split('/').pop() || '';
     const safeEnv = getSafeEnv(this.shellIntegrationEnabled);
-    const shellArgs: string[] = ['--login'];
+    let shellArgs: string[] = ['--login'];
+
+    // Inject shell integration via startup mechanisms (not PTY write) to avoid
+    // the terminal driver echoing the source command visibly.
+    if (this.shellIntegrationEnabled) {
+      const resDir = getResourcesPath();
+      if (shellBase === 'zsh') {
+        const script = join(resDir, 'shell-integration-zsh.zsh');
+        if (existsSync(script)) {
+          safeEnv.PATTON_ORIG_ZDOTDIR = process.env.ZDOTDIR || '';
+          safeEnv.ZDOTDIR = join(resDir, 'patton-zdotdir');
+          safeEnv.PATTON_SHELL_INTEGRATION_SCRIPT = script;
+        }
+      } else if (shellBase === 'bash') {
+        const script = join(resDir, 'shell-integration-bash.sh');
+        const initScript = join(resDir, 'patton-bash-init.sh');
+        if (existsSync(script) && existsSync(initScript)) {
+          shellArgs = ['--rcfile', initScript];
+          safeEnv.PATTON_SHELL_INTEGRATION_SCRIPT = script;
+        }
+      }
+    }
 
     const proc = pty.spawn(shell, shellArgs, {
       name: 'xterm-256color',
@@ -151,25 +172,7 @@ export class PtyManager {
     this.instances.set(id, instance);
     this.countByWindow.set(winId, current + 1);
 
-    // Inject shell integration by sourcing the script after shell init.
-    // Quote is displayed instantly in the renderer (pane.ts), so PTY side just
-    // silently sources shell integration (no clear — would erase the pre-PTY quote).
-    if (this.shellIntegrationEnabled) {
-      const resDir = getResourcesPath();
-      let script = '';
-      if (shellBase === 'zsh') {
-        script = join(resDir, 'shell-integration-zsh.zsh');
-      } else if (shellBase === 'bash') {
-        script = join(resDir, 'shell-integration-bash.sh');
-      }
-      if (script && existsSync(script)) {
-        setTimeout(() => {
-          if (this.instances.has(id)) {
-            proc.write(` stty -echo; source "${script}"; stty echo\r`);
-          }
-        }, 500);
-      }
-    }
+
 
     proc.onData((data: string) => {
       instance.buffer += data;
