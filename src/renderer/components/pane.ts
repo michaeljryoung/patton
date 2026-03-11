@@ -129,6 +129,18 @@ export class Pane {
     // Mount terminal
     this.terminalView.mount();
 
+    // Shift+Enter: send kitty keyboard protocol escape sequence so apps
+    // (Claude Code, fish, neovim, etc.) can distinguish it from plain Enter
+    this.terminalView.terminal.attachCustomKeyEventHandler((e) => {
+      if (e.type === 'keydown' && e.key === 'Enter' && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        if (this.ptyId !== null) {
+          window.patton.pty.write(this.ptyId, '\x1b[13;2u');
+        }
+        return false; // prevent xterm from sending \r
+      }
+      return true; // let xterm handle all other keys
+    });
+
     // Register file path link provider (Cmd+click to open in editor)
     const linkDisposable = this.terminalView.terminal.registerLinkProvider(
       new FileLinkProvider(this.terminalView.terminal, () => this.currentCwd),

@@ -49,24 +49,28 @@ npm run lint && npm run package
 Feature-complete, distributed. Automated CI/CD pipeline with auto-versioning.
 
 ## Last Session
-**2026-03-10 (session 13)**
-- Fixed shell integration command (`stty -echo; source ...`) echoing visibly in terminal
-- Replaced PTY write injection with proper shell startup mechanisms: ZDOTDIR override for zsh, `--rcfile` wrapper for bash
-- Added `resources/patton-zdotdir/.zshenv` and `resources/patton-bash-init.sh`
-- Updated `~/.claude/projects.md`: RepoMapper path changed from `~/Projects/repomap` to `~/Projects/citrus-repo`
+**2026-03-11 (session 14)**
+- Added Shift+Enter support via kitty keyboard protocol (`\x1b[13;2u`) in `pane.ts`
+- xterm.js `attachCustomKeyEventHandler` intercepts Shift+Enter before it becomes `\r`
+- Sends kitty escape sequence to PTY so apps (Claude Code, fish, neovim) can distinguish Shift+Enter from Enter
+- Apps that don't support the protocol safely ignore the unrecognized sequence
 
 ## Decisions
 - **ZDOTDIR for zsh shell integration** — overrides ZDOTDIR to a custom `.zshenv` that restores the user's real ZDOTDIR, sources their `.zshenv`, then sources the integration script. Same pattern VS Code uses. Avoids PTY write echo entirely.
 - **--rcfile for bash shell integration** — custom init script that manually sources login files (`/etc/profile`, `~/.bash_profile`) + integration. Replaces `--login` flag since `--rcfile` requires non-login mode.
+- **Kitty keyboard protocol for Shift+Enter** — sends `\x1b[13;2u` instead of `\r` so terminal apps can handle Shift+Enter as "newline without submit". Chosen over backslash-continuation (shell-only, breaks in apps like Claude Code) and compose-panel-open (too disruptive).
 
 ## Gotchas
 - `stty -echo` on the same line as `source ...` does NOT prevent echo — the terminal driver echoes characters as they arrive, before the shell executes anything. Must inject via shell startup (ZDOTDIR, --rcfile) not PTY write.
 - Idle detection fires on ANY PTY data, including prompt redraws and background trickle. Duration guard is essential — byte count alone isn't enough since small periodic output accumulates.
+- xterm.js treats Shift+Enter identically to Enter (`\r`) by default. Must use `attachCustomKeyEventHandler` to intercept and send a distinct escape sequence.
 
 ## Next Steps
+- [ ] Test Shift+Enter in Claude Code, fish, neovim to verify kitty protocol works
 - [ ] Test CI-built DMG install on a clean machine (right-click → Open for Gatekeeper)
 - [ ] Verify `brew tap michaeljryoung/patton && brew install --cask patton` installs latest
 - [ ] Consider Apple Developer ID ($99/yr) for notarization if distributing widely
 - [ ] End-to-end test all features in packaged app
 - [x] Fix shell integration echo (ZDOTDIR + --rcfile approach)
 - [x] Tune idle detection threshold (was 3s any-activity, now 10s+ duration gate)
+- [x] Shift+Enter sends kitty keyboard protocol escape sequence
