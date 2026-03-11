@@ -49,11 +49,10 @@ npm run lint && npm run package
 Feature-complete, distributed. Automated CI/CD pipeline with auto-versioning.
 
 ## Last Session
-**2026-03-11 (session 14)**
-- Added Shift+Enter support via kitty keyboard protocol (`\x1b[13;2u`) in `pane.ts`
-- xterm.js `attachCustomKeyEventHandler` intercepts Shift+Enter before it becomes `\r`
-- Sends kitty escape sequence to PTY so apps (Claude Code, fish, neovim) can distinguish Shift+Enter from Enter
-- Apps that don't support the protocol safely ignore the unrecognized sequence
+**2026-03-11 (session 15)**
+- Fixed Shift+Enter keypress leak: `attachCustomKeyEventHandler` was returning `false` only for `keydown`, letting `keypress` through — xterm still sent `\r` alongside the kitty sequence
+- Fix: return `false` for both event types, gate `pty.write` on `e.type === 'keydown'`
+- Built and installed locally via `npm run make`
 
 ## Decisions
 - **ZDOTDIR for zsh shell integration** — overrides ZDOTDIR to a custom `.zshenv` that restores the user's real ZDOTDIR, sources their `.zshenv`, then sources the integration script. Same pattern VS Code uses. Avoids PTY write echo entirely.
@@ -64,9 +63,10 @@ Feature-complete, distributed. Automated CI/CD pipeline with auto-versioning.
 - `stty -echo` on the same line as `source ...` does NOT prevent echo — the terminal driver echoes characters as they arrive, before the shell executes anything. Must inject via shell startup (ZDOTDIR, --rcfile) not PTY write.
 - Idle detection fires on ANY PTY data, including prompt redraws and background trickle. Duration guard is essential — byte count alone isn't enough since small periodic output accumulates.
 - xterm.js treats Shift+Enter identically to Enter (`\r`) by default. Must use `attachCustomKeyEventHandler` to intercept and send a distinct escape sequence.
+- xterm.js `attachCustomKeyEventHandler` fires for BOTH `keydown` AND `keypress`. Returning `false` only on `keydown` still lets `keypress` through, causing xterm to send `\r`. Must return `false` for both event types.
 
 ## Next Steps
-- [ ] Test Shift+Enter in Claude Code, fish, neovim to verify kitty protocol works
+- [x] Test Shift+Enter in Claude Code — confirmed working
 - [ ] Test CI-built DMG install on a clean machine (right-click → Open for Gatekeeper)
 - [ ] Verify `brew tap michaeljryoung/patton && brew install --cask patton` installs latest
 - [ ] Consider Apple Developer ID ($99/yr) for notarization if distributing widely
