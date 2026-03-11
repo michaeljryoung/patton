@@ -132,11 +132,11 @@ export class Pane {
     // Shift+Enter: send kitty keyboard protocol escape sequence so apps
     // (Claude Code, fish, neovim, etc.) can distinguish it from plain Enter
     this.terminalView.terminal.attachCustomKeyEventHandler((e) => {
-      if (e.type === 'keydown' && e.key === 'Enter' && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
-        if (this.ptyId !== null) {
+      if (e.key === 'Enter' && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        if (e.type === 'keydown' && this.ptyId !== null) {
           window.patton.pty.write(this.ptyId, '\x1b[13;2u');
         }
-        return false; // prevent xterm from sending \r
+        return false; // block both keydown AND keypress to prevent xterm sending \r
       }
       return true; // let xterm handle all other keys
     });
