@@ -4,7 +4,7 @@ import type { IPty } from 'node-pty';
 // Handle CJS/ESM interop for externalized module
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- CJS/ESM interop requires runtime check
 const pty = ((ptyModule as any).default || ptyModule) as typeof ptyModule;
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, nativeTheme } from 'electron';
 import { execFile } from 'node:child_process';
 import { existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
@@ -42,7 +42,7 @@ function getResourcesPath(): string {
   return join(app.getAppPath(), 'resources');
 }
 
-function getSafeEnv(shellIntegration = true): Record<string, string> {
+function getSafeEnv(shellIntegration = true, isDark?: boolean): Record<string, string> {
   const safe: Record<string, string> = {};
   for (const key of SAFE_ENV_KEYS) {
     if (process.env[key]) {
@@ -51,6 +51,14 @@ function getSafeEnv(shellIntegration = true): Record<string, string> {
   }
   safe.TERM = 'xterm-256color';
   safe.COLORTERM = 'truecolor';
+  safe.TERM_PROGRAM = 'Patton';
+
+  // Tell CLI apps about the terminal's color scheme so they choose
+  // readable text colors. Prefer the renderer's knowledge (accounts for
+  // custom themes); fall back to the system appearance.
+  const dark = isDark ?? nativeTheme.shouldUseDarkColors;
+  safe.COLORFGBG = dark ? '15;0' : '0;15';
+
   if (shellIntegration) {
     safe.PATTON_SHELL_INTEGRATION = '1';
     safe.PATTON_SHELL_INTEGRATION_DIR = getResourcesPath();
@@ -130,7 +138,7 @@ export class PtyManager {
     const cwd = validateCwd(opts?.cwd);
 
     const shellBase = shell.split('/').pop() || '';
-    const safeEnv = getSafeEnv(this.shellIntegrationEnabled);
+    const safeEnv = getSafeEnv(this.shellIntegrationEnabled, opts?.isDark);
     let shellArgs: string[] = ['--login'];
 
     // Inject shell integration via startup mechanisms (not PTY write) to avoid

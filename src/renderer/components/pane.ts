@@ -160,6 +160,7 @@ export class Pane {
         rows: dims.rows,
         ...(this.initialCwd ? { cwd: this.initialCwd } : {}),
         ...(shellPath ? { shell: shellPath } : {}),
+        isDark: this.terminalView.isDarkBackground(),
       });
       this.terminalView.setPtyId(this.ptyId);
     } catch (err) {

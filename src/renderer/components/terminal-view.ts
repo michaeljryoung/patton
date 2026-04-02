@@ -282,6 +282,18 @@ export class TerminalView {
     }
   }
 
+  /** Whether the current terminal background is dark (for COLORFGBG signalling). */
+  isDarkBackground(): boolean {
+    const theme = this.customTheme || getTheme();
+    const bg = theme.background || '#000000';
+    const hex = bg.replace('#', '');
+    const r = parseInt(hex.substring(0, 2), 16);
+    const g = parseInt(hex.substring(2, 4), 16);
+    const b = parseInt(hex.substring(4, 6), 16);
+    // Weighted luminance (ITU-R BT.601)
+    return (r * 299 + g * 587 + b * 114) / 1000 < 128;
+  }
+
   setFontFamily(family: string): void {
     this.terminal.options.fontFamily = family;
     this.fit();

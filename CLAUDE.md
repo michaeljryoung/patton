@@ -49,28 +49,28 @@ npm run lint && npm run package
 Feature-complete, distributed. Automated CI/CD pipeline with auto-versioning.
 
 ## Last Session
-**2026-03-11 (session 15)**
-- Fixed Shift+Enter keypress leak: `attachCustomKeyEventHandler` was returning `false` only for `keydown`, letting `keypress` through — xterm still sent `\r` alongside the kitty sequence
-- Fix: return `false` for both event types, gate `pty.write` on `e.type === 'keydown'`
+**2026-04-02 (session 16)**
+- Fixed invisible text in CLI app dropdowns (Claude Code) on light backgrounds
+- Root cause: PTY env missing `COLORFGBG` — CLI apps couldn't detect light/dark background, defaulted to dark and used light text
+- Set `COLORFGBG` based on active theme's background luminance (ITU-R BT.601 weighted), passed from renderer to main process
+- Also set `TERM_PROGRAM=Patton` for terminal identification
 - Built and installed locally via `npm run make`
 
 ## Decisions
 - **ZDOTDIR for zsh shell integration** — overrides ZDOTDIR to a custom `.zshenv` that restores the user's real ZDOTDIR, sources their `.zshenv`, then sources the integration script. Same pattern VS Code uses. Avoids PTY write echo entirely.
 - **--rcfile for bash shell integration** — custom init script that manually sources login files (`/etc/profile`, `~/.bash_profile`) + integration. Replaces `--login` flag since `--rcfile` requires non-login mode.
 - **Kitty keyboard protocol for Shift+Enter** — sends `\x1b[13;2u` instead of `\r` so terminal apps can handle Shift+Enter as "newline without submit". Chosen over backslash-continuation (shell-only, breaks in apps like Claude Code) and compose-panel-open (too disruptive).
+- **COLORFGBG from renderer, not just nativeTheme** — renderer passes `isDark` based on actual terminal background luminance (custom theme or system). Main process falls back to `nativeTheme.shouldUseDarkColors`. This handles custom light themes on dark system and vice versa.
 
 ## Gotchas
 - `stty -echo` on the same line as `source ...` does NOT prevent echo — the terminal driver echoes characters as they arrive, before the shell executes anything. Must inject via shell startup (ZDOTDIR, --rcfile) not PTY write.
 - Idle detection fires on ANY PTY data, including prompt redraws and background trickle. Duration guard is essential — byte count alone isn't enough since small periodic output accumulates.
 - xterm.js treats Shift+Enter identically to Enter (`\r`) by default. Must use `attachCustomKeyEventHandler` to intercept and send a distinct escape sequence.
 - xterm.js `attachCustomKeyEventHandler` fires for BOTH `keydown` AND `keypress`. Returning `false` only on `keydown` still lets `keypress` through, causing xterm to send `\r`. Must return `false` for both event types.
+- CLI apps (Claude Code, etc.) use `COLORFGBG` env var to detect light vs dark terminal backgrounds. Without it, they assume dark and render light-colored text — invisible on light backgrounds. Must set at PTY spawn time; can't change env vars for running PTYs.
 
 ## Next Steps
-- [x] Test Shift+Enter in Claude Code — confirmed working
 - [ ] Test CI-built DMG install on a clean machine (right-click → Open for Gatekeeper)
 - [ ] Verify `brew tap michaeljryoung/patton && brew install --cask patton` installs latest
 - [ ] Consider Apple Developer ID ($99/yr) for notarization if distributing widely
 - [ ] End-to-end test all features in packaged app
-- [x] Fix shell integration echo (ZDOTDIR + --rcfile approach)
-- [x] Tune idle detection threshold (was 3s any-activity, now 10s+ duration gate)
-- [x] Shift+Enter sends kitty keyboard protocol escape sequence

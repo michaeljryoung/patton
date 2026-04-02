@@ -3,6 +3,7 @@ export interface PtyCreateOptions {
   cwd?: string;
   cols?: number;
   rows?: number;
+  isDark?: boolean;
 }
 
 export interface HistoryEntry {
