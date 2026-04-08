@@ -176,7 +176,7 @@ export class TabManager {
 
   switchToId(id: string): void {
     const tab = this.tabs.find(t => t.id === id);
-    if (!tab) return;
+    if (!tab || tab === this.activeTab) return;
 
     if (this.activeTab) {
       this.activeTab.hide();
