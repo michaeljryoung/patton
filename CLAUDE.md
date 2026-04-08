@@ -49,12 +49,11 @@ npm run lint && npm run package
 Feature-complete, distributed. Automated CI/CD pipeline with auto-versioning.
 
 ## Last Session
-**2026-04-02 (session 16)**
-- Fixed invisible text in CLI app dropdowns (Claude Code) on light backgrounds
-- Root cause: PTY env missing `COLORFGBG` — CLI apps couldn't detect light/dark background, defaulted to dark and used light text
-- Set `COLORFGBG` based on active theme's background luminance (ITU-R BT.601 weighted), passed from renderer to main process
-- Also set `TERM_PROGRAM=Patton` for terminal identification
-- Built and installed locally via `npm run make`
+**2026-04-08 (session 17)**
+- Fixed double-click to rename tab not working on the active tab
+- Root cause: clicking the active tab called `switchToId` → `updateTabBar` → full DOM rebuild (`innerHTML = ''`), destroying the `titleSpan` before the second click could fire `dblclick`
+- Fix: early-return in `switchToId` when `tab === this.activeTab` (one-line change in `tab-manager.ts:177`)
+- Built, installed to `/Applications/Patton.app`, committed and pushed
 
 ## Decisions
 - **ZDOTDIR for zsh shell integration** — overrides ZDOTDIR to a custom `.zshenv` that restores the user's real ZDOTDIR, sources their `.zshenv`, then sources the integration script. Same pattern VS Code uses. Avoids PTY write echo entirely.
@@ -68,6 +67,7 @@ Feature-complete, distributed. Automated CI/CD pipeline with auto-versioning.
 - xterm.js treats Shift+Enter identically to Enter (`\r`) by default. Must use `attachCustomKeyEventHandler` to intercept and send a distinct escape sequence.
 - xterm.js `attachCustomKeyEventHandler` fires for BOTH `keydown` AND `keypress`. Returning `false` only on `keydown` still lets `keypress` through, causing xterm to send `\r`. Must return `false` for both event types.
 - CLI apps (Claude Code, etc.) use `COLORFGBG` env var to detect light vs dark terminal backgrounds. Without it, they assume dark and render light-colored text — invisible on light backgrounds. Must set at PTY spawn time; can't change env vars for running PTYs.
+- `tabBar.update()` rebuilds the entire DOM (`innerHTML = ''`). Any click-triggered callback that calls `updateTabBar` will destroy elements mid-interaction (e.g., breaking `dblclick` because the first click's target is gone). Guard with early-returns for no-op state transitions.
 
 ## Next Steps
 - [ ] Test CI-built DMG install on a clean machine (right-click → Open for Gatekeeper)
