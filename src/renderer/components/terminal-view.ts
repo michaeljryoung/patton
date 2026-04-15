@@ -63,6 +63,15 @@ function getTheme() {
   return LIGHT_THEME;
 }
 
+/** Convert #RRGGBB to xterm's rgb:RRRR/GGGG/BBBB query-response format */
+function hexToXtermRgb(hex: string): string {
+  const h = hex.replace('#', '');
+  const r = h.substring(0, 2);
+  const g = h.substring(2, 4);
+  const b = h.substring(4, 6);
+  return `rgb:${r}${r}/${g}${g}/${b}${b}`;
+}
+
 export type PromptState = 'prompt' | 'command' | 'idle';
 
 export class TerminalView {
@@ -145,6 +154,27 @@ export class TerminalView {
       }
     };
     this.mediaQuery.addEventListener('change', this.themeHandler);
+
+    // OSC 10/11: Respond to foreground/background color queries.
+    // CLI tools (Claude Code, vim, etc.) send \e]10;? or \e]11;? to detect
+    // the terminal's color scheme and choose readable text colors.
+    // Without this, apps assume dark background and render white text — invisible on light themes.
+    this.terminal.parser.registerOscHandler(10, (data) => {
+      if (data === '?' && this.ptyId !== null) {
+        const theme = this.customTheme || getTheme();
+        const fg = theme.foreground || '#d4d4d4';
+        window.patton.pty.write(this.ptyId, `\x1b]10;${hexToXtermRgb(fg)}\x1b\\`);
+      }
+      return true;
+    });
+    this.terminal.parser.registerOscHandler(11, (data) => {
+      if (data === '?' && this.ptyId !== null) {
+        const theme = this.customTheme || getTheme();
+        const bg = theme.background || '#1e1e1e';
+        window.patton.pty.write(this.ptyId, `\x1b]11;${hexToXtermRgb(bg)}\x1b\\`);
+      }
+      return true;
+    });
 
     // Register OSC 133 handler for shell integration (prompt detection)
     // Sub-commands: A = prompt start, B = prompt ready, C = pre-execution, D = finished
