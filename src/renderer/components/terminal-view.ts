@@ -15,20 +15,20 @@ const LIGHT_THEME = {
   selectionForeground: '#1e1e1e',
   black: '#000000',
   red: '#cd3131',
-  green: '#00bc00',
-  yellow: '#949800',
+  green: '#008000',
+  yellow: '#6b6b00',
   blue: '#0451a5',
   magenta: '#bc05bc',
-  cyan: '#0598bc',
+  cyan: '#007688',
   white: '#555555',
   brightBlack: '#666666',
   brightRed: '#cd3131',
-  brightGreen: '#14ce14',
-  brightYellow: '#b5ba00',
+  brightGreen: '#008000',
+  brightYellow: '#6b6b00',
   brightBlue: '#0451a5',
   brightMagenta: '#bc05bc',
-  brightCyan: '#0598bc',
-  brightWhite: '#a5a5a5',
+  brightCyan: '#007688',
+  brightWhite: '#717171',
 };
 
 const DARK_THEME = {
@@ -97,6 +97,7 @@ export class TerminalView {
       cursorStyle: 'bar',
       scrollback: DEFAULTS.SCROLLBACK,
       allowProposedApi: true,
+      minimumContrastRatio: 4.5,
       theme: getTheme(),
     });
 
