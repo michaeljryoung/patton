@@ -49,6 +49,11 @@ npm run lint && npm run package
 Feature-complete, distributed. Automated CI/CD pipeline with auto-versioning.
 
 ## Session Log
+**2026-04-18 (session 21)**
+- **Tab "awaiting input" indicator** shipped (iTerm-style). Small green dot on inactive tabs whose shell is at OSC 133 prompt-ready; cleared on tab activation or next `'command'` transition. Reuses `--prompt-ready` / `--prompt-ready-glow` tokens for visual consistency with the editor glow. Plumbing lives in `tab.ts` (_isActive / _awaitingInput state + handlePaneStateChange subscription per pane) → `tab-manager.ts` (updateTabBar passes flag) → `tab-bar.ts` (dot element, guarded by !active).
+- **File logger** (`src/main/logger.ts`, ~90 LOC) tees `console.*` to `~/Library/Application Support/Patton/logs/main.log` with 5 MB size-based rotation (3 files kept). Packaged Electron Dock/Finder launches route stderr to `/dev/null`, so session-20 hardening signals had nowhere to land — this fixes the observability blind spot. Eagerly creates the file + writes a startup line on install so the file always materializes even on clean sessions.
+- **Health script** (`scripts/patton-health.sh`, `npm run health`, `patton-health` shell alias) — one-shot diagnostic: counts crash dumps, greps the log file for every session-20 error marker, verifies `config.json` + `key.enc`, ISO-timestamp-based `--hours=N` window that works across log rotations. Verified green against a real launch.
+
 **2026-04-18 (session 20)**
 - Shipped renderer-crash hardening (Tier 1 + Tier 2 from the harden-patton-renderer-crashes plan): WebGL `onContextLoss` → DOM fallback, `render-process-gone` auto-reload, `unresponsive`/`responsive` breadcrumbs, `child-process-gone` logging for GPU/utility deaths, local-only `crashReporter` for post-mortem dumps.
 - Ran a 10-agent epistemic review (`/reasoning`) plus UI/UX audit pass. Full report at `analysis/reasoning-modes/REPORT.md` (gitignored). 5 Kernel (HIGH-confidence) findings, 11 Supported, 10 Hypotheses, 2 Disputed.
@@ -68,6 +73,9 @@ Feature-complete, distributed. Automated CI/CD pipeline with auto-versioning.
 - Previous sessions: OSC 10/11 responses (18), tab rename fix (17), COLORFGBG env var (16)
 
 ## Decisions
+- **File logger eagerly creates the log file on install, not lazily on first write** — first attempt only opened the stream on the first `console.*` call. On a fully clean session (no warns, no errors) nothing ever called `console.*`, so the file never materialized. That made the health script indistinguishable between "logger not installed" and "session ran clean." Writing a "Patton main process started" line on install guarantees the file exists after every launch and gives free launch-cadence telemetry.
+- **Tab indicator shares prompt-ready theme tokens instead of its own color** — considered a distinct accent (blue, cyan) but picked `--prompt-ready` because the editor's prompt-ready glow uses the same signal. One visual language for "shell is ready for input" across surfaces; one token to tweak if the hue is ever wrong.
+- **Dot suppressed on the active tab, not just styled differently** — active tab is where the user's attention already is, so a dot would be noise. Cleared on `show()` even if the pane re-enters `'prompt'` a moment later; `handlePaneStateChange` guards on `!this._isActive` so it can't be set while active.
 - **safeStorage-backed random key over deterministic SHA-256** — previous scheme was `SHA-256(homedir + ':' + username)`, reconstructable by any same-user process in milliseconds. New scheme generates a random 32-byte key, stores it in `userData/key.enc` encrypted by the OS keychain via `safeStorage`. Legacy key path retained only as a one-shot migration on first launch: probe with new key → on failure, try legacy → copy contents, delete file, reinit. Fallback to legacy deterministic key if `safeStorage.isEncryptionAvailable()` returns false (Linux without GNOME keyring), which is no worse than before.
 - **CommandDoneCoordinator (coordinate, don't eliminate)** — three command-done signals coexist for a reason: OSC 133;D is authoritative when shell integration is on, idle heuristic covers children that never emit OSC 133 (Claude Code, npm, docker compose), bell is explicit. Per-pane coordinator debounces across all three (5s) and suppresses idle for 60s after any OSC 133 fire. Strictly better than picking any one.
 - **Crash circuit breaker: 3 crashes in 30s → static error page** — below this, a transient GPU blip should auto-recover silently. Above it, a deterministic cause (corrupt session, specific escape sequence) would loop forever. Clearing saved session after the 2nd crash breaks restore-triggered loops before the hard cap trips.
@@ -83,6 +91,9 @@ Feature-complete, distributed. Automated CI/CD pipeline with auto-versioning.
 - **minimumContrastRatio: 4.5** — xterm.js auto-adjusts any foreground color below this contrast ratio against the background. This is the same approach VS Code uses. Without it, even correct light-mode detection doesn't help if ANSI palette colors themselves lack contrast. The palette fix provides better defaults; the ratio enforcement is the safety net for 256-color and true-color values from CLI apps.
 
 ## Gotchas
+- **Packaged Electron apps launched from Dock/Finder route main-process stderr to `/dev/null`.** `console.error` / `console.warn` in the main process go nowhere visible unless the app ships its own file logger OR the user launches from a terminal (`/Applications/Patton.app/Contents/MacOS/Patton`). Without file logging, every hardening signal is invisible to the user. See `src/main/logger.ts`.
+- macOS does NOT hot-swap a replaced `.app` bundle. After `npm run package` reinstalls to `/Applications/Patton.app`, the currently running Patton process is still the OLD binary in memory. A full ⌘Q + relaunch (not just close-window) is required to pick up the new code.
+- `createWriteStream(..., { flags: 'a' })` does NOT create the file on construction; it creates on first write. A file-based logger that lazy-opens will never create the file on completely clean sessions where nothing logs. Eagerly write a "started" line on install.
 - `window.reload()` does NOT destroy main-process PTYs. Without an explicit `ptyManager.destroyByWindow(window)` before reload, each crash-recovery reload leaks PTYs — they keep running in main, sending PTY_DATA for ids the new renderer doesn't recognize, eventually hitting `MAX_PTY_PER_WINDOW`. Crash handling without PTY cleanup makes crashes *worse*.
 - `beforeunload` is fire-and-forget and does NOT fire on renderer crash. A periodic autosave (30s) is the only way to keep persisted state close to reality for crash recovery.
 - wrapper `.zshenv` in ZDOTDIR mode sources user's `.zshenv` AFTER ours runs but BEFORE Patton's integration script. A compromised user `.zshenv` can redirect `PATTON_SHELL_INTEGRATION_SCRIPT` to a malicious path unless we `typeset -r`/`readonly` the captured value first.
@@ -105,14 +116,17 @@ Feature-complete, distributed. Automated CI/CD pipeline with auto-versioning.
 - `~/.claude/plans/image-1-my-interfaces-keep-tender-harp.md` — the original crash-hardening plan that kicked off session 20.
 - `src/renderer/services/focus-trap.ts` — reusable modal focus trap. Import as `trapFocus(container)` → returns release fn.
 - `src/renderer/services/announcer.ts` — global aria-live regions. Import as `announce(msg, 'polite' | 'assertive')`.
+- `src/main/logger.ts` — file logger that tees `console.*` to `~/Library/Application Support/Patton/logs/main.log`. Called once from `main.ts` via `installFileLogger()`.
+- `scripts/patton-health.sh` — diagnostic script. `npm run health` or `patton-health` (shell alias) from anywhere. Greps log file + crashpad for session-20 error markers.
 
 ## Next Steps
 - [ ] Test CI-built DMG install on a clean machine (right-click → Open for Gatekeeper)
 - [ ] Verify `brew tap michaeljryoung/patton && brew install --cask patton` installs latest
 - [ ] Consider Apple Developer ID ($99/yr) for notarization if distributing widely
 - [ ] End-to-end test all features in packaged app
-- [ ] **Validate session 20 changes in a real session** — run for a day with the new autosave, crash counter, CommandDoneCoordinator, and `safeStorage` migration. Watch for: duplicate notifications still firing (K3 regression), `safeStorage` migration failures in logs, crash counter false-tripping on benign GPU losses.
-- [ ] **Tab "awaiting input" indicator** (iTerm-style dot). When a tab's foreground process is idle/prompting (i.e., shell at prompt waiting for user input) show a small colored dot on the tab in the tab bar. Plumbing already exists: `terminal-view.ts` parses OSC 133 and emits `promptState` ('command' | 'idle'); `tab-manager.ts` already subscribes. Just need (a) a per-tab `awaitingInput` state set true on 'idle' when the tab is NOT the active tab (active tab is by definition where user attention is), cleared on tab focus or 'command' state; (b) a dot element in the tab DOM rendered when that state is true. Skip the indicator for the active tab. Consider: different dot color if the last command failed (exit code from OSC 133 ;D parameter).
+- [ ] **Validate session 20+21 changes in real use** — tooling is ready (`patton-health` alias + file logger). Run for a day or two. Watch health output for: duplicate notifications firing (K3 regression), `safeStorage` migration failures, crash counter false-tripping, unexpected WebGL context-loss rate.
+- [x] **Tab "awaiting input" indicator** (iTerm-style dot) — shipped in session 21.
+- [ ] **Failed-command indicator variant** — follow-up idea from the tab-dot work. OSC 133 `;D` can carry an exit code; show a red dot variant on inactive tabs whose last command exited non-zero. Would need to plumb the exit code through `onPromptState` (currently only emits the state enum), so more invasive than the green-dot implementation.
 - [ ] **Blind-spot passes** flagged by the reasoning synthesis (separate sessions):
   - CVE scan of dep tree (Electron 40, xterm.js 6, node-pty, electron-store, codemirror) — `npm audit` already clean but CVE-age matters
   - Audit the auto-release CI workflow + signing-key handling (highest-severity blind spot given self-signed distribution)
