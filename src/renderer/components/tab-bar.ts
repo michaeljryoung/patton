@@ -11,6 +11,7 @@ interface TabHeaderInfo {
   id: string;
   title: string;
   active: boolean;
+  awaitingInput?: boolean;
 }
 
 export class TabBar {
@@ -165,6 +166,17 @@ export class TabBar {
           this.callbacks.onReorder(fromId, tab.id);
         }
       });
+
+      // "Awaiting input" dot — only for inactive tabs whose shell is at a prompt.
+      // Guarded on !active so the dot never flickers in if the state races tab
+      // activation.
+      if (tab.awaitingInput && !tab.active) {
+        const dot = document.createElement('span');
+        dot.className = 'tab-bar-tab-indicator';
+        dot.setAttribute('aria-label', 'Awaiting input');
+        dot.setAttribute('role', 'img');
+        el.appendChild(dot);
+      }
 
       const titleSpan = document.createElement('span');
       titleSpan.className = 'tab-bar-tab-title';

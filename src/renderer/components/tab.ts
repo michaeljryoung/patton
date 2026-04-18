@@ -34,6 +34,15 @@ export class Tab {
   private _zoomed = false;
   private _shell: string | undefined;
   private _historyManager: HistoryManager | undefined;
+  // True when this tab is the currently-visible tab in the window.
+  // Used to decide whether a prompt-ready signal should raise the
+  // "awaiting input" indicator — active tabs never show it (the user
+  // is already looking at them).
+  private _isActive = false;
+  // True when an inactive tab's shell has returned to a prompt and is
+  // waiting for input. Cleared when the tab becomes active or when any
+  // pane starts running a new command.
+  private _awaitingInput = false;
 
   constructor(initialCwd?: string) {
     this.id = `tab-${++tabIdCounter}`;
@@ -90,8 +99,34 @@ export class Tab {
       const { sourceId, targetId } = e.detail;
       this.handlePaneSwap(sourceId, targetId);
     }) as EventListener);
+    // Listen for OSC 133 prompt state from this pane to drive the tab's
+    // "awaiting input" indicator. Subscription outlives only the pane —
+    // when the pane's terminalView is disposed its listener array is
+    // cleared, so no manual cleanup is required here.
+    pane.terminalView.onPromptState((state) => this.handlePaneStateChange(state));
     this._panes.push(pane);
     return pane;
+  }
+
+  private handlePaneStateChange(state: 'prompt' | 'command' | 'idle'): void {
+    // Only inactive tabs raise the indicator — the active tab is already
+    // in the user's view, so a dot would be noise. Clear on 'command'
+    // because a new command started and the shell is no longer waiting.
+    if (state === 'prompt' && !this._isActive) {
+      if (!this._awaitingInput) {
+        this._awaitingInput = true;
+        this.onTitleChanged?.();
+      }
+    } else if (state === 'command') {
+      if (this._awaitingInput) {
+        this._awaitingInput = false;
+        this.onTitleChanged?.();
+      }
+    }
+  }
+
+  get awaitingInput(): boolean {
+    return this._awaitingInput;
   }
 
   setRegistrationCallbacks(
@@ -335,15 +370,22 @@ export class Tab {
   }
 
   show(): void {
+    this._isActive = true;
+    // Becoming active clears any pending "awaiting input" dot — user is
+    // now looking at this tab. Notify so the tab-bar drops the indicator.
+    const wasAwaiting = this._awaitingInput;
+    this._awaitingInput = false;
     this.element.style.display = 'flex';
     for (const pane of this._panes) {
       pane.show();
     }
     // Deferred to ensure focus wins over xterm.js internal focus grabs from fit()
     requestAnimationFrame(() => this._focusedPane.focus());
+    if (wasAwaiting) this.onTitleChanged?.();
   }
 
   hide(): void {
+    this._isActive = false;
     this.element.style.display = 'none';
   }
 

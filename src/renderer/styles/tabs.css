@@ -140,6 +140,20 @@
   pointer-events: auto;
 }
 
+/* "Awaiting input" indicator — small dot before the tab title when an
+ * inactive tab's shell has returned to a prompt (iTerm-style). Uses the
+ * same green token as the prompt-ready editor glow so the visual language
+ * stays consistent. */
+.tab-bar-tab-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--prompt-ready);
+  box-shadow: 0 0 4px var(--prompt-ready-glow);
+  flex-shrink: 0;
+  align-self: center;
+}
+
 .tab-bar-tab-rename {
   flex: 1;
   min-width: 40px;

@@ -457,6 +457,7 @@ export class TabManager {
         id: t.id,
         title: t.title,
         active: t.id === this.activeTab?.id,
+        awaitingInput: t.awaitingInput,
       })),
     );
   }

@@ -5,10 +5,18 @@ import { registerIpcHandlers } from './ipc-handlers';
 import { createWindow } from './window-manager';
 import { buildMenu } from './menu';
 import { getSettings } from './store';
+import { installFileLogger } from './logger';
 
 if (started) {
   app.quit();
 }
+
+// Install BEFORE anything else logs. Packaged-app Dock/Finder launches route
+// stderr to /dev/null, so without a file logger all the hardening signals
+// (render-process-gone, child-process-gone, safeStorage migration, circuit
+// breaker, etc.) would have nowhere to land. stderr is preserved for terminal
+// launches. Log file: ~/Library/Application Support/Patton/logs/main.log
+installFileLogger();
 
 // Local-only crash dumps (no upload) for post-mortem diagnosis.
 // Lands under app.getPath('crashDumps') — e.g. ~/Library/Application Support/Patton/Crashpad/completed/
