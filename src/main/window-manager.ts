@@ -1,4 +1,4 @@
-import { BrowserWindow, screen } from 'electron';
+import { BrowserWindow, dialog, screen } from 'electron';
 import path from 'node:path';
 import * as store from './store';
 import type { PtyManager } from './pty-manager';
@@ -172,7 +172,34 @@ export function createWindow(ptyManager?: PtyManager): BrowserWindow {
     saveTimer = setTimeout(saveState, 500);
   };
 
-  window.on('close', () => {
+  window.on('close', (e) => {
+    // Guard against silently killing live PTYs by closing the last window.
+    // On macOS, `window-all-closed` triggers `app.quit()` here (Patton is
+    // a terminal app, not something that stays dockside windowless), so
+    // closing the final window IS a quit action. The main-process
+    // before-quit handler can't catch this path because the window's
+    // PTYs are destroyed here before the quit handler sees them.
+    const isLastWindow = BrowserWindow.getAllWindows().length === 1;
+    if (isLastWindow && ptyManager && ptyManager.size > 0) {
+      const count = ptyManager.size;
+      const result = dialog.showMessageBoxSync(window, {
+        type: 'warning',
+        buttons: ['Cancel', 'Close Anyway'],
+        defaultId: 0,
+        cancelId: 0,
+        title: 'Close Patton',
+        message: `${count} terminal${count === 1 ? '' : 's'} still running`,
+        detail:
+          'Closing the last window will end every terminal session and quit Patton. ' +
+          'Transcripts on disk are preserved, but in-memory session state is not.\n\n' +
+          'To keep a session alive, cancel and exit it gracefully from inside its tab first.',
+      });
+      if (result === 0) {
+        e.preventDefault();
+        return;
+      }
+    }
+
     if (saveTimer) clearTimeout(saveTimer);
     saveState();
     ptyManager?.destroyByWindow(window);

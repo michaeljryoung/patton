@@ -142,6 +142,10 @@ export class PtyManager {
   private countByWindow = new Map<number, number>();
   shellIntegrationEnabled = true;
 
+  get size(): number {
+    return this.instances.size;
+  }
+
   create(window: BrowserWindow, opts?: PtyCreateOptions): number {
     // --- Security: Rate limit PTY creation ---
     const winId = window.id;

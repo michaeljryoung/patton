@@ -115,7 +115,37 @@ app.on('activate', () => {
   }
 });
 
-app.on('before-quit', () => {
+// Guard against silently killing live PTYs on ⌘Q / close-last-window. Today's
+// incident: three active Claude Code sessions were lost to a clean app.quit()
+// because there was no confirmation step. This handler asks first when any PTY
+// is alive; cleanup runs only after the user confirms (or when no PTYs exist).
+let quitConfirmed = false;
+
+app.on('before-quit', (event) => {
+  if (!quitConfirmed && ptyManager.size > 0) {
+    const activeCount = ptyManager.size;
+    const parent = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
+    const result = dialog.showMessageBoxSync(parent, {
+      type: 'warning',
+      buttons: ['Cancel', 'Quit Anyway'],
+      defaultId: 0,
+      cancelId: 0,
+      title: 'Quit Patton',
+      message: `${activeCount} terminal${activeCount === 1 ? '' : 's'} still running`,
+      detail:
+        'Quitting will end every terminal session and kill any long-running processes inside them ' +
+        '(Claude Code conversations, dev servers, watchers, remote shells). Transcripts on disk are ' +
+        'preserved, but in-memory session state is not.\n\n' +
+        'To keep a session alive, cancel and exit it gracefully from inside its tab first.',
+    });
+
+    if (result === 0) {
+      event.preventDefault();
+      return;
+    }
+    quitConfirmed = true;
+  }
+
   globalShortcut.unregisterAll();
   try {
     ptyManager.destroyAll();
