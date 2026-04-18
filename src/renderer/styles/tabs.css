@@ -141,17 +141,31 @@
 }
 
 /* "Awaiting input" indicator — small dot before the tab title when an
- * inactive tab's shell has returned to a prompt (iTerm-style). Uses the
- * same green token as the prompt-ready editor glow so the visual language
- * stays consistent. */
+ * inactive tab has a meaningful attention signal (command-done, Claude
+ * Code title prefix, OSC 9 notification, bell). Uses the same green
+ * token as the prompt-ready editor glow so the visual language stays
+ * consistent. Dual box-shadow (inner bright core + outer halo) plus a
+ * slow pulse lift it above Claude Code's inline "·" title character so
+ * the user can tell the two apart at a glance.
+ *
+ * The global prefers-reduced-motion rule in main.css zeroes animation
+ * duration, giving motion-averse users a static dot for free. */
 .tab-bar-tab-indicator {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
   background: var(--prompt-ready);
-  box-shadow: 0 0 4px var(--prompt-ready-glow);
+  box-shadow:
+    0 0 2px var(--prompt-ready),
+    0 0 8px var(--prompt-ready);
   flex-shrink: 0;
   align-self: center;
+  animation: tab-indicator-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes tab-indicator-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.55; }
 }
 
 .tab-bar-tab-rename {
