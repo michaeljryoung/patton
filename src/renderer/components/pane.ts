@@ -56,7 +56,7 @@ export class Pane {
   private static readonly COMMAND_DONE_DEBOUNCE_MS = 5000;
   private static readonly OSC_SUPPRESSES_IDLE_MS = 60_000;
 
-  private fireCommandDone(source: 'osc133' | 'idle' | 'bell'): void {
+  private fireCommandDone(source: 'osc133' | 'idle' | 'bell' | 'osc9'): void {
     const now = Date.now();
     // Once OSC 133 has demonstrably fired for this pane, the idle heuristic
     // is redundant and noisy — suppress it for a window after any OSC 133
@@ -252,6 +252,13 @@ export class Pane {
     // Terminal bell → notification sound
     this.disposables.push(
       this.terminalView.onBell(() => this.fireCommandDone('bell')),
+    );
+
+    // OSC 9 (terminal notification escape) → command-done signal. Standards-
+    // based attention request from any tool that opts in; gets the same
+    // treatment as an explicit bell (no idle suppression, shares debounce).
+    this.disposables.push(
+      this.terminalView.onOsc9(() => this.fireCommandDone('osc9')),
     );
 
     // Listen for title changes via xterm.js OSC sequences (no process polling needed)

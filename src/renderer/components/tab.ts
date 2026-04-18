@@ -79,8 +79,23 @@ export class Tab {
           this.title = p.title;
           this.onTitleChanged?.();
         }
+        // Path B: Claude Code signals "needs attention" by prepending "·" to
+        // its terminal title via OSC 2. Treat any pane whose title arrives
+        // with a leading middle-dot / bullet as awaiting input. Gated on
+        // !_customTitle so a user-chosen tab name like "· notes" doesn't
+        // keep the indicator permanently lit.
+        if (!this._customTitle && /^[·•]/.test(p.title)) {
+          this.raiseAwaitingInput();
+        }
       },
-      onCommandDone: () => this.onCommandDone?.(),
+      onCommandDone: () => {
+        // Path A: any pane command completion (OSC 133 transition, idle
+        // heuristic, bell, OSC 9) is a meaningful attention signal — the
+        // signal is already transition-filtered and cross-source debounced
+        // by fireCommandDone() in pane.ts.
+        this.raiseAwaitingInput();
+        this.onCommandDone?.();
+      },
       onBroadcastWrite: (data) => {
         if (!this._broadcastInput) return;
         // Write to all OTHER panes
@@ -99,30 +114,25 @@ export class Tab {
       const { sourceId, targetId } = e.detail;
       this.handlePaneSwap(sourceId, targetId);
     }) as EventListener);
-    // Listen for OSC 133 prompt state from this pane to drive the tab's
-    // "awaiting input" indicator. Subscription outlives only the pane —
-    // when the pane's terminalView is disposed its listener array is
-    // cleared, so no manual cleanup is required here.
-    pane.terminalView.onPromptState((state) => this.handlePaneStateChange(state));
+    // Clear the dot the instant a new command starts — the prior signal is
+    // stale the moment work resumes in this pane. OSC 133 'prompt' events
+    // are NOT used to SET the dot any more (they fire too liberally — on
+    // every prompt redraw, resize, session restore); the SET paths are
+    // onCommandDone (Path A) and the title-prefix check (Path B).
+    pane.terminalView.onPromptState((state) => {
+      if (state === 'command' && this._awaitingInput) {
+        this._awaitingInput = false;
+        this.onTitleChanged?.();
+      }
+    });
     this._panes.push(pane);
     return pane;
   }
 
-  private handlePaneStateChange(state: 'prompt' | 'command' | 'idle'): void {
-    // Only inactive tabs raise the indicator — the active tab is already
-    // in the user's view, so a dot would be noise. Clear on 'command'
-    // because a new command started and the shell is no longer waiting.
-    if (state === 'prompt' && !this._isActive) {
-      if (!this._awaitingInput) {
-        this._awaitingInput = true;
-        this.onTitleChanged?.();
-      }
-    } else if (state === 'command') {
-      if (this._awaitingInput) {
-        this._awaitingInput = false;
-        this.onTitleChanged?.();
-      }
-    }
+  private raiseAwaitingInput(): void {
+    if (this._isActive || this._awaitingInput) return;
+    this._awaitingInput = true;
+    this.onTitleChanged?.();
   }
 
   get awaitingInput(): boolean {

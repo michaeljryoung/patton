@@ -86,6 +86,7 @@ export class TerminalView {
   private copyOnSelectEnabled = false;
   private customTheme: ITheme | null = null;
   private promptListeners: ((state: PromptState) => void)[] = [];
+  private osc9Listeners: (() => void)[] = [];
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -187,6 +188,15 @@ export class TerminalView {
         const bg = theme.background || '#1e1e1e';
         window.patton.pty.write(this.ptyId, `\x1b]11;${hexToXtermRgb(bg)}\x1b\\`);
       }
+      return true;
+    });
+
+    // OSC 9: de-facto terminal notification escape (iTerm, macOS Terminal,
+    // Alacritty, etc. — emitted by many CLI tools to request user attention).
+    // Collapse any OSC 9 payload into a single "attention wanted" signal —
+    // sub-codes (iTerm progress, dismissals) are not distinguished here.
+    this.terminal.parser.registerOscHandler(9, () => {
+      for (const cb of this.osc9Listeners) cb();
       return true;
     });
 
@@ -374,6 +384,13 @@ export class TerminalView {
     return () => disposable.dispose();
   }
 
+  onOsc9(callback: () => void): () => void {
+    this.osc9Listeners.push(callback);
+    return () => {
+      this.osc9Listeners = this.osc9Listeners.filter(l => l !== callback);
+    };
+  }
+
   /** Heuristic prompt detection: lines starting with common prompt patterns */
   private isPromptLine(line: string): boolean {
     const trimmed = line.trimStart();
@@ -418,6 +435,7 @@ export class TerminalView {
   dispose(): void {
     this.disposed = true;
     this.promptListeners = [];
+    this.osc9Listeners = [];
     this.mediaQuery.removeEventListener('change', this.themeHandler);
     this.terminal.dispose();
   }
