@@ -1,5 +1,6 @@
 import { Pane } from './pane';
 import { HistoryManager } from '../services/history-manager';
+import { trapFocus } from '../services/focus-trap';
 
 /**
  * Quick Terminal: A drop-down terminal panel that slides from the top of the window.
@@ -16,12 +17,17 @@ export class QuickTerminal {
   private onCommandDone: (() => void) | null = null;
   private container: HTMLElement;
   private disposables: (() => void)[] = [];
+  private releaseFocusTrap: (() => void) | null = null;
 
   constructor(container: HTMLElement) {
     this.container = container;
 
     this.overlay = document.createElement('div');
     this.overlay.className = 'quick-terminal-overlay';
+    this.overlay.setAttribute('role', 'dialog');
+    this.overlay.setAttribute('aria-modal', 'true');
+    this.overlay.setAttribute('aria-label', 'Quick terminal');
+    this.overlay.setAttribute('aria-hidden', 'true');
 
     this.panel = document.createElement('div');
     this.panel.className = 'quick-terminal-panel';
@@ -80,6 +86,7 @@ export class QuickTerminal {
 
     this.visible = true;
     this.overlay.classList.add('visible');
+    this.overlay.setAttribute('aria-hidden', 'false');
 
     // Animate slide down
     requestAnimationFrame(() => {
@@ -90,11 +97,15 @@ export class QuickTerminal {
         this.pane?.focus();
       }, 200);
     });
+    this.releaseFocusTrap = trapFocus(this.overlay);
   }
 
   hide(): void {
     if (!this.visible) return;
     this.visible = false;
+    this.overlay.setAttribute('aria-hidden', 'true');
+    this.releaseFocusTrap?.();
+    this.releaseFocusTrap = null;
     this.panel.classList.remove('open');
 
     // Remove overlay after animation

@@ -1,5 +1,6 @@
 import type { AppSettings } from '../../shared/types';
 import { DEFAULTS } from '../../shared/constants';
+import { trapFocus } from '../services/focus-trap';
 
 export class SettingsPanel {
   private overlay: HTMLElement;
@@ -7,6 +8,7 @@ export class SettingsPanel {
   private onSettingsChanged: (settings: Partial<AppSettings>) => void;
   private cachedSettings: AppSettings | null = null;
   private disposables: (() => void)[] = [];
+  private releaseFocusTrap: (() => void) | null = null;
 
   constructor(container: HTMLElement, onSettingsChanged: (settings: Partial<AppSettings>) => void) {
     this.onSettingsChanged = onSettingsChanged;
@@ -263,6 +265,7 @@ export class SettingsPanel {
     this.visible = true;
     this.overlay.classList.add('visible');
     (this.overlay.querySelector('#setting-font-size') as HTMLInputElement).focus();
+    this.releaseFocusTrap = trapFocus(this.overlay);
   }
 
   private populateValues(settings: AppSettings): void {
@@ -294,6 +297,8 @@ export class SettingsPanel {
   hide(): void {
     this.visible = false;
     this.overlay.classList.remove('visible');
+    this.releaseFocusTrap?.();
+    this.releaseFocusTrap = null;
   }
 
   isVisible(): boolean {

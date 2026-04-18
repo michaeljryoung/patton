@@ -1,7 +1,11 @@
+import { trapFocus } from '../services/focus-trap';
+import { announce } from '../services/announcer';
+
 export class PasteDialog {
   private overlay: HTMLElement;
   private resolve: ((paste: boolean) => void) | null = null;
   private disposables: (() => void)[] = [];
+  private releaseFocusTrap: (() => void) | null = null;
 
   constructor(container: HTMLElement) {
     this.overlay = document.createElement('div');
@@ -59,6 +63,8 @@ export class PasteDialog {
     preview.textContent = shown + (lines.length > 6 ? '\n...' : '');
     this.overlay.classList.add('visible');
     (this.overlay.querySelector('.paste-dialog-cancel') as HTMLElement).focus();
+    this.releaseFocusTrap?.();
+    this.releaseFocusTrap = trapFocus(this.overlay);
 
     return new Promise<boolean>((resolve) => {
       this.resolve = resolve;
@@ -67,6 +73,11 @@ export class PasteDialog {
 
   private finish(result: boolean): void {
     this.overlay.classList.remove('visible');
+    this.releaseFocusTrap?.();
+    this.releaseFocusTrap = null;
+    if (this.resolve) {
+      announce(result ? 'Paste confirmed' : 'Paste cancelled');
+    }
     this.resolve?.(result);
     this.resolve = null;
   }

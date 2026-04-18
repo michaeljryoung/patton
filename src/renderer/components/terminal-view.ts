@@ -160,8 +160,18 @@ export class TerminalView {
     // CLI tools (Claude Code, vim, etc.) send \e]10;? or \e]11;? to detect
     // the terminal's color scheme and choose readable text colors.
     // Without this, apps assume dark background and render white text — invisible on light themes.
+    //
+    // Debounce responses per PTY: a chatty process could query OSC 10/11
+    // rapidly, and our response creates a renderer→PTY write loop. 100ms
+    // between responses prevents any degenerate amplification.
+    const OSC_QUERY_DEBOUNCE_MS = 100;
+    let lastOsc10ResponseMs = 0;
+    let lastOsc11ResponseMs = 0;
     this.terminal.parser.registerOscHandler(10, (data) => {
       if (data === '?' && this.ptyId !== null) {
+        const now = Date.now();
+        if (now - lastOsc10ResponseMs < OSC_QUERY_DEBOUNCE_MS) return true;
+        lastOsc10ResponseMs = now;
         const theme = this.customTheme || getTheme();
         const fg = theme.foreground || '#d4d4d4';
         window.patton.pty.write(this.ptyId, `\x1b]10;${hexToXtermRgb(fg)}\x1b\\`);
@@ -170,6 +180,9 @@ export class TerminalView {
     });
     this.terminal.parser.registerOscHandler(11, (data) => {
       if (data === '?' && this.ptyId !== null) {
+        const now = Date.now();
+        if (now - lastOsc11ResponseMs < OSC_QUERY_DEBOUNCE_MS) return true;
+        lastOsc11ResponseMs = now;
         const theme = this.customTheme || getTheme();
         const bg = theme.background || '#1e1e1e';
         window.patton.pty.write(this.ptyId, `\x1b]11;${hexToXtermRgb(bg)}\x1b\\`);
@@ -211,12 +224,34 @@ export class TerminalView {
   mount(): void {
     this.terminal.open(this.container);
 
-    // Try WebGL, fall back to canvas
-    try {
-      this.terminal.loadAddon(new WebglAddon());
-    } catch {
-      console.warn('WebGL addon failed to load, using canvas renderer');
-    }
+    // Try WebGL, fall back to DOM on load failure or runtime context loss.
+    // xterm.js fires onContextLoss when the GPU context dies (sleep/wake, display
+    // unplug, driver hiccup, Chromium killing idle GPU contexts under pressure).
+    // Without this handler, context loss often takes down the renderer process.
+    //
+    // After fallback, force a full redraw so the DOM renderer has current content
+    // (xterm.js can leave stale glyphs if the switch happens mid-frame), and try
+    // to re-acquire WebGL after 10s — context-loss is often transient.
+    const loadWebgl = (isRetry: boolean) => {
+      try {
+        const webgl = new WebglAddon();
+        webgl.onContextLoss(() => {
+          console.warn('WebGL context lost — disposing addon, falling back to DOM renderer');
+          webgl.dispose();
+          if (!this.disposed) {
+            this.terminal.refresh(0, this.terminal.rows - 1);
+            setTimeout(() => {
+              if (!this.disposed) loadWebgl(true);
+            }, 10_000);
+          }
+        });
+        this.terminal.loadAddon(webgl);
+        if (isRetry) console.info('WebGL renderer re-acquired after context loss');
+      } catch {
+        console.warn('WebGL addon failed to load, using DOM renderer');
+      }
+    };
+    loadWebgl(false);
 
     this.fit();
   }

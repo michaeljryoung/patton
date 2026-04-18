@@ -5,7 +5,6 @@ export const IPC = {
   PTY_RESIZE: 'pty:resize',
   PTY_DESTROY: 'pty:destroy',
   PTY_GET_PROCESS: 'pty:get-process',
-  PTY_GET_DESCENDANTS: 'pty:get-descendants',
   PTY_EXIT: 'pty:exit',
   PTY_TITLE: 'pty:title',
 

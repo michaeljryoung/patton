@@ -67,7 +67,6 @@ export interface PattonAPI {
     resize: (id: number, cols: number, rows: number) => void;
     destroy: (id: number) => void;
     getProcess: (id: number) => Promise<string>;
-    getDescendants: (id: number) => Promise<string[]>;
     getCwd: (id: number) => Promise<string>;
     onData: (callback: (id: number, data: string) => void) => () => void;
     onExit: (callback: (id: number, code: number) => void) => () => void;

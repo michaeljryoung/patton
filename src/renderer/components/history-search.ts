@@ -84,7 +84,10 @@ export class HistorySearch {
     }).join('');
 
     if (this.filtered.length === 0) {
-      this.list.innerHTML = '<div class="history-search-empty">No matches</div>';
+      const msg = this.entries.length === 0
+        ? 'No command history yet — run a few commands to build it up'
+        : 'No matches';
+      this.list.innerHTML = `<div class="history-search-empty">${msg}</div>`;
     }
 
     // Scroll selected into view

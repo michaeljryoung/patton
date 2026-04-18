@@ -2,6 +2,7 @@ import { Tab } from '../components/tab';
 import { Pane } from '../components/pane';
 import { TabBar } from '../components/tab-bar';
 import { HistoryManager } from './history-manager';
+import { announce } from './announcer';
 import type { SessionState } from '../../shared/types';
 import type { ITheme } from '@xterm/xterm';
 
@@ -171,6 +172,7 @@ export class TabManager {
     }
 
     this.switchToId(tab.id);
+    announce(`Opened tab ${this.tabs.length}: ${tab.title}`);
     return tab;
   }
 
@@ -231,6 +233,7 @@ export class TabManager {
     if (idx === -1) return;
 
     const tab = this.tabs[idx];
+    const closedTitle = tab.title;
 
     // Save pane state for undo before disposing
     for (const pane of tab.panes) {
@@ -239,6 +242,7 @@ export class TabManager {
 
     tab.dispose();
     this.tabs.splice(idx, 1);
+    announce(`Closed tab: ${closedTitle}`);
 
     if (this.tabs.length === 0) {
       window.close();

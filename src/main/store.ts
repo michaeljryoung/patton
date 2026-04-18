@@ -1,14 +1,49 @@
-import { app } from 'electron';
+import { app, safeStorage } from 'electron';
 import ElectronStore from 'electron-store';
-import { createHash } from 'node:crypto';
-import { existsSync, unlinkSync } from 'node:fs';
+import { createHash, randomBytes } from 'node:crypto';
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir, userInfo } from 'node:os';
 import { DEFAULTS } from '../shared/constants';
+import { ALLOWED_SHELLS } from './pty-manager';
 import type { HistoryEntry, AppSettings, WindowState, SessionState } from '../shared/types';
 
-// Machine-binding key for electron-store (obfuscation, not encryption against local attackers)
+// Keychain-protected random encryption key for electron-store.
+// The key itself is 32 random bytes, stored in userData/key.enc encrypted by
+// the OS keychain via safeStorage. Unlike the previous deterministic
+// SHA-256(homedir + ':' + username) scheme — which any same-user process could
+// reconstruct in milliseconds — this key requires Keychain access to read.
 function getEncryptionKey(): string {
+  const keyPath = join(app.getPath('userData'), 'key.enc');
+
+  // Load existing keychain-protected key if available
+  if (existsSync(keyPath) && safeStorage.isEncryptionAvailable()) {
+    try {
+      const decrypted = safeStorage.decryptString(readFileSync(keyPath));
+      if (decrypted && decrypted.length === 64) return decrypted;
+    } catch {
+      // Keychain read failed or key corrupt — fall through to regenerate
+    }
+  }
+
+  // Generate and persist a new random key
+  const newKey = randomBytes(32).toString('hex');
+  if (safeStorage.isEncryptionAvailable()) {
+    try {
+      writeFileSync(keyPath, safeStorage.encryptString(newKey), { mode: 0o600 });
+      return newKey;
+    } catch (err) {
+      console.warn('[SECURITY] safeStorage persist failed, falling back to legacy key:', err);
+    }
+  }
+  // Fallback for environments without a keyring (Linux without GNOME keyring,
+  // etc.) — same weak scheme as before, but at least it still works.
+  return getLegacyEncryptionKey();
+}
+
+// Previous deterministic scheme. Kept solely for one-shot migration of
+// existing config.json files encrypted with it.
+function getLegacyEncryptionKey(): string {
   let username: string;
   try {
     username = userInfo().username;
@@ -61,27 +96,56 @@ const defaults: StoreSchema = {
 let store: ElectronStore<StoreSchema> | null = null;
 
 function getStore(): ElectronStore<StoreSchema> {
-  if (!store) {
+  if (store) return store;
+
+  const encryptionKey = getEncryptionKey();
+
+  // First, attempt migration from the legacy deterministic key. If a config
+  // file exists and the new key can't decrypt it but the legacy key can,
+  // copy the contents, delete the file, and reinitialize with the new key.
+  const configPath = join(app.getPath('userData'), 'config.json');
+  if (existsSync(configPath) && encryptionKey !== getLegacyEncryptionKey()) {
     try {
-      store = new Store({ defaults, encryptionKey: getEncryptionKey() });
-    } catch (err) {
-      // Only delete store on parse/decrypt errors — not on permission/disk errors
-      const errCode = (err as NodeJS.ErrnoException).code;
-      const isCorruption = !errCode || errCode === 'ERR_CRYPTO_INVALID_IV' || errCode === 'ERR_OSSL_BAD_DECRYPT';
-      if (isCorruption || (err instanceof SyntaxError)) {
-        console.warn('[SECURITY] Store corrupted, resetting', err);
-        try {
-          const configPath = join(app.getPath('userData'), 'config.json');
-          if (existsSync(configPath)) unlinkSync(configPath);
-        } catch {
-          // Ignore cleanup errors
+      // Probe: can the new key read the existing file?
+      const probe = new Store({ defaults, encryptionKey });
+      void probe.store;
+    } catch {
+      // New key can't — try the legacy key
+      try {
+        const legacy = new Store({ defaults, encryptionKey: getLegacyEncryptionKey() });
+        const snapshot = legacy.store;
+        unlinkSync(configPath);
+        const fresh = new Store({ defaults, encryptionKey });
+        for (const [k, v] of Object.entries(snapshot)) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- store schema keys are dynamic here
+          (fresh as any).set(k, v);
         }
-        store = new Store({ defaults, encryptionKey: getEncryptionKey() });
-      } else {
-        console.error('[SECURITY] Store init failed (not corruption, not resetting)', err);
-        // Re-throw non-corruption errors (EACCES, ENOSPC, etc.)
-        throw err;
+        store = fresh;
+        console.log('[SECURITY] Migrated store from legacy encryption key to safeStorage-backed key');
+        return store;
+      } catch {
+        // Legacy key also failed — fall through to normal corruption handling below
       }
+    }
+  }
+
+  try {
+    store = new Store({ defaults, encryptionKey });
+  } catch (err) {
+    // Only delete store on parse/decrypt errors — not on permission/disk errors
+    const errCode = (err as NodeJS.ErrnoException).code;
+    const isCorruption = !errCode || errCode === 'ERR_CRYPTO_INVALID_IV' || errCode === 'ERR_OSSL_BAD_DECRYPT';
+    if (isCorruption || (err instanceof SyntaxError)) {
+      console.warn('[SECURITY] Store corrupted, resetting', err);
+      try {
+        if (existsSync(configPath)) unlinkSync(configPath);
+      } catch {
+        // Ignore cleanup errors
+      }
+      store = new Store({ defaults, encryptionKey });
+    } else {
+      console.error('[SECURITY] Store init failed (not corruption, not resetting)', err);
+      throw err;
     }
   }
   return store;
@@ -145,10 +209,11 @@ export function setSettings(partial: Partial<AppSettings>): void {
   }
 
   if (partial.shell !== undefined) {
-    // Shell validation handled by pty-manager allowlist; store as-is
-    // but only if it looks like a valid path
+    // Validate against the same allowlist pty-manager uses at spawn time.
+    // Without this, a path that passes a permissive regex here would silently
+    // fall back to the default at spawn — user saves a value they never get.
     const s = String(partial.shell);
-    if (/^\/[a-zA-Z0-9/._-]+$/.test(s)) {
+    if (ALLOWED_SHELLS.has(s)) {
       validated.shell = s;
     }
   }
@@ -220,7 +285,12 @@ export function getSession(): SessionState | null {
 }
 
 // --- Security: Deep validation for session tree nodes ---
-function isValidTreeNode(node: unknown, depth = 0): boolean {
+// Depth alone doesn't bound total leaves: a balanced split tree of depth 10
+// has up to 1024 leaves, far exceeding MAX_PTY_PER_WINDOW. Count leaves and
+// reject trees that would blow the PTY cap at restore time.
+const MAX_LEAVES_PER_TAB = 50; // matches PtyManager.MAX_PTY_PER_WINDOW
+
+function isValidTreeNode(node: unknown, depth = 0, counter: { leaves: number } = { leaves: 0 }): boolean {
   // Guard against deeply nested structures (max 10 levels of splits)
   if (depth > 10) return false;
   if (!node || typeof node !== 'object') return false;
@@ -232,12 +302,14 @@ function isValidTreeNode(node: unknown, depth = 0): boolean {
     if (obj.direction !== 'vertical' && obj.direction !== 'horizontal') return false;
     if (typeof obj.ratio !== 'number' || obj.ratio < 0 || obj.ratio > 1) return false;
     if (!Array.isArray(obj.children) || obj.children.length !== 2) return false;
-    return isValidTreeNode(obj.children[0], depth + 1) && isValidTreeNode(obj.children[1], depth + 1);
+    return isValidTreeNode(obj.children[0], depth + 1, counter) && isValidTreeNode(obj.children[1], depth + 1, counter);
   }
 
   // Pane node (no 'type' property): must have 'cwd' string
   if ('type' in obj) return false; // unknown type
   if (typeof obj.cwd !== 'string' || Buffer.byteLength(obj.cwd, 'utf-8') > 4096) return false;
+  counter.leaves++;
+  if (counter.leaves > MAX_LEAVES_PER_TAB) return false;
   return true;
 }
 

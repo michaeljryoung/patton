@@ -1,6 +1,9 @@
+import { trapFocus } from '../services/focus-trap';
+
 export class Onboarding {
   private overlay: HTMLElement;
   private disposables: (() => void)[] = [];
+  private releaseFocusTrap: (() => void) | null = null;
 
   constructor(container: HTMLElement) {
     this.overlay = document.createElement('div');
@@ -56,10 +59,13 @@ export class Onboarding {
   show(): void {
     this.overlay.classList.add('visible');
     (this.overlay.querySelector('.onboarding-dismiss') as HTMLElement).focus();
+    this.releaseFocusTrap = trapFocus(this.overlay);
   }
 
   private dismiss(): void {
     this.overlay.classList.remove('visible');
+    this.releaseFocusTrap?.();
+    this.releaseFocusTrap = null;
     // Mark as shown in localStorage (persists across sessions)
     localStorage.setItem('patton-onboarding-shown', '1');
     setTimeout(() => {

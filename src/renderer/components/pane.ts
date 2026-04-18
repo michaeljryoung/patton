@@ -44,6 +44,38 @@ export class Pane {
   private initialCwd: string | undefined;
   private currentCwd = '';
 
+  // --- Command-done coordination ---
+  // Three signals can indicate "command finished": OSC 133 prompt transition
+  // (authoritative when shell integration is on), an activity-based idle
+  // heuristic (fallback for processes that never emit OSC 133, e.g. Claude
+  // Code, npm scripts), and the terminal bell. Without coordination, all
+  // three fire for the same event — so the user gets a triple-notification.
+  private oscHasFired = false;
+  private lastOscFireMs = 0;
+  private lastCommandDoneMs = 0;
+  private static readonly COMMAND_DONE_DEBOUNCE_MS = 5000;
+  private static readonly OSC_SUPPRESSES_IDLE_MS = 60_000;
+
+  private fireCommandDone(source: 'osc133' | 'idle' | 'bell'): void {
+    const now = Date.now();
+    // Once OSC 133 has demonstrably fired for this pane, the idle heuristic
+    // is redundant and noisy — suppress it for a window after any OSC 133
+    // signal. (Heuristic stays on for processes that don't emit OSC 133.)
+    if (source === 'idle' && this.oscHasFired && (now - this.lastOscFireMs) < Pane.OSC_SUPPRESSES_IDLE_MS) {
+      return;
+    }
+    // Per-pane debounce across all sources kills the triple-fire.
+    if (now - this.lastCommandDoneMs < Pane.COMMAND_DONE_DEBOUNCE_MS) {
+      return;
+    }
+    if (source === 'osc133') {
+      this.oscHasFired = true;
+      this.lastOscFireMs = now;
+    }
+    this.lastCommandDoneMs = now;
+    this.callbacks.onCommandDone?.();
+  }
+
 
   constructor(callbacks: PaneCallbacks) {
     this.id = `pane-${++paneIdCounter}`;
@@ -193,7 +225,7 @@ export class Pane {
               hadActivity = false;
               activityStartTime = 0;
               if (duration >= MIN_ACTIVE_DURATION_MS) {
-                this.callbacks.onCommandDone?.();
+                this.fireCommandDone('idle');
               }
             }
             idleTimer = null;
@@ -219,7 +251,7 @@ export class Pane {
 
     // Terminal bell → notification sound
     this.disposables.push(
-      this.terminalView.onBell(() => this.callbacks.onCommandDone?.()),
+      this.terminalView.onBell(() => this.fireCommandDone('bell')),
     );
 
     // Listen for title changes via xterm.js OSC sequences (no process polling needed)
@@ -337,7 +369,7 @@ export class Pane {
         this.editorContainer.classList.toggle('command-running', state === 'command');
         // Fire command-done when transitioning from running → prompt/idle
         if (wasRunning && (state === 'prompt' || state === 'idle')) {
-          this.callbacks.onCommandDone?.();
+          this.fireCommandDone('osc133');
         }
         wasRunning = state === 'command';
       }),

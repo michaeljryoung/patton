@@ -2,6 +2,7 @@ import { TabManager } from '../services/tab-manager';
 import { KeybindingManager } from '../services/keybinding-manager';
 import { NotificationSound } from '../services/notification-sound';
 import { getThemeById, applyThemeToCSS, clearThemeCSS } from '../services/themes';
+import { announce } from '../services/announcer';
 import { SettingsPanel } from './settings-panel';
 import { CommandPalette } from './command-palette';
 import { QuickTerminal } from './quick-terminal';
@@ -62,6 +63,7 @@ export class App {
       if (settings.theme !== undefined) {
         this.applyTheme(settings.theme);
       }
+      announce('Settings saved');
     });
 
     this.commandPalette = new CommandPalette(appEl, (actionId) => {
@@ -84,7 +86,9 @@ export class App {
     this.disposables.push(
       window.patton.app.onBroadcastInput(() => {
         const tab = this.tabManager.getActiveTab();
-        tab?.toggleBroadcastInput();
+        if (!tab) return;
+        tab.toggleBroadcastInput();
+        announce(tab.isBroadcasting ? 'Broadcast input enabled' : 'Broadcast input disabled');
       }),
     );
 
@@ -161,14 +165,37 @@ export class App {
     // Execute startup command in the active tab (restored or fresh).
     // Restore only recovers tab layout + scrollback — all PTYs are fresh shells,
     // so the startup command is always safe to run.
+    //
+    // Timing: wait for the shell's first prompt signal (OSC 133;B) rather than
+    // a fixed 500ms. A slow shell (plugins, slow .zshrc) can exceed 500ms on
+    // cold start, making the old code race — the startup command gets swallowed
+    // by the not-yet-ready shell. The 500ms fallback covers shells without
+    // shell integration (no OSC 133 emit).
     if (settings.startupCommand) {
       const activeTab = this.tabManager.getActiveTab();
       const ptyId = activeTab?.ptyId ?? null;
-      if (ptyId !== null) {
+      if (ptyId !== null && activeTab) {
         const cmd = settings.startupCommand;
-        setTimeout(() => {
+        let fired = false;
+        const fire = () => {
+          if (fired || ptyId === null) return;
+          fired = true;
           window.patton.pty.write(ptyId, cmd + '\r');
-        }, 500);
+        };
+        const dispose = activeTab.focusedPane.terminalView.onPromptState((state) => {
+          if (state === 'prompt' && !fired) {
+            fire();
+            dispose?.();
+          }
+        });
+        // Fallback if no prompt signal arrives (shell integration disabled,
+        // exotic shell, etc.)
+        setTimeout(() => {
+          if (!fired) {
+            fire();
+            dispose?.();
+          }
+        }, 1500);
       }
     }
 
@@ -179,6 +206,16 @@ export class App {
     };
     window.addEventListener('beforeunload', beforeUnloadHandler);
     this.disposables.push(() => window.removeEventListener('beforeunload', beforeUnloadHandler));
+
+    // Periodic autosave. `beforeunload` alone is fragile — it doesn't fire on
+    // renderer crash, and its fire-and-forget async save races process
+    // teardown. A 30s background save keeps persisted state within half a
+    // minute of reality, which is what crash recovery needs to be useful.
+    const AUTOSAVE_INTERVAL_MS = 30_000;
+    const autosaveTimer = setInterval(() => {
+      this.tabManager.saveSession().catch(() => {});
+    }, AUTOSAVE_INTERVAL_MS);
+    this.disposables.push(() => clearInterval(autosaveTimer));
   }
 
   private registerAppListeners(): void {

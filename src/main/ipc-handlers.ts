@@ -134,20 +134,6 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
     return ptyManager.getProcessName(id);
   });
 
-  ipcMain.handle(IPC.PTY_GET_DESCENDANTS, (event, id: number) => {
-    if (typeof id !== 'number' || !Number.isFinite(id)) {
-      console.warn('[SECURITY] PTY_GET_DESCENDANTS type validation failed', { id });
-      return [];
-    }
-    try {
-      requireOwnership(ptyManager, event, id);
-    } catch {
-      console.warn('[SECURITY] PTY ownership check failed', { channel: IPC.PTY_GET_DESCENDANTS, id });
-      return [];
-    }
-    return ptyManager.getDescendantNames(id);
-  });
-
   ipcMain.handle(IPC.HISTORY_GET, () => {
     return store.getHistory();
   });
@@ -162,7 +148,14 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
       console.warn('[SECURITY] Rate limit exceeded', { channel: IPC.HISTORY_ADD });
       return;
     }
-    store.addHistory(command);
+    // Strip C0/C1 control chars and ESC — when a stored history entry is later
+    // written back to the PTY, an embedded escape sequence would be interpreted
+    // as a terminal command. This matches the safePaste policy elsewhere.
+    // Allow tab and newline explicitly since multi-line commands are legitimate.
+    // eslint-disable-next-line no-control-regex -- intentional: stripping control chars
+    const sanitized = command.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g, '');
+    if (!sanitized) return;
+    store.addHistory(sanitized);
   });
 
   ipcMain.handle(IPC.HISTORY_CLEAR, () => {
@@ -173,7 +166,7 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
     return store.getSettings();
   });
 
-  ipcMain.handle(IPC.SETTINGS_SET, (_event, settings: Record<string, unknown>) => {
+  ipcMain.handle(IPC.SETTINGS_SET, async (event, settings: Record<string, unknown>) => {
     if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
       console.warn('[SECURITY] SETTINGS_SET type validation failed', { type: typeof settings });
       return;
@@ -182,6 +175,40 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
       console.warn('[SECURITY] Rate limit exceeded', { channel: IPC.SETTINGS_SET });
       return;
     }
+
+    // Confirm startupCommand changes: a malicious process with same-user
+    // access could otherwise silently persist a command that runs on every
+    // new terminal (reverse shell, credential harvester, etc.). A modal
+    // dialog gives the user a chance to notice.
+    if ('startupCommand' in settings && typeof settings.startupCommand === 'string') {
+      const current = store.getSettings().startupCommand || '';
+      const proposed = settings.startupCommand;
+      if (proposed !== current && proposed.trim().length > 0) {
+        const win = BrowserWindow.fromWebContents(event.sender);
+        const { response } = await dialog.showMessageBox(win ?? undefined as unknown as BrowserWindow, {
+          type: 'warning',
+          buttons: ['Cancel', 'Apply'],
+          defaultId: 0,
+          cancelId: 0,
+          title: 'Confirm startup command',
+          message: 'Apply new startup command?',
+          detail: `This command will run in every new terminal:\n\n  ${proposed}\n\nOnly apply commands you recognize — a stray startup command can be a persistent code-execution vector.`,
+        });
+        if (response !== 1) {
+          // User cancelled — drop just the startupCommand but keep other changes
+          const { startupCommand: _dropped, ...rest } = settings;
+          void _dropped;
+          if (Object.keys(rest).length > 0) {
+            store.setSettings(rest);
+            if ('shellIntegration' in rest) {
+              ptyManager.shellIntegrationEnabled = !!rest.shellIntegration;
+            }
+          }
+          return;
+        }
+      }
+    }
+
     store.setSettings(settings);
     // Propagate shell integration toggle to pty manager (affects new PTYs only)
     if ('shellIntegration' in settings) {
@@ -279,6 +306,16 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
   ipcMain.on(IPC.APP_NOTIFY, (event, title: string, body: string, tabId: string) => {
     if (typeof title !== 'string' || typeof body !== 'string') return;
     if (!Notification.isSupported()) return;
+    // Length caps: prevent a runaway tab title or command output from
+    // creating multi-KB OS notifications. macOS truncates but still renders
+    // the full string to the notification DB.
+    const safeTitle = title.slice(0, 200);
+    const safeBody = body.slice(0, 500);
+    // tabId must be a bounded opaque string — it round-trips back via
+    // APP_SWITCH_TAB_BY_ID and should not contain control chars or be huge.
+    const safeTabId = typeof tabId === 'string' && tabId.length > 0 && tabId.length <= 64 && /^[a-zA-Z0-9_-]+$/.test(tabId)
+      ? tabId
+      : '';
 
     // Security: capture window reference NOW, not in the click handler
     // (event.sender/webContents may be destroyed by the time notification is clicked)
@@ -290,15 +327,15 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
       const oldest = activeNotifications.values().next().value;
       if (oldest) activeNotifications.delete(oldest);
     }
-    const notif = new Notification({ title, body, silent: true });
+    const notif = new Notification({ title: safeTitle, body: safeBody, silent: true });
     activeNotifications.add(notif);
 
     notif.on('click', () => {
       if (!win.isDestroyed()) {
         win.show();
         win.focus();
-        if (tabId && !win.webContents.isDestroyed()) {
-          win.webContents.send(IPC.APP_SWITCH_TAB_BY_ID, tabId);
+        if (safeTabId && !win.webContents.isDestroyed()) {
+          win.webContents.send(IPC.APP_SWITCH_TAB_BY_ID, safeTabId);
         }
       }
       activeNotifications.delete(notif);

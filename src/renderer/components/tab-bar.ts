@@ -41,6 +41,36 @@ export class TabBar {
     this.tabsContainer.setAttribute('role', 'tablist');
     this.container.appendChild(this.tabsContainer);
 
+    // --- Keyboard navigation (WAI-ARIA roving tabindex pattern) ---
+    // Arrow keys move focus between tabs and activate them; Home/End jump
+    // to the ends. Only fires when a tab already has focus (so we don't
+    // hijack arrow keys inside rename inputs or unrelated UI).
+    this.tabsContainer.addEventListener('keydown', (e) => {
+      const target = e.target as HTMLElement;
+      if (!target.classList.contains('tab-bar-tab')) return;
+      const tabEls = Array.from(this.tabsContainer.querySelectorAll<HTMLElement>('.tab-bar-tab'));
+      if (tabEls.length === 0) return;
+      const currentIdx = tabEls.indexOf(target);
+      if (currentIdx === -1) return;
+      let nextIdx: number | null = null;
+      if (e.key === 'ArrowLeft') nextIdx = (currentIdx - 1 + tabEls.length) % tabEls.length;
+      else if (e.key === 'ArrowRight') nextIdx = (currentIdx + 1) % tabEls.length;
+      else if (e.key === 'Home') nextIdx = 0;
+      else if (e.key === 'End') nextIdx = tabEls.length - 1;
+      if (nextIdx === null) return;
+      e.preventDefault();
+      const nextEl = tabEls[nextIdx];
+      const nextId = nextEl.dataset.tabId;
+      if (nextId) {
+        this.callbacks.onSelect(nextId);
+        // After update(), the new active tab is focusable (tabindex=0)
+        requestAnimationFrame(() => {
+          const refreshed = this.tabsContainer.querySelector<HTMLElement>(`.tab-bar-tab[data-tab-id="${CSS.escape(nextId)}"]`);
+          refreshed?.focus();
+        });
+      }
+    });
+
     // Window drag from empty space in the tabs container
     this.tabsContainer.addEventListener('mousedown', (e) => {
       if (e.button !== 0) return;

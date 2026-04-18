@@ -18,6 +18,9 @@
   --shadow: rgba(0, 0, 0, 0.12);
   --submit-flash: #e3f2fd;
   --accent-text: #0451a5;
+  --broadcast: #f0b429;
+  --prompt-ready: #22c55e;
+  --prompt-ready-glow: rgba(34, 197, 94, 0.4);
   --font-mono: 'SF Mono', 'Menlo', 'Monaco', 'Courier New', monospace;
   --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
@@ -42,6 +45,9 @@
     --shadow: rgba(0, 0, 0, 0.3);
     --submit-flash: #1a3a50;
     --accent-text: #9cdcfe;
+    --broadcast: #f0b429;
+    --prompt-ready: #22c55e;
+    --prompt-ready-glow: rgba(34, 197, 94, 0.4);
     --font-mono: 'SF Mono', 'Menlo', 'Monaco', 'Courier New', monospace;
     --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   }
@@ -229,7 +235,7 @@ input:focus-visible {
 
 /* --- Broadcast input indicator --- */
 .pane.broadcast {
-  box-shadow: inset 0 0 0 2px #f0b429;
+  box-shadow: inset 0 0 0 2px var(--broadcast);
 }
 
 /* --- Context menu --- */
@@ -408,4 +414,16 @@ input:focus-visible {
 .toast-notification.visible {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
+}
+
+/* Respect user's OS-level motion preference. WCAG 2.3.3. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

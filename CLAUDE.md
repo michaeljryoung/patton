@@ -48,7 +48,7 @@ npm run lint && npm run package
 ## Status
 Feature-complete, distributed. Automated CI/CD pipeline with auto-versioning.
 
-## Last Session
+## Session Log
 **2026-04-15 (session 19)**
 - Fixed persistent light-theme text readability — CLI tool text (Claude Code, etc.) was unreadable on light backgrounds despite COLORFGBG and OSC 10/11 fixes from prior sessions
 - Root cause: xterm.js `minimumContrastRatio` was unset (defaults to 1 = disabled). VS Code uses the same ANSI palette but sets this to 4.5, which auto-corrects low-contrast colors. Patton copied the colors without the safety net.
@@ -79,3 +79,4 @@ Feature-complete, distributed. Automated CI/CD pipeline with auto-versioning.
 - [ ] Verify `brew tap michaeljryoung/patton && brew install --cask patton` installs latest
 - [ ] Consider Apple Developer ID ($99/yr) for notarization if distributing widely
 - [ ] End-to-end test all features in packaged app
+- [ ] **Tab "awaiting input" indicator** (iTerm-style dot). When a tab's foreground process is idle/prompting (i.e., shell at prompt waiting for user input) show a small colored dot on the tab in the tab bar. Plumbing already exists: `terminal-view.ts` parses OSC 133 and emits `promptState` ('command' | 'idle'); `tab-manager.ts` already subscribes. Just need (a) a per-tab `awaitingInput` state set true on 'idle' when the tab is NOT the active tab (active tab is by definition where user attention is), cleared on tab focus or 'command' state; (b) a dot element in the tab DOM rendered when that state is true. Skip the indicator for the active tab. Consider: different dot color if the last command failed (exit code from OSC 133 ;D parameter).

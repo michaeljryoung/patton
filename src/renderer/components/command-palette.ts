@@ -1,3 +1,5 @@
+import { trapFocus } from '../services/focus-trap';
+
 export interface PaletteAction {
   label: string;
   shortcut?: string;
@@ -15,6 +17,7 @@ export class CommandPalette {
   private filteredActions: PaletteAction[] = [];
   private selectedIndex = 0;
   private disposables: (() => void)[] = [];
+  private releaseFocusTrap: (() => void) | null = null;
 
   constructor(container: HTMLElement, onAction: (actionId: string) => void) {
     this.onAction = onAction;
@@ -41,8 +44,13 @@ export class CommandPalette {
     this.input.setAttribute('aria-label', 'Search commands');
     this.input.setAttribute('autocomplete', 'off');
     this.input.setAttribute('spellcheck', 'false');
+    this.input.setAttribute('role', 'combobox');
+    this.input.setAttribute('aria-controls', 'command-palette-list');
+    this.input.setAttribute('aria-expanded', 'true');
+    this.input.setAttribute('aria-autocomplete', 'list');
 
     this.list = document.createElement('div');
+    this.list.id = 'command-palette-list';
     this.list.className = 'command-palette-list';
     this.list.setAttribute('role', 'listbox');
 
@@ -106,6 +114,7 @@ export class CommandPalette {
     this.visible = true;
     this.overlay.classList.add('visible');
     this.input.focus();
+    this.releaseFocusTrap = trapFocus(this.overlay);
   }
 
   hide(): void {
@@ -115,6 +124,8 @@ export class CommandPalette {
     this.actions = [];
     this.filteredActions = [];
     this.selectedIndex = 0;
+    this.releaseFocusTrap?.();
+    this.releaseFocusTrap = null;
   }
 
   toggle(actions: PaletteAction[]): void {
@@ -164,12 +175,14 @@ export class CommandPalette {
     this.filteredActions.forEach((action, index) => {
       const item = document.createElement('div');
       item.className = 'command-palette-item';
+      item.id = `command-palette-item-${index}`;
       item.setAttribute('role', 'option');
       item.setAttribute('data-index', String(index));
 
       if (index === this.selectedIndex) {
         item.classList.add('selected');
         item.setAttribute('aria-selected', 'true');
+        this.input.setAttribute('aria-activedescendant', item.id);
       } else {
         item.setAttribute('aria-selected', 'false');
       }
@@ -213,6 +226,7 @@ export class CommandPalette {
         item.classList.add('selected');
         item.setAttribute('aria-selected', 'true');
         item.scrollIntoView({ block: 'nearest' });
+        this.input.setAttribute('aria-activedescendant', item.id);
       } else {
         item.classList.remove('selected');
         item.setAttribute('aria-selected', 'false');

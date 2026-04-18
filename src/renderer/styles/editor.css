@@ -66,8 +66,8 @@
 
 /* OSC 133 shell integration: prompt-ready glow */
 .editor-container.prompt-ready::before {
-  background: #22c55e;
-  box-shadow: 0 0 6px rgba(34, 197, 94, 0.4);
+  background: var(--prompt-ready);
+  box-shadow: 0 0 6px var(--prompt-ready-glow);
 }
 
 /* OSC 133 shell integration: command running — dim the bar */

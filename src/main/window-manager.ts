@@ -82,6 +82,65 @@ export function createWindow(ptyManager?: PtyManager): BrowserWindow {
   // --- Security: Block new window creation ---
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
 
+  // --- Resilience: log and auto-recover from renderer crashes ---
+  // Without this, an OOM or GPU-context death leaves the user staring at
+  // Chromium's sad-face icon with no log line and no recovery path.
+  //
+  // Circuit breaker: a deterministic crash cause (e.g. a restored session that
+  // triggers the same bug on reload) would produce an infinite reload loop.
+  // We cap at MAX_CRASHES within CRASH_WINDOW_MS, and clear the saved session
+  // after the second crash so restore-triggered crashes don't keep re-firing.
+  //
+  // PTY cleanup: window.reload() creates a new renderer but doesn't touch
+  // main-process PTYs. Without destroying them first, each reload leaks PTYs
+  // (still running, sending PTY_DATA for ids the new renderer doesn't know),
+  // eventually hitting MAX_PTY_PER_WINDOW.
+  const MAX_CRASHES = 3;
+  const CRASH_WINDOW_MS = 30_000;
+  const crashTimestamps: number[] = [];
+  window.webContents.on('render-process-gone', (_event, details) => {
+    console.error(
+      'Renderer process gone:',
+      details.reason,
+      'exitCode:', details.exitCode
+    );
+    if (details.reason === 'clean-exit' || window.isDestroyed()) return;
+
+    const now = Date.now();
+    // Keep only crashes within the window
+    while (crashTimestamps.length && now - crashTimestamps[0] > CRASH_WINDOW_MS) {
+      crashTimestamps.shift();
+    }
+    crashTimestamps.push(now);
+
+    // After second crash, clear saved session — if restore is triggering the
+    // crash, the third reload with a cleared session should succeed.
+    if (crashTimestamps.length >= 2) {
+      console.warn('Renderer crashed twice — clearing saved session to break potential restore loop');
+      try { store.setSession(null); } catch (err) { console.error('Failed to clear session:', err); }
+    }
+
+    if (crashTimestamps.length >= MAX_CRASHES) {
+      console.error(`Renderer crashed ${MAX_CRASHES} times in ${CRASH_WINDOW_MS}ms — halting auto-reload`);
+      const msg = encodeURIComponent(`Patton's renderer has crashed ${MAX_CRASHES} times in a row. Auto-reload halted to prevent a crash loop. Quit and relaunch the app. Check Console.app or ~/Library/Application Support/Patton/Crashpad/completed/ for crash dumps.`);
+      window.loadURL(`data:text/html;charset=utf-8,<!doctype html><html><body style="font-family:-apple-system,sans-serif;padding:2rem;background:%231e1e1e;color:%23d4d4d4;line-height:1.6"><h2>Patton stopped auto-recovering</h2><p>${msg}</p></body></html>`).catch(() => { /* ignore */ });
+      return;
+    }
+
+    // Destroy orphaned PTYs before reload (new renderer won't know their ids).
+    try { ptyManager?.destroyByWindow(window); } catch (err) { console.error('PTY cleanup on reload failed:', err); }
+    window.reload();
+  });
+
+  // Detect stalls *before* the renderer dies. A hung event loop usually
+  // precedes a crash — logging it gives us a breadcrumb.
+  window.webContents.on('unresponsive', () => {
+    console.error('Renderer unresponsive (event loop stalled)');
+  });
+  window.webContents.on('responsive', () => {
+    console.info('Renderer responsive again');
+  });
+
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
     window.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL).catch((err) => {
       console.error('Failed to load dev server URL:', err);

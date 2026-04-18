@@ -13,6 +13,10 @@ import { DEFAULTS, IPC } from '../shared/constants';
 import type { PtyCreateOptions } from '../shared/types';
 
 // --- Security: Environment variable allowlist ---
+// Only these env vars are forwarded to spawned PTYs. Adding an entry is a
+// deliberate decision: each additional forwarded var is information the PTY
+// can read or act on. Bias toward inclusion only when (a) a common developer
+// tool meaningfully breaks without it, and (b) the value is not a secret.
 const SAFE_ENV_KEYS = new Set([
   'HOME', 'USER', 'LOGNAME', 'PATH', 'SHELL',
   'LANG', 'LC_ALL', 'LC_CTYPE', 'LC_MESSAGES', 'LC_COLLATE',
@@ -32,6 +36,17 @@ const SAFE_ENV_KEYS = new Set([
   'FZF_DEFAULT_COMMAND', 'FZF_DEFAULT_OPTS',
   'DOCKER_HOST',
   'GPG_TTY',
+  // Added to cover common dev toolchains that silently broke without them:
+  'CONDA_PREFIX', 'CONDA_DEFAULT_ENV',
+  'VIRTUAL_ENV', 'VIRTUAL_ENV_PROMPT', 'POETRY_HOME', 'PIPX_HOME', 'PIPX_BIN_DIR',
+  'KUBECONFIG',
+  'ANDROID_HOME', 'ANDROID_SDK_ROOT', 'ANDROID_NDK_HOME',
+  'DOTNET_ROOT',
+  'AWS_PROFILE', 'AWS_REGION', 'AWS_DEFAULT_REGION', 'AWS_CONFIG_FILE', 'AWS_SHARED_CREDENTIALS_FILE',
+  'GCLOUD_PROJECT', 'GOOGLE_APPLICATION_CREDENTIALS',
+  'NODE_OPTIONS',
+  'GH_TOKEN_FILE', 'GIT_CONFIG_GLOBAL',
+  'SSH_AGENT_PID',
 ]);
 
 /** Resolve the resources directory (works in both dev and packaged mode) */
@@ -67,7 +82,10 @@ function getSafeEnv(shellIntegration = true, isDark?: boolean): Record<string, s
 }
 
 // --- Security: Shell path allowlist ---
-const ALLOWED_SHELLS = new Set([
+// Exported so store.ts can validate settings against the same set — otherwise
+// the user could save a shell path that passes the store's regex check but
+// silently falls back to the default at spawn time.
+export const ALLOWED_SHELLS = new Set([
   '/bin/bash', '/bin/zsh', '/bin/sh', '/bin/dash', '/bin/csh', '/bin/tcsh', '/bin/fish',
   '/usr/bin/bash', '/usr/bin/zsh', '/usr/bin/sh', '/usr/bin/fish',
   '/usr/local/bin/bash', '/usr/local/bin/zsh', '/usr/local/bin/fish',
@@ -184,9 +202,29 @@ export class PtyManager {
 
     proc.onData((data: string) => {
       instance.buffer += data;
-      // Flush immediately if buffer exceeds 256KB to prevent unbounded memory growth
-      const shouldFlushNow = instance.buffer.length > 256 * 1024;
-      if (shouldFlushNow && instance.flushTimer) {
+      // Graduated write-coalesce backoff. Under heavy load (`yes`, `cat`
+      // large file, npm install spam) the default 4ms timer fires as fast
+      // as it can, and each flush is a full IPC roundtrip. Letting the
+      // buffer grow a bit between flushes trades a few ms of latency for
+      // far fewer IPC messages — the user doesn't notice 16-32ms extra on
+      // a torrent of output but does notice a choppy frame rate.
+      const len = instance.buffer.length;
+      let delay: number;
+      if (len > 1024 * 1024) {
+        // Hard cap: flush now to bound heap.
+        delay = 0;
+      } else if (len > 256 * 1024) {
+        delay = 32;
+      } else if (len > 64 * 1024) {
+        delay = 16;
+      } else {
+        delay = DEFAULTS.WRITE_COALESCE_MS;
+      }
+
+      // If the buffer has crossed into a larger-delay tier, restart the
+      // timer with the new delay. (Don't accidentally delay a pending
+      // small-buffer flush that was about to fire.)
+      if (delay === 0 && instance.flushTimer) {
         clearTimeout(instance.flushTimer);
         instance.flushTimer = null;
       }
@@ -197,7 +235,7 @@ export class PtyManager {
             instance.buffer = '';
           }
           instance.flushTimer = null;
-        }, shouldFlushNow ? 0 : DEFAULTS.WRITE_COALESCE_MS);
+        }, delay);
       }
     });
 
@@ -250,7 +288,22 @@ export class PtyManager {
     const instance = this.instances.get(id);
     if (instance) {
       if (instance.flushTimer) clearTimeout(instance.flushTimer);
-      // Clean up map and counter BEFORE kill() — if kill() throws, resources are still freed
+      instance.flushTimer = null;
+      // Flush any buffered output to the renderer BEFORE we delete the map
+      // entry. Otherwise the renderer misses the final output of the
+      // command (error message, exit summary, shell's goodbye) that was
+      // sitting in `instance.buffer` waiting for the 4ms coalesce window.
+      if (instance.buffer.length > 0 && !instance.window.isDestroyed()) {
+        try {
+          instance.window.webContents.send(IPC.PTY_DATA, id, instance.buffer);
+        } catch {
+          // webContents may be gone — ignore
+        }
+        instance.buffer = '';
+      }
+      // Clean up map and counter BEFORE kill() — if kill() throws, resources are still freed.
+      // Note the delete-to-claim invariant: only the caller that successfully deletes
+      // here (or in the onExit handler above) owns final teardown of `instance`.
       this.instances.delete(id);
       const winId = instance.window.id;
       const c = this.countByWindow.get(winId) ?? 0;
@@ -276,13 +329,6 @@ export class PtyManager {
     } catch {
       return '';
     }
-  }
-
-  /** Scan descendant processes (children + grandchildren) for interactive program names */
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- API compatibility
-  getDescendantNames(id: number): string[] {
-    // Mode detection uses foreground process polling instead
-    return [];
   }
 
   /** Get the current working directory of the PTY's process via lsof */

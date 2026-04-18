@@ -99,6 +99,9 @@ build/signing/
 
 # Personal dev tool configs
 .serena/
+.claude/
+.ntm/
+analysis/
 CLAUDE.md
 
 # Editor configs
