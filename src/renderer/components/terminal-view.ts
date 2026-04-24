@@ -107,7 +107,11 @@ export class TerminalView {
 
     this.terminal.loadAddon(this.fitAddon);
     this.terminal.loadAddon(this.searchAddon);
-    this.terminal.loadAddon(new WebLinksAddon((_event, uri) => {
+    this.terminal.loadAddon(new WebLinksAddon((event, uri) => {
+      // Double-click to open (matches Claude Code chat). Single clicks fall
+      // through to xterm's selection behavior so users can drag-select text
+      // that happens to contain a URL.
+      if (event.detail !== 2) return;
       // Security: Only allow http/https links via main process shell.openExternal
       try {
         const url = new URL(uri);
