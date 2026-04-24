@@ -1,5 +1,6 @@
 import { ipcMain, BrowserWindow, dialog, Notification, shell } from 'electron';
 import { execFile } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { IPC } from '../shared/constants';
 import { PtyManager } from './pty-manager';
 import * as store from './store';
@@ -232,7 +233,16 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
     store.setSession(session);
   });
 
-  // --- Open file in editor (VS Code) ---
+  // --- Open file in editor ---
+  // Priority cascade:
+  //   1. VS Code's app-bundle CLI — works even if the user never ran
+  //      "Shell Command: Install 'code' command in PATH" inside VS Code.
+  //   2. `code` on $PATH — catches Cursor/Codium/forks that expose a `code` shim.
+  //   3. shell.openPath() — macOS default app for the file type. Loses line/col
+  //      but at least opens something instead of silently failing.
+  // Resolved once at handler-install time; cheap to re-check per-click if needed.
+  const VSCODE_APP_CODE = '/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code';
+  const editorBin = existsSync(VSCODE_APP_CODE) ? VSCODE_APP_CODE : 'code';
   ipcMain.handle(IPC.APP_OPEN_IN_EDITOR, (_event, filePath: string) => {
     if (typeof filePath !== 'string' || filePath.length > 1000) return;
     // Security: validate strict path:line:col format (no shell metacharacters, no traversal)
@@ -241,8 +251,14 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
     if (/(?:^|\/)\.\.(?:\/|$)/.test(filePath)) return;
     // Security: must start with / (absolute path required from renderer)
     if (!filePath.startsWith('/')) return;
-    execFile('code', ['--goto', filePath], { timeout: 5000 }, (err) => {
-      if (err) console.warn('Failed to open in editor:', err.message);
+    execFile(editorBin, ['--goto', filePath], { timeout: 5000 }, (err) => {
+      if (!err) return;
+      // Editor CLI missing or errored — fall back to the system default opener.
+      // shell.openPath doesn't understand `:line:col`, so strip it.
+      const pathOnly = filePath.replace(/:\d+(?::\d+)?$/, '');
+      shell.openPath(pathOnly).then((errorMsg) => {
+        if (errorMsg) console.warn('shell.openPath fallback failed:', errorMsg, { pathOnly });
+      }, () => {});
     });
   });
 
