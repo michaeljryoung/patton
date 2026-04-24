@@ -382,6 +382,7 @@ export class App {
       { label: 'Broadcast Input', shortcut: '\u2318\u21E7B', action: 'broadcast' },
       { label: 'Quick Terminal', action: 'quick-terminal' },
       { label: 'Save Terminal Output', shortcut: '\u2318S', action: 'save-terminal' },
+      { label: 'Reset Renderer', action: 'reset-renderer' },
       { label: 'Settings', shortcut: '\u2318,', action: 'settings' },
     ];
   }
@@ -455,6 +456,11 @@ export class App {
         window.patton.terminal.saveOutput(content, defaultName).catch(console.error);
         break;
       }
+      case 'reset-renderer':
+        // Escape hatch for the "garbled glyphs" render state — force-rebuilds
+        // the WebGL texture atlas on the active pane.
+        tab?.focusedPane.terminalView.resetRenderer();
+        break;
       case 'settings':
         this.settingsPanel.toggle();
         break;

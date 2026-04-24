@@ -72,6 +72,22 @@ function hexToXtermRgb(hex: string): string {
   return `rgb:${r}${r}/${g}${g}/${b}${b}`;
 }
 
+/** GPU vendor/renderer snapshot for context-loss breadcrumbs. Best-effort. */
+function tryGetGpuInfo(): string {
+  try {
+    const canvas = document.createElement('canvas');
+    const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
+    if (!gl) return 'no-webgl';
+    const ext = gl.getExtension('WEBGL_debug_renderer_info');
+    if (!ext) return 'no-debug-info';
+    const vendor = gl.getParameter(ext.UNMASKED_VENDOR_WEBGL);
+    const renderer = gl.getParameter(ext.UNMASKED_RENDERER_WEBGL);
+    return `${vendor} / ${renderer}`;
+  } catch {
+    return 'gpu-info-error';
+  }
+}
+
 export type PromptState = 'prompt' | 'command' | 'idle';
 
 export class TerminalView {
@@ -87,6 +103,7 @@ export class TerminalView {
   private customTheme: ITheme | null = null;
   private promptListeners: ((state: PromptState) => void)[] = [];
   private osc9Listeners: (() => void)[] = [];
+  private webglAddon: WebglAddon | null = null;
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -237,37 +254,59 @@ export class TerminalView {
 
   mount(): void {
     this.terminal.open(this.container);
-
-    // Try WebGL, fall back to DOM on load failure or runtime context loss.
-    // xterm.js fires onContextLoss when the GPU context dies (sleep/wake, display
-    // unplug, driver hiccup, Chromium killing idle GPU contexts under pressure).
-    // Without this handler, context loss often takes down the renderer process.
-    //
-    // After fallback, force a full redraw so the DOM renderer has current content
-    // (xterm.js can leave stale glyphs if the switch happens mid-frame), and try
-    // to re-acquire WebGL after 10s — context-loss is often transient.
-    const loadWebgl = (isRetry: boolean) => {
-      try {
-        const webgl = new WebglAddon();
-        webgl.onContextLoss(() => {
-          console.warn('WebGL context lost — disposing addon, falling back to DOM renderer');
-          webgl.dispose();
-          if (!this.disposed) {
-            this.terminal.refresh(0, this.terminal.rows - 1);
-            setTimeout(() => {
-              if (!this.disposed) loadWebgl(true);
-            }, 10_000);
-          }
-        });
-        this.terminal.loadAddon(webgl);
-        if (isRetry) console.info('WebGL renderer re-acquired after context loss');
-      } catch {
-        console.warn('WebGL addon failed to load, using DOM renderer');
-      }
-    };
-    loadWebgl(false);
-
+    this.loadWebgl(false);
     this.fit();
+  }
+
+  /**
+   * Load (or reload) the WebGL renderer. Falls back to the DOM renderer on
+   * load failure or runtime context loss. xterm fires onContextLoss when the
+   * GPU context dies (sleep/wake, display unplug, driver hiccup, Chromium
+   * killing idle GPU contexts under pressure) — without this handler, context
+   * loss often takes down the renderer process.
+   */
+  private loadWebgl(isRetry: boolean): void {
+    if (this.disposed) return;
+    try {
+      const webgl = new WebglAddon();
+      this.webglAddon = webgl;
+      webgl.onContextLoss(() => {
+        console.warn('[RENDER] WebGL context lost', {
+          theme: this.customTheme ? 'custom' : 'system',
+          gpu: tryGetGpuInfo(),
+          ptyId: this.ptyId,
+        });
+        try { webgl.dispose(); } catch { /* already gone */ }
+        if (this.webglAddon === webgl) this.webglAddon = null;
+        if (!this.disposed) {
+          this.terminal.refresh(0, this.terminal.rows - 1);
+          setTimeout(() => {
+            if (!this.disposed && this.webglAddon === null) this.loadWebgl(true);
+          }, 10_000);
+        }
+      });
+      this.terminal.loadAddon(webgl);
+      if (isRetry) console.info('WebGL renderer re-acquired after context loss');
+    } catch {
+      console.warn('WebGL addon failed to load, using DOM renderer');
+      this.webglAddon = null;
+    }
+  }
+
+  /**
+   * User-triggered recovery for the "corrupted glyph" render state where the
+   * WebGL texture atlas serves stale/wrong glyphs (e.g. after an undetected
+   * context degrade). Wired to the "Reset Renderer" command-palette entry.
+   * Disposes the WebGL addon, full-redraws via DOM, then re-acquires WebGL.
+   */
+  resetRenderer(): void {
+    if (this.disposed) return;
+    if (this.webglAddon) {
+      try { this.webglAddon.dispose(); } catch { /* already gone */ }
+      this.webglAddon = null;
+    }
+    this.terminal.refresh(0, this.terminal.rows - 1);
+    this.loadWebgl(false);
   }
 
   setPtyId(id: number): void {
@@ -355,10 +394,15 @@ export class TerminalView {
 
   setCustomTheme(theme: ITheme | null): void {
     this.customTheme = theme;
-    if (theme) {
-      this.terminal.options.theme = theme;
-    } else {
-      this.terminal.options.theme = getTheme();
+    this.terminal.options.theme = theme ?? getTheme();
+    // WebGL's glyph atlas is keyed under the old theme's colors; a theme swap
+    // without a flush can leave stale glyphs (wrong color/contrast) for
+    // attribute combinations that were already cached. Cheap to rebuild —
+    // theme changes are rare, the flicker is ~1 frame.
+    if (this.webglAddon) {
+      try { this.webglAddon.dispose(); } catch { /* already gone */ }
+      this.webglAddon = null;
+      this.loadWebgl(false);
     }
   }
 
@@ -441,6 +485,7 @@ export class TerminalView {
     this.promptListeners = [];
     this.osc9Listeners = [];
     this.mediaQuery.removeEventListener('change', this.themeHandler);
+    this.webglAddon = null;
     this.terminal.dispose();
   }
 }
