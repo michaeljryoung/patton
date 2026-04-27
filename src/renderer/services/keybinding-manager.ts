@@ -16,6 +16,15 @@ export class KeybindingManager {
         return;
       }
 
+      // Cmd+Shift+K: Reset Renderer (escape hatch for the WebGL atlas-eviction
+      // garbled-glyph state). Direct hotkey instead of palette → 1 keystroke.
+      if (e.metaKey && e.shiftKey && !e.ctrlKey && (e.key === 'K' || e.key === 'k')) {
+        e.preventDefault();
+        const tab = this.tabManager.getActiveTab();
+        tab?.focusedPane.terminalView.resetRenderer();
+        return;
+      }
+
       // Ctrl+R: History search
       if (e.ctrlKey && !e.shiftKey && e.key === 'r') {
         e.preventDefault();

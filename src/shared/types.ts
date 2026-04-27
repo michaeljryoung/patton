@@ -60,6 +60,20 @@ export interface SessionState {
   activeTabIndex: number;
 }
 
+export interface RenderSnapshot {
+  reason: string;
+  timestamp: string;
+  ptyId: number | null;
+  gpu: string;
+  rendererType: 'webgl' | 'dom';
+  customTheme: boolean;
+  cols: number;
+  rows: number;
+  scrollbackLength: number;
+  viewportY: number;
+  scrollbackTail: string;
+}
+
 export interface PattonAPI {
   pty: {
     create: (opts?: PtyCreateOptions) => Promise<number>;
@@ -90,6 +104,9 @@ export interface PattonAPI {
   };
   terminal: {
     saveOutput: (content: string, defaultName: string) => Promise<string | null>;
+  };
+  diagnostics: {
+    saveSnapshot: (data: RenderSnapshot) => Promise<string | null>;
   };
   app: {
     onSettings: (callback: () => void) => () => void;

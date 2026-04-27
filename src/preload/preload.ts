@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import { IPC } from '../shared/constants';
-import type { PattonAPI } from '../shared/types';
+import type { PattonAPI, RenderSnapshot } from '../shared/types';
 
 const api: PattonAPI = {
   pty: {
@@ -44,6 +44,9 @@ const api: PattonAPI = {
   },
   terminal: {
     saveOutput: (content, defaultName) => ipcRenderer.invoke(IPC.APP_SAVE_TERMINAL, content, defaultName),
+  },
+  diagnostics: {
+    saveSnapshot: (data: RenderSnapshot) => ipcRenderer.invoke(IPC.DIAGNOSTICS_SAVE_SNAPSHOT, data),
   },
   app: {
     onSettings: (cb) => {

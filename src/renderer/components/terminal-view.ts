@@ -104,6 +104,8 @@ export class TerminalView {
   private promptListeners: ((state: PromptState) => void)[] = [];
   private osc9Listeners: (() => void)[] = [];
   private webglAddon: WebglAddon | null = null;
+  private atlasFlushTimer: ReturnType<typeof setInterval> | null = null;
+  private static readonly ATLAS_FLUSH_INTERVAL_MS = 10 * 60 * 1000;
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -256,6 +258,31 @@ export class TerminalView {
     this.terminal.open(this.container);
     this.loadWebgl(false);
     this.fit();
+    this.startAtlasFlushTimer();
+  }
+
+  /**
+   * xterm's WebGL renderer caches glyphs in a fixed-size texture atlas. Under
+   * sustained pressure (long Claude Code sessions emit many bullet/box-drawing/
+   * bold/coloured glyph variants), the atlas saturates and old slots get
+   * reassigned to new glyphs — but the buffer cells that referenced those slots
+   * are not repointed, so historical scrollback renders the wrong characters.
+   *
+   * Periodic preventive flush forces xterm to drop and lazily re-rasterize
+   * glyphs against a fresh atlas. `clearTextureAtlas()` is a no-op when the
+   * WebGL renderer isn't active.
+   */
+  private startAtlasFlushTimer(): void {
+    if (this.atlasFlushTimer) return;
+    this.atlasFlushTimer = setInterval(() => {
+      if (this.disposed || !this.webglAddon) return;
+      try {
+        this.terminal.clearTextureAtlas();
+        console.info('[RENDER] periodic atlas flush', { ptyId: this.ptyId });
+      } catch (err) {
+        console.warn('[RENDER] atlas flush failed', { err: String(err) });
+      }
+    }, TerminalView.ATLAS_FLUSH_INTERVAL_MS);
   }
 
   /**
@@ -301,12 +328,45 @@ export class TerminalView {
    */
   resetRenderer(): void {
     if (this.disposed) return;
+    // Capture state BEFORE the flush so the snapshot reflects the bug, not the recovery.
+    this.captureSnapshot('reset-renderer').catch(() => { /* best-effort */ });
     if (this.webglAddon) {
       try { this.webglAddon.dispose(); } catch { /* already gone */ }
       this.webglAddon = null;
     }
     this.terminal.refresh(0, this.terminal.rows - 1);
     this.loadWebgl(false);
+  }
+
+  /**
+   * Snapshot of the renderer/buffer state for post-mortem on render bugs.
+   * Lands as JSON in `~/Library/Application Support/Patton/logs/render-snapshots/`.
+   * Called automatically from `resetRenderer()`; also callable manually via
+   * the **Capture Renderer State** palette command for baseline or pre-recovery
+   * state captures.
+   */
+  async captureSnapshot(reason: string): Promise<string | null> {
+    if (this.disposed) return null;
+    const buffer = this.terminal.buffer.active;
+    const tail = this.getScrollbackContent().split('\n').slice(-200).join('\n');
+    const data = {
+      reason,
+      timestamp: new Date().toISOString(),
+      ptyId: this.ptyId,
+      gpu: tryGetGpuInfo(),
+      rendererType: this.webglAddon ? 'webgl' as const : 'dom' as const,
+      customTheme: !!this.customTheme,
+      cols: this.terminal.cols,
+      rows: this.terminal.rows,
+      scrollbackLength: buffer.length,
+      viewportY: buffer.viewportY,
+      scrollbackTail: tail,
+    };
+    try {
+      return await window.patton.diagnostics.saveSnapshot(data);
+    } catch {
+      return null;
+    }
   }
 
   setPtyId(id: number): void {
@@ -342,6 +402,9 @@ export class TerminalView {
 
   clear(): void {
     this.terminal.clear();
+    if (this.webglAddon) {
+      try { this.terminal.clearTextureAtlas(); } catch { /* best-effort */ }
+    }
   }
 
   setFontSize(size: number): void {
@@ -485,6 +548,10 @@ export class TerminalView {
     this.promptListeners = [];
     this.osc9Listeners = [];
     this.mediaQuery.removeEventListener('change', this.themeHandler);
+    if (this.atlasFlushTimer) {
+      clearInterval(this.atlasFlushTimer);
+      this.atlasFlushTimer = null;
+    }
     this.webglAddon = null;
     this.terminal.dispose();
   }

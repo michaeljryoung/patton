@@ -52,6 +52,8 @@ export const IPC = {
   APP_SWITCH_TAB_BY_ID: 'app:switch-tab-by-id',
   APP_OPEN_EXTERNAL: 'app:open-external',
   WINDOW_MOVE_BY: 'window:move-by',
+
+  DIAGNOSTICS_SAVE_SNAPSHOT: 'diagnostics:save-snapshot',
 } as const;
 
 export const DEFAULTS = {

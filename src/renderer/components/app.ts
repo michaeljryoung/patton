@@ -382,7 +382,8 @@ export class App {
       { label: 'Broadcast Input', shortcut: '\u2318\u21E7B', action: 'broadcast' },
       { label: 'Quick Terminal', action: 'quick-terminal' },
       { label: 'Save Terminal Output', shortcut: '\u2318S', action: 'save-terminal' },
-      { label: 'Reset Renderer', action: 'reset-renderer' },
+      { label: 'Reset Renderer', shortcut: '\u2318\u21E7K', action: 'reset-renderer' },
+      { label: 'Capture Renderer State', action: 'capture-render-state' },
       { label: 'Settings', shortcut: '\u2318,', action: 'settings' },
     ];
   }
@@ -458,8 +459,15 @@ export class App {
       }
       case 'reset-renderer':
         // Escape hatch for the "garbled glyphs" render state — force-rebuilds
-        // the WebGL texture atlas on the active pane.
+        // the WebGL texture atlas on the active pane. Auto-snapshot fires inside
+        // resetRenderer() so the captured state reflects the bug, not the recovery.
         tab?.focusedPane.terminalView.resetRenderer();
+        break;
+      case 'capture-render-state':
+        // Manual diagnostic snapshot — lands in render-snapshots/. Useful for
+        // grabbing a clean baseline or a known-bad state on demand without
+        // triggering a full renderer reset.
+        tab?.focusedPane.terminalView.captureSnapshot('manual').catch(console.error);
         break;
       case 'settings':
         this.settingsPanel.toggle();

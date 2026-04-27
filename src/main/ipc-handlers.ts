@@ -1,10 +1,11 @@
-import { ipcMain, BrowserWindow, dialog, Notification, shell } from 'electron';
+import { ipcMain, BrowserWindow, dialog, Notification, shell, app } from 'electron';
 import { execFile } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, unlinkSync } from 'node:fs';
+import { join } from 'node:path';
 import { IPC } from '../shared/constants';
 import { PtyManager } from './pty-manager';
 import * as store from './store';
-import type { PtyCreateOptions, SessionState } from '../shared/types';
+import type { PtyCreateOptions, RenderSnapshot, SessionState } from '../shared/types';
 
 // --- Security: Sliding-window rate limiter (ring buffer, O(1) operations) ---
 class RateLimiter {
@@ -283,6 +284,48 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
       return result.filePath;
     } catch (err) {
       console.warn('Failed to save terminal output:', (err as Error).message);
+      return null;
+    }
+  });
+
+  // --- Save renderer diagnostic snapshot ---
+  // Lands at ~/Library/Application Support/Patton/logs/render-snapshots/<timestamp>.json
+  // when the user invokes Reset Renderer or Capture Renderer State. Auto-snapshot on
+  // resetRenderer() captures state at the moment of corruption (before the flush).
+  // Manual capture lets the user grab a clean baseline or a known-bad state on demand.
+  // Cleanup keeps the last 50 files; the directory is bounded to ~2-3 MB worst case.
+  const SNAPSHOT_KEEP = 50;
+  const snapshotLimiter = new RateLimiter(5);
+  ipcMain.handle(IPC.DIAGNOSTICS_SAVE_SNAPSHOT, async (_event, data: RenderSnapshot) => {
+    if (!data || typeof data !== 'object') return null;
+    if (!snapshotLimiter.allow()) {
+      console.warn('[SECURITY] Rate limit exceeded', { channel: IPC.DIAGNOSTICS_SAVE_SNAPSHOT });
+      return null;
+    }
+    // Bound the payload — scrollbackTail is the only large field
+    if (typeof data.scrollbackTail === 'string' && data.scrollbackTail.length > 200_000) {
+      data.scrollbackTail = data.scrollbackTail.slice(-200_000);
+    }
+    try {
+      const dir = join(app.getPath('userData'), 'logs', 'render-snapshots');
+      if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const reasonSlug = (typeof data.reason === 'string' ? data.reason : 'snapshot').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 32);
+      const filePath = join(dir, `${stamp}-${reasonSlug || 'snapshot'}.json`);
+      const { writeFile } = await import('node:fs/promises');
+      await writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
+      // Best-effort cleanup: keep newest SNAPSHOT_KEEP, drop the rest
+      try {
+        const files = readdirSync(dir).filter((f) => f.endsWith('.json')).sort();
+        const stale = files.slice(0, Math.max(0, files.length - SNAPSHOT_KEEP));
+        for (const f of stale) {
+          try { unlinkSync(join(dir, f)); } catch { /* ignore */ }
+        }
+      } catch { /* cleanup is best-effort */ }
+      console.info('[RENDER] snapshot saved', { filePath, reason: data.reason });
+      return filePath;
+    } catch (err) {
+      console.warn('Failed to save render snapshot:', (err as Error).message);
       return null;
     }
   });
