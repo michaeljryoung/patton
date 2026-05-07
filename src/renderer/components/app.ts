@@ -29,8 +29,14 @@ export class App {
       onSettings: () => this.settingsPanel.toggle(),
       onCommandDone: (tabId, tabTitle) => {
         this.notificationSound.play();
-        // Send native notification for background tabs
-        if (!this.tabManager.isActiveTab(tabId) || document.hidden) {
+        // Send native notification for background tabs OR when Patton itself
+        // doesn't have user focus. NOTE: we use `document.hasFocus()` instead
+        // of `document.hidden` because window-manager sets `backgroundThrottling:
+        // false` to prevent a WebGL atlas-corruption bug, and that pin keeps
+        // visibilityState 'visible' even when Patton is occluded — which would
+        // suppress all "app in background" notifications. `hasFocus()` reflects
+        // actual user focus and is unaffected by the throttling pin.
+        if (!this.tabManager.isActiveTab(tabId) || !document.hasFocus()) {
           window.patton.notify('Patton', `Command finished in ${tabTitle}`, tabId);
         }
       },

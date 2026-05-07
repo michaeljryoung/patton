@@ -54,6 +54,8 @@ export const IPC = {
   WINDOW_MOVE_BY: 'window:move-by',
 
   DIAGNOSTICS_SAVE_SNAPSHOT: 'diagnostics:save-snapshot',
+
+  LOG_RENDERER: 'log:renderer',
 } as const;
 
 export const DEFAULTS = {

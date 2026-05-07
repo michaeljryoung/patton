@@ -27,6 +27,16 @@ export function createWindow(ptyManager?: PtyManager): BrowserWindow {
       sandbox: true,
       webSecurity: true,
       allowRunningInsecureContent: false,
+      // Keep the renderer fully alive when Patton is backgrounded. Chromium's
+      // default (true) throttles timers and may suspend the renderer when the
+      // app loses focus on macOS — which appears to leave the WebGL texture
+      // atlas in a corrupted state on resume (the recurring "garbled glyphs
+      // after Cmd+Tab" bug). Setting false keeps the GPU pipeline live, which
+      // prevents the corruption rather than just recovering from it. Side
+      // effect: visibilityState stays 'visible' even when occluded, so any
+      // background-detection logic must use document.hasFocus() / window
+      // focus events instead of document.hidden.
+      backgroundThrottling: false,
     },
   });
 

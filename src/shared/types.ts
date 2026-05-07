@@ -108,6 +108,9 @@ export interface PattonAPI {
   diagnostics: {
     saveSnapshot: (data: RenderSnapshot) => Promise<string | null>;
   };
+  log: {
+    send: (level: 'info' | 'warn' | 'error', args: unknown[]) => void;
+  };
   app: {
     onSettings: (callback: () => void) => () => void;
     onNewTab: (callback: () => void) => () => void;

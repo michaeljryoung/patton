@@ -420,6 +420,25 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
     }
   });
 
+  // --- Renderer log forwarding ---
+  // Bridges renderer-process console calls into main.log via the file logger.
+  // Without this, [RENDER] lines (atlas flushes, WebGL context loss, etc.)
+  // only appear in DevTools — invisible in packaged-app launches and absent
+  // from the health-script log scan. Bound at 50/s/window so a chatty pane
+  // can't flood the log; payload sanitized to keep individual entries small.
+  const rendererLogLimiter = new RateLimiter(50);
+  ipcMain.on(IPC.LOG_RENDERER, (_event, level: unknown, args: unknown) => {
+    if (level !== 'info' && level !== 'warn' && level !== 'error') return;
+    if (!Array.isArray(args)) return;
+    if (!rendererLogLimiter.allow()) return;
+    const safe = args.slice(0, 10).map((a) => {
+      if (typeof a === 'string' && a.length > 4000) return a.slice(0, 4000) + '\u2026';
+      return a;
+    });
+    const fn = level === 'info' ? console.info : level === 'warn' ? console.warn : console.error;
+    fn('[RENDERER]', ...safe);
+  });
+
   // --- Programmatic window drag (tab bar uses this instead of -webkit-app-region) ---
   ipcMain.on(IPC.WINDOW_MOVE_BY, (event, dx: number, dy: number) => {
     if (typeof dx !== 'number' || typeof dy !== 'number') return;

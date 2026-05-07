@@ -4,6 +4,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { SearchAddon } from '@xterm/addon-search';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { DEFAULTS } from '../../shared/constants';
+import { rlog } from '../services/renderer-logger';
 import type { ITheme } from '@xterm/xterm';
 
 const LIGHT_THEME = {
@@ -105,7 +106,20 @@ export class TerminalView {
   private osc9Listeners: (() => void)[] = [];
   private webglAddon: WebglAddon | null = null;
   private atlasFlushTimer: ReturnType<typeof setInterval> | null = null;
-  private static readonly ATLAS_FLUSH_INTERVAL_MS = 10 * 60 * 1000;
+  private lastResumeFlushMs = 0;
+  private resumeFlushHandler: (() => void) | null = null;
+  private windowFocusHandler: (() => void) | null = null;
+  // Periodic flush is now belt-and-suspenders. Visibility/focus handlers
+  // catch the actual reported trigger (Cmd+Tab away and back), so we don't
+  // need a long timer doing the heavy lifting alone. 2 min keeps the log
+  // signal noticeable without burning real cost — clearTextureAtlas() is
+  // a no-op when the atlas is already small / no-op when WebGL isn't the
+  // active renderer.
+  private static readonly ATLAS_FLUSH_INTERVAL_MS = 2 * 60 * 1000;
+  // Throttle resume-triggered flushes so a rapid Cmd+Tab spree doesn't
+  // produce dozens of flushes per second. 1s window is well below human
+  // perception of a flicker but well above macOS focus-event burstiness.
+  private static readonly RESUME_FLUSH_THROTTLE_MS = 1000;
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -179,6 +193,25 @@ export class TerminalView {
       }
     };
     this.mediaQuery.addEventListener('change', this.themeHandler);
+
+    // Flush the WebGL texture atlas whenever Patton regains user focus.
+    // Empirically the recurring "garbled glyphs" bug fires after Patton has
+    // been backgrounded (Cmd+Tab to another app, then back) — most likely
+    // macOS / Chromium silently invalidates GPU texture state when the app
+    // is occluded, leaving xterm's atlas pointing at degraded data. xterm's
+    // own `onContextLoss` doesn't always fire for this case (no log entry
+    // matched the bug's timing in S25 / S26 / S27 evidence). Flushing on
+    // resume forces lazy re-rasterization against fresh GPU state — the
+    // same recovery resize already produces, just automatic. Throttled so
+    // rapid focus events don't thrash. Both events listen because macOS
+    // sometimes fires only one of them depending on switch type.
+    this.resumeFlushHandler = () => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      this.flushAtlasOnResume();
+    };
+    this.windowFocusHandler = () => this.flushAtlasOnResume();
+    document.addEventListener('visibilitychange', this.resumeFlushHandler);
+    window.addEventListener('focus', this.windowFocusHandler);
 
     // OSC 10/11: Respond to foreground/background color queries.
     // CLI tools (Claude Code, vim, etc.) send \e]10;? or \e]11;? to detect
@@ -278,11 +311,67 @@ export class TerminalView {
       if (this.disposed || !this.webglAddon) return;
       try {
         this.terminal.clearTextureAtlas();
-        console.info('[RENDER] periodic atlas flush', { ptyId: this.ptyId });
+        rlog('info', '[RENDER] periodic atlas flush', { ptyId: this.ptyId });
       } catch (err) {
-        console.warn('[RENDER] atlas flush failed', { err: String(err) });
+        // A throw here typically means the GL context is lost or the atlas
+        // is wedged — at that point a flush alone won't fix anything, so
+        // dispose+reload the addon. Same recovery path as user-triggered
+        // Reset Renderer.
+        rlog('warn', '[RENDER] atlas flush failed; reloading WebGL addon', {
+          err: String(err),
+          ptyId: this.ptyId,
+        });
+        this.reloadWebglAfterError();
       }
     }, TerminalView.ATLAS_FLUSH_INTERVAL_MS);
+  }
+
+  /**
+   * Resume-triggered atlas flush: invoked from `visibilitychange` and
+   * `window.focus`. Cheap, throttled, and a no-op when WebGL isn't loaded
+   * or the page is still hidden (defensive — `backgroundThrottling: false`
+   * in window-manager already keeps visibilityState 'visible').
+   */
+  private flushAtlasOnResume(): void {
+    if (this.disposed || !this.webglAddon) return;
+    const now = Date.now();
+    if (now - this.lastResumeFlushMs < TerminalView.RESUME_FLUSH_THROTTLE_MS) return;
+    this.lastResumeFlushMs = now;
+    try {
+      this.terminal.clearTextureAtlas();
+      rlog('info', '[RENDER] resume atlas flush', { ptyId: this.ptyId });
+    } catch (err) {
+      rlog('warn', '[RENDER] resume flush failed; reloading WebGL addon', {
+        err: String(err),
+        ptyId: this.ptyId,
+      });
+      this.reloadWebglAfterError();
+    }
+  }
+
+  /**
+   * Public wrapper for the atlas flush — usable by tab/pane code if it ever
+   * wants to fire a flush at an external trigger (e.g. global window focus
+   * coordination). Same throttle as the resume path.
+   */
+  flushAtlas(): void {
+    this.flushAtlasOnResume();
+  }
+
+  /**
+   * Recovery for a wedged atlas/context: dispose the WebGL addon and re-acquire.
+   * Falls back to DOM if reload fails. Same shape as `resetRenderer()` but
+   * without the user-facing snapshot capture (this fires from background paths
+   * where the user hasn't asked for diagnostics).
+   */
+  private reloadWebglAfterError(): void {
+    if (this.disposed) return;
+    if (this.webglAddon) {
+      try { this.webglAddon.dispose(); } catch { /* already gone */ }
+      this.webglAddon = null;
+    }
+    this.terminal.refresh(0, this.terminal.rows - 1);
+    this.loadWebgl(true);
   }
 
   /**
@@ -298,7 +387,7 @@ export class TerminalView {
       const webgl = new WebglAddon();
       this.webglAddon = webgl;
       webgl.onContextLoss(() => {
-        console.warn('[RENDER] WebGL context lost', {
+        rlog('warn', '[RENDER] WebGL context lost', {
           theme: this.customTheme ? 'custom' : 'system',
           gpu: tryGetGpuInfo(),
           ptyId: this.ptyId,
@@ -313,9 +402,9 @@ export class TerminalView {
         }
       });
       this.terminal.loadAddon(webgl);
-      if (isRetry) console.info('WebGL renderer re-acquired after context loss');
+      if (isRetry) rlog('info', '[RENDER] WebGL renderer re-acquired after context loss');
     } catch {
-      console.warn('WebGL addon failed to load, using DOM renderer');
+      rlog('warn', '[RENDER] WebGL addon failed to load, using DOM renderer');
       this.webglAddon = null;
     }
   }
@@ -548,6 +637,14 @@ export class TerminalView {
     this.promptListeners = [];
     this.osc9Listeners = [];
     this.mediaQuery.removeEventListener('change', this.themeHandler);
+    if (this.resumeFlushHandler) {
+      document.removeEventListener('visibilitychange', this.resumeFlushHandler);
+      this.resumeFlushHandler = null;
+    }
+    if (this.windowFocusHandler) {
+      window.removeEventListener('focus', this.windowFocusHandler);
+      this.windowFocusHandler = null;
+    }
     if (this.atlasFlushTimer) {
       clearInterval(this.atlasFlushTimer);
       this.atlasFlushTimer = null;

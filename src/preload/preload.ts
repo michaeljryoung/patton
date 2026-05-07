@@ -48,6 +48,9 @@ const api: PattonAPI = {
   diagnostics: {
     saveSnapshot: (data: RenderSnapshot) => ipcRenderer.invoke(IPC.DIAGNOSTICS_SAVE_SNAPSHOT, data),
   },
+  log: {
+    send: (level, args) => ipcRenderer.send(IPC.LOG_RENDERER, level, args),
+  },
   app: {
     onSettings: (cb) => {
       const listener = () => cb();
