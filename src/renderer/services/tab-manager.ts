@@ -3,7 +3,7 @@ import { Pane } from '../components/pane';
 import { TabBar } from '../components/tab-bar';
 import { HistoryManager } from './history-manager';
 import { announce } from './announcer';
-import type { SessionState } from '../../shared/types';
+import type { SessionState, RendererMode } from '../../shared/types';
 import type { ITheme } from '@xterm/xterm';
 
 interface ClosedPaneState {
@@ -29,6 +29,7 @@ export class TabManager {
   private static readonly MAX_CLOSED = 10;
   private currentCopyOnSelect = false;
   private currentTerminalTheme: ITheme | null = null;
+  private currentRenderer: RendererMode = 'webgl';
 
   constructor(
     tabBarContainer: HTMLElement,
@@ -122,6 +123,17 @@ export class TabManager {
     }
   }
 
+  setRenderer(mode: RendererMode): void {
+    this.currentRenderer = mode;
+    for (const tab of this.tabs) {
+      tab.setRenderer(mode);
+    }
+  }
+
+  getRenderer(): RendererMode {
+    return this.currentRenderer;
+  }
+
   async createTab(cwd?: string): Promise<Tab> {
     // Only use explicitly provided CWD (e.g. session restore, reopen closed).
     // New tabs (Cmd+T / +) start at home directory.
@@ -152,6 +164,9 @@ export class TabManager {
     }
     if (this.currentTerminalTheme) {
       tab.setTerminalTheme(this.currentTerminalTheme);
+    }
+    if (this.currentRenderer === 'dom') {
+      tab.setRenderer(this.currentRenderer);
     }
 
     try {
@@ -358,6 +373,9 @@ export class TabManager {
           }
           if (this.currentTerminalTheme) {
             tab.setTerminalTheme(this.currentTerminalTheme);
+          }
+          if (this.currentRenderer === 'dom') {
+            tab.setRenderer(this.currentRenderer);
           }
 
           // Initialize all panes (creates PTYs)

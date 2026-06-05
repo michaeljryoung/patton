@@ -18,6 +18,7 @@ export class QuickTerminal {
   private container: HTMLElement;
   private disposables: (() => void)[] = [];
   private releaseFocusTrap: (() => void) | null = null;
+  private renderer: 'webgl' | 'dom' = 'webgl';
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -129,6 +130,7 @@ export class QuickTerminal {
       onCommandDone: () => this.onCommandDone?.(),
     });
 
+    this.pane.setRenderer(this.renderer);
     this.panel.appendChild(this.pane.element);
     await this.pane.init();
   }
@@ -143,6 +145,11 @@ export class QuickTerminal {
 
   setScrollback(lines: number): void {
     this.pane?.setScrollback(lines);
+  }
+
+  setRenderer(mode: 'webgl' | 'dom'): void {
+    this.renderer = mode;
+    this.pane?.setRenderer(mode);
   }
 
   dispose(): void {

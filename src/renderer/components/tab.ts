@@ -423,6 +423,12 @@ export class Tab {
     }
   }
 
+  setRenderer(mode: 'webgl' | 'dom'): void {
+    for (const pane of this._panes) {
+      pane.setRenderer(mode);
+    }
+  }
+
   setTerminalTheme(theme: ITheme | null): void {
     for (const pane of this._panes) {
       pane.setTerminalTheme(theme);

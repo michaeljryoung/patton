@@ -105,6 +105,12 @@ export class TerminalView {
   private promptListeners: ((state: PromptState) => void)[] = [];
   private osc9Listeners: (() => void)[] = [];
   private webglAddon: WebglAddon | null = null;
+  // When false, the WebGL renderer is never (re)loaded and the terminal renders
+  // via xterm's DOM renderer — which has no GPU glyph atlas and so is immune to
+  // the "garbled glyphs" atlas corruption. Toggled at runtime via the Switch
+  // Renderer command / Settings. Gates every load path below, so DOM mode stays
+  // sticky against the context-loss / post-error reacquire retries.
+  private useWebgl = true;
   private atlasFlushTimer: ReturnType<typeof setInterval> | null = null;
   private lastResumeFlushMs = 0;
   private resumeFlushHandler: (() => void) | null = null;
@@ -131,6 +137,11 @@ export class TerminalView {
       cursorStyle: 'bar',
       scrollback: DEFAULTS.SCROLLBACK,
       allowProposedApi: true,
+      // Option+drag forces a native selection even when a full-screen app has
+      // the mouse captured (Claude Code fullscreen rendering, vim, tmux, htop).
+      // xterm's macOS branch ignores Shift, so without this there is NO way to
+      // drag-select text while an app is in mouse-tracking mode. Matches iTerm2.
+      macOptionClickForcesSelection: true,
       minimumContrastRatio: 4.5,
       theme: getTheme(),
     });
@@ -383,6 +394,7 @@ export class TerminalView {
    */
   private loadWebgl(isRetry: boolean): void {
     if (this.disposed) return;
+    if (!this.useWebgl) return; // DOM renderer selected — never (re)acquire WebGL
     try {
       const webgl = new WebglAddon();
       this.webglAddon = webgl;
@@ -425,6 +437,24 @@ export class TerminalView {
     }
     this.terminal.refresh(0, this.terminal.rows - 1);
     this.loadWebgl(false);
+  }
+
+  /**
+   * Switch the text renderer at runtime. `false` disposes the WebGL addon so
+   * xterm falls back to its DOM renderer (no GPU atlas → immune to the garbled-
+   * glyph corruption); `true` re-acquires WebGL. The `useWebgl` flag also gates
+   * mount() and every reacquire path, so the choice is sticky until toggled.
+   */
+  setUseWebgl(enabled: boolean): void {
+    if (this.disposed || this.useWebgl === enabled) return;
+    this.useWebgl = enabled;
+    if (enabled) {
+      if (!this.webglAddon) this.loadWebgl(false);
+    } else if (this.webglAddon) {
+      try { this.webglAddon.dispose(); } catch { /* already gone */ }
+      this.webglAddon = null;
+      this.terminal.refresh(0, this.terminal.rows - 1);
+    }
   }
 
   /**

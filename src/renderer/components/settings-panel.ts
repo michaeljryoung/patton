@@ -47,6 +47,13 @@ export class SettingsPanel {
             <input class="settings-input" id="setting-scrollback" type="number" min="100" max="100000" step="1000" />
           </div>
           <div class="settings-group">
+            <label class="settings-label" for="setting-renderer">Text Renderer</label>
+            <select class="settings-input" id="setting-renderer">
+              <option value="webgl">GPU — fast (default)</option>
+              <option value="dom">Compatibility — fixes garbled text</option>
+            </select>
+          </div>
+          <div class="settings-group">
             <label class="settings-label" for="setting-shell">Shell Path</label>
             <input class="settings-input" id="setting-shell" type="text" placeholder="/bin/zsh" />
           </div>
@@ -197,6 +204,11 @@ export class SettingsPanel {
       }
     });
 
+    const rendererInput = this.overlay.querySelector('#setting-renderer') as HTMLSelectElement;
+    listen(rendererInput, 'change', () => {
+      this.saveAndNotify({ renderer: rendererInput.value as 'webgl' | 'dom' });
+    });
+
     listen(shellInput, 'change', () => {
       if (shellInput.value.startsWith('/')) {
         this.saveAndNotify({ shell: shellInput.value });
@@ -252,6 +264,15 @@ export class SettingsPanel {
     this.onSettingsChanged(settings);
   }
 
+  /** Keep cached settings in sync when a value is changed outside the panel
+   *  (e.g. the Switch Renderer command), so the next open shows the right state.
+   *  Does not persist or re-notify — the caller already did both. */
+  syncCached(settings: Partial<AppSettings>): void {
+    if (this.cachedSettings) {
+      Object.assign(this.cachedSettings, settings);
+    }
+  }
+
   /** Pre-load settings into cache so show() is instant. Call from App.init(). */
   loadSettings(settings: AppSettings): void {
     this.cachedSettings = { ...settings };
@@ -271,6 +292,7 @@ export class SettingsPanel {
   private populateValues(settings: AppSettings): void {
     (this.overlay.querySelector('#setting-font-size') as HTMLInputElement).value = String(settings.fontSize);
     (this.overlay.querySelector('#setting-scrollback') as HTMLInputElement).value = String(settings.scrollback);
+    (this.overlay.querySelector('#setting-renderer') as HTMLSelectElement).value = settings.renderer || 'webgl';
     (this.overlay.querySelector('#setting-shell') as HTMLInputElement).value = settings.shell;
 
     (this.overlay.querySelector('#setting-notification-sound') as HTMLInputElement).checked = settings.notificationSound !== false;

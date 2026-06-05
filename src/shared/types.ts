@@ -19,6 +19,11 @@ export interface WindowState {
   isMaximized: boolean;
 }
 
+/** Text renderer backend. `webgl` uses the GPU (fast); `dom` skips the GPU
+ *  entirely and so cannot exhibit the WebGL glyph-atlas corruption ("garbled
+ *  glyphs"), at a small render-throughput cost. */
+export type RendererMode = 'webgl' | 'dom';
+
 export interface AppSettings {
   fontSize: number;
   fontFamily: string;
@@ -33,6 +38,7 @@ export interface AppSettings {
   opacity: number;
   restoreSession: boolean;
   shellIntegration: boolean;
+  renderer: RendererMode;
 }
 
 export interface SessionPaneState {

@@ -56,6 +56,10 @@ export class App {
         this.tabManager.setScrollback(settings.scrollback);
         this.quickTerminal.setScrollback(settings.scrollback);
       }
+      if (settings.renderer !== undefined) {
+        this.tabManager.setRenderer(settings.renderer);
+        this.quickTerminal.setRenderer(settings.renderer);
+      }
       if (settings.notificationSound !== undefined) {
         this.notificationSound.setEnabled(settings.notificationSound);
       }
@@ -127,6 +131,7 @@ export class App {
     if (settings.scrollback) {
       this.tabManager.setScrollback(settings.scrollback);
     }
+    this.tabManager.setRenderer(settings.renderer || 'webgl');
     if (settings.shell) {
       this.tabManager.setShell(settings.shell);
     }
@@ -151,6 +156,7 @@ export class App {
     this.quickTerminal.setFontSize(this.fontSize);
     if (settings.fontFamily) this.quickTerminal.setFontFamily(settings.fontFamily);
     if (settings.scrollback) this.quickTerminal.setScrollback(settings.scrollback);
+    this.quickTerminal.setRenderer(settings.renderer || 'webgl');
 
     // Try to restore previous session (if enabled)
     // Restore previous session if enabled, otherwise start fresh
@@ -390,6 +396,10 @@ export class App {
       { label: 'Save Terminal Output', shortcut: '\u2318S', action: 'save-terminal' },
       { label: 'Reset Renderer', shortcut: '\u2318\u21E7K', action: 'reset-renderer' },
       { label: 'Capture Renderer State', action: 'capture-render-state' },
+      { label: this.tabManager.getRenderer() === 'webgl'
+          ? 'Switch to Compatibility Renderer (fixes garbled text)'
+          : 'Switch to GPU Renderer (fast)',
+        action: 'toggle-renderer' },
       { label: 'Settings', shortcut: '\u2318,', action: 'settings' },
     ];
   }
@@ -475,6 +485,20 @@ export class App {
         // triggering a full renderer reset.
         tab?.focusedPane.terminalView.captureSnapshot('manual').catch(console.error);
         break;
+      case 'toggle-renderer': {
+        // Flip the text renderer GPU(WebGL) <-> Compatibility(DOM) across every
+        // pane + the quick terminal, then persist. The DOM renderer has no GPU
+        // glyph atlas, so it's the escape hatch when WebGL garbles glyphs.
+        const next = this.tabManager.getRenderer() === 'webgl' ? 'dom' : 'webgl';
+        this.tabManager.setRenderer(next);
+        this.quickTerminal.setRenderer(next);
+        this.settingsPanel.syncCached({ renderer: next });
+        window.patton.settings.set({ renderer: next }).catch(console.error);
+        announce(next === 'dom'
+          ? 'Switched to Compatibility renderer — no GPU, fixes garbled text'
+          : 'Switched to GPU renderer — fast');
+        break;
+      }
       case 'settings':
         this.settingsPanel.toggle();
         break;

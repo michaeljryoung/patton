@@ -527,6 +527,10 @@ export class Pane {
     this.terminalView.setCopyOnSelect(enabled);
   }
 
+  setRenderer(mode: 'webgl' | 'dom'): void {
+    this.terminalView.setUseWebgl(mode === 'webgl');
+  }
+
   getScrollbackContent(): string {
     return this.terminalView.getScrollbackContent();
   }

@@ -65,6 +65,7 @@ export const DEFAULTS = {
   FONT_SIZE: 14,
   FONT_FAMILY: "'SF Mono', 'Menlo', 'Monaco', 'Courier New', monospace",
   SCROLLBACK: 10000,
+  RENDERER: 'webgl',
   HISTORY_MAX: 10000,
   WRITE_COALESCE_MS: 4,
   FONT_SIZE_MIN: 8,
