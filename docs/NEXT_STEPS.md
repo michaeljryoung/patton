@@ -1,6 +1,6 @@
 # Patton — Next Steps
 
-Last updated: 2026-06-05 (Session 29)
+Last updated: 2026-06-08 (Session 30)
 
 CLAUDE.md's `## Next Steps` section points here; this is the canonical list. Items leave only via `[x] DONE — Session N`, `[~] SUPERSEDED — <pointer>`, or `[-] DROPPED: <reason>`. Marked items linger 10 checkpoints, then sweep to `docs/session-archive.md`.
 
@@ -8,7 +8,6 @@ CLAUDE.md's `## Next Steps` section points here; this is the canonical list. Ite
 
 ## Live
 
-- [ ] **Confirm the DOM/Compatibility renderer actually kills the glyphs over sustained use** (S29). User switched and said "seems to be working"; the old bug hit *loads*/session, so a full day+ of real use (esp. long Claude Code sessions + Cmd+Tab) with zero garbling = confident. If it holds → consider DOM as default vs leaving opt-in. If it STILL garbles on DOM → it's system-level (macOS 26.4.1 / M5 Pro Metal/CoreText), not Patton — reproduce in **Apple Terminal.app** (CoreGraphics, no Metal) to discriminate; `sudo atsutil databases -remove` + restart resets CoreText's glyph cache.
 - [ ] **Dev-dependency CVE pass** (S29). 42 dev-only audit findings remain (webpack/inquirer/`tmp` via electron-forge tooling) — they don't ship in the app and don't block the `--omit=dev` build gate, so deferred to a deliberate dep-upgrade pass (risky major bumps). Prod `fast-uri` already patched via `overrides`. Continuation of the old "CVE scan of dep tree" blind-spot.
 - [ ] **Revoke the burned `github_pat_` PAT** (security, S28). A fine-grained PAT was pasted into another chat transcript and is now on disk → revoke at https://github.com/settings/personal-access-tokens regardless of which token GitHub's expiry email named. User action only; nothing in Patton's auth path uses it (local push = gh keyring `gho_` OAuth, no expiry).
 - [ ] **Validate the S24 double-click links in real use** (carried from S24/S27). Does `event.detail === 2` actually fire from xterm's link dispatch? First double-click on a path/URL/MD-link in the v1.4.0 build is the test. If double-click does nothing (xterm may collapse to detail=1), the fallback is a native `dblclick` listener on `terminal.element` hit-testing the active link range. See `src/renderer/services/file-link-provider.ts`.
@@ -19,15 +18,14 @@ CLAUDE.md's `## Next Steps` section points here; this is the canonical list. Ite
 ## Distribution / packaging
 
 - [ ] Test CI-built DMG install on a clean machine (right-click → Open for Gatekeeper).
-- [ ] Verify `brew tap michaeljryoung/patton && brew install --cask patton` installs latest (blocked until `HOMEBREW_PAT` refreshed — tap is stuck at v1.3.0).
 - [ ] End-to-end test all features in packaged app.
 - [ ] Consider Apple Developer ID ($99/yr) for notarization if distributing widely.
 
 ## Considered / low-priority
 
-- [ ] **Refresh `HOMEBREW_PAT` if/when the brew channel is wanted again** (S28). It expired (set 2026-03-09) → the release workflow's cask-update step fails (the GitHub release + DMG are unaffected). Fix: generate a fine-grained PAT scoped to `homebrew-patton` (Contents: read/write), then `gh secret set HOMEBREW_PAT --repo michaeljryoung/patton`. User deprioritized brew, so no rush.
+- [ ] **Refresh `HOMEBREW_PAT` if/when the brew channel is wanted again** (S28). It expired (set 2026-03-09) → the release workflow's cask-update step fails (the GitHub release + DMG are unaffected). Fix: generate a fine-grained PAT scoped to `homebrew-patton` (Contents: read/write), then `gh secret set HOMEBREW_PAT --repo michaeljryoung/patton`. User deprioritized brew, so no rush. **S30**: tap is now manually current at v1.6.0, but **each future release still needs a ~30s manual cask bump** (see the Homebrew-tap Gotcha) until this token is refreshed for auto-updates.
 - [ ] **Harden `release.yml`'s `HOMEBREW_PAT` guard** (S28). `if [ -z "$HOMEBREW_PAT" ]` catches unset but not expired — an expired token fails the cask step (red ✗ on an otherwise-successful release) instead of skipping gracefully. Either test token validity before the clone, or accept the cosmetic red ✗.
-- [ ] **Install the actual v1.4.0 DMG locally for a correct version string** (S28, cosmetic). The local `npm run package` build self-reports 1.0.0 though its code is byte-equivalent to v1.4.0. Reinstall the DMG from the release only if the version label matters.
+- [ ] **Install the actual v1.6.0 DMG locally for a correct version string** (S28→S30, cosmetic). The local `npm run package` build self-reports 1.0.0 though its code matches the released build. Reinstall the DMG from the release only if the version label matters.
 - [ ] **Install VS Code for `:line:col` jump** — without it, file-path double-clicks fall through to `shell.openPath` (macOS default app). Opens but loses line/column. Most useful when Claude Code output has `path.ts:42` references.
 - [ ] **Failed-command indicator variant** — OSC 133 `;D` carries an exit code; show a red dot variant on inactive tabs whose last command exited non-zero. Would need to plumb the exit code through `onPromptState` (currently emits state enum only) — more invasive than the green-dot impl.
 - [ ] **Blind-spot passes** flagged by S20 reasoning synthesis (separate sessions): CVE scan of dep tree (Electron 40, xterm.js 6, node-pty, electron-store, codemirror) — **prod `fast-uri` patched S29; dev-tree scan still owed (see "Dev-dependency CVE pass" in Live)**; audit auto-release CI workflow + signing-key handling (highest-severity blind spot for self-signed distribution); empirical validation of K3/K5/S7 timing under real slow commands.
@@ -56,6 +54,8 @@ CLAUDE.md's `## Next Steps` section points here; this is the canonical list. Ite
 
 ## Recent transitions (visible 10 checkpoints, then archived)
 
+- [x] **DONE — Session 30**: **Promoted DOM (Compatibility) to the default renderer → v1.6.0** (commit `8d5ac84`). The S29 toggle held over real use (user: glyphs stopped), so `DEFAULTS.RENDERER` flipped `'webgl'`→`'dom'` — fresh installs now land structurally immune to the garbled-glyph class; WebGL stays a one-click opt-in; existing users' saved choice unaffected. Resolves the S29 "confirm DOM holds → consider DOM as default" item.
+- [x] **DONE — Session 30**: **Manually unstuck the Homebrew tap to v1.6.0** (`homebrew-patton` `29f66db`). CI's auto-update stays blocked on the expired `HOMEBREW_PAT`, so hand-bumped `Casks/patton.rb` 1.3.0→1.6.0 (checksum verified vs the live DMG) via gh OAuth push. `brew install --cask patton` now serves latest (was frozen at v1.3.0 since ~April).
 - [x] **DONE — Session 29**: **Shipped the renderer toggle → v1.5.0** (commit `6f9504f`) — persisted WebGL⇄DOM switch (command palette + Settings "Text Renderer"), the DOM-renderer escape hatch for glyph corruption (all panes + quick terminal, sticky across relaunches). `Patton-1.5.0-arm64.dmg` + GitHub release published; only the Homebrew-cask step failed (expired PAT).
 - [x] **DONE — Session 29**: **Option+drag text selection** during mouse mode (`macOptionClickForcesSelection: true`) — previously no selection modifier worked on macOS while an app (Claude Code fullscreen, vim, tmux) held the mouse.
 - [x] **DONE — Session 29**: **Diagnosed Claude Code v2.1.x fullscreen rendering** as the single cause of the selection breakage + "Jump to bottom" button + glyph-corruption recurrence. Disable via `/tui default` or `CLAUDE_CODE_DISABLE_MOUSE=1`.
