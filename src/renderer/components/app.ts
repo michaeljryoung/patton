@@ -131,7 +131,7 @@ export class App {
     if (settings.scrollback) {
       this.tabManager.setScrollback(settings.scrollback);
     }
-    this.tabManager.setRenderer(settings.renderer || 'webgl');
+    this.tabManager.setRenderer(settings.renderer || 'dom');
     if (settings.shell) {
       this.tabManager.setShell(settings.shell);
     }
@@ -156,7 +156,7 @@ export class App {
     this.quickTerminal.setFontSize(this.fontSize);
     if (settings.fontFamily) this.quickTerminal.setFontFamily(settings.fontFamily);
     if (settings.scrollback) this.quickTerminal.setScrollback(settings.scrollback);
-    this.quickTerminal.setRenderer(settings.renderer || 'webgl');
+    this.quickTerminal.setRenderer(settings.renderer || 'dom');
 
     // Try to restore previous session (if enabled)
     // Restore previous session if enabled, otherwise start fresh

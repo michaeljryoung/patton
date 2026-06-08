@@ -49,8 +49,8 @@ export class SettingsPanel {
           <div class="settings-group">
             <label class="settings-label" for="setting-renderer">Text Renderer</label>
             <select class="settings-input" id="setting-renderer">
-              <option value="webgl">GPU — fast (default)</option>
-              <option value="dom">Compatibility — fixes garbled text</option>
+              <option value="dom">Compatibility — no garbled text (default)</option>
+              <option value="webgl">GPU — fast</option>
             </select>
           </div>
           <div class="settings-group">
@@ -292,7 +292,7 @@ export class SettingsPanel {
   private populateValues(settings: AppSettings): void {
     (this.overlay.querySelector('#setting-font-size') as HTMLInputElement).value = String(settings.fontSize);
     (this.overlay.querySelector('#setting-scrollback') as HTMLInputElement).value = String(settings.scrollback);
-    (this.overlay.querySelector('#setting-renderer') as HTMLSelectElement).value = settings.renderer || 'webgl';
+    (this.overlay.querySelector('#setting-renderer') as HTMLSelectElement).value = settings.renderer || 'dom';
     (this.overlay.querySelector('#setting-shell') as HTMLInputElement).value = settings.shell;
 
     (this.overlay.querySelector('#setting-notification-sound') as HTMLInputElement).checked = settings.notificationSound !== false;

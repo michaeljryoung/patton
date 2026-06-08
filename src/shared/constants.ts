@@ -65,7 +65,11 @@ export const DEFAULTS = {
   FONT_SIZE: 14,
   FONT_FAMILY: "'SF Mono', 'Menlo', 'Monaco', 'Courier New', monospace",
   SCROLLBACK: 10000,
-  RENDERER: 'webgl',
+  // DOM ("Compatibility") is the default: it has no GPU glyph atlas, so the
+  // garbled-text corruption class is structurally impossible. WebGL ("GPU") is
+  // a one-click opt-in (command palette / Settings → Text Renderer) for anyone
+  // who wants its perf on huge output bursts. See S29 render saga.
+  RENDERER: 'dom',
   HISTORY_MAX: 10000,
   WRITE_COALESCE_MS: 4,
   FONT_SIZE_MIN: 8,
