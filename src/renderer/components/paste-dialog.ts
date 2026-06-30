@@ -62,7 +62,11 @@ export class PasteDialog {
     const shown = lines.slice(0, 6).join('\n');
     preview.textContent = shown + (lines.length > 6 ? '\n...' : '');
     this.overlay.classList.add('visible');
-    (this.overlay.querySelector('.paste-dialog-cancel') as HTMLElement).focus();
+    // Don't pre-focus Cancel here: trapFocus must capture the real
+    // previously-focused element (the xterm textarea) so it can restore focus
+    // on close. Cancel is the first focusable child, so trapFocus lands on it
+    // anyway — keeping the Cancel-focused default without stranding focus on a
+    // hidden button after the dialog dismisses.
     this.releaseFocusTrap?.();
     this.releaseFocusTrap = trapFocus(this.overlay);
 

@@ -1,6 +1,7 @@
 import { Tab } from '../components/tab';
 import { Pane } from '../components/pane';
 import { TabBar } from '../components/tab-bar';
+import { ConfirmDialog } from '../components/confirm-dialog';
 import { HistoryManager } from './history-manager';
 import { announce } from './announcer';
 import type { SessionState, RendererMode } from '../../shared/types';
@@ -16,6 +17,7 @@ export class TabManager {
   private tabs: Tab[] = [];
   private activeTab: Tab | null = null;
   private tabBar: TabBar;
+  private confirmDialog: ConfirmDialog;
   private contentContainer: HTMLElement;
   private disposables: (() => void)[] = [];
   private currentFontSize: number | undefined;
@@ -37,10 +39,11 @@ export class TabManager {
     options?: { onSettings?: () => void; onCommandDone?: (tabId: string, tabTitle: string) => void },
   ) {
     this.contentContainer = contentContainer;
+    this.confirmDialog = new ConfirmDialog(document.body);
 
     this.tabBar = new TabBar(tabBarContainer, {
       onSelect: (id) => this.switchToId(id),
-      onClose: (id) => { this.closeById(id).catch(console.error); },
+      onClose: (id) => { this.confirmAndCloseTab(id).catch(console.error); },
       onNew: () => { this.createTab().catch(console.error); },
       onReorder: (fromId, toId) => this.reorder(fromId, toId),
       onSettings: () => options?.onSettings?.(),
@@ -279,14 +282,51 @@ export class TabManager {
   }
 
   async closeActivePane(): Promise<void> {
-    if (!this.activeTab) return;
-    if (this.activeTab.panes.length <= 1) {
-      await this.closeById(this.activeTab.id);
+    const tab = this.activeTab;
+    if (!tab) return;
+    const closingWholeTab = tab.panes.length <= 1;
+
+    // Closing the final tab quits the app, which the main-process quit /
+    // close-last-window guard already confirms. Skip our dialog there so the
+    // user doesn't face two prompts back-to-back.
+    const isLastTab = closingWholeTab && this.tabs.length <= 1;
+    if (!isLastTab) {
+      const ok = await this.confirmClose(closingWholeTab ? 'tab' : 'pane', tab.title);
+      if (!ok) return;
+      // The PTY may have exited (auto-closing the tab) while the dialog was up.
+      if (!this.tabs.includes(tab)) return;
+    }
+
+    if (closingWholeTab) {
+      await this.closeById(tab.id);
     } else {
       // Save focused pane state before closing it
-      this.saveClosedPane(this.activeTab.focusedPane);
-      this.activeTab.closePane();
+      this.saveClosedPane(tab.focusedPane);
+      tab.closePane();
     }
+  }
+
+  /** ✕-button / middle-click close: confirm first, then close the whole tab. */
+  private async confirmAndCloseTab(id: string): Promise<void> {
+    const tab = this.tabs.find(t => t.id === id);
+    if (!tab) return;
+    const ok = await this.confirmClose('tab', tab.title);
+    if (!ok) return;
+    if (!this.tabs.includes(tab)) return; // disposed while dialog was open
+    await this.closeById(id);
+  }
+
+  /** Shared "are you sure you want to close this?" prompt for user-initiated
+   *  closes. Not used by automatic closes (PTY exit), which must not prompt. */
+  private confirmClose(kind: 'tab' | 'pane', title: string): Promise<boolean> {
+    const name = title?.trim();
+    const subject = name ? `“${name}”` : `this ${kind}`;
+    return this.confirmDialog.confirm({
+      title: kind === 'tab' ? 'Close this tab?' : 'Close this pane?',
+      message: `Closing ${subject} ends the shell and any process running inside it.`,
+      confirmLabel: kind === 'tab' ? 'Close Tab' : 'Close Pane',
+      cancelLabel: 'Cancel',
+    });
   }
 
   splitVertical(): void {
@@ -484,5 +524,6 @@ export class TabManager {
     for (const d of this.disposables) d();
     for (const tab of this.tabs) tab.dispose();
     this.tabBar.dispose();
+    this.confirmDialog.dispose();
   }
 }
