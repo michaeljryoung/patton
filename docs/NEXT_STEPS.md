@@ -1,6 +1,6 @@
 # Patton — Next Steps
 
-Last updated: 2026-06-08 (Session 30)
+Last updated: 2026-06-30 (Session 31)
 
 CLAUDE.md's `## Next Steps` section points here; this is the canonical list. Items leave only via `[x] DONE — Session N`, `[~] SUPERSEDED — <pointer>`, or `[-] DROPPED: <reason>`. Marked items linger 10 checkpoints, then sweep to `docs/session-archive.md`.
 
@@ -23,9 +23,9 @@ CLAUDE.md's `## Next Steps` section points here; this is the canonical list. Ite
 
 ## Considered / low-priority
 
-- [ ] **Refresh `HOMEBREW_PAT` if/when the brew channel is wanted again** (S28). It expired (set 2026-03-09) → the release workflow's cask-update step fails (the GitHub release + DMG are unaffected). Fix: generate a fine-grained PAT scoped to `homebrew-patton` (Contents: read/write), then `gh secret set HOMEBREW_PAT --repo michaeljryoung/patton`. User deprioritized brew, so no rush. **S30**: tap is now manually current at v1.6.0, but **each future release still needs a ~30s manual cask bump** (see the Homebrew-tap Gotcha) until this token is refreshed for auto-updates.
+- [ ] **Refresh `HOMEBREW_PAT` if/when the brew channel is wanted again** (S28). It expired (set 2026-03-09) → the release workflow's cask-update step fails (the GitHub release + DMG are unaffected). Fix: generate a fine-grained PAT scoped to `homebrew-patton` (Contents: read/write), then `gh secret set HOMEBREW_PAT --repo michaeljryoung/patton`. User deprioritized brew, so no rush. **S30–S31**: tap is now manually current at v1.7.0, but **each future release still needs a ~30s manual cask bump** (see the Homebrew-tap Gotcha) until this token is refreshed for auto-updates.
 - [ ] **Harden `release.yml`'s `HOMEBREW_PAT` guard** (S28). `if [ -z "$HOMEBREW_PAT" ]` catches unset but not expired — an expired token fails the cask step (red ✗ on an otherwise-successful release) instead of skipping gracefully. Either test token validity before the clone, or accept the cosmetic red ✗.
-- [ ] **Install the actual v1.6.0 DMG locally for a correct version string** (S28→S30, cosmetic). The local `npm run package` build self-reports 1.0.0 though its code matches the released build. Reinstall the DMG from the release only if the version label matters.
+- [ ] **Harden CI's DMG maker against the flaky `hdiutil detach` race** (S31, optional). electron-forge's `maker-dmg` intermittently fails `hdiutil detach … No such file or directory`, blocking the release until a `gh run rerun`. A retry wrapper / newer `appdmg` / `maker-dmg` option would remove the manual re-run. Low priority — re-run works and it's rare. (The S28→S30 "install the actual DMG for a correct version string" item is now DONE — see Recent transitions.)
 - [ ] **Install VS Code for `:line:col` jump** — without it, file-path double-clicks fall through to `shell.openPath` (macOS default app). Opens but loses line/column. Most useful when Claude Code output has `path.ts:42` references.
 - [ ] **Failed-command indicator variant** — OSC 133 `;D` carries an exit code; show a red dot variant on inactive tabs whose last command exited non-zero. Would need to plumb the exit code through `onPromptState` (currently emits state enum only) — more invasive than the green-dot impl.
 - [ ] **Blind-spot passes** flagged by S20 reasoning synthesis (separate sessions): CVE scan of dep tree (Electron 40, xterm.js 6, node-pty, electron-store, codemirror) — **prod `fast-uri` patched S29; dev-tree scan still owed (see "Dev-dependency CVE pass" in Live)**; audit auto-release CI workflow + signing-key handling (highest-severity blind spot for self-signed distribution); empirical validation of K3/K5/S7 timing under real slow commands.
@@ -54,6 +54,9 @@ CLAUDE.md's `## Next Steps` section points here; this is the canonical list. Ite
 
 ## Recent transitions (visible 10 checkpoints, then archived)
 
+- [x] **DONE — Session 31**: **Shipped the confirm-before-closing-a-tab/pane dialog → v1.7.0** (commit `f935a2b`). ⌘W / ✕ / middle-click now prompt before ending a shell; the last-tab case defers to the app-quit guard (no double prompt); automatic PTY-exit closes don't prompt. Recovered from a crashed session's uncommitted on-disk work via transcript forensics.
+- [x] **DONE — Session 31**: **Hand-bumped the Homebrew tap 1.6.0→1.7.0** (`homebrew-patton` `72c8d40`, SHA-256 independently verified). CI's cask step stayed red on the expired `HOMEBREW_PAT`, as every release since S28.
+- [x] **DONE — Session 31**: **Installed the v1.7.0 DMG to /Applications** → version string 1.0.0→1.7.0. Resolves the S28→S30 "install the actual DMG for a correct version string" cosmetic item.
 - [x] **DONE — Session 30**: **Promoted DOM (Compatibility) to the default renderer → v1.6.0** (commit `8d5ac84`). The S29 toggle held over real use (user: glyphs stopped), so `DEFAULTS.RENDERER` flipped `'webgl'`→`'dom'` — fresh installs now land structurally immune to the garbled-glyph class; WebGL stays a one-click opt-in; existing users' saved choice unaffected. Resolves the S29 "confirm DOM holds → consider DOM as default" item.
 - [x] **DONE — Session 30**: **Manually unstuck the Homebrew tap to v1.6.0** (`homebrew-patton` `29f66db`). CI's auto-update stays blocked on the expired `HOMEBREW_PAT`, so hand-bumped `Casks/patton.rb` 1.3.0→1.6.0 (checksum verified vs the live DMG) via gh OAuth push. `brew install --cask patton` now serves latest (was frozen at v1.3.0 since ~April).
 - [x] **DONE — Session 29**: **Shipped the renderer toggle → v1.5.0** (commit `6f9504f`) — persisted WebGL⇄DOM switch (command palette + Settings "Text Renderer"), the DOM-renderer escape hatch for glyph corruption (all panes + quick terminal, sticky across relaunches). `Patton-1.5.0-arm64.dmg` + GitHub release published; only the Homebrew-cask step failed (expired PAT).
