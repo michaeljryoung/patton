@@ -1,6 +1,6 @@
 # Patton — Next Steps
 
-Last updated: 2026-06-30 (Session 31)
+Last updated: 2026-06-30 (Session 32)
 
 CLAUDE.md's `## Next Steps` section points here; this is the canonical list. Items leave only via `[x] DONE — Session N`, `[~] SUPERSEDED — <pointer>`, or `[-] DROPPED: <reason>`. Marked items linger 10 checkpoints, then sweep to `docs/session-archive.md`.
 
