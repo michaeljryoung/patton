@@ -286,21 +286,25 @@ export class TabManager {
     if (!tab) return;
     const closingWholeTab = tab.panes.length <= 1;
 
-    // Closing the final tab quits the app, which the main-process quit /
-    // close-last-window guard already confirms. Skip our dialog there so the
-    // user doesn't face two prompts back-to-back.
-    const isLastTab = closingWholeTab && this.tabs.length <= 1;
-    if (!isLastTab) {
-      const ok = await this.confirmClose(closingWholeTab ? 'tab' : 'pane', tab.title);
-      if (!ok) return;
-      // The PTY may have exited (auto-closing the tab) while the dialog was up.
-      if (!this.tabs.includes(tab)) return;
-    }
-
     if (closingWholeTab) {
+      // Closing the whole tab ends every shell in it — the accidental ⌘W the
+      // S22/S31 guard exists for. Confirm it, unless it's the final tab (that
+      // quits the app, which the main-process quit / close-last-window guard
+      // already confirms — skip ours to avoid two prompts back-to-back).
+      const isLastTab = this.tabs.length <= 1;
+      if (!isLastTab) {
+        const ok = await this.confirmClose('tab', tab.title);
+        if (!ok) return;
+        // The PTY may have exited (auto-closing the tab) while the dialog was up.
+        if (!this.tabs.includes(tab)) return;
+      }
       await this.closeById(tab.id);
     } else {
-      // Save focused pane state before closing it
+      // Closing one pane of a split is low-stakes — the tab and sibling panes
+      // survive, and the pane's scrollback is saved for ⌘⇧T (Reopen Closed).
+      // No confirmation: the prompt made deliberate pane-closing feel broken,
+      // because the Cancel-defaulted dialog turned the natural ⌘W-then-Enter
+      // into a cancel. Instant close matches iTerm2's idle-split behaviour.
       this.saveClosedPane(tab.focusedPane);
       tab.closePane();
     }
