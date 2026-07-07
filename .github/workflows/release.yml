@@ -116,17 +116,26 @@ jobs:
 
       - name: Update Homebrew cask
         env:
-          HOMEBREW_PAT: ${{ secrets.HOMEBREW_PAT }}
+          # Write-scoped SSH deploy key for michaeljryoung/homebrew-patton only
+          # (least-privilege, no expiry). Replaces the old broad HOMEBREW_PAT,
+          # which expired and failed this step on every release since S28.
+          HOMEBREW_DEPLOY_KEY: ${{ secrets.HOMEBREW_DEPLOY_KEY }}
         run: |
-          if [ -z "$HOMEBREW_PAT" ]; then
-            echo "HOMEBREW_PAT not set — skipping cask update"
+          if [ -z "$HOMEBREW_DEPLOY_KEY" ]; then
+            echo "HOMEBREW_DEPLOY_KEY not set — skipping cask update"
             exit 0
           fi
 
           VERSION="${{ steps.version.outputs.new }}"
           SHA256="${{ steps.dmg.outputs.sha256 }}"
 
-          git clone "https://x-access-token:${HOMEBREW_PAT}@github.com/michaeljryoung/homebrew-patton.git" homebrew-cask
+          # Install the deploy key and route all git-over-SSH through it.
+          mkdir -p ~/.ssh
+          printf '%s\n' "$HOMEBREW_DEPLOY_KEY" > ~/.ssh/homebrew_deploy
+          chmod 600 ~/.ssh/homebrew_deploy
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/homebrew_deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+
+          git clone git@github.com:michaeljryoung/homebrew-patton.git homebrew-cask
           cd homebrew-cask
           mkdir -p Casks
 
