@@ -1,6 +1,6 @@
 # Patton — Next Steps
 
-Last updated: 2026-06-30 (Session 32)
+Last updated: 2026-07-07 (Session 33)
 
 CLAUDE.md's `## Next Steps` section points here; this is the canonical list. Items leave only via `[x] DONE — Session N`, `[~] SUPERSEDED — <pointer>`, or `[-] DROPPED: <reason>`. Marked items linger 10 checkpoints, then sweep to `docs/session-archive.md`.
 
@@ -23,8 +23,6 @@ CLAUDE.md's `## Next Steps` section points here; this is the canonical list. Ite
 
 ## Considered / low-priority
 
-- [ ] **Refresh `HOMEBREW_PAT` if/when the brew channel is wanted again** (S28). It expired (set 2026-03-09) → the release workflow's cask-update step fails (the GitHub release + DMG are unaffected). Fix: generate a fine-grained PAT scoped to `homebrew-patton` (Contents: read/write), then `gh secret set HOMEBREW_PAT --repo michaeljryoung/patton`. User deprioritized brew, so no rush. **S30–S31**: tap is now manually current at v1.7.0, but **each future release still needs a ~30s manual cask bump** (see the Homebrew-tap Gotcha) until this token is refreshed for auto-updates.
-- [ ] **Harden `release.yml`'s `HOMEBREW_PAT` guard** (S28). `if [ -z "$HOMEBREW_PAT" ]` catches unset but not expired — an expired token fails the cask step (red ✗ on an otherwise-successful release) instead of skipping gracefully. Either test token validity before the clone, or accept the cosmetic red ✗.
 - [ ] **Harden CI's DMG maker against the flaky `hdiutil detach` race** (S31, optional). electron-forge's `maker-dmg` intermittently fails `hdiutil detach … No such file or directory`, blocking the release until a `gh run rerun`. A retry wrapper / newer `appdmg` / `maker-dmg` option would remove the manual re-run. Low priority — re-run works and it's rare. (The S28→S30 "install the actual DMG for a correct version string" item is now moot — the post-commit hook reverts the version string on every commit; see Recent transitions + the `app.getVersion` Gotcha.)
 - [ ] **Install VS Code for `:line:col` jump** — without it, file-path double-clicks fall through to `shell.openPath` (macOS default app). Opens but loses line/column. Most useful when Claude Code output has `path.ts:42` references.
 - [ ] **Failed-command indicator variant** — OSC 133 `;D` carries an exit code; show a red dot variant on inactive tabs whose last command exited non-zero. Would need to plumb the exit code through `onPromptState` (currently emits state enum only) — more invasive than the green-dot impl.
@@ -54,6 +52,9 @@ CLAUDE.md's `## Next Steps` section points here; this is the canonical list. Ite
 
 ## Recent transitions (visible 10 checkpoints, then archived)
 
+- [x] **DONE — Session 33**: **Instant split-pane close on ⌘W → v1.8.0** (`bede3f9`). Scoped the S31 close-confirmation to whole-tab closes; a split pane now closes with no dialog (the Cancel-defaulted dialog had turned ⌘W-then-Enter into a cancel, so panes felt uncloseable). Whole-tab + ✕/middle-click still confirm. WHY: S33 Decisions.
+- [x] **DONE — Session 33**: **Ctrl+Cmd+N notes scratchpad → v1.8.0** (`886e74b`, new `notes-panel.ts`). Persistent plain-text panel docked right of the terminal (no PTY/shell); autosaves to electron-store (`notes` key), width in localStorage. Built as a docked sidebar, not a split-tree node, to leave the terminal's pane/split/session code untouched. WHY: S33 Decisions.
+- [x] **DONE — Session 33**: **Homebrew auto-update fixed via a write-scoped SSH deploy key** (`37a8e1e`, `[no-release]`). Replaces the expired `HOMEBREW_PAT` that failed the cask step every release S28–S32. **Resolves the former "Refresh `HOMEBREW_PAT`" + "Harden the `HOMEBREW_PAT` guard" items** — least-privilege (writes only the tap repo), no expiry, and the guard now skips gracefully if the key is absent. Old `HOMEBREW_PAT` secret now unused (deletable: `gh secret delete HOMEBREW_PAT --repo michaeljryoung/patton`). WHY: S33 Decisions.
 - [x] **DONE — Session 31**: **Shipped the confirm-before-closing-a-tab/pane dialog → v1.7.0** (commit `f935a2b`). ⌘W / ✕ / middle-click now prompt before ending a shell; the last-tab case defers to the app-quit guard (no double prompt); automatic PTY-exit closes don't prompt. Recovered from a crashed session's uncommitted on-disk work via transcript forensics.
 - [x] **DONE — Session 31**: **Hand-bumped the Homebrew tap 1.6.0→1.7.0** (`homebrew-patton` `72c8d40`, SHA-256 independently verified). CI's cask step stayed red on the expired `HOMEBREW_PAT`, as every release since S28.
 - [-] **DROPPED (S31): Install the actual DMG for a correct version string** (was S28→S30 cosmetic) — **moot**. Installing the released DMG *does* set the right version string, but the post-commit auto-rebuild hook re-`package`s + copies a 1.0.0 build to /Applications on the very next commit, so it never survives. /Applications stays code-current but self-reports 1.0.0. The real fix is to stamp the version into `package.json`/the build (folded into the `app.getVersion` Gotcha). WHY: S31 Decisions.
