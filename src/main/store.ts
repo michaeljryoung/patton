@@ -66,6 +66,7 @@ interface StoreSchema {
   settings: AppSettings;
   windowState: WindowState;
   session: SessionState | null;
+  notes: string;
 }
 
 const defaults: StoreSchema = {
@@ -92,6 +93,7 @@ const defaults: StoreSchema = {
     isMaximized: false,
   },
   session: null,
+  notes: '',
 };
 
 let store: ElectronStore<StoreSchema> | null = null;
@@ -282,6 +284,20 @@ export function setSettings(partial: Partial<AppSettings>): void {
     const current = s.get('settings', defaults.settings);
     s.set('settings', { ...current, ...validated });
   }
+}
+
+// --- Notes scratchpad (single per-store document) ---
+export function getNotes(): string {
+  const n = getStore().get('notes', '');
+  return typeof n === 'string' ? n : '';
+}
+
+export function setNotes(content: string): void {
+  // Coerce + cap: the renderer already caps, but the store is the trust
+  // boundary — an oversized payload must never reach the config file.
+  const str = typeof content === 'string' ? content : String(content ?? '');
+  const capped = str.length > DEFAULTS.NOTES_MAX_CHARS ? str.slice(0, DEFAULTS.NOTES_MAX_CHARS) : str;
+  getStore().set('notes', capped);
 }
 
 export function getWindowState(): WindowState {

@@ -6,6 +6,7 @@ import { announce } from '../services/announcer';
 import { SettingsPanel } from './settings-panel';
 import { CommandPalette } from './command-palette';
 import { QuickTerminal } from './quick-terminal';
+import { NotesPanel } from './notes-panel';
 import { Onboarding } from './onboarding';
 import { DEFAULTS } from '../../shared/constants';
 
@@ -15,6 +16,7 @@ export class App {
   private settingsPanel: SettingsPanel;
   private commandPalette: CommandPalette;
   private quickTerminal: QuickTerminal;
+  private notesPanel: NotesPanel;
   private notificationSound: NotificationSound;
   private fontSize: number = DEFAULTS.FONT_SIZE;
   private disposables: (() => void)[] = [];
@@ -23,6 +25,7 @@ export class App {
     const tabBarEl = document.getElementById('tab-bar')!;
     const contentEl = document.getElementById('content')!;
     const appEl = document.getElementById('app')!;
+    const mainEl = document.getElementById('main')!;
 
     this.notificationSound = new NotificationSound();
     this.tabManager = new TabManager(tabBarEl, contentEl, {
@@ -81,6 +84,12 @@ export class App {
     });
 
     this.quickTerminal = new QuickTerminal(appEl);
+
+    // Notes scratchpad (Ctrl+Cmd+N): a plain textarea docked beside the
+    // terminal. On close, hand focus back to the active terminal pane.
+    this.notesPanel = new NotesPanel(mainEl, {
+      onClose: () => this.tabManager.getActiveTab()?.focusedPane.focus(),
+    });
 
     this.registerAppListeners();
     this.registerSettingsShortcut();
@@ -234,6 +243,12 @@ export class App {
     this.disposables.push(
       window.patton.app.onSettings(() => {
         this.settingsPanel.toggle();
+      }),
+    );
+
+    this.disposables.push(
+      window.patton.app.onToggleNotes(() => {
+        this.notesPanel.toggle().catch(console.error);
       }),
     );
 
@@ -393,6 +408,7 @@ export class App {
       { label: 'Jump to Next Prompt', shortcut: '\u2318\u21E7\u2193', action: 'prompt-down' },
       { label: 'Broadcast Input', shortcut: '\u2318\u21E7B', action: 'broadcast' },
       { label: 'Quick Terminal', action: 'quick-terminal' },
+      { label: 'Toggle Notes', shortcut: '\u2303\u2318N', action: 'toggle-notes' },
       { label: 'Save Terminal Output', shortcut: '\u2318S', action: 'save-terminal' },
       { label: 'Reset Renderer', shortcut: '\u2318\u21E7K', action: 'reset-renderer' },
       { label: 'Capture Renderer State', action: 'capture-render-state' },
@@ -462,6 +478,9 @@ export class App {
         break;
       case 'quick-terminal':
         this.quickTerminal.toggle().catch(console.error);
+        break;
+      case 'toggle-notes':
+        this.notesPanel.toggle().catch(console.error);
         break;
       case 'save-terminal': {
         if (!tab) break;
@@ -542,6 +561,7 @@ export class App {
     this.settingsPanel.dispose();
     this.commandPalette.dispose();
     this.quickTerminal.dispose();
+    this.notesPanel.dispose();
     this.notificationSound.dispose();
     this.tabManager.dispose();
   }

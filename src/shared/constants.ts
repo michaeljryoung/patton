@@ -15,7 +15,11 @@ export const IPC = {
   SETTINGS_GET: 'settings:get',
   SETTINGS_SET: 'settings:set',
 
+  NOTES_GET: 'notes:get',
+  NOTES_SET: 'notes:set',
+
   APP_SETTINGS: 'app:settings',
+  APP_TOGGLE_NOTES: 'app:toggle-notes',
   APP_NEW_TAB: 'app:new-tab',
   APP_CLOSE_TAB: 'app:close-tab',
   APP_NEXT_TAB: 'app:next-tab',
@@ -78,6 +82,10 @@ export const DEFAULTS = {
   NOTIFICATION_SOUND_TYPE: 'chime' as const,
   STARTUP_COMMAND: '' as const,
   MAX_PANES_PER_TAB: 5,
+  // Notes scratchpad: max stored characters (a generous ~1 MB cap so a runaway
+  // paste can't bloat the encrypted config file) and the panel's default width.
+  NOTES_MAX_CHARS: 1_000_000,
+  NOTES_PANEL_WIDTH: 360,
 } as const;
 
 export const PATTON_QUOTES = [

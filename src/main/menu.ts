@@ -89,6 +89,15 @@ export function buildMenu(ptyManager?: PtyManager): void {
         },
         { type: 'separator' },
         {
+          label: 'Toggle Notes',
+          // Ctrl+Cmd+N — deliberately distinct from ⌘N (New Window) and ⌘T
+          // (New Tab): a notes scratchpad is separate from opening a shell.
+          accelerator: 'Control+Command+N',
+          click: (_item, window) => {
+            (window as BrowserWindow | undefined)?.webContents.send(IPC.APP_TOGGLE_NOTES);
+          },
+        },
+        {
           label: 'New Window',
           accelerator: 'CmdOrCtrl+N',
           click: () => {

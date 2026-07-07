@@ -54,6 +54,8 @@ function requireOwnership(
 export function registerIpcHandlers(ptyManager: PtyManager): void {
   const ptyWriteLimiter = new RateLimiter(5000);
   const settingsSetLimiter = new RateLimiter(10);
+  // Notes saves are debounced client-side; a low cap still absorbs bursts.
+  const notesSetLimiter = new RateLimiter(20);
 
   ipcMain.handle(IPC.PTY_CREATE, (event, opts?: PtyCreateOptions) => {
     const window = BrowserWindow.fromWebContents(event.sender);
@@ -216,6 +218,23 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
     if ('shellIntegration' in settings) {
       ptyManager.shellIntegrationEnabled = !!settings.shellIntegration;
     }
+  });
+
+  // --- Notes scratchpad ---
+  ipcMain.handle(IPC.NOTES_GET, () => {
+    return store.getNotes();
+  });
+
+  ipcMain.handle(IPC.NOTES_SET, (_event, content: unknown) => {
+    if (typeof content !== 'string') {
+      console.warn('[SECURITY] NOTES_SET type validation failed', { type: typeof content });
+      return;
+    }
+    if (!notesSetLimiter.allow()) {
+      console.warn('[SECURITY] Rate limit exceeded', { channel: IPC.NOTES_SET });
+      return;
+    }
+    store.setNotes(content);
   });
 
   // --- Session restore ---

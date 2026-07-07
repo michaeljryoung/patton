@@ -35,6 +35,10 @@ const api: PattonAPI = {
     get: () => ipcRenderer.invoke(IPC.SETTINGS_GET),
     set: (settings) => ipcRenderer.invoke(IPC.SETTINGS_SET, settings),
   },
+  notes: {
+    get: () => ipcRenderer.invoke(IPC.NOTES_GET),
+    set: (content) => ipcRenderer.invoke(IPC.NOTES_SET, content),
+  },
   session: {
     get: () => ipcRenderer.invoke(IPC.SESSION_GET),
     set: (session) => ipcRenderer.invoke(IPC.SESSION_SET, session),
@@ -56,6 +60,11 @@ const api: PattonAPI = {
       const listener = () => cb();
       ipcRenderer.on(IPC.APP_SETTINGS, listener);
       return () => ipcRenderer.removeListener(IPC.APP_SETTINGS, listener);
+    },
+    onToggleNotes: (cb) => {
+      const listener = () => cb();
+      ipcRenderer.on(IPC.APP_TOGGLE_NOTES, listener);
+      return () => ipcRenderer.removeListener(IPC.APP_TOGGLE_NOTES, listener);
     },
     onNewTab: (cb) => {
       const listener = () => cb();

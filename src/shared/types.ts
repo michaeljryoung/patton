@@ -101,6 +101,10 @@ export interface PattonAPI {
     get: () => Promise<AppSettings>;
     set: (settings: Partial<AppSettings>) => Promise<void>;
   };
+  notes: {
+    get: () => Promise<string>;
+    set: (content: string) => Promise<void>;
+  };
   session: {
     get: () => Promise<SessionState | null>;
     set: (session: SessionState | null) => Promise<void>;
@@ -119,6 +123,7 @@ export interface PattonAPI {
   };
   app: {
     onSettings: (callback: () => void) => () => void;
+    onToggleNotes: (callback: () => void) => () => void;
     onNewTab: (callback: () => void) => () => void;
     onCloseTab: (callback: () => void) => () => void;
     onNextTab: (callback: () => void) => () => void;
