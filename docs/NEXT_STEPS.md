@@ -1,6 +1,6 @@
 # Patton — Next Steps
 
-Last updated: 2026-07-07 (Session 34)
+Last updated: 2026-07-29 (Session 35)
 
 CLAUDE.md's `## Next Steps` section points here; this is the canonical list. Items leave only via `[x] DONE — Session N`, `[~] SUPERSEDED — <pointer>`, or `[-] DROPPED: <reason>`. Marked items linger 10 checkpoints, then sweep to `docs/session-archive.md`.
 
@@ -15,6 +15,7 @@ CLAUDE.md's `## Next Steps` section points here; this is the canonical list. Ite
 - [ ] **`/mcp`-auth Enter unresponsiveness — watching brief** (S23). On next recurrence of any Claude Code blocking prompt where Enter appears dead: (1) press Ctrl+C — if it aborts, stdin is flowing, it's a Claude Code bug, stop here. (2) press any letter key — if nothing happens, it's Patton keystroke-delivery; add a dev-toggleable keystroke tracer to `terminal-view.ts` that file-logs every `onKey` event and repro. Notes in `~/.claude/plans/enchanted-sauteeing-moonbeam.md`.
 - [ ] **Validate session 22 changes in real use** — Path A (command-done) verified live. Path B (Claude Code title prefix) and Path C (OSC 9) still need observation in everyday Claude Code workflow. Quit-confirmation dialog still needs a real-world trigger to confirm UX.
 - [ ] **Validate session 20+21 changes in real use** — `patton-health` alias + file logger ready. Watch for: duplicate notifications firing (K3 regression), `safeStorage` migration failures, crash counter false-tripping, unexpected WebGL context-loss rate.
+- [ ] **Judge the S35 ESLint PostToolUse pilot** (estate session, 2026-07-29) after the first real coding session — lint findings now surface at edit time via the hook in `.claude/settings.local.json`; keep/tune, or delete its `hooks` block if it's noise.
 
 ## Distribution / packaging
 
