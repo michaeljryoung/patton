@@ -13,6 +13,12 @@ export interface ConfirmOptions {
  * overlay, focus trap, ARIA) but is content-agnostic. Defaults keyboard focus
  * to Cancel so a stray Enter/Escape dismisses without performing the action —
  * the protective convention the native ⌘Q quit-confirm already uses.
+ *
+ * Fully keyboard-drivable: ←/→ move between the buttons and Enter activates the
+ * focused one, so confirming is → then Enter — two deliberate keystrokes rather
+ * than a reach for the mouse, while a reflexive bare Enter still cancels. The
+ * focused button carries a visible ring (see `.confirm-dialog-footer button` in
+ * settings.css); without it the arrow keys would move an invisible selection.
  */
 export class ConfirmDialog {
   private overlay: HTMLElement;
@@ -53,6 +59,16 @@ export class ConfirmDialog {
       if (e.key === 'Escape') {
         e.stopPropagation();
         this.finish(false);
+        return;
+      }
+      // Left/Right move between the two buttons, so the whole dialog is
+      // keyboard-drivable: → then Enter closes, Enter alone still cancels.
+      // Explicit per-key targets rather than index maths — there are exactly
+      // two buttons and this reads as what it does.
+      if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+        e.preventDefault();
+        e.stopPropagation();
+        (e.key === 'ArrowRight' ? confirmBtn : cancelBtn).focus();
         return;
       }
       // Confirm on Enter only when the focused control is the confirm button,

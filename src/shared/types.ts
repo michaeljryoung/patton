@@ -54,9 +54,19 @@ export interface SessionSplitState {
 
 export type SessionTreeNode = SessionPaneState | SessionSplitState;
 
+/**
+ * Manual colour flag a user puts on a tab (right-click → Flag) to track what
+ * still needs coming back to. Deliberately independent of the automatic
+ * "awaiting input" dot: that one is raised and cleared by shell activity, this
+ * one only ever by the user — including surviving tab activation, which is the
+ * whole point (reading a tab shouldn't erase your note-to-self about it).
+ */
+export type TabFlag = 'green' | 'yellow' | 'red';
+
 export interface SessionTabState {
   title?: string;
   customTitle?: boolean;
+  flag?: TabFlag;
   tree: SessionTreeNode;
   focusedPaneIndex: number;
 }

@@ -11,7 +11,7 @@ import {
   type SplitTreeNode,
   type SplitDirection,
 } from './split-tree';
-import type { SessionTreeNode, SessionTabState, SessionPaneState } from '../../shared/types';
+import type { SessionTreeNode, SessionTabState, SessionPaneState, TabFlag } from '../../shared/types';
 import type { ITheme } from '@xterm/xterm';
 import { DEFAULTS } from '../../shared/constants';
 
@@ -43,6 +43,10 @@ export class Tab {
   // waiting for input. Cleared when the tab becomes active or when any
   // pane starts running a new command.
   private _awaitingInput = false;
+  // User-set colour flag (right-click a tab → Flag). Unlike _awaitingInput this
+  // is never touched by shell activity or by activating the tab — only the user
+  // sets or clears it. See TabFlag in shared/types.ts.
+  private _flag: TabFlag | null = null;
 
   constructor(initialCwd?: string) {
     this.id = `tab-${++tabIdCounter}`;
@@ -196,6 +200,19 @@ export class Tab {
 
   get hasCustomTitle(): boolean {
     return this._customTitle;
+  }
+
+  /** Set or clear the manual colour flag. Passing the flag already set clears
+   *  it, so picking the same colour twice toggles it off. */
+  setFlag(flag: TabFlag | null): void {
+    const next = this._flag === flag ? null : flag;
+    if (next === this._flag) return;
+    this._flag = next;
+    this.onTitleChanged?.();
+  }
+
+  get flag(): TabFlag | null {
+    return this._flag;
   }
 
   // ---- Split operations ----
@@ -521,6 +538,7 @@ export class Tab {
     return {
       title: this._customTitle ? this.title : undefined,
       customTitle: this._customTitle || undefined,
+      flag: this._flag ?? undefined,
       tree: await serialize(this.rootNode),
       focusedPaneIndex: focusedIndex >= 0 ? focusedIndex : 0,
     };
@@ -583,6 +601,8 @@ export class Tab {
         tab.element.appendChild(pane.element);
       }
     }
+
+    tab._flag = state.flag ?? null;
 
     if (state.customTitle && state.title) {
       tab.title = state.title;

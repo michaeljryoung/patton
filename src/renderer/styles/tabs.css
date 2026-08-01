@@ -168,6 +168,33 @@
   50%      { opacity: 0.55; }
 }
 
+/* --- Manual colour flags (right-click a tab → Flag) ---
+ * Same dot, user-chosen colour. Deliberately NOT animated: the pulse means
+ * "this just happened, look now", whereas a flag is a standing note-to-self.
+ * Keeping the animation off is what lets you tell the two apart at a glance
+ * when both kinds of dot are on screen. Colours are self-contained here rather
+ * than new global tokens — nothing else in the app needs a "flag yellow". */
+.tab-bar-tab-indicator.flag-green,
+.tab-bar-tab-indicator.flag-yellow,
+.tab-bar-tab-indicator.flag-red {
+  animation: none;
+}
+
+.tab-bar-tab-indicator.flag-green {
+  background: #22c55e;
+  box-shadow: 0 0 2px #22c55e, 0 0 8px #22c55e;
+}
+
+.tab-bar-tab-indicator.flag-yellow {
+  background: #eab308;
+  box-shadow: 0 0 2px #eab308, 0 0 8px #eab308;
+}
+
+.tab-bar-tab-indicator.flag-red {
+  background: #ef4444;
+  box-shadow: 0 0 2px #ef4444, 0 0 8px #ef4444;
+}
+
 .tab-bar-tab-rename {
   flex: 1;
   min-width: 40px;

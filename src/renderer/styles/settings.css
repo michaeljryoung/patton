@@ -383,6 +383,15 @@ select.settings-input {
   transition: background 0.12s;
 }
 
+/* The dialog is driven with ←/→ + Enter, so the focused button must be
+   unmistakable — without a ring the arrow keys move an invisible selection and
+   the dialog reads as mouse-only. Not :focus-visible: focus here is moved
+   programmatically and by arrow keys, which :focus-visible may not match. */
+.confirm-dialog-footer button:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .confirm-dialog-cancel {
   background: var(--bg-tertiary);
   color: var(--text-primary);

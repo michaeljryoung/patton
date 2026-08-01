@@ -1,3 +1,6 @@
+import { ContextMenu } from './context-menu';
+import type { TabFlag } from '../../shared/types';
+
 export interface TabBarCallbacks {
   onSelect: (id: string) => void;
   onClose: (id: string) => void;
@@ -5,6 +8,7 @@ export interface TabBarCallbacks {
   onReorder: (fromId: string, toId: string) => void;
   onSettings: () => void;
   onRename: (id: string, name: string) => void;
+  onSetFlag: (id: string, flag: TabFlag | null) => void;
 }
 
 interface TabHeaderInfo {
@@ -12,13 +16,23 @@ interface TabHeaderInfo {
   title: string;
   active: boolean;
   awaitingInput?: boolean;
+  flag?: TabFlag | null;
 }
+
+/** Right-click menu entries for the colour flags, in a fixed order so the
+ *  positions stay muscle-memory stable. */
+const FLAG_CHOICES: { flag: TabFlag; label: string }[] = [
+  { flag: 'green', label: 'Green' },
+  { flag: 'yellow', label: 'Yellow' },
+  { flag: 'red', label: 'Red' },
+];
 
 export class TabBar {
   private container: HTMLElement;
   private tabsContainer: HTMLElement;
   private callbacks: TabBarCallbacks;
   private draggedId: string | null = null;
+  private contextMenu = new ContextMenu();
 
   constructor(container: HTMLElement, callbacks: TabBarCallbacks) {
     this.container = container;
@@ -167,16 +181,43 @@ export class TabBar {
         }
       });
 
-      // "Awaiting input" dot — only for inactive tabs whose shell is at a prompt.
-      // Guarded on !active so the dot never flickers in if the state races tab
-      // activation.
-      if (tab.awaitingInput && !tab.active) {
+      // One dot slot, two sources. A user-set flag wins and shows even on the
+      // active tab — it's a deliberate marker, so hiding it on the tab you're
+      // looking at would defeat the point. The automatic "awaiting input" dot
+      // stays inactive-only and pulses; a flag is static, so at a glance you
+      // can tell "something just happened here" from "I marked this".
+      if (tab.flag) {
+        const dot = document.createElement('span');
+        dot.className = `tab-bar-tab-indicator flag-${tab.flag}`;
+        dot.setAttribute('aria-label', `Flagged ${tab.flag}`);
+        dot.setAttribute('role', 'img');
+        el.appendChild(dot);
+      } else if (tab.awaitingInput && !tab.active) {
         const dot = document.createElement('span');
         dot.className = 'tab-bar-tab-indicator';
         dot.setAttribute('aria-label', 'Awaiting input');
         dot.setAttribute('role', 'img');
         el.appendChild(dot);
       }
+
+      // Right-click → set/clear the colour flag.
+      el.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.contextMenu.show(e.clientX, e.clientY, [
+          ...FLAG_CHOICES.map(({ flag, label }) => ({
+            // A check marks the current flag, and re-picking it clears — so the
+            // menu doubles as the toggle rather than needing a separate step.
+            label: tab.flag === flag ? `✓ ${label}` : label,
+            action: () => this.callbacks.onSetFlag(tab.id, flag),
+          })),
+          { separator: true as const },
+          {
+            label: 'Clear Flag',
+            action: () => this.callbacks.onSetFlag(tab.id, null),
+          },
+        ]);
+      });
 
       const titleSpan = document.createElement('span');
       titleSpan.className = 'tab-bar-tab-title';
@@ -293,6 +334,7 @@ export class TabBar {
   }
 
   dispose(): void {
+    this.contextMenu.dispose();
     this.container.innerHTML = '';
   }
 }

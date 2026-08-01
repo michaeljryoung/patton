@@ -4,7 +4,7 @@ import { TabBar } from '../components/tab-bar';
 import { ConfirmDialog } from '../components/confirm-dialog';
 import { HistoryManager } from './history-manager';
 import { announce } from './announcer';
-import type { SessionState, RendererMode } from '../../shared/types';
+import type { SessionState, RendererMode, TabFlag } from '../../shared/types';
 import type { ITheme } from '@xterm/xterm';
 
 interface ClosedPaneState {
@@ -48,6 +48,7 @@ export class TabManager {
       onReorder: (fromId, toId) => this.reorder(fromId, toId),
       onSettings: () => options?.onSettings?.(),
       onRename: (id, name) => this.renameTab(id, name),
+      onSetFlag: (id, flag) => this.setTabFlag(id, flag),
     });
     this.onCommandDone = options?.onCommandDone || null;
 
@@ -231,6 +232,16 @@ export class TabManager {
     const tab = this.tabs.find(t => t.id === id);
     if (tab) {
       tab.setCustomTitle(name);
+      this.updateTabBar();
+    }
+  }
+
+  /** Set or clear a tab's manual colour flag. Persistence rides the existing
+   *  30s session autosave, same as renameTab. */
+  setTabFlag(id: string, flag: TabFlag | null): void {
+    const tab = this.tabs.find(t => t.id === id);
+    if (tab) {
+      tab.setFlag(flag);
       this.updateTabBar();
     }
   }
@@ -520,6 +531,7 @@ export class TabManager {
         title: t.title,
         active: t.id === this.activeTab?.id,
         awaitingInput: t.awaitingInput,
+        flag: t.flag,
       })),
     );
   }
