@@ -1,7 +1,34 @@
 import { app, Menu, BrowserWindow } from 'electron';
 import { IPC } from '../shared/constants';
+import { shortcut } from '../shared/shortcuts';
 import { createWindow } from './window-manager';
 import type { PtyManager } from './pty-manager';
+
+/**
+ * Build a menu item from the shortcuts registry. Only the menu's *structure*
+ * (which submenu, what order, where the separators go) lives here — the label
+ * and accelerator come from `shared/shortcuts.ts`, so the menu can't drift from
+ * the command palette or the Settings grid.
+ */
+function menuItem(
+  id: string,
+  click: Electron.MenuItemConstructorOptions['click'],
+): Electron.MenuItemConstructorOptions {
+  const s = shortcut(id);
+  if (s.rendererOnly) {
+    // A menu accelerator is consumed by the main process before the renderer's
+    // keydown listener ever runs, so registering one here would break the binding.
+    throw new Error(`Shortcut "${id}" is rendererOnly and must not become a menu item`);
+  }
+  return { label: s.menuLabel ?? s.label, accelerator: s.accelerator, click };
+}
+
+/** Menu item that forwards to the focused window's renderer over IPC. */
+function sendItem(id: string, channel: string): Electron.MenuItemConstructorOptions {
+  return menuItem(id, (_item, window) => {
+    (window as BrowserWindow | undefined)?.webContents.send(channel);
+  });
+}
 
 export function buildMenu(ptyManager?: PtyManager): void {
   const template: Electron.MenuItemConstructorOptions[] = [
@@ -10,14 +37,8 @@ export function buildMenu(ptyManager?: PtyManager): void {
       submenu: [
         { role: 'about' },
         { type: 'separator' },
-        {
-          label: 'Preferences...',
-          accelerator: 'CmdOrCtrl+,',
-          click: (_item, window) => {
-            // Handled in renderer via keydown listener
-            (window as BrowserWindow | undefined)?.webContents.send(IPC.APP_SETTINGS);
-          },
-        },
+        // Handled in the renderer via its settings listener
+        sendItem('settings', IPC.APP_SETTINGS),
         { type: 'separator' },
         { role: 'services' },
         { type: 'separator' },
@@ -31,86 +52,26 @@ export function buildMenu(ptyManager?: PtyManager): void {
     {
       label: 'File',
       submenu: [
-        {
-          label: 'Save Terminal Output...',
-          accelerator: 'CmdOrCtrl+S',
-          click: (_item, window) => {
-            (window as BrowserWindow | undefined)?.webContents.send(IPC.APP_SAVE_TERMINAL_MENU);
-          },
-        },
+        sendItem('save-terminal', IPC.APP_SAVE_TERMINAL_MENU),
       ],
     },
     {
       label: 'Shell',
       submenu: [
-        {
-          label: 'New Tab',
-          accelerator: 'CmdOrCtrl+T',
-          click: (_item, window) => {
-            (window as BrowserWindow | undefined)?.webContents.send(IPC.APP_NEW_TAB);
-          },
-        },
-        {
-          label: 'Close Tab',
-          accelerator: 'CmdOrCtrl+W',
-          click: (_item, window) => {
-            (window as BrowserWindow | undefined)?.webContents.send(IPC.APP_CLOSE_TAB);
-          },
-        },
+        sendItem('new-tab', IPC.APP_NEW_TAB),
+        sendItem('close-pane', IPC.APP_CLOSE_TAB),
         { type: 'separator' },
-        {
-          label: 'Split Pane Right',
-          accelerator: 'CmdOrCtrl+D',
-          click: (_item, window) => {
-            (window as BrowserWindow | undefined)?.webContents.send(IPC.APP_SPLIT_VERTICAL);
-          },
-        },
-        {
-          label: 'Split Pane Down',
-          accelerator: 'CmdOrCtrl+Shift+D',
-          click: (_item, window) => {
-            (window as BrowserWindow | undefined)?.webContents.send(IPC.APP_SPLIT_HORIZONTAL);
-          },
-        },
-        {
-          label: 'Zoom Split',
-          accelerator: 'CmdOrCtrl+Shift+Enter',
-          click: (_item, window) => {
-            (window as BrowserWindow | undefined)?.webContents.send(IPC.APP_SPLIT_ZOOM);
-          },
-        },
+        sendItem('split-vertical', IPC.APP_SPLIT_VERTICAL),
+        sendItem('split-horizontal', IPC.APP_SPLIT_HORIZONTAL),
+        sendItem('zoom-split', IPC.APP_SPLIT_ZOOM),
         { type: 'separator' },
-        {
-          label: 'Broadcast Input',
-          accelerator: 'CmdOrCtrl+Shift+B',
-          click: (_item, window) => {
-            (window as BrowserWindow | undefined)?.webContents.send(IPC.APP_BROADCAST_INPUT);
-          },
-        },
+        sendItem('broadcast', IPC.APP_BROADCAST_INPUT),
         { type: 'separator' },
-        {
-          label: 'Toggle Notes',
-          // Ctrl+Cmd+N — deliberately distinct from ⌘N (New Window) and ⌘T
-          // (New Tab): a notes scratchpad is separate from opening a shell.
-          accelerator: 'Control+Command+N',
-          click: (_item, window) => {
-            (window as BrowserWindow | undefined)?.webContents.send(IPC.APP_TOGGLE_NOTES);
-          },
-        },
-        {
-          label: 'New Window',
-          accelerator: 'CmdOrCtrl+N',
-          click: () => {
-            createWindow(ptyManager);
-          },
-        },
-        {
-          label: 'Reopen Closed Tab',
-          accelerator: 'CmdOrCtrl+Shift+T',
-          click: (_item, window) => {
-            (window as BrowserWindow | undefined)?.webContents.send(IPC.APP_UNDO_CLOSE);
-          },
-        },
+        sendItem('toggle-notes', IPC.APP_TOGGLE_NOTES),
+        menuItem('new-window', () => {
+          createWindow(ptyManager);
+        }),
+        sendItem('undo-close', IPC.APP_UNDO_CLOSE),
       ],
     },
     {
@@ -128,65 +89,19 @@ export function buildMenu(ptyManager?: PtyManager): void {
     {
       label: 'View',
       submenu: [
-        {
-          label: 'Find',
-          accelerator: 'CmdOrCtrl+F',
-          click: (_item, window) => {
-            (window as BrowserWindow | undefined)?.webContents.send(IPC.APP_SEARCH);
-          },
-        },
+        sendItem('search', IPC.APP_SEARCH),
         { type: 'separator' },
-        {
-          label: 'Clear Terminal',
-          accelerator: 'CmdOrCtrl+K',
-          click: (_item, window) => {
-            (window as BrowserWindow | undefined)?.webContents.send(IPC.APP_CLEAR);
-          },
-        },
+        sendItem('clear', IPC.APP_CLEAR),
         { type: 'separator' },
-        {
-          label: 'Increase Font Size',
-          accelerator: 'CmdOrCtrl+=',
-          click: (_item, window) => {
-            (window as BrowserWindow | undefined)?.webContents.send(IPC.APP_FONT_SIZE_UP);
-          },
-        },
-        {
-          label: 'Decrease Font Size',
-          accelerator: 'CmdOrCtrl+-',
-          click: (_item, window) => {
-            (window as BrowserWindow | undefined)?.webContents.send(IPC.APP_FONT_SIZE_DOWN);
-          },
-        },
+        sendItem('font-up', IPC.APP_FONT_SIZE_UP),
+        sendItem('font-down', IPC.APP_FONT_SIZE_DOWN),
         { type: 'separator' },
-        {
-          label: 'Jump to Previous Prompt',
-          accelerator: 'CmdOrCtrl+Shift+Up',
-          click: (_item, window) => {
-            (window as BrowserWindow | undefined)?.webContents.send(IPC.APP_PROMPT_JUMP_UP);
-          },
-        },
-        {
-          label: 'Jump to Next Prompt',
-          accelerator: 'CmdOrCtrl+Shift+Down',
-          click: (_item, window) => {
-            (window as BrowserWindow | undefined)?.webContents.send(IPC.APP_PROMPT_JUMP_DOWN);
-          },
-        },
+        sendItem('prompt-up', IPC.APP_PROMPT_JUMP_UP),
+        sendItem('prompt-down', IPC.APP_PROMPT_JUMP_DOWN),
         { type: 'separator' },
-        {
-          label: 'Command Palette',
-          accelerator: 'CmdOrCtrl+Shift+P',
-          click: (_item, window) => {
-            (window as BrowserWindow | undefined)?.webContents.send(IPC.APP_COMMAND_PALETTE);
-          },
-        },
-        {
-          label: 'Quick Terminal',
-          click: (_item, window) => {
-            (window as BrowserWindow | undefined)?.webContents.send(IPC.APP_QUICK_TERMINAL);
-          },
-        },
+        sendItem('command-palette', IPC.APP_COMMAND_PALETTE),
+        // No accelerator — reached via the configurable global hotkey (main.ts)
+        sendItem('quick-terminal', IPC.APP_QUICK_TERMINAL),
         { type: 'separator' },
         ...(!app.isPackaged ? [
           { role: 'reload' as const },
@@ -201,23 +116,13 @@ export function buildMenu(ptyManager?: PtyManager): void {
         { role: 'minimize' },
         { role: 'zoom' },
         { type: 'separator' },
-        {
-          label: 'Select Next Tab',
-          accelerator: 'CmdOrCtrl+Shift+]',
-          click: (_item, window) => {
-            (window as BrowserWindow | undefined)?.webContents.send(IPC.APP_NEXT_TAB);
-          },
-        },
-        {
-          label: 'Select Previous Tab',
-          accelerator: 'CmdOrCtrl+Shift+[',
-          click: (_item, window) => {
-            (window as BrowserWindow | undefined)?.webContents.send(IPC.APP_PREV_TAB);
-          },
-        },
+        sendItem('next-tab', IPC.APP_NEXT_TAB),
+        sendItem('prev-tab', IPC.APP_PREV_TAB),
         { type: 'separator' },
+        // Nine generated items; the registry lists them as the single
+        // `switch-tab` entry (⌘1–9) for display purposes.
         ...Array.from({ length: 9 }, (_, i) => ({
-          label: `Tab ${i + 1}`,
+          label: `${shortcut('switch-tab').menuLabel} ${i + 1}`,
           accelerator: `CmdOrCtrl+${i + 1}`,
           click: (_item: Electron.MenuItem, window: Electron.BaseWindow | undefined) => {
             (window as BrowserWindow | undefined)?.webContents.send(IPC.APP_SWITCH_TAB, i);

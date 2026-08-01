@@ -1,4 +1,5 @@
 import { trapFocus } from '../services/focus-trap';
+import { shortcutKeys } from '../../shared/shortcuts';
 
 export class Onboarding {
   private overlay: HTMLElement;
@@ -27,14 +28,14 @@ export class Onboarding {
             <span class="onboarding-icon">&#9998;</span>
             <div>
               <strong>Compose Panel</strong>
-              <p>Press <kbd>\u2318E</kbd> to open a text editor for drafting multi-line commands. <kbd>Enter</kbd> sends, <kbd>Esc</kbd> dismisses.</p>
+              <p>Press <kbd>${shortcutKeys('toggle-compose')}</kbd> to open a text editor for drafting multi-line commands. <kbd>Enter</kbd> sends, <kbd>Esc</kbd> dismisses.</p>
             </div>
           </div>
           <div class="onboarding-feature">
             <span class="onboarding-icon">&#8984;</span>
             <div>
               <strong>Key Shortcuts</strong>
-              <p><kbd>\u2318D</kbd> split pane &middot; <kbd>\u2318T</kbd> new tab &middot; <kbd>\u2318,</kbd> settings &middot; <kbd>\u2318\u21E7P</kbd> command palette</p>
+              <p><kbd>${shortcutKeys('split-vertical')}</kbd> split pane &middot; <kbd>${shortcutKeys('new-tab')}</kbd> new tab &middot; <kbd>${shortcutKeys('settings')}</kbd> settings &middot; <kbd>${shortcutKeys('command-palette')}</kbd> command palette</p>
             </div>
           </div>
         </div>

@@ -86,6 +86,9 @@ export const DEFAULTS = {
   // paste can't bloat the encrypted config file) and the panel's default width.
   NOTES_MAX_CHARS: 1_000_000,
   NOTES_PANEL_WIDTH: 360,
+  // Quick-terminal global hotkey. Configurable via the `globalHotkey` setting;
+  // this is the fallback used by main.ts and shown in Settings when unset.
+  GLOBAL_HOTKEY: 'Control+`',
 } as const;
 
 export const PATTON_QUOTES = [

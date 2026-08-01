@@ -1,5 +1,12 @@
 import { TabManager } from './tab-manager';
 
+/**
+ * Renderer-side keystrokes — the ones the application menu can't own, because a
+ * menu accelerator is consumed by the main process before the renderer sees the
+ * key. Each binding below has a matching `rendererOnly` entry in
+ * `shared/shortcuts.ts`; if you change a key here, change it there too, or the
+ * Settings grid and command palette will advertise the old one.
+ */
 export class KeybindingManager {
   private tabManager: TabManager;
   private handler: (e: KeyboardEvent) => void;

@@ -7,6 +7,7 @@ import { ContextMenu } from './context-menu';
 import { HistoryManager } from '../services/history-manager';
 import { FileLinkProvider } from '../services/file-link-provider';
 import { PATTON_QUOTES } from '../../shared/constants';
+import { shortcutKeys } from '../../shared/shortcuts';
 
 import type { ITheme } from '@xterm/xterm';
 
@@ -322,7 +323,7 @@ export class Pane {
       this.contextMenu.show(e.clientX, e.clientY, [
         ...(hasSelection ? [{
           label: 'Copy',
-          shortcut: '\u2318C',
+          shortcut: shortcutKeys('copy'),
           action: () => {
             const sel = this.terminalView.terminal.getSelection();
             if (sel) navigator.clipboard.writeText(sel);
@@ -330,7 +331,7 @@ export class Pane {
         }] : []),
         {
           label: 'Paste',
-          shortcut: '\u2318V',
+          shortcut: shortcutKeys('paste'),
           action: () => {
             navigator.clipboard.readText().then(text => {
               if (text) this.safePaste(text);
@@ -340,25 +341,25 @@ export class Pane {
         { separator: true as const },
         {
           label: 'Compose',
-          shortcut: '\u2318E',
+          shortcut: shortcutKeys('toggle-compose'),
           action: () => this.toggleCompose(),
         },
         {
           label: 'Clear',
-          shortcut: '\u2318K',
+          shortcut: shortcutKeys('clear'),
           action: () => this.terminalView.clear(),
         },
         { separator: true as const },
         {
           label: 'Split Right',
-          shortcut: '\u2318D',
+          shortcut: shortcutKeys('split-vertical'),
           action: () => {
             this.element.dispatchEvent(new CustomEvent('pane-split', { detail: 'vertical', bubbles: true }));
           },
         },
         {
           label: 'Split Down',
-          shortcut: '\u2318\u21E7D',
+          shortcut: shortcutKeys('split-horizontal'),
           action: () => {
             this.element.dispatchEvent(new CustomEvent('pane-split', { detail: 'horizontal', bubbles: true }));
           },

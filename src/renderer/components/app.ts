@@ -9,6 +9,7 @@ import { QuickTerminal } from './quick-terminal';
 import { NotesPanel } from './notes-panel';
 import { Onboarding } from './onboarding';
 import { DEFAULTS } from '../../shared/constants';
+import { paletteShortcuts, displayKeys } from '../../shared/shortcuts';
 
 export class App {
   private tabManager: TabManager;
@@ -390,33 +391,19 @@ export class App {
 
   private getPaletteActions(): { label: string; shortcut?: string; action: string }[] {
     return [
-      { label: 'New Tab', shortcut: '\u2318T', action: 'new-tab' },
-      { label: 'Close Pane', shortcut: '\u2318W', action: 'close-pane' },
-      { label: 'Split Pane Right', shortcut: '\u2318D', action: 'split-vertical' },
-      { label: 'Split Pane Down', shortcut: '\u2318\u21E7D', action: 'split-horizontal' },
-      { label: 'Zoom Split', shortcut: '\u2318\u21E7\u23CE', action: 'zoom-split' },
-      { label: 'Reopen Closed Tab', shortcut: '\u2318\u21E7T', action: 'undo-close' },
-      { label: 'Find', shortcut: '\u2318F', action: 'search' },
-      { label: 'Clear Terminal', shortcut: '\u2318K', action: 'clear' },
-      { label: 'Increase Font Size', shortcut: '\u2318=', action: 'font-up' },
-      { label: 'Decrease Font Size', shortcut: '\u2318-', action: 'font-down' },
-      { label: 'Next Tab', shortcut: '\u2318\u21E7]', action: 'next-tab' },
-      { label: 'Previous Tab', shortcut: '\u2318\u21E7[', action: 'prev-tab' },
-      { label: 'Toggle Compose Panel', shortcut: '\u2318E', action: 'toggle-compose' },
-      { label: 'History Search', shortcut: '\u2303R', action: 'history-search' },
-      { label: 'Jump to Previous Prompt', shortcut: '\u2318\u21E7\u2191', action: 'prompt-up' },
-      { label: 'Jump to Next Prompt', shortcut: '\u2318\u21E7\u2193', action: 'prompt-down' },
-      { label: 'Broadcast Input', shortcut: '\u2318\u21E7B', action: 'broadcast' },
-      { label: 'Quick Terminal', action: 'quick-terminal' },
-      { label: 'Toggle Notes', shortcut: '\u2303\u2318N', action: 'toggle-notes' },
-      { label: 'Save Terminal Output', shortcut: '\u2318S', action: 'save-terminal' },
-      { label: 'Reset Renderer', shortcut: '\u2318\u21E7K', action: 'reset-renderer' },
-      { label: 'Capture Renderer State', action: 'capture-render-state' },
+      // Generated from the shortcuts registry \u2014 adding a `palette: true` entry
+      // there is all it takes to list a command here.
+      ...paletteShortcuts().map((s) => ({
+        label: s.label,
+        shortcut: displayKeys(s) || undefined,
+        action: s.id,
+      })),
+      // The one entry whose label depends on runtime state, so it can't come
+      // from the static registry.
       { label: this.tabManager.getRenderer() === 'webgl'
           ? 'Switch to Compatibility Renderer (fixes garbled text)'
           : 'Switch to GPU Renderer (fast)',
         action: 'toggle-renderer' },
-      { label: 'Settings', shortcut: '\u2318,', action: 'settings' },
     ];
   }
 

@@ -1,5 +1,6 @@
 import type { AppSettings } from '../../shared/types';
 import { DEFAULTS } from '../../shared/constants';
+import { settingsShortcuts, displayKeys, acceleratorToDisplay } from '../../shared/shortcuts';
 import { trapFocus } from '../services/focus-trap';
 
 export class SettingsPanel {
@@ -9,6 +10,9 @@ export class SettingsPanel {
   private cachedSettings: AppSettings | null = null;
   private disposables: (() => void)[] = [];
   private releaseFocusTrap: (() => void) | null = null;
+  /** Global hotkey the shortcuts grid was last rendered with, so re-opening the
+   *  panel doesn't rebuild an unchanged grid. */
+  private renderedHotkey: string | null = null;
 
   constructor(container: HTMLElement, onSettingsChanged: (settings: Partial<AppSettings>) => void) {
     this.onSettingsChanged = onSettingsChanged;
@@ -137,22 +141,10 @@ export class SettingsPanel {
           </div>
           <div class="shortcuts-section">
             <h3 class="shortcuts-title">Keyboard Shortcuts</h3>
-            <div class="shortcuts-grid">
-              <kbd>\u2318D</kbd><span>Split pane right</span>
-              <kbd>\u2318\u21E7D</kbd><span>Split pane down</span>
-              <kbd>\u2318\u2325\u2190\u2191\u2193\u2192</kbd><span>Navigate panes</span>
-              <kbd>\u2318W</kbd><span>Close pane / tab</span>
-              <kbd>\u2318T</kbd><span>New tab</span>
-              <kbd>\u2318K</kbd><span>Clear terminal</span>
-              <kbd>\u2318F</kbd><span>Find</span>
-              <kbd>\u2318,</kbd><span>Settings</span>
-              <kbd>\u2318\u21E7\u23CE</kbd><span>Zoom split</span>
-              <kbd>\u2318\u21E7T</kbd><span>Reopen closed tab</span>
-              <kbd>\u2318\u21E7P</kbd><span>Command palette</span>
-              <kbd>\u2318\u21E7\u2191\u2193</kbd><span>Jump between prompts</span>
-              <kbd>\u2318E</kbd><span>Compose panel</span>
-              <kbd>\u2303R</kbd><span>History search</span>
-            </div>
+            <!-- Rendered from the shortcuts registry by renderShortcuts(). Never
+                 hand-maintain rows here: this list silently drifted for eight
+                 shortcuts before S36 (see src/shared/shortcuts.ts). -->
+            <div class="shortcuts-grid"></div>
           </div>
         </div>
       </div>
@@ -254,6 +246,33 @@ export class SettingsPanel {
     listen(shellIntegrationInput, 'change', () => {
       this.saveAndNotify({ shellIntegration: shellIntegrationInput.checked });
     });
+
+    // Render with the default hotkey now; populateValues() re-renders once real
+    // settings arrive, so the grid is never empty even if they never do.
+    this.renderShortcuts(DEFAULTS.GLOBAL_HOTKEY);
+  }
+
+  /**
+   * Fill the Keyboard Shortcuts grid from `shared/shortcuts.ts`. This is the
+   * whole point of the registry: a shortcut added there appears here with no
+   * edit to this file.
+   */
+  private renderShortcuts(globalHotkey: string): void {
+    if (this.renderedHotkey === globalHotkey) return;
+    this.renderedHotkey = globalHotkey;
+
+    const grid = this.overlay.querySelector('.shortcuts-grid') as HTMLElement;
+    grid.replaceChildren(
+      ...settingsShortcuts().flatMap((s) => {
+        const keys = document.createElement('kbd');
+        // Quick Terminal is bound to the configurable global hotkey, so its keys
+        // come from settings rather than from a fixed registry accelerator.
+        keys.textContent = s.id === 'quick-terminal' ? acceleratorToDisplay(globalHotkey) : displayKeys(s);
+        const label = document.createElement('span');
+        label.textContent = s.label;
+        return [keys, label];
+      }),
+    );
   }
 
   private saveAndNotify(settings: Partial<AppSettings>): void {
@@ -290,6 +309,8 @@ export class SettingsPanel {
   }
 
   private populateValues(settings: AppSettings): void {
+    this.renderShortcuts(settings.globalHotkey || DEFAULTS.GLOBAL_HOTKEY);
+
     (this.overlay.querySelector('#setting-font-size') as HTMLInputElement).value = String(settings.fontSize);
     (this.overlay.querySelector('#setting-scrollback') as HTMLInputElement).value = String(settings.scrollback);
     (this.overlay.querySelector('#setting-renderer') as HTMLSelectElement).value = settings.renderer || 'dom';

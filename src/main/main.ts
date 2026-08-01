@@ -6,6 +6,7 @@ import { createWindow } from './window-manager';
 import { buildMenu } from './menu';
 import { getSettings } from './store';
 import { installFileLogger } from './logger';
+import { DEFAULTS } from '../shared/constants';
 
 if (started) {
   app.quit();
@@ -74,7 +75,7 @@ app.on('ready', () => {
     registerIpcHandlers(ptyManager);
     buildMenu(ptyManager);
     createWindow(ptyManager);
-    const hotkey = settings.globalHotkey || 'Control+`';
+    const hotkey = settings.globalHotkey || DEFAULTS.GLOBAL_HOTKEY;
     try {
       const registered = globalShortcut.register(hotkey, () => {
         const windows = BrowserWindow.getAllWindows();
