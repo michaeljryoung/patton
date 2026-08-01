@@ -63,9 +63,18 @@ const config: ForgeConfig = {
           stdio: 'inherit',
         });
 
-        // Copy to /Applications so dock shortcut always points to latest build
+        // Copy to /Applications so the dock shortcut always points at the latest
+        // build. `ditto` overwrites in place instead of `rm -rf` + `cp -R`: the
+        // post-commit hook runs this on EVERY commit, and deleting the bundle
+        // out from under a running Patton kills it the next time it lazily
+        // loads anything from the bundle (S36 — cost a live session mid-work).
+        // macOS keeps a running process's open inodes alive across an
+        // overwrite, which is the same no-force-quit path S31 validated for
+        // installing a released DMG over the running app.
+        // Trade-off: files that disappear in a newer build can linger here, so
+        // remove /Applications/Patton.app by hand if you need a clean install.
         const dest = '/Applications/Patton.app';
-        execSync(`rm -rf "${dest}" && cp -R "${appPath}" "${dest}"`, { stdio: 'inherit' });
+        execSync(`ditto "${appPath}" "${dest}"`, { stdio: 'inherit' });
         console.log(`\n✅ Installed to ${dest}`);
       }
     },
