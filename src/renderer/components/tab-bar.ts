@@ -48,6 +48,11 @@ export class TabBar {
   private callbacks: TabBarCallbacks;
   private draggedId: string | null = null;
   private contextMenu = new ContextMenu();
+  // update() rebuilds every tab element, which would destroy an open rename
+  // box mid-typing whenever any tab's title or dot changes. While a box is
+  // open, the latest update is held here and applied when the box closes.
+  private renameOpen = false;
+  private heldUpdate: TabHeaderInfo[] | null = null;
 
   constructor(container: HTMLElement, callbacks: TabBarCallbacks) {
     this.container = container;
@@ -138,6 +143,11 @@ export class TabBar {
   }
 
   update(tabs: TabHeaderInfo[]): void {
+    if (this.renameOpen) {
+      this.heldUpdate = tabs;
+      return;
+    }
+    this.heldUpdate = null;
     this.tabsContainer.innerHTML = '';
     for (const tab of tabs) {
       const el = document.createElement('div');
@@ -354,20 +364,29 @@ export class TabBar {
 
     let committed = false;
 
+    // Put the title back and let updates through again. The update held while
+    // the box was open is applied after any rebuild the commit itself causes.
+    const close = () => {
+      input.replaceWith(titleSpan);
+      this.renameOpen = false;
+    };
+
     const commit = () => {
       if (committed) return;
       committed = true;
       const name = input.value.trim();
+      close();
       if (name !== opts.value) {
         opts.onCommit(name);
       }
-      input.replaceWith(titleSpan);
+      this.applyHeldUpdate();
     };
 
     const cancel = () => {
       if (committed) return;
       committed = true;
-      input.replaceWith(titleSpan);
+      close();
+      this.applyHeldUpdate();
     };
 
     input.addEventListener('keydown', (e) => {
@@ -378,9 +397,16 @@ export class TabBar {
     input.addEventListener('blur', commit);
     input.addEventListener('click', (e) => e.stopPropagation());
 
+    this.renameOpen = true;
     titleSpan.replaceWith(input);
     input.select();
     input.focus();
+  }
+
+  /** Apply the update held back while a rename box was open, if it is still
+   *  pending (a commit that renamed something has usually rebuilt the bar already). */
+  private applyHeldUpdate(): void {
+    if (this.heldUpdate) this.update(this.heldUpdate);
   }
 
   dispose(): void {

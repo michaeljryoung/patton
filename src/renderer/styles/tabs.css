@@ -141,12 +141,12 @@
 }
 
 /* "Awaiting input" indicator — small dot before the tab title when an
- * inactive tab has a meaningful attention signal (command-done, Claude
- * Code title prefix, OSC 9 notification, bell). Uses the same green
+ * inactive tab needs the user (Claude Code stopped working, a shell command
+ * finished, OSC 9 notification, bell). Uses the same green
  * token as the prompt-ready editor glow so the visual language stays
  * consistent. Dual box-shadow (inner bright core + outer halo) plus a
- * slow pulse lift it above Claude Code's inline "·" title character so
- * the user can tell the two apart at a glance.
+ * slow pulse lift it above the glyph Claude Code puts at the start of its
+ * title (◐/◑ working, ✳ stopped) so the user can tell them apart at a glance.
  *
  * The global prefers-reduced-motion rule in main.css zeroes animation
  * duration, giving motion-averse users a static dot for free. */

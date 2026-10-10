@@ -49,11 +49,13 @@ export class Tab {
   // "awaiting input" indicator — active tabs never show it (the user
   // is already looking at them).
   private _isActive = false;
-  // True when an inactive tab's shell has returned to a prompt and is
-  // waiting for input. Cleared when the tab becomes active or when any
-  // pane starts running a new command.
-  private _awaitingInput = false;
-  // User-set colour flag (right-click a tab → Flag). Unlike _awaitingInput this
+  // Panes that need the user (Claude stopped, a command finished, a bell or
+  // notification) while this tab was inactive; the green dot shows while any
+  // do. Tracked per pane so one pane resuming work can't clear a dot another
+  // pane raised. Emptied when the tab becomes active; a pane leaves the set
+  // when it starts working again or closes.
+  private _panesNeedingYou = new Set<Pane>();
+  // User-set colour flag (right-click a tab → Flag). Unlike the green dot this
   // is never touched by shell activity or by activating the tab — only the user
   // sets or clears it. See TabFlag in shared/types.ts.
   private _flag: TabFlag | null = null;
@@ -90,26 +92,18 @@ export class Tab {
       onFocus: (p) => this.setFocusedPane(p),
       onTitleChange: (p) => {
         if (p === this._focusedPane) this.refreshTitle();
-        // Path B: Claude Code signals "needs attention" by prepending "·" to
-        // its terminal title via OSC 2. Treat any pane whose title arrives
-        // with a leading middle-dot / bullet as awaiting input. Gated on
-        // !_customTitle so a user-chosen tab name like "· notes" doesn't
-        // keep the indicator permanently lit.
-        if (!this._customTitle && /^[·•]/.test(p.title)) {
-          this.raiseAwaitingInput();
-        }
       },
       onCwdChange: (p) => {
         if (p === this._focusedPane) this.lookUpProject();
       },
       onCommandDone: () => {
-        // Path A: any pane command completion (OSC 133 transition, idle
-        // heuristic, bell, OSC 9) is a meaningful attention signal — the
-        // signal is already transition-filtered and cross-source debounced
-        // by fireCommandDone() in pane.ts.
-        this.raiseAwaitingInput();
+        // The pane needs the user: Claude stopped working, a shell command
+        // finished, a bell or an OSC 9 notification. pane.ts filters and
+        // debounces these (fireCommandDone), so every call is a real event.
+        this.raiseAwaitingInput(pane);
         this.onCommandDone?.();
       },
+      onWorkStarted: () => this.clearAwaitingInput(pane),
       onBroadcastWrite: (data) => {
         if (!this._broadcastInput) return;
         // Write to all OTHER panes
@@ -129,28 +123,31 @@ export class Tab {
       this.handlePaneSwap(sourceId, targetId);
     }) as EventListener);
     // Clear the dot the instant a new command starts — the prior signal is
-    // stale the moment work resumes in this pane. OSC 133 'prompt' events
-    // are NOT used to SET the dot any more (they fire too liberally — on
-    // every prompt redraw, resize, session restore); the SET paths are
-    // onCommandDone (Path A) and the title-prefix check (Path B).
+    // stale the moment work resumes in this pane (Claude resuming work clears
+    // it the same way, via onWorkStarted). OSC 133 'prompt' events are NOT
+    // used to SET the dot (they fire too liberally — on every prompt redraw,
+    // resize, session restore); the only SET path is onCommandDone.
     pane.terminalView.onPromptState((state) => {
-      if (state === 'command' && this._awaitingInput) {
-        this._awaitingInput = false;
-        this.onTitleChanged?.();
-      }
+      if (state === 'command') this.clearAwaitingInput(pane);
     });
     this._panes.push(pane);
     return pane;
   }
 
-  private raiseAwaitingInput(): void {
-    if (this._isActive || this._awaitingInput) return;
-    this._awaitingInput = true;
-    this.onTitleChanged?.();
+  private raiseAwaitingInput(pane: Pane): void {
+    if (this._isActive || this._panesNeedingYou.has(pane)) return;
+    const wasShowing = this._panesNeedingYou.size > 0;
+    this._panesNeedingYou.add(pane);
+    if (!wasShowing) this.onTitleChanged?.();
+  }
+
+  private clearAwaitingInput(pane: Pane): void {
+    if (!this._panesNeedingYou.delete(pane)) return;
+    if (this._panesNeedingYou.size === 0) this.onTitleChanged?.();
   }
 
   get awaitingInput(): boolean {
-    return this._awaitingInput;
+    return this._panesNeedingYou.size > 0;
   }
 
   setRegistrationCallbacks(
@@ -349,6 +346,7 @@ export class Tab {
     this.onPaneUnregistered?.(pane);
     const idx = this._panes.indexOf(pane);
     if (idx !== -1) this._panes.splice(idx, 1);
+    this.clearAwaitingInput(pane); // a closed pane can't still need you
     pane.dispose();
 
     this.rootNode = newRoot;
@@ -470,8 +468,8 @@ export class Tab {
     this._isActive = true;
     // Becoming active clears any pending "awaiting input" dot — user is
     // now looking at this tab. Notify so the tab-bar drops the indicator.
-    const wasAwaiting = this._awaitingInput;
-    this._awaitingInput = false;
+    const wasAwaiting = this._panesNeedingYou.size > 0;
+    this._panesNeedingYou.clear();
     this.element.style.display = 'flex';
     for (const pane of this._panes) {
       pane.show();

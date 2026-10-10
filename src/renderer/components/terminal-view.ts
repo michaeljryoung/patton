@@ -260,9 +260,12 @@ export class TerminalView {
 
     // OSC 9: de-facto terminal notification escape (iTerm, macOS Terminal,
     // Alacritty, etc. — emitted by many CLI tools to request user attention).
-    // Collapse any OSC 9 payload into a single "attention wanted" signal —
-    // sub-codes (iTerm progress, dismissals) are not distinguished here.
-    this.terminal.parser.registerOscHandler(9, () => {
+    // OSC 9 is also ConEmu's control channel, whose bodies start with a number
+    // and a semicolon: `4;3;0` is a progress bar, which Claude Code can send
+    // while it WORKS. Those are not requests for attention, so only a
+    // free-text body counts as one.
+    this.terminal.parser.registerOscHandler(9, (data) => {
+      if (/^\d+(;|$)/.test(data)) return true;
       for (const cb of this.osc9Listeners) cb();
       return true;
     });

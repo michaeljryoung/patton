@@ -6,6 +6,7 @@ import { PasteDialog } from './paste-dialog';
 import { ContextMenu } from './context-menu';
 import { HistoryManager } from '../services/history-manager';
 import { FileLinkProvider } from '../services/file-link-provider';
+import { rlog } from '../services/renderer-logger';
 import { PATTON_QUOTES } from '../../shared/constants';
 import { shortcutKeys } from '../../shared/shortcuts';
 
@@ -18,7 +19,10 @@ export interface PaneCallbacks {
   onTitleChange: (pane: Pane) => void;
   /** The pane's working directory became known or changed (polled, so up to ~2s late). */
   onCwdChange?: (pane: Pane) => void;
+  /** The pane now needs the user: Claude stopped, a command finished, a bell or notification. */
   onCommandDone?: () => void;
+  /** Claude Code started working again, so any "needs you" signal is stale. */
+  onWorkStarted?: () => void;
   onBroadcastWrite?: (data: string) => void;
   cwd?: string;
   shell?: string;
@@ -47,36 +51,68 @@ export class Pane {
   private initialCwd: string | undefined;
   private currentCwd = '';
 
-  // --- Command-done coordination ---
-  // Three signals can indicate "command finished": OSC 133 prompt transition
-  // (authoritative when shell integration is on), an activity-based idle
-  // heuristic (fallback for processes that never emit OSC 133, e.g. Claude
-  // Code, npm scripts), and the terminal bell. Without coordination, all
-  // three fire for the same event — so the user gets a triple-notification.
-  private oscHasFired = false;
-  private lastOscFireMs = 0;
+  // --- "Needs you" signals (green dot, sound, notification) ---
+  // Only signals that mean the pane is now waiting on the user: Claude Code
+  // stopping work (see trackClaudeState), a shell command finishing (OSC 133),
+  // the bell, and an OSC 9 notification. There is deliberately no "output went
+  // quiet" guess: it fired whenever Claude paused mid-task or a dev server
+  // went quiet. Several signals can arrive for one event (Claude stopping and
+  // ringing the bell), so they share a short debounce.
   private lastCommandDoneMs = 0;
   private static readonly COMMAND_DONE_DEBOUNCE_MS = 5000;
-  private static readonly OSC_SUPPRESSES_IDLE_MS = 60_000;
+  // Claude Code's terminal title starts with ◐/◑ (alternating) while it works
+  // and ✳ once it stops — finished, or waiting on a question or a dialog.
+  private static readonly CLAUDE_WORKING = /^[◐◑]/;
+  private static readonly CLAUDE_STOPPED = /^✳/;
+  // A stop only counts once it has lasted this long: between the turns of a
+  // queued prompt the title can flash ✳ for a moment while Claude carries on.
+  private static readonly CLAUDE_STOP_SETTLE_MS = 1500;
+  private claudeWorking = false;
+  private claudeStopTimer: ReturnType<typeof setTimeout> | null = null;
 
-  private fireCommandDone(source: 'osc133' | 'idle' | 'bell' | 'osc9'): void {
-    const now = Date.now();
-    // Once OSC 133 has demonstrably fired for this pane, the idle heuristic
-    // is redundant and noisy — suppress it for a window after any OSC 133
-    // signal. (Heuristic stays on for processes that don't emit OSC 133.)
-    if (source === 'idle' && this.oscHasFired && (now - this.lastOscFireMs) < Pane.OSC_SUPPRESSES_IDLE_MS) {
+  private fireCommandDone(source: 'osc133' | 'claude' | 'bell' | 'osc9'): void {
+    // While Claude works (or its stop is still settling), a bell or OSC 9 is
+    // incidental — e.g. a BEL in tool output — not Claude asking for you. A
+    // real stop arrives through the title anyway.
+    if ((source === 'bell' || source === 'osc9') && (this.claudeWorking || this.claudeStopTimer)) {
       return;
     }
-    // Per-pane debounce across all sources kills the triple-fire.
+    const now = Date.now();
     if (now - this.lastCommandDoneMs < Pane.COMMAND_DONE_DEBOUNCE_MS) {
       return;
     }
-    if (source === 'osc133') {
-      this.oscHasFired = true;
-      this.lastOscFireMs = now;
-    }
     this.lastCommandDoneMs = now;
+    rlog('info', '[DOT] Needs-you signal', { pane: this.id, source });
     this.callbacks.onCommandDone?.();
+  }
+
+  /** Follow Claude Code's working/stopped state from its title. Going from
+   *  working to stopped is the moment it needs the user. */
+  private trackClaudeState(title: string): void {
+    if (Pane.CLAUDE_WORKING.test(title)) {
+      this.cancelClaudeStop(); // the ✳ was only a flash between turns
+      if (this.claudeWorking) return;
+      this.claudeWorking = true;
+      // A new stretch of work: the next stop is a new event, never a
+      // duplicate of the last one, so it mustn't be debounced away.
+      this.lastCommandDoneMs = 0;
+      this.callbacks.onWorkStarted?.();
+    } else if (this.claudeWorking) {
+      this.claudeWorking = false;
+      if (Pane.CLAUDE_STOPPED.test(title)) {
+        this.claudeStopTimer = setTimeout(() => {
+          this.claudeStopTimer = null;
+          this.fireCommandDone('claude');
+        }, Pane.CLAUDE_STOP_SETTLE_MS);
+      }
+    }
+  }
+
+  private cancelClaudeStop(): void {
+    if (this.claudeStopTimer) {
+      clearTimeout(this.claudeStopTimer);
+      this.claudeStopTimer = null;
+    }
   }
 
 
@@ -205,38 +241,13 @@ export class Pane {
     }
 
     // Wire PTY data → terminal (unconditional — no mode checking)
-    // Activity-based idle detection: when terminal output stops for 3s after
-    // being active AND output spanned 10s+, fire onCommandDone. This catches
-    // tool completions in long-running processes like Claude Code (where OSC 133
-    // markers don't fire) without false-firing on brief output bursts.
-    let idleTimer: ReturnType<typeof setTimeout> | null = null;
-    let hadActivity = false;
-    let activityStartTime = 0;
-    const IDLE_THRESHOLD_MS = 3000;
-    const MIN_ACTIVE_DURATION_MS = 10_000;
-
     this.disposables.push(
       window.patton.pty.onData((id, data) => {
         if (id === this.ptyId) {
           this.terminalView.write(data);
-          hadActivity = true;
-          if (!activityStartTime) activityStartTime = Date.now();
-          if (idleTimer) clearTimeout(idleTimer);
-          idleTimer = setTimeout(() => {
-            if (hadActivity) {
-              const duration = Date.now() - activityStartTime;
-              hadActivity = false;
-              activityStartTime = 0;
-              if (duration >= MIN_ACTIVE_DURATION_MS) {
-                this.fireCommandDone('idle');
-              }
-            }
-            idleTimer = null;
-          }, IDLE_THRESHOLD_MS);
         }
       }),
     );
-    this.disposables.push(() => { if (idleTimer) clearTimeout(idleTimer); });
 
     // Track PTY exit to avoid destroy-after-exit
     this.disposables.push(
@@ -257,9 +268,10 @@ export class Pane {
       this.terminalView.onBell(() => this.fireCommandDone('bell')),
     );
 
-    // OSC 9 (terminal notification escape) → command-done signal. Standards-
-    // based attention request from any tool that opts in; gets the same
-    // treatment as an explicit bell (no idle suppression, shares debounce).
+    // OSC 9 (terminal notification escape) → needs-you signal. Standards-
+    // based attention request from any tool that opts in; same treatment as
+    // the bell. Progress-bar and other ConEmu-style OSC 9 forms are filtered
+    // out in terminal-view.ts, so they never get here.
     this.disposables.push(
       this.terminalView.onOsc9(() => this.fireCommandDone('osc9')),
     );
@@ -269,10 +281,13 @@ export class Pane {
       this.terminalView.onTitleChange((title) => {
         if (title) {
           this.title = title;
+          // Tab title first, so a "needs you" alert names the tab as it is now.
           this.callbacks.onTitleChange(this);
+          this.trackClaudeState(title);
         }
       }),
     );
+    this.disposables.push(() => this.cancelClaudeStop());
 
     // Poll cwd periodically for file link resolution and tab naming (only when focused)
     this.currentCwd = this.initialCwd || '';
@@ -386,6 +401,13 @@ export class Pane {
           this.fireCommandDone('osc133');
         }
         wasRunning = state === 'command';
+        // The shell is back at its prompt, so Claude isn't running here any
+        // more — even if it quit mid-work and left a ◐ title behind. Without
+        // this, the next `claude` launch's first ✳ would read as a stop.
+        if (state === 'prompt') {
+          this.claudeWorking = false;
+          this.cancelClaudeStop();
+        }
       }),
     );
 

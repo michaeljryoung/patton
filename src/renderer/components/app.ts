@@ -41,7 +41,7 @@ export class App {
         // suppress all "app in background" notifications. `hasFocus()` reflects
         // actual user focus and is unaffected by the throttling pin.
         if (!this.tabManager.isActiveTab(tabId) || !document.hasFocus()) {
-          window.patton.notify('Patton', `Command finished in ${tabTitle}`, tabId);
+          window.patton.notify('Patton', `Waiting for you in ${tabTitle}`, tabId);
         }
       },
     });
