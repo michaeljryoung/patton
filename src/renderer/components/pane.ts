@@ -50,6 +50,12 @@ export class Pane {
   private contextMenu: ContextMenu;
   private initialCwd: string | undefined;
   private currentCwd = '';
+  // Set by the first OSC 133 event: this pane's shell reports every prompt,
+  // so the cwd can be re-read on prompts instead of polled.
+  private shellIntegrated = false;
+  private lastCwdCheckMs = 0;
+  private static readonly CWD_POLL_MS = 2000;
+  private static readonly CWD_SAFETY_NET_MS = 30_000;
 
   // --- "Needs you" signals (green dot, sound, notification) ---
   // Only signals that mean the pane is now waiting on the user: Claude Code
@@ -106,6 +112,20 @@ export class Pane {
         }, Pane.CLAUDE_STOP_SETTLE_MS);
       }
     }
+  }
+
+  /** Ask main for the shell's current folder (lsof) and report a change. */
+  private refreshCwd(): void {
+    if (this.ptyId === null || this.ptyExited) return;
+    this.lastCwdCheckMs = Date.now();
+    window.patton.pty.getCwd(this.ptyId)
+      .then((cwd) => {
+        if (cwd && cwd !== this.currentCwd) {
+          this.currentCwd = cwd;
+          this.callbacks.onCwdChange?.(this);
+        }
+      })
+      .catch(() => { /* ignore — the next prompt or poll retries */ });
   }
 
   private cancelClaudeStop(): void {
@@ -289,21 +309,17 @@ export class Pane {
     );
     this.disposables.push(() => this.cancelClaudeStop());
 
-    // Poll cwd periodically for file link resolution and tab naming (only when focused)
+    // Track the cwd for file link resolution and tab naming. With shell
+    // integration the folder is re-read at every prompt (see the
+    // onPromptState handler), so this timer is only a slow safety net;
+    // shells without integration keep the 2s poll (focused pane only).
     this.currentCwd = this.initialCwd || '';
     if (this.currentCwd) this.callbacks.onCwdChange?.(this);
-    const cwdPoll = setInterval(async () => {
+    const cwdPoll = setInterval(() => {
       if (!this._isFocused) return; // Skip polling for unfocused panes
-      if (this.ptyId !== null && !this.ptyExited) {
-        try {
-          const cwd = await window.patton.pty.getCwd(this.ptyId);
-          if (cwd && cwd !== this.currentCwd) {
-            this.currentCwd = cwd;
-            this.callbacks.onCwdChange?.(this);
-          }
-        } catch { /* ignore */ }
-      }
-    }, 2000);
+      if (this.shellIntegrated && Date.now() - this.lastCwdCheckMs < Pane.CWD_SAFETY_NET_MS) return;
+      this.refreshCwd();
+    }, Pane.CWD_POLL_MS);
     this.disposables.push(() => clearInterval(cwdPoll));
 
     // Wire terminal data → PTY (unconditional forwarding)
@@ -401,6 +417,11 @@ export class Pane {
           this.fireCommandDone('osc133');
         }
         wasRunning = state === 'command';
+        // A shell's folder can only change at a prompt, and every prompt sends
+        // OSC 133 D ('idle') first — including the first one — so re-read it
+        // now: a `cd` renames the tab instantly instead of on the next poll.
+        this.shellIntegrated = true;
+        if (state === 'idle') this.refreshCwd();
         // The shell is back at its prompt, so Claude isn't running here any
         // more — even if it quit mid-work and left a ◐ title behind. Without
         // this, the next `claude` launch's first ✳ would read as a stop.
