@@ -472,6 +472,14 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
       activeNotifications.delete(notif);
     });
 
+    // Since Electron 42, macOS notifications go through UNNotification, which
+    // needs a code-signed app — Patton's signature is self-signed. Log any
+    // refusal so a missing notification is diagnosable from main.log.
+    notif.on('failed', (_e, error) => {
+      console.warn('[NOTIFY] Notification not shown', { error });
+      activeNotifications.delete(notif);
+    });
+
     notif.show();
   });
 
