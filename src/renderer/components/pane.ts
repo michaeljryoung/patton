@@ -16,6 +16,8 @@ let paneIdCounter = 0;
 export interface PaneCallbacks {
   onFocus: (pane: Pane) => void;
   onTitleChange: (pane: Pane) => void;
+  /** The pane's working directory became known or changed (polled, so up to ~2s late). */
+  onCwdChange?: (pane: Pane) => void;
   onCommandDone?: () => void;
   onBroadcastWrite?: (data: string) => void;
   cwd?: string;
@@ -272,14 +274,18 @@ export class Pane {
       }),
     );
 
-    // Poll cwd periodically for file link resolution (only when focused)
+    // Poll cwd periodically for file link resolution and tab naming (only when focused)
     this.currentCwd = this.initialCwd || '';
+    if (this.currentCwd) this.callbacks.onCwdChange?.(this);
     const cwdPoll = setInterval(async () => {
       if (!this._isFocused) return; // Skip polling for unfocused panes
       if (this.ptyId !== null && !this.ptyExited) {
         try {
           const cwd = await window.patton.pty.getCwd(this.ptyId);
-          if (cwd) this.currentCwd = cwd;
+          if (cwd && cwd !== this.currentCwd) {
+            this.currentCwd = cwd;
+            this.callbacks.onCwdChange?.(this);
+          }
         } catch { /* ignore */ }
       }
     }, 2000);

@@ -6,7 +6,8 @@ import { join } from 'node:path';
 import { homedir, userInfo } from 'node:os';
 import { DEFAULTS } from '../shared/constants';
 import { ALLOWED_SHELLS } from './pty-manager';
-import type { HistoryEntry, AppSettings, WindowState, SessionState } from '../shared/types';
+import { cleanProjectName } from './projects';
+import type { HistoryEntry, AppSettings, WindowState, SessionState, ProjectInfo } from '../shared/types';
 
 // Keychain-protected random encryption key for electron-store.
 // The key itself is 32 random bytes, stored in userData/key.enc encrypted by
@@ -67,6 +68,7 @@ interface StoreSchema {
   windowState: WindowState;
   session: SessionState | null;
   notes: string;
+  projectNames: Record<string, string>;
 }
 
 const defaults: StoreSchema = {
@@ -94,6 +96,7 @@ const defaults: StoreSchema = {
   },
   session: null,
   notes: '',
+  projectNames: {},
 };
 
 let store: ElectronStore<StoreSchema> | null = null;
@@ -298,6 +301,35 @@ export function setNotes(content: string): void {
   const str = typeof content === 'string' ? content : String(content ?? '');
   const capped = str.length > DEFAULTS.NOTES_MAX_CHARS ? str.slice(0, DEFAULTS.NOTES_MAX_CHARS) : str;
   getStore().set('notes', capped);
+}
+
+// --- Project names (project root → the name its tabs show) ---
+export function getProjectNames(): Record<string, string> {
+  const names = getStore().get('projectNames', {});
+  return names && typeof names === 'object' && !Array.isArray(names) ? names : {};
+}
+
+/**
+ * Store the name a project's tabs show. An empty name, or the automatic one,
+ * removes the entry so the project goes back to its folder-derived name. The
+ * caller has already checked `project.root` is a real project root. Returns
+ * the full updated map.
+ */
+export function setProjectName(project: ProjectInfo, rawName: string): Record<string, string> {
+  // The store is the trust boundary, so the name is cleaned here, not just in the UI.
+  const name = cleanProjectName(rawName);
+  const names = { ...getProjectNames() };
+  if (!name || name === project.defaultName) {
+    delete names[project.root];
+  } else {
+    if (names[project.root] === undefined && Object.keys(names).length >= DEFAULTS.PROJECT_NAMES_MAX) {
+      console.warn('[SECURITY] Project name rejected — name store full', { max: DEFAULTS.PROJECT_NAMES_MAX });
+      return names;
+    }
+    names[project.root] = name;
+  }
+  getStore().set('projectNames', names);
+  return names;
 }
 
 export function getWindowState(): WindowState {

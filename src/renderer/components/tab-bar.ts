@@ -1,4 +1,5 @@
 import { ContextMenu } from './context-menu';
+import { DEFAULTS } from '../../shared/constants';
 import type { TabFlag } from '../../shared/types';
 
 export interface TabBarCallbacks {
@@ -8,15 +9,29 @@ export interface TabBarCallbacks {
   onReorder: (fromId: string, toId: string) => void;
   onSettings: () => void;
   onRename: (id: string, name: string) => void;
+  onRenameProject: (id: string, name: string) => void;
   onSetFlag: (id: string, flag: TabFlag | null) => void;
 }
 
 interface TabHeaderInfo {
   id: string;
   title: string;
+  /** What the tab shows without a name of its own — the rename box's placeholder. */
+  autoTitle?: string;
+  /** The tab's project, if it is in one: its current and automatic names. */
+  project?: { name: string; defaultName: string } | null;
   active: boolean;
   awaitingInput?: boolean;
   flag?: TabFlag | null;
+}
+
+interface RenameOptions {
+  value: string;
+  /** Shown when the box is emptied: what committing an empty box goes back to. */
+  placeholder: string;
+  ariaLabel: string;
+  maxLength: number;
+  onCommit: (name: string) => void;
 }
 
 /** Right-click menu entries for the colour flags, in a fixed order so the
@@ -200,10 +215,28 @@ export class TabBar {
         el.appendChild(dot);
       }
 
-      // Right-click → set/clear the colour flag.
+      const titleSpan = document.createElement('span');
+      titleSpan.className = 'tab-bar-tab-title';
+      titleSpan.textContent = tab.title;
+      el.appendChild(titleSpan);
+
+      // Double-click to rename this one tab
+      titleSpan.addEventListener('dblclick', (e) => {
+        e.stopPropagation();
+        this.startRename(titleSpan, {
+          value: tab.title,
+          placeholder: tab.autoTitle ?? '',
+          ariaLabel: 'Rename tab',
+          maxLength: 100,
+          onCommit: (name) => this.callbacks.onRename(tab.id, name),
+        });
+      });
+
+      // Right-click → set/clear the colour flag, or rename the tab's project.
       el.addEventListener('contextmenu', (e) => {
         e.preventDefault();
         e.stopPropagation();
+        const project = tab.project;
         this.contextMenu.show(e.clientX, e.clientY, [
           ...FLAG_CHOICES.map(({ flag, label }) => ({
             // A check marks the current flag, and re-picking it clears — so the
@@ -216,18 +249,29 @@ export class TabBar {
             label: 'Clear Flag',
             action: () => this.callbacks.onSetFlag(tab.id, null),
           },
+          // Unlike double-click, this names every tab in the project, now and later.
+          ...(project ? [
+            { separator: true as const },
+            {
+              label: 'Rename Project…',
+              action: () => {
+                // The bar may have been rebuilt while the menu was open, so use
+                // this tab's title as it is now, not the one captured above.
+                const liveTitle = this.tabsContainer.querySelector<HTMLElement>(
+                  `.tab-bar-tab[data-tab-id="${CSS.escape(tab.id)}"] .tab-bar-tab-title`,
+                );
+                if (!liveTitle) return; // the tab closed meanwhile
+                this.startRename(liveTitle, {
+                  value: project.name,
+                  placeholder: project.defaultName,
+                  ariaLabel: 'Rename project',
+                  maxLength: DEFAULTS.PROJECT_NAME_MAX_CHARS,
+                  onCommit: (name) => this.callbacks.onRenameProject(tab.id, name),
+                });
+              },
+            },
+          ] : []),
         ]);
-      });
-
-      const titleSpan = document.createElement('span');
-      titleSpan.className = 'tab-bar-tab-title';
-      titleSpan.textContent = tab.title;
-      el.appendChild(titleSpan);
-
-      // Double-click to rename
-      titleSpan.addEventListener('dblclick', (e) => {
-        e.stopPropagation();
-        this.startRename(el, titleSpan, tab.id);
       });
 
       if (tabs.length > 1) {
@@ -255,8 +299,10 @@ export class TabBar {
           return;
         }
         if (e.button !== 0) return;
-        // Don't intercept grip or close button
-        if ((e.target as HTMLElement).closest('.tab-bar-tab-grip, .tab-bar-tab-close')) return;
+        // Don't intercept grip, close button, or an open rename box — a click or
+        // drag there is for the text; selecting the tab would rebuild the bar
+        // and drop the box, and dragging would move the window.
+        if ((e.target as HTMLElement).closest('.tab-bar-tab-grip, .tab-bar-tab-close, .tab-bar-tab-rename')) return;
 
         let dragging = false;
         const startX = e.screenX;
@@ -294,13 +340,17 @@ export class TabBar {
     }
   }
 
-  private startRename(tabEl: HTMLElement, titleSpan: HTMLElement, tabId: string): void {
+  /** Swap a tab's title for an inline text box. Enter or clicking away commits,
+   *  Escape cancels. An empty box commits too: it means "back to the automatic
+   *  name", which the placeholder shows. */
+  private startRename(titleSpan: HTMLElement, opts: RenameOptions): void {
     const input = document.createElement('input');
     input.className = 'tab-bar-tab-rename';
     input.type = 'text';
-    input.value = titleSpan.textContent || '';
-    input.maxLength = 100;
-    input.setAttribute('aria-label', 'Rename tab');
+    input.value = opts.value;
+    input.placeholder = opts.placeholder;
+    input.maxLength = opts.maxLength;
+    input.setAttribute('aria-label', opts.ariaLabel);
 
     let committed = false;
 
@@ -308,8 +358,8 @@ export class TabBar {
       if (committed) return;
       committed = true;
       const name = input.value.trim();
-      if (name && name !== titleSpan.textContent) {
-        this.callbacks.onRename(tabId, name);
+      if (name !== opts.value) {
+        opts.onCommit(name);
       }
       input.replaceWith(titleSpan);
     };

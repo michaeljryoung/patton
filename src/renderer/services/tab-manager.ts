@@ -4,6 +4,7 @@ import { TabBar } from '../components/tab-bar';
 import { ConfirmDialog } from '../components/confirm-dialog';
 import { HistoryManager } from './history-manager';
 import { announce } from './announcer';
+import { onProjectNamesChanged, projectName, startProjectNames } from './project-names';
 import type { SessionState, RendererMode, TabFlag } from '../../shared/types';
 import type { ITheme } from '@xterm/xterm';
 
@@ -48,9 +49,20 @@ export class TabManager {
       onReorder: (fromId, toId) => this.reorder(fromId, toId),
       onSettings: () => options?.onSettings?.(),
       onRename: (id, name) => this.renameTab(id, name),
+      onRenameProject: (id, name) => this.renameProject(id, name),
       onSetFlag: (id, flag) => this.setTabFlag(id, flag),
     });
     this.onCommandDone = options?.onCommandDone || null;
+
+    // Tabs are named after their project. A project renamed in any window
+    // renames its tabs here too.
+    startProjectNames().catch(console.error);
+    this.disposables.push(
+      onProjectNamesChanged(() => {
+        for (const tab of this.tabs) tab.refreshTitle();
+        this.updateTabBar();
+      }),
+    );
 
     // Listen for PTY exit — route via panesByPtyId
     this.disposables.push(
@@ -228,12 +240,24 @@ export class TabManager {
     this.switchToId(this.tabs[prevIdx].id);
   }
 
+  /** Name one tab. An empty name forgets it, so the tab follows its project's
+   *  name (or the program's title) again. */
   renameTab(id: string, name: string): void {
     const tab = this.tabs.find(t => t.id === id);
     if (tab) {
-      tab.setCustomTitle(name);
+      if (name) tab.setCustomTitle(name);
+      else tab.clearCustomTitle();
       this.updateTabBar();
     }
+  }
+
+  /** Rename the project a tab is in: every tab in that project, in every
+   *  window, shows the new name. An empty name restores the automatic one.
+   *  The tabs update when main broadcasts the change back. */
+  renameProject(id: string, name: string): void {
+    const project = this.tabs.find(t => t.id === id)?.project;
+    if (!project) return;
+    window.patton.projects.setName(project.root, name).catch(console.error);
   }
 
   /** Set or clear a tab's manual colour flag. Persistence rides the existing
@@ -504,7 +528,10 @@ export class TabManager {
       );
     }
     if (state.title && state.title !== 'Terminal') {
-      tab.setCustomTitle(state.title);
+      // The closed pane's last program title, at the program title's usual
+      // rank: a project's name still wins, and the next title the program
+      // sets replaces it — rather than pinning it as a user-chosen name.
+      tab.setProcessName(state.title);
     }
   }
 
@@ -529,6 +556,8 @@ export class TabManager {
       this.tabs.map(t => ({
         id: t.id,
         title: t.title,
+        autoTitle: t.autoTitle,
+        project: t.project ? { name: projectName(t.project), defaultName: t.project.defaultName } : null,
         active: t.id === this.activeTab?.id,
         awaitingInput: t.awaitingInput,
         flag: t.flag,

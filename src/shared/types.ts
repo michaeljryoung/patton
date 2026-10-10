@@ -76,6 +76,15 @@ export interface SessionState {
   activeTabIndex: number;
 }
 
+/** The project a terminal's folder belongs to, which names its tab. See
+ *  main/projects.ts for what counts as a project. */
+export interface ProjectInfo {
+  /** Absolute path of the project folder; a name the user gives the project is stored under it. */
+  root: string;
+  /** The automatic name: the last word of the folder name ("fantasy-football" → "football"). */
+  defaultName: string;
+}
+
 export interface RenderSnapshot {
   reason: string;
   timestamp: string;
@@ -114,6 +123,12 @@ export interface PattonAPI {
   notes: {
     get: () => Promise<string>;
     set: (content: string) => Promise<void>;
+  };
+  projects: {
+    resolve: (cwd: string) => Promise<ProjectInfo | null>;
+    getNames: () => Promise<Record<string, string>>;
+    setName: (root: string, name: string) => Promise<void>;
+    onNamesChanged: (callback: (names: Record<string, string>) => void) => () => void;
   };
   session: {
     get: () => Promise<SessionState | null>;

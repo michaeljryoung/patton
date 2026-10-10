@@ -2,6 +2,8 @@ import { Pane } from './pane';
 import { SplitContainer } from './split-container';
 import { SearchOverlay } from './search-overlay';
 import { HistoryManager } from '../services/history-manager';
+import { projectName } from '../services/project-names';
+import { rlog } from '../services/renderer-logger';
 import {
   splitPane as splitPaneInTree,
   closePane as closePaneInTree,
@@ -11,7 +13,7 @@ import {
   type SplitTreeNode,
   type SplitDirection,
 } from './split-tree';
-import type { SessionTreeNode, SessionTabState, SessionPaneState, TabFlag } from '../../shared/types';
+import type { SessionTreeNode, SessionTabState, SessionPaneState, TabFlag, ProjectInfo } from '../../shared/types';
 import type { ITheme } from '@xterm/xterm';
 import { DEFAULTS } from '../../shared/constants';
 
@@ -30,6 +32,14 @@ export class Tab {
   private onCommandDone: (() => void) | null = null;
   title = 'Terminal';
   private _customTitle = false;
+  // The project the focused pane's folder belongs to, if any. Its name outranks
+  // the title the running program sets (OSC 0/2), so the tab reads "football"
+  // rather than whatever Claude Code last wrote there; a name the user typed
+  // for this one tab outranks both. See refreshTitle().
+  private _project: ProjectInfo | null = null;
+  // Bumped on every lookup so a slow answer for a folder the pane has already
+  // left can't overwrite a newer one.
+  private _projectLookup = 0;
   private _broadcastInput = false;
   private _zoomed = false;
   private _shell: string | undefined;
@@ -79,10 +89,7 @@ export class Tab {
       ...(this._historyManager ? { historyManager: this._historyManager } : {}),
       onFocus: (p) => this.setFocusedPane(p),
       onTitleChange: (p) => {
-        if (p === this._focusedPane && !this._customTitle) {
-          this.title = p.title;
-          this.onTitleChanged?.();
-        }
+        if (p === this._focusedPane) this.refreshTitle();
         // Path B: Claude Code signals "needs attention" by prepending "·" to
         // its terminal title via OSC 2. Treat any pane whose title arrives
         // with a leading middle-dot / bullet as awaiting input. Gated on
@@ -91,6 +98,9 @@ export class Tab {
         if (!this._customTitle && /^[·•]/.test(p.title)) {
           this.raiseAwaitingInput();
         }
+      },
+      onCwdChange: (p) => {
+        if (p === this._focusedPane) this.lookUpProject();
       },
       onCommandDone: () => {
         // Path A: any pane command completion (OSC 133 transition, idle
@@ -167,9 +177,61 @@ export class Tab {
     // Explicitly focus after enabling — the textarea was disabled so the
     // browser won't auto-focus it from the click that triggered this switch.
     requestAnimationFrame(() => pane.focus());
-    if (!this._customTitle) {
-      this.title = pane.title;
+    // The newly focused pane may be in a different folder, so a different project.
+    this.lookUpProject();
+    this.refreshTitle();
+  }
+
+  /** Find out which project the focused pane's folder belongs to. */
+  private lookUpProject(): void {
+    const lookup = ++this._projectLookup;
+    const cwd = this._focusedPane.getCwd();
+    if (!cwd) {
+      // Not known yet — don't keep showing another pane's project. The pane
+      // reports its folder once its first poll lands.
+      this.setProject(null);
+      return;
     }
+    window.patton.projects.resolve(cwd)
+      .then((project) => {
+        if (lookup !== this._projectLookup) return; // superseded by a newer lookup
+        this.setProject(project);
+      })
+      // Main couldn't check (rate limit, bad path): keep the current name
+      // rather than treating it as "not in a project".
+      .catch((err) => rlog('warn', '[PROJECTS] Project lookup failed', err));
+  }
+
+  private setProject(project: ProjectInfo | null): void {
+    if (project?.root === this._project?.root) return;
+    this._project = project;
+    const titleChanged = this.refreshTitle();
+    // Even when the title stays put (e.g. the user named this tab), the tab
+    // bar needs the new project for its Rename Project… menu item.
+    if (!titleChanged) this.onTitleChanged?.();
+  }
+
+  /** The project this tab's focused pane is in, if any. */
+  get project(): ProjectInfo | null {
+    return this._project;
+  }
+
+  /** What the tab is called when the user hasn't named it: its project's name,
+   *  else the title the program in the focused pane set. */
+  get autoTitle(): string {
+    return this._project ? projectName(this._project) : this._focusedPane.title;
+  }
+
+  /** Recompute the displayed title — after a title, folder or project-name
+   *  change. A name the user typed for this tab always wins. Returns whether
+   *  the title changed. */
+  refreshTitle(): boolean {
+    if (this._customTitle) return false;
+    const next = this.autoTitle;
+    if (next === this.title) return false;
+    this.title = next;
+    this.onTitleChanged?.();
+    return true;
   }
 
   get focusedPane(): Pane {
@@ -196,6 +258,14 @@ export class Tab {
     this.title = name;
     this._customTitle = true;
     this.onTitleChanged?.();
+  }
+
+  /** Forget the user's name for this tab, so it follows its project's name (or
+   *  the program's title) again. */
+  clearCustomTitle(): void {
+    if (!this._customTitle) return;
+    this._customTitle = false;
+    this.refreshTitle();
   }
 
   get hasCustomTitle(): boolean {

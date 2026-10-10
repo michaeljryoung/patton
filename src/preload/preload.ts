@@ -39,6 +39,16 @@ const api: PattonAPI = {
     get: () => ipcRenderer.invoke(IPC.NOTES_GET),
     set: (content) => ipcRenderer.invoke(IPC.NOTES_SET, content),
   },
+  projects: {
+    resolve: (cwd) => ipcRenderer.invoke(IPC.PROJECT_RESOLVE, cwd),
+    getNames: () => ipcRenderer.invoke(IPC.PROJECT_NAMES_GET),
+    setName: (root, name) => ipcRenderer.invoke(IPC.PROJECT_NAME_SET, root, name),
+    onNamesChanged: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, names: Record<string, string>) => callback(names);
+      ipcRenderer.on(IPC.PROJECT_NAMES_CHANGED, listener);
+      return () => ipcRenderer.removeListener(IPC.PROJECT_NAMES_CHANGED, listener);
+    },
+  },
   session: {
     get: () => ipcRenderer.invoke(IPC.SESSION_GET),
     set: (session) => ipcRenderer.invoke(IPC.SESSION_SET, session),

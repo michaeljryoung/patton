@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readdirSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { IPC } from '../shared/constants';
 import { PtyManager } from './pty-manager';
+import { isSafeAbsolutePath, resolveProject } from './projects';
 import * as store from './store';
 import type { PtyCreateOptions, RenderSnapshot, SessionState } from '../shared/types';
 
@@ -235,6 +236,54 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
       return;
     }
     store.setNotes(content);
+  });
+
+  // --- Project names ---
+  // A tab is named after the project its folder belongs to (see projects.ts).
+  // Renaming a project updates its tabs in every window.
+  // A lookup is a handful of existsSync calls, so the cap is generous: restoring
+  // a full session (100 tabs, the session cap) looks up every tab at once.
+  // Failures throw rather than return null, so the renderer can tell "couldn't
+  // check" (keep the current name) from "not in a project".
+  const projectResolveLimiter = new RateLimiter(100);
+  ipcMain.handle(IPC.PROJECT_RESOLVE, (_event, cwd: unknown) => {
+    if (!isSafeAbsolutePath(cwd)) {
+      console.warn('[SECURITY] PROJECT_RESOLVE path validation failed', { type: typeof cwd });
+      throw new Error('Invalid path');
+    }
+    if (!projectResolveLimiter.allow()) {
+      console.warn('[SECURITY] Rate limit exceeded', { channel: IPC.PROJECT_RESOLVE });
+      throw new Error('Rate limit exceeded');
+    }
+    return resolveProject(cwd);
+  });
+
+  ipcMain.handle(IPC.PROJECT_NAMES_GET, () => {
+    return store.getProjectNames();
+  });
+
+  const projectNameSetLimiter = new RateLimiter(5);
+  ipcMain.handle(IPC.PROJECT_NAME_SET, (_event, root: unknown, name: unknown) => {
+    // Bound the raw name before any processing; the rename box itself caps at 60.
+    if (!isSafeAbsolutePath(root) || typeof name !== 'string' || name.length > 1000) {
+      console.warn('[SECURITY] PROJECT_NAME_SET validation failed', { rootType: typeof root, nameType: typeof name });
+      return;
+    }
+    if (!projectNameSetLimiter.allow()) {
+      console.warn('[SECURITY] Rate limit exceeded', { channel: IPC.PROJECT_NAME_SET });
+      return;
+    }
+    // Names are only ever stored against a real project root, never an arbitrary path.
+    const project = resolveProject(root);
+    if (!project || project.root !== root) {
+      console.warn('[SECURITY] PROJECT_NAME_SET rejected — not a project root', { root });
+      return;
+    }
+    const names = store.setProjectName(project, name);
+    console.info('[PROJECTS] Project renamed', { root, name: names[root] ?? `${project.defaultName} (automatic)` });
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) win.webContents.send(IPC.PROJECT_NAMES_CHANGED, names);
+    }
   });
 
   // --- Session restore ---

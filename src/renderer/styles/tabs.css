@@ -209,6 +209,10 @@
   outline: none;
 }
 
+.tab-bar-tab-rename::placeholder {
+  color: var(--text-muted);
+}
+
 .tab-bar-tab-close {
   background: none;
   border: none;
