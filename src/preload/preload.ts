@@ -54,7 +54,7 @@ const api: PattonAPI = {
     set: (session) => ipcRenderer.invoke(IPC.SESSION_SET, session),
   },
   editor: {
-    openFile: (filePath) => ipcRenderer.invoke(IPC.APP_OPEN_IN_EDITOR, filePath),
+    openFile: (filePath, webFallback) => ipcRenderer.invoke(IPC.APP_OPEN_IN_EDITOR, filePath, webFallback),
   },
   terminal: {
     saveOutput: (content, defaultName) => ipcRenderer.invoke(IPC.APP_SAVE_TERMINAL, content, defaultName),

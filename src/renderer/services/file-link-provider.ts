@@ -8,10 +8,43 @@ const MD_LINK_RE = /\[([^\]\n]+)\]\(([^)\s]+)\)/g;
 
 /**
  * Plain file paths with optional :line:col or (line,col) suffix.
- * Examples: /abs/path.ts:42:9, ./rel/path.ts:42, src/path.ts, path.ts(42,9).
- * Requires a file extension to avoid matching bare words.
+ * Examples: /abs/path.ts:42:9, ./rel/path.ts:42, ~/notes/todo.md,
+ * src/path.ts, path.ts(42,9). Requires a file extension to avoid matching
+ * bare words. The leading `~/` matters: without it, `~/Downloads/x.txt`
+ * matched as the absolute — and nonexistent — `/Downloads/x.txt`.
  */
-const FILE_PATH_RE = /(?:(?:\.{0,2}\/)?(?:[\w@.-]+\/)*[\w@.-]+\.\w{1,10})(?::(\d+)(?::(\d+))?|\((\d+),(\d+)\))?/g;
+const FILE_PATH_RE = /(?:(?:~\/|\.{0,2}\/)?(?:[\w@.-]+\/)*[\w@.-]+\.\w{1,10})(?::(\d+)(?::(\d+))?|\((\d+),(\d+)\))?/g;
+
+/**
+ * Endings that mark a bare token as a web address ("civitai.com"). Limited to
+ * common ones that aren't also everyday file extensions — `.md`, `.py`, `.sh`,
+ * `.rs`, `.pl`, `.so`, `.cc`, `.in` are all real TLDs too — and main only uses
+ * the web address when no file of that name exists.
+ */
+const WEB_TLDS = new Set([
+  'com', 'org', 'net', 'io', 'ai', 'co', 'app', 'dev', 'me', 'info', 'biz', 'edu', 'gov',
+  'xyz', 'tech', 'cloud', 'page', 'site', 'online', 'store', 'blog', 'news',
+  'uk', 'us', 'de', 'fr', 'nl', 'es', 'it', 'eu', 'ca', 'au', 'ch', 'se', 'no', 'dk', 'fi',
+  'is', 'ie', 'be', 'at', 'pt', 'jp', 'cn', 'kr', 'nz', 'br', 'mx', 'tv', 'fm', 'gg',
+]);
+
+/**
+ * The web address a bare host-like token stands for — "civitai.com",
+ * "kibot.com/subscribe.html", "192.168.0.1:8080" — or null if it doesn't look
+ * like one. `port` is what the path pattern read as a line number.
+ */
+export function webAddressFor(token: string, port: string): string | null {
+  if (/^(?:\/|\.{1,2}\/|~\/)/.test(token)) return null; // explicit paths are files
+  const [host, ...rest] = token.split('/');
+  const isIPv4 = /^\d{1,3}(?:\.\d{1,3}){3}$/.test(host);
+  if (!isIPv4) {
+    const labels = host.toLowerCase().split('.');
+    if (labels.length < 2 || !labels.every((label) => /^[a-z0-9-]+$/.test(label))) return null;
+    if (!WEB_TLDS.has(labels[labels.length - 1])) return null;
+  }
+  const path = rest.length > 0 ? `/${rest.join('/')}` : '';
+  return `${isIPv4 ? 'http' : 'https'}://${host}${port ? `:${port}` : ''}${path}`;
+}
 
 export class FileLinkProvider implements ILinkProvider {
   private getCwd: () => string;
@@ -104,7 +137,8 @@ export class FileLinkProvider implements ILinkProvider {
 
         const cwd = this.getCwd();
         let target = filePath;
-        if (!target.startsWith('/') && cwd) {
+        // `~/…` stays as is: main expands it (the renderer doesn't know $HOME).
+        if (!target.startsWith('/') && !target.startsWith('~/') && cwd) {
           target = `${cwd}/${target}`;
         }
         // Security: reject traversal that survives resolution.
@@ -116,7 +150,11 @@ export class FileLinkProvider implements ILinkProvider {
           if (colNum) gotoPath += `:${colNum}`;
         }
 
-        window.patton.editor.openFile(gotoPath).catch(console.error);
+        // A web address printed without its scheme ("civitai.com") resolves
+        // to a missing file under the cwd; main opens this instead when no
+        // such file exists.
+        const webFallback = webAddressFor(filePath, lineNum) ?? undefined;
+        window.patton.editor.openFile(gotoPath, webFallback).catch(console.error);
       },
     });
   }

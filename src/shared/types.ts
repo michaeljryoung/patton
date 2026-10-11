@@ -135,7 +135,9 @@ export interface PattonAPI {
     set: (session: SessionState | null) => Promise<void>;
   };
   editor: {
-    openFile: (filePath: string) => Promise<void>;
+    /** Open a file (path, optionally `:line:col`; may start with `~/`). If no
+     *  such file exists and `webFallback` is an http(s) URL, open that instead. */
+    openFile: (filePath: string, webFallback?: string) => Promise<void>;
   };
   terminal: {
     saveOutput: (content: string, defaultName: string) => Promise<string | null>;

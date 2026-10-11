@@ -1,12 +1,27 @@
 import { ipcMain, BrowserWindow, dialog, Notification, shell, app } from 'electron';
 import { execFile } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, unlinkSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { IPC } from '../shared/constants';
 import { PtyManager } from './pty-manager';
 import { isSafeAbsolutePath, resolveProject } from './projects';
 import * as store from './store';
 import type { PtyCreateOptions, RenderSnapshot, SessionState } from '../shared/types';
+
+/** Open an http(s) URL in the default browser. Anything else — other schemes
+ *  can launch local apps — is refused and returns false. */
+function openWebUrl(url: unknown): boolean {
+  if (typeof url !== 'string' || url.length > 2048) return false;
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+  } catch {
+    return false; // not a URL
+  }
+  shell.openExternal(url).catch(() => {});
+  return true;
+}
 
 // --- Security: Sliding-window rate limiter (ring buffer, O(1) operations) ---
 class RateLimiter {
@@ -312,19 +327,28 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
   // Resolved once at handler-install time; cheap to re-check per-click if needed.
   const VSCODE_APP_CODE = '/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code';
   const editorBin = existsSync(VSCODE_APP_CODE) ? VSCODE_APP_CODE : 'code';
-  ipcMain.handle(IPC.APP_OPEN_IN_EDITOR, (_event, filePath: string) => {
-    if (typeof filePath !== 'string' || filePath.length > 1000) return;
+  ipcMain.handle(IPC.APP_OPEN_IN_EDITOR, (_event, rawPath: string, webFallback?: unknown) => {
+    if (typeof rawPath !== 'string' || rawPath.length > 1000) return;
+    // `~/…` comes through unexpanded: only main knows the home directory.
+    const filePath = rawPath.startsWith('~/') ? homedir() + rawPath.slice(1) : rawPath;
     // Security: validate strict path:line:col format (no shell metacharacters, no traversal)
     if (!/^[/a-zA-Z0-9._\-@]+(?::[0-9]+(?::[0-9]+)?)?$/.test(filePath)) return;
     // Security: reject directory traversal
     if (/(?:^|\/)\.\.(?:\/|$)/.test(filePath)) return;
     // Security: must start with / (absolute path required from renderer)
     if (!filePath.startsWith('/')) return;
+    // shell.openPath doesn't understand `:line:col`, so strip it for file checks.
+    const pathOnly = filePath.replace(/:\d+(?::\d+)?$/, '');
+    // A web address printed without its scheme ("civitai.com") arrives as a
+    // cwd-relative path that doesn't exist. The renderer offers the address
+    // it looks like; use it only when there really is no such file.
+    if (typeof webFallback === 'string' && !existsSync(pathOnly) && openWebUrl(webFallback)) {
+      console.info('[LINK] No such file, opened as a web address', { url: webFallback });
+      return;
+    }
     execFile(editorBin, ['--goto', filePath], { timeout: 5000 }, (err) => {
       if (!err) return;
       // Editor CLI missing or errored — fall back to the system default opener.
-      // shell.openPath doesn't understand `:line:col`, so strip it.
-      const pathOnly = filePath.replace(/:\d+(?::\d+)?$/, '');
       shell.openPath(pathOnly).then((errorMsg) => {
         if (errorMsg) console.warn('shell.openPath fallback failed:', errorMsg, { pathOnly });
       }, () => {});
@@ -485,15 +509,7 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
 
   // --- Open external URL (for terminal link clicks) ---
   ipcMain.handle(IPC.APP_OPEN_EXTERNAL, (_event, url: string) => {
-    if (typeof url !== 'string' || url.length > 2048) return;
-    try {
-      const parsed = new URL(url);
-      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
-        shell.openExternal(url).catch(() => {});
-      }
-    } catch {
-      // Invalid URL, ignore
-    }
+    openWebUrl(url);
   });
 
   // --- Renderer log forwarding ---
