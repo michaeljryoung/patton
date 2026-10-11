@@ -25,9 +25,34 @@ const SIGNING_IDENTITY = (() => {
   return '-';
 })();
 
+// Local builds take their version from git, so /Applications/Patton.app reports
+// the release it was built from — "1.10.2", or "1.10.2+3" three commits later —
+// instead of package.json's placeholder 1.0.0. CI stamps package.json itself
+// ("Set version for build" in release.yml) before building, so leave it alone
+// there. Tags only arrive with `git fetch --tags`; until then a build made
+// right after a release shows the previous tag plus its commits.
+const LOCAL_VERSION = (() => {
+  if (process.env.CI) return undefined;
+  try {
+    const described = execSync('git describe --tags --long --match "v[0-9]*"', {
+      cwd: __dirname,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    const match = described.match(/^v(\d+\.\d+\.\d+)-(\d+)-g[0-9a-f]+$/);
+    if (!match) return undefined;
+    return match[2] === '0' ? match[1] : `${match[1]}+${match[2]}`;
+  } catch {
+    return undefined; // no git or no release tags: keep package.json's version
+  }
+})();
+
 const config: ForgeConfig = {
   packagerConfig: {
     name: 'Patton',
+    // Info.plist version (About box, Finder); app.getVersion() comes from the
+    // build's package.json, stamped in packageAfterPrune below.
+    ...(LOCAL_VERSION ? { appVersion: LOCAL_VERSION } : {}),
     icon: './build/icon',
     asar: {
       unpack: '**/{*.node,node-pty/**/*}',
@@ -92,6 +117,8 @@ const config: ForgeConfig = {
         'node-pty': projectPkg.dependencies['node-pty'],
         'electron-store': projectPkg.dependencies['electron-store'],
       };
+      // app.getVersion() (and so main.log's startup line) reads this file.
+      if (LOCAL_VERSION) buildPkg.version = LOCAL_VERSION;
       fs.writeFileSync(pkgPath, JSON.stringify(buildPkg, null, 2));
 
       // Install native modules in the packaged app
