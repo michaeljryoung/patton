@@ -361,6 +361,15 @@ export class PtyManager {
     }
   }
 
+  /** How many live PTYs belong to `window` — what closing it would end. */
+  liveCountForWindow(window: BrowserWindow): number {
+    let count = 0;
+    for (const instance of this.instances.values()) {
+      if (instance.window === window) count++;
+    }
+    return count;
+  }
+
   destroyByWindow(window: BrowserWindow): void {
     // Collect IDs first to avoid modifying map during iteration
     const idsToDestroy: number[] = [];

@@ -323,16 +323,20 @@ export class TabManager {
 
     if (closingWholeTab) {
       // Closing the whole tab ends every shell in it — the accidental ⌘W the
-      // S22/S31 guard exists for. Confirm it, unless it's the final tab (that
-      // quits the app, which the main-process quit / close-last-window guard
-      // already confirms — skip ours to avoid two prompts back-to-back).
-      const isLastTab = this.tabs.length <= 1;
-      if (!isLastTab) {
-        const ok = await this.confirmClose('tab', tab.title);
-        if (!ok) return;
-        // The PTY may have exited (auto-closing the tab) while the dialog was up.
-        if (!this.tabs.includes(tab)) return;
+      // S22/S31 guard exists for. Confirm it.
+      if (this.tabs.length <= 1) {
+        // The final tab: closing it closes the window, so hand that straight
+        // to the main process's close guard WITHOUT tearing the tab down first.
+        // The guard only asks while this window's shells are alive; disposing
+        // the tab first killed them, so it asked only when the close happened
+        // to win the race (and a Cancel would have left an empty window).
+        window.close();
+        return;
       }
+      const ok = await this.confirmClose('tab', tab.title);
+      if (!ok) return;
+      // The PTY may have exited (auto-closing the tab) while the dialog was up.
+      if (!this.tabs.includes(tab)) return;
       await this.closeById(tab.id);
     } else {
       // Closing one pane of a split is low-stakes — the tab and sibling panes

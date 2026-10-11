@@ -263,7 +263,7 @@ export class TabBar {
           ...(project ? [
             { separator: true as const },
             {
-              label: 'Rename Project…',
+              label: 'Set Default Tab Name for Project…',
               action: () => {
                 // The bar may have been rebuilt while the menu was open, so use
                 // this tab's title as it is now, not the one captured above.
@@ -274,7 +274,7 @@ export class TabBar {
                 this.startRename(liveTitle, {
                   value: project.name,
                   placeholder: project.defaultName,
-                  ariaLabel: 'Rename project',
+                  ariaLabel: 'Default tab name for this project',
                   maxLength: DEFAULTS.PROJECT_NAME_MAX_CHARS,
                   onCommit: (name) => this.callbacks.onRenameProject(tab.id, name),
                 });

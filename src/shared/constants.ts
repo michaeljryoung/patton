@@ -91,7 +91,7 @@ export const DEFAULTS = {
   // paste can't bloat the encrypted config file) and the panel's default width.
   NOTES_MAX_CHARS: 1_000_000,
   NOTES_PANEL_WIDTH: 360,
-  // Project names (right-click a tab → Rename Project…): the longest name kept,
+  // Project names (right-click a tab → Set Default Tab Name for Project…): the longest name kept,
   // and how many projects' names are stored before new ones are refused.
   PROJECT_NAME_MAX_CHARS: 60,
   PROJECT_NAMES_MAX: 500,

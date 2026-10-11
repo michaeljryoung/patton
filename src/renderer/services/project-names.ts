@@ -2,7 +2,7 @@ import type { ProjectInfo } from '../../shared/types';
 import { rlog } from './renderer-logger';
 
 /**
- * The names the user has given projects (right-click a tab → Rename Project…),
+ * The names the user has given projects (right-click a tab → Set Default Tab Name for Project…),
  * keyed by project root. The main process owns the store and broadcasts every
  * change to all windows, so this copy stays current without re-fetching.
  */

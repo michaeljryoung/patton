@@ -183,24 +183,30 @@ export function createWindow(ptyManager?: PtyManager): BrowserWindow {
   };
 
   window.on('close', (e) => {
-    // Guard against silently killing live PTYs by closing the last window.
-    // On macOS, `window-all-closed` triggers `app.quit()` here (Patton is
-    // a terminal app, not something that stays dockside windowless), so
-    // closing the final window IS a quit action. The main-process
-    // before-quit handler can't catch this path because the window's
-    // PTYs are destroyed here before the quit handler sees them.
-    const isLastWindow = BrowserWindow.getAllWindows().length === 1;
-    if (isLastWindow && ptyManager && ptyManager.size > 0) {
-      const count = ptyManager.size;
+    // Guard against silently killing live PTYs by closing a window — the red
+    // button, or ⌘W on its last tab (the renderer hands that here before
+    // touching the tab, so its shells are still alive). On macOS,
+    // `window-all-closed` triggers `app.quit()` here (Patton is a terminal
+    // app, not something that stays dockside windowless), so closing the
+    // final window IS a quit action; the before-quit handler can't catch that
+    // path because this handler destroys the window's PTYs first. ⌘Q asks in
+    // before-quit and destroys every PTY before windows close, so it is never
+    // asked twice.
+    const count = ptyManager?.liveCountForWindow(window) ?? 0;
+    if (count > 0) {
+      const isLastWindow = BrowserWindow.getAllWindows().length === 1;
+      const terminals = `${count} terminal${count === 1 ? '' : 's'}`;
       const result = dialog.showMessageBoxSync(window, {
         type: 'warning',
         buttons: ['Cancel', 'Close Anyway'],
         defaultId: 0,
         cancelId: 0,
-        title: 'Close Patton',
-        message: `${count} terminal${count === 1 ? '' : 's'} still running`,
+        title: isLastWindow ? 'Close Patton' : 'Close Window',
+        message: `${terminals} still running`,
         detail:
-          'Closing the last window will end every terminal session and quit Patton. ' +
+          (isLastWindow
+            ? 'Closing the last window will end every terminal session and quit Patton. '
+            : `Closing this window will end its ${terminals}; your other windows stay open. `) +
           'Transcripts on disk are preserved, but in-memory session state is not.\n\n' +
           'To keep a session alive, cancel and exit it gracefully from inside its tab first.',
       });

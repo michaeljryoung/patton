@@ -204,7 +204,7 @@ export class Tab {
     this._project = project;
     const titleChanged = this.refreshTitle();
     // Even when the title stays put (e.g. the user named this tab), the tab
-    // bar needs the new project for its Rename Project… menu item.
+    // bar needs the new project for its "Set Default Tab Name for Project…" menu item.
     if (!titleChanged) this.onTitleChanged?.();
   }
 
