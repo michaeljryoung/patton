@@ -286,3 +286,21 @@ _The two atlas-eviction trigger gotchas below were merged into one concise entry
 - [x] **DONE — Session 24**: **Fix VS Code CLI ENOENT** (commit `3118108`, v1.1.21). Priority cascade: app-bundle CLI → `code` on PATH → `shell.openPath` fallback. No more silent ENOENT spam in `main.log`.
 - [x] **DONE — Session 22**: **Confirm before quit when PTYs are alive** (commit `f600248`). Catches ⌘Q and close-last-window.
 - [x] **DONE — Session 22**: **Tab "awaiting input" indicator** (iTerm-style dot) — shipped in S21, fully wired in S22 (S21 impl listened to the wrong signal and never fired in practice).
+
+## Session Log stubs (2026-10-12 estate cleanup trim)
+
+_Moved verbatim from CLAUDE.md's Session Log by the 2026-10-12 estate cleanup; one range pointer stands for them there._
+
+_S31 (recovered a crashed session's confirm-before-close feature → v1.7.0) and S33 (instant pane-close + ⌃⌘N notes scratchpad → v1.8.0; Homebrew SSH deploy key) archived 2026-10-11 S37 trim → `docs/session-archive.md`._
+
+_S29–S32 (S29 Claude Code fullscreen fallout → DOM-renderer toggle + selection fix, v1.5.0; S30 DOM promoted to default, v1.6.0; S31 recovered a crashed session → confirm-before-close, v1.7.0; S32 verification-only) archived 2026-08-01 S36 trim → `docs/session-archive.md`. S31 archived with S33 in the S37 trim._
+
+_S28 (shipped v1.4.0 — pushed S25+S27 fixes; user-confirmed ~2 weeks zero garbled-glyph recurrence + 60k+ defence fires in `main.log` → render saga closed; `HOMEBREW_PAT` confirmed as the expired token) archived 2026-07-07 S34 trim → `docs/session-archive.md`._
+
+_S27 (comprehensive WebGL-atlas defensive pass — `backgroundThrottling:false` + visibility/focus flush + renderer-log IPC bridge; late-session iTerm2 repro reoriented it to a possible system-level cause; shipped v1.4.0, validated S28) archived 2026-07-07 S33 trim → `docs/session-archive.md`._
+
+_S24–S26 (render-corruption defensive hardening → atlas-eviction diagnosis + Phase 1 → pre-S25-binary recurrence) archived 2026-05-31 S28 trim → `docs/session-archive.md`. The saga closed in S28: shipped v1.4.0, validated zero recurrence._
+
+_S21–S23 (file logger + health script + dot rewire + quit-confirm + `/mcp` Enter audit) archived 2026-05-07 S27 trim → `docs/session-archive.md`._
+
+_Verbose S19 + S20 live in `docs/session-archive.md` (moved 2026-04-24). Sessions 18 and earlier predate the log; see `git log --grep=Checkpoint`._
