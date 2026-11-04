@@ -79,6 +79,7 @@ Patton is a macOS Electron terminal with always-passthrough xterm.js input and a
 _Earlier entries archived → `docs/session-archive.md` (latest trim 2026-11-04, S39)._
 
 ## Decisions
+- **2026-11-04 (from a `~` session) — The account-per-tab switch is dropped** (Michael: "i dont think we need any of that test, i can just login to other account"). Switching accounts is `/login` in Claude Code, which carried a live session across accounts on 3 Nov. Supersedes the S38 keypress decision below; the queued item is marked dropped in `docs/NEXT_STEPS.md`.
 - **2026-11-04 (S39) — Install scripts approved by name, not pinned to versions.** Pinned entries (npm's default) block again at every dependency bump, and a blocked node-pty fails the build quietly; name-only approval, behind the Mac's 7-day minimum package age, keeps rebuilds working while a fresh malicious release still can't install.
 - **2026-11-03 (S38) — Switching accounts stays a keypress.** Patton shows both accounts' usage and never rotates a tab by itself. The user's call, reasons in private notes.
 _S33–S34 Decisions (4: close-confirm scoped to whole-tab closes, notes pane as a docked sidebar, Homebrew deploy key over a refreshed PAT, shortcuts fix must be structural) archived 2026-10-11 S37 trim → `docs/session-archive.md`._
