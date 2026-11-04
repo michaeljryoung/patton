@@ -344,3 +344,28 @@ _Earlier entries archived → docs/session-archive.md: Sessions 19 to 33 (2026-0
 - **Local builds report the release they were built from** (S37, `LOCAL_VERSION` in `forge.config.ts`). `git describe` gives `1.10.2` on a release commit and `1.10.2+3` three commits later, stamped into Info.plist (About box, Finder) and the build's package.json (`app.getVersion()`, main.log's startup line). CI is untouched — it stamps package.json itself. Caveat: release tags only reach this Mac via `git fetch --tags`, so a build made right after a release can still show the previous tag plus commits. Before S37 every local build said `1.0.0`; the asar mtime (`ls -lT /Applications/Patton.app/Contents/Resources/app.asar`) still tells you when the last build ran.
 
 - **Committing used to kill a running Patton** (S36, fixed). The post-commit hook packages on every commit, and the old install step deleted `/Applications/Patton.app` and copied a fresh one in under the live process, which then died silently (no crash dump). `forge.config.ts` now installs with `ditto` (overwrite in place). If Patton dies right after a commit, check that step first; for a truly clean install, delete the bundle by hand. Full story → `docs/session-archive.md`.
+
+## Session Log (S39 trim 2026-11-04)
+
+**2026-07-29 (session 35)** — estate session: ESLint PostToolUse pilot wired into `.claude/settings.local.json`; config-only, no code changes
+- A global estate-maintenance session added a project-local PostToolUse hook: on any `.ts`/`.tsx` Edit/Write, `npx eslint --no-warn-ignored <file>` runs and feeds the first 30 lines back to Claude — lint findings surface at edit time instead of waiting for the verifier pass. Loads from the next Patton session.
+- Judge after the first real coding session: keep, tune, or delete the `hooks` block (tracked in NEXT_STEPS). The URGENT S34 shortcuts-registry item remains first up.
+
+_Earlier entries archived → `docs/session-archive.md` (latest trim 2026-11-03, S38)._
+
+## Decisions (S39 trim 2026-11-04)
+
+- **2026-10-10 (S37) — Project = nearest git repo, else the top-level `~/Projects` folder; name = last word.** Resolved in main only when a pane's cwd changes; `~` itself never counts (a dotfiles repo would name every tab). The last-word default is crude (`computer-use` → "use") but deterministic, and per-project overrides fix the odd ones. User chose a separate right-click item over making double-click rename the project, so one-off tab names stay possible.
+
+- **2026-10-10 (S37) — Green dot = "Claude stopped", read from Claude's title glyphs.** User chose "when Claude stops" (finished or asking) over "only when it asks", which the title can't distinguish and would need a Claude Code hook. The 3s-quiet heuristic was removed, not tuned: any timing guess fires on mid-task pauses. Stops must hold 1.5s (queued-prompt flashes); needs-you is tracked per pane.
+
+- **2026-10-10 (S37) — Folder tracking via OSC 133 D, not OSC 7.** Patton's shell integration already signals every prompt; re-reading the cwd (lsof) there needs no new parsing and can't be pointed at a remote path by an ssh session's OSC 7. Supersedes S20 punch-list item H4 ("OSC 7 CWD push").
+
+- **2026-10-11 (S37) — Last-tab ⌘W hands the close to the main guard untouched; the guard counts the closing window's PTYs.** Deterministic prompt, a safe Cancel, and non-last windows now ask too. Rejected: a renderer confirm for the last tab — it would double-prompt with the guard on the last window.
+
+## Completed / superseded / dropped items (swept 2026-11-04, S39)
+
+- [x] **DONE — Session 28**: **Shipped v1.4.0** — pushed the 5 local commits (S25 `89404e4` + S27 `3cd768c` + 3 checkpoints); CI published the GitHub release + `Patton-1.4.0-arm64.dmg` + SHA-256. Only the Homebrew-cask step failed (expired `HOMEBREW_PAT`); the release is intact.
+- [x] **DONE — Session 28**: **Validated S27 render defences** — user-confirmed zero garbled-glyph recurrence since ~2026-05-18; `main.log` shows the visibility/focus + periodic flushes firing 60k+ times, 10/10 context losses self-healed, 0 manual resets. Render-corruption saga (S24–S27) closed.
+- [-] **DROPPED (S28): System-level font-cache reset** (was immediate-priority). It was the fallback for if S27 failed; S27 held (~2 weeks clean). The 2026-05-18 reboot may or may not have run `atsutil`, but it's moot. Discriminator recipe (Apple Terminal.app repro) preserved in CLAUDE.md Gotchas. WHY: S28 Decisions.
+- [-] **DROPPED (S28): Phase 2 Canvas-renderer fallback.** Contingent on recurrence inside the flush window; the contingency never fired in ~2 weeks of validated use. Plan stub `~/.claude/plans/see-this-screenshot-that-smooth-cake.md` preserved if it ever returns. WHY: S28 Decisions.

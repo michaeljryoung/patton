@@ -1,6 +1,6 @@
 # Patton — Next Steps
 
-Last updated: 2026-11-03 (Session 38)
+Last updated: 2026-11-04 (Session 39)
 
 CLAUDE.md's `## Next Steps` section points here; this is the canonical list. Items leave only via `[x] DONE — Session N`, `[~] SUPERSEDED — <pointer>`, or `[-] DROPPED: <reason>`. Marked items linger 10 checkpoints, then sweep to `docs/session-archive.md`.
 
@@ -87,9 +87,6 @@ CLAUDE.md's `## Next Steps` section points here; this is the canonical list. Ite
 - [x] **DONE — Session 29**: **Option+drag text selection** during mouse mode (`macOptionClickForcesSelection: true`) — previously no selection modifier worked on macOS while an app (Claude Code fullscreen, vim, tmux) held the mouse.
 - [x] **DONE — Session 29**: **Diagnosed Claude Code v2.1.x fullscreen rendering** as the single cause of the selection breakage + "Jump to bottom" button + glyph-corruption recurrence. Disable via `/tui default` or `CLAUDE_CODE_DISABLE_MOUSE=1`.
 - [x] **DONE — Session 29**: **`fast-uri` ^3.1.2 security pin** — closed the prod path-traversal advisory + unblocked the `npm audit` build gate (partial close of "CVE scan of dep tree").
-- [x] **DONE — Session 28**: **Shipped v1.4.0** — pushed the 5 local commits (S25 `89404e4` + S27 `3cd768c` + 3 checkpoints); CI published the GitHub release + `Patton-1.4.0-arm64.dmg` + SHA-256. Only the Homebrew-cask step failed (expired `HOMEBREW_PAT`); the release is intact.
-- [x] **DONE — Session 28**: **Validated S27 render defences** — user-confirmed zero garbled-glyph recurrence since ~2026-05-18; `main.log` shows the visibility/focus + periodic flushes firing 60k+ times, 10/10 context losses self-healed, 0 manual resets. Render-corruption saga (S24–S27) closed.
-- [-] **DROPPED (S28): System-level font-cache reset** (was immediate-priority). It was the fallback for if S27 failed; S27 held (~2 weeks clean). The 2026-05-18 reboot may or may not have run `atsutil`, but it's moot. Discriminator recipe (Apple Terminal.app repro) preserved in CLAUDE.md Gotchas. WHY: S28 Decisions.
-- [-] **DROPPED (S28): Phase 2 Canvas-renderer fallback.** Contingent on recurrence inside the flush window; the contingency never fired in ~2 weeks of validated use. Plan stub `~/.claude/plans/see-this-screenshot-that-smooth-cake.md` preserved if it ever returns. WHY: S28 Decisions.
+- _Four items (`[x]` DONE — Session 28, DONE — Session 28; `[-]` DROPPED (S28): System-level font-cache reset, DROPPED (S28): Phase 2 Canvas-renderer fallback) swept 2026-11-04 S39 → `docs/session-archive.md`._
 
 _S22–S27 completed/superseded items (8) swept 2026-10-11 S37 → `docs/session-archive.md`._
