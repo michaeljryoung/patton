@@ -71,5 +71,12 @@
   },
   "overrides": {
     "fast-uri": "^3.1.8"
+  },
+  "allowScripts": {
+    "electron-winstaller": true,
+    "esbuild": true,
+    "fs-xattr": true,
+    "macos-alias": true,
+    "node-pty": true
   }
 }
