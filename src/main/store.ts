@@ -89,6 +89,7 @@ const defaults: StoreSchema = {
     restoreSession: false,
     shellIntegration: true,
     renderer: DEFAULTS.RENDERER,
+    composeFirst: DEFAULTS.COMPOSE_FIRST,
   },
   windowState: {
     width: 900,
@@ -268,6 +269,10 @@ export function setSettings(partial: Partial<AppSettings>): void {
 
   if (partial.shellIntegration !== undefined) {
     validated.shellIntegration = !!partial.shellIntegration;
+  }
+
+  if (partial.composeFirst !== undefined) {
+    validated.composeFirst = !!partial.composeFirst;
   }
 
   if (partial.renderer !== undefined) {

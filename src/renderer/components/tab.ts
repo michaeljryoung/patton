@@ -41,6 +41,10 @@ export class Tab {
   // left can't overwrite a newer one.
   private _projectLookup = 0;
   private _broadcastInput = false;
+  // Compose-first in Claude Code tabs: the Settings value, and this tab's
+  // session-only override from the palette (null = follow the setting).
+  private _composeFirstSetting = false;
+  private _composeFirstOverride: boolean | null = null;
   private _zoomed = false;
   private _shell: string | undefined;
   private _historyManager: HistoryManager | undefined;
@@ -123,6 +127,7 @@ export class Tab {
         }
       },
     });
+    pane.setComposeFirst(this._composeFirstSetting, this._composeFirstOverride);
     pane.element.addEventListener('pane-split', ((e: CustomEvent) => {
       if (e.detail === 'vertical') this.splitVertical().catch(console.error);
       else if (e.detail === 'horizontal') this.splitHorizontal().catch(console.error);
@@ -506,6 +511,29 @@ export class Tab {
 
   toggleCompose(): void {
     this._focusedPane.toggleCompose();
+  }
+
+  /** The Settings value changed: every pane follows it unless this tab overrides it. */
+  setComposeFirst(enabled: boolean): void {
+    this._composeFirstSetting = enabled;
+    // An override equal to the new setting no longer overrides anything.
+    if (this._composeFirstOverride === enabled) this._composeFirstOverride = null;
+    this.applyComposeFirst();
+  }
+
+  /** Palette: flip compose-first for this tab only, until Patton quits. */
+  toggleComposeFirst(): void {
+    const effective = this._composeFirstOverride ?? this._composeFirstSetting;
+    const next = !effective;
+    this._composeFirstOverride = next === this._composeFirstSetting ? null : next;
+    this.applyComposeFirst();
+    this.showToast(`Compose-first ${next ? 'on' : 'off'} for this tab`);
+  }
+
+  private applyComposeFirst(): void {
+    for (const pane of this._panes) {
+      pane.setComposeFirst(this._composeFirstSetting, this._composeFirstOverride);
+    }
   }
 
   showHistorySearch(): void {

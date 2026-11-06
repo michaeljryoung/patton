@@ -88,6 +88,9 @@ export const SHORTCUTS: Shortcut[] = [
 
   // ── Input & tools ──
   { id: 'toggle-compose', label: 'Toggle Compose Panel', accelerator: 'CmdOrCtrl+E', rendererOnly: true, palette: true },
+  // Session-only override of the compose-first setting for the active tab. No
+  // key: it's an escape hatch, reached from the palette.
+  { id: 'toggle-compose-first', label: 'Compose-first: toggle for this tab', palette: true },
   { id: 'history-search', label: 'History Search', accelerator: 'Control+R', rendererOnly: true, palette: true },
   { id: 'broadcast', label: 'Broadcast Input', accelerator: 'CmdOrCtrl+Shift+B', palette: true },
   {

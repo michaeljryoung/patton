@@ -41,6 +41,10 @@ export interface AppSettings {
   restoreSession: boolean;
   shellIntegration: boolean;
   renderer: RendererMode;
+  /** Compose-first mode: while Claude Code runs in a pane, keep the compose
+   *  panel open and focused. Absent in settings saved before it existed, so
+   *  read it as `!== false` (on by default). */
+  composeFirst: boolean;
 }
 
 export interface SessionPaneState {

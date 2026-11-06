@@ -93,6 +93,12 @@ export class Pane {
   private claudeActive = false;
   private disposed = false;
 
+  // --- Compose-first (Claude Code tabs) ---
+  // The Settings value and the tab's session-only override (null = follow
+  // the setting); the effective mode is override ?? setting.
+  private composeFirstSetting = false;
+  private composeFirstOverride: boolean | null = null;
+
   // --- Pasted-image thumbnails (see pasteImage) ---
   private static readonly PASTE_CHIP_TTL_MS = 10 * 60 * 1000;
   private static readonly PASTE_CHIP_MAX = 6;
@@ -791,6 +797,20 @@ export class Pane {
   }
 
   // --- Compose panel ---
+
+  private get composeFirstEffective(): boolean {
+    return this.composeFirstOverride ?? this.composeFirstSetting;
+  }
+
+  /** Set by the tab: the Settings value and the tab's override. */
+  setComposeFirst(setting: boolean, override: boolean | null): void {
+    if (setting === this.composeFirstSetting && override === this.composeFirstOverride) return;
+    this.composeFirstSetting = setting;
+    this.composeFirstOverride = override;
+    rlog('info', '[COMPOSE] first-mode', {
+      pane: this.id, setting, override, effective: this.composeFirstEffective,
+    });
+  }
 
   isComposeExpanded(): boolean {
     return !this.editorContainer.classList.contains('collapsed');

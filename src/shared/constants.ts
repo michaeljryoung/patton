@@ -110,6 +110,8 @@ export const DEFAULTS = {
   NOTIFICATION_SOUND: true,
   NOTIFICATION_SOUND_TYPE: 'chime' as const,
   STARTUP_COMMAND: '' as const,
+  // Compose-first in Claude Code tabs (Settings, per tab from the palette).
+  COMPOSE_FIRST: true,
   MAX_PANES_PER_TAB: 5,
   // Notes scratchpad: max stored characters (a generous ~1 MB cap so a runaway
   // paste can't bloat the encrypted config file) and the panel's default width.

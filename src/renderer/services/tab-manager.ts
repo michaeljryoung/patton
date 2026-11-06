@@ -3,6 +3,7 @@ import { Pane } from '../components/pane';
 import { TabBar } from '../components/tab-bar';
 import { ConfirmDialog } from '../components/confirm-dialog';
 import { HistoryManager } from './history-manager';
+import { DEFAULTS } from '../../shared/constants';
 import { announce } from './announcer';
 import { onProjectNamesChanged, projectName, startProjectNames } from './project-names';
 import type { SessionState, RendererMode, TabFlag } from '../../shared/types';
@@ -31,6 +32,7 @@ export class TabManager {
   private closedPanes: ClosedPaneState[] = [];
   private static readonly MAX_CLOSED = 10;
   private currentCopyOnSelect = false;
+  private currentComposeFirst: boolean = DEFAULTS.COMPOSE_FIRST;
   private currentTerminalTheme: ITheme | null = null;
   private currentRenderer: RendererMode = 'webgl';
   private onTabsChanged: (() => void) | null = null; // bookmarks sidebar
@@ -149,6 +151,14 @@ export class TabManager {
     }
   }
 
+  /** Compose-first in Claude Code tabs: applies to every open pane at once. */
+  setComposeFirst(enabled: boolean): void {
+    this.currentComposeFirst = enabled;
+    for (const tab of this.tabs) {
+      tab.setComposeFirst(enabled);
+    }
+  }
+
   setTerminalTheme(theme: ITheme | null): void {
     this.currentTerminalTheme = theme;
     for (const tab of this.tabs) {
@@ -195,6 +205,7 @@ export class TabManager {
     if (this.currentCopyOnSelect) {
       tab.setCopyOnSelect(this.currentCopyOnSelect);
     }
+    tab.setComposeFirst(this.currentComposeFirst);
     if (this.currentTerminalTheme) {
       tab.setTerminalTheme(this.currentTerminalTheme);
     }
@@ -476,6 +487,7 @@ export class TabManager {
           if (this.currentCopyOnSelect) {
             tab.setCopyOnSelect(this.currentCopyOnSelect);
           }
+          tab.setComposeFirst(this.currentComposeFirst);
           if (this.currentTerminalTheme) {
             tab.setTerminalTheme(this.currentTerminalTheme);
           }

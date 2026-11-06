@@ -111,6 +111,14 @@ export class SettingsPanel {
             </label>
             <span class="settings-hint">Auto-copy selected text to clipboard</span>
           </div>
+          <div class="settings-group settings-group-toggle">
+            <label class="settings-label" for="setting-compose-first">Compose-first in Claude Code tabs</label>
+            <label class="settings-toggle">
+              <input type="checkbox" id="setting-compose-first" />
+              <span class="settings-toggle-slider"></span>
+            </label>
+            <span class="settings-hint">Keep the compose panel open and focused while Claude Code runs. Esc hands the keyboard to Claude's own prompt; Enter in an empty box, arrows and Tab pass through to it.</span>
+          </div>
           <div class="settings-group">
             <label class="settings-label" for="setting-opacity">Window Opacity</label>
             <div class="settings-range-row">
@@ -228,6 +236,11 @@ export class SettingsPanel {
       this.saveAndNotify({ copyOnSelect: copyOnSelectInput.checked });
     });
 
+    const composeFirstInput = this.overlay.querySelector('#setting-compose-first') as HTMLInputElement;
+    listen(composeFirstInput, 'change', () => {
+      this.saveAndNotify({ composeFirst: composeFirstInput.checked });
+    });
+
     const soundTypeInput = this.overlay.querySelector('#setting-notification-sound-type') as HTMLSelectElement;
     listen(soundTypeInput, 'change', () => {
       if (isNotificationSoundType(soundTypeInput.value)) {
@@ -338,6 +351,7 @@ export class SettingsPanel {
     (this.overlay.querySelector('#setting-notification-sound') as HTMLInputElement).checked = settings.notificationSound !== false;
     (this.overlay.querySelector('#setting-notification-sound-type') as HTMLSelectElement).value = settings.notificationSoundType || 'chime';
     (this.overlay.querySelector('#setting-copy-on-select') as HTMLInputElement).checked = settings.copyOnSelect === true;
+    (this.overlay.querySelector('#setting-compose-first') as HTMLInputElement).checked = settings.composeFirst !== false;
     (this.overlay.querySelector('#setting-startup-command') as HTMLInputElement).value = settings.startupCommand || '';
     (this.overlay.querySelector('#setting-restore-session') as HTMLInputElement).checked = settings.restoreSession !== false;
     (this.overlay.querySelector('#setting-shell-integration') as HTMLInputElement).checked = settings.shellIntegration !== false;

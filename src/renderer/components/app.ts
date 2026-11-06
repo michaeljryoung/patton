@@ -80,6 +80,9 @@ export class App {
       if (settings.copyOnSelect !== undefined) {
         this.tabManager.setCopyOnSelect(settings.copyOnSelect);
       }
+      if (settings.composeFirst !== undefined) {
+        this.tabManager.setComposeFirst(settings.composeFirst);
+      }
       if (settings.theme !== undefined) {
         this.applyTheme(settings.theme);
       }
@@ -165,6 +168,7 @@ export class App {
       this.notificationSound.setType(settings.notificationSoundType);
     }
     this.tabManager.setCopyOnSelect(settings.copyOnSelect === true);
+    this.tabManager.setComposeFirst(settings.composeFirst !== false);
     this.settingsPanel.loadSettings(settings);
     if (settings.theme && settings.theme !== 'system') {
       this.applyTheme(settings.theme);
@@ -444,6 +448,9 @@ export class App {
         break;
       case 'toggle-compose':
         tab?.toggleCompose();
+        break;
+      case 'toggle-compose-first':
+        tab?.toggleComposeFirst();
         break;
       case 'history-search':
         tab?.showHistorySearch();
