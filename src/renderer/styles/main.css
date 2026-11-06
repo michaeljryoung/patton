@@ -214,6 +214,54 @@ html, body {
   display: none;
 }
 
+/* Hidden, the sidebar leaves a narrow strip with a small boxed "+" level with
+ * the header row it stood in. The whole strip is the button (an easy target,
+ * nothing else lives there); ⌃⌘B and the header's chevron toggle the same two
+ * states. No width animation: the terminal re-fits once, not on every frame. */
+#bookmarks-rail {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 22px;
+  padding: 6px 0 0; /* centres the 16 px mark in the 28 px header row */
+  border: none;
+  border-right: 1px solid var(--hairline);
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+
+#bookmarks-rail[hidden] {
+  display: none;
+}
+
+.bookmarks-rail-mark {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border: 1px solid var(--hairline);
+  border-radius: 2px;
+  transition: background 0.12s;
+}
+
+#bookmarks-rail:hover {
+  background: var(--surface-hover);
+  color: var(--ink);
+}
+
+#bookmarks-rail:hover .bookmarks-rail-mark {
+  background: var(--bg);
+}
+
+#bookmarks-rail:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
 .bookmarks-header {
   display: flex;
   align-items: center;
@@ -226,7 +274,13 @@ html, body {
   -webkit-app-region: no-drag;
 }
 
-.bookmarks-add {
+.bookmarks-header-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.bookmarks-add,
+.bookmarks-hide {
   width: 20px;
   height: 20px;
   display: grid;
@@ -241,12 +295,14 @@ html, body {
   cursor: pointer;
 }
 
-.bookmarks-add:hover {
+.bookmarks-add:hover,
+.bookmarks-hide:hover {
   background: var(--bg);
   color: var(--ink);
 }
 
 .bookmarks-add:focus-visible,
+.bookmarks-hide:focus-visible,
 .bookmarks-form button:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 1px;
@@ -440,6 +496,58 @@ html, body {
 .bookmark-subtitle {
   font-size: calc(var(--ui) - 2px);
   color: var(--muted);
+}
+
+/* Drag to reorder: a 2 px blue line where the row will land (blue is the
+ * tab bar's drop colour too), the row being moved dimmed in place, and a
+ * ground-and-hairline card as the drag image. */
+.bookmarks-items > li {
+  position: relative;
+}
+
+.bookmarks-items > li.drop-before::before,
+.bookmarks-items > li.drop-after::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--accent);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.bookmarks-items > li.drop-before::before {
+  top: -1px;
+}
+
+.bookmarks-items > li.drop-after::after {
+  bottom: -1px;
+}
+
+.bookmark-row.is-dragging {
+  opacity: 0.35;
+}
+
+.bookmark-row.drag-ghost {
+  background: var(--bg);
+  color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+}
+
+/* The grip only tells you the row drags; the whole row is the handle. */
+.bookmark-grip {
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+.bookmark-row:hover .bookmark-grip {
+  opacity: 1;
 }
 
 /* Drag handle on the panel's right edge to resize it */

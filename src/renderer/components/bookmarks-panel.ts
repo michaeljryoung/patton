@@ -1,4 +1,5 @@
 import { DEFAULTS } from '../../shared/constants';
+import { shortcutKeys } from '../../shared/shortcuts';
 import type { Bookmark } from '../../shared/types';
 import { announce } from '../services/announcer';
 import { projectName } from '../services/project-names';
@@ -11,6 +12,14 @@ import type { Tab } from './tab';
 const WIDTH_STORAGE_KEY = 'patton.bookmarks.width';
 const OPEN_STORAGE_KEY = 'patton.bookmarks.open';
 const REFRESH_DEBOUNCE_MS = 100;
+// A private drag type: a bookmark dropped on the terminal or another app
+// carries no text, so nothing gets typed or opened by accident.
+const DRAG_TYPE = 'application/x-patton-bookmark';
+
+const ICON_HIDE =
+  '<svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M6.25 2 3.25 5l3 3" fill="none" stroke="currentColor" stroke-width="1.25"/></svg>';
+const ICON_PLUS =
+  '<svg width="8" height="8" viewBox="0 0 8 8" aria-hidden="true"><path d="M4 0.5v7M0.5 4h7" fill="none" stroke="currentColor" stroke-width="1"/></svg>';
 
 /** What the panel needs from the window's tabs. Kept narrow so the panel
  *  doesn't reach into TabManager's internals. */
@@ -59,12 +68,20 @@ function newId(): string {
  * has a tab open are marked (dot + bold); the row for the active tab's project
  * gets the accent background and `aria-current`.
  *
+ * Rows drag to reorder within their group (projects among projects, links
+ * among links); the row menu's Move Up / Move Down is the keyboard route.
+ *
+ * Hidden, the sidebar folds to a narrow strip with a small "+" where it stood:
+ * the header's chevron, the strip and ⌃⌘B all toggle between those two states.
+ *
  * The list lives in the encrypted store (main validates every save and
  * broadcasts it to all windows); width and open/closed state are renderer-local
  * preferences in localStorage, as with the notes panel.
  */
 export class BookmarksPanel {
   private panel: HTMLElement;
+  private rail: HTMLButtonElement;
+  private hideButton: HTMLButtonElement;
   private listEl: HTMLElement;
   private form: HTMLFormElement;
   private urlInput: HTMLInputElement;
@@ -81,6 +98,9 @@ export class BookmarksPanel {
   // While a row is being renamed, re-rendering would destroy the input box
   // mid-typing; the render is skipped and run when the rename ends.
   private renamingId: string | null = null;
+  // The row being dragged. Renders wait for the drop for the same reason as
+  // renames: rebuilding the list mid-drag would remove the row being dragged.
+  private dragId: string | null = null;
   // Paths whose tab is being created, so a double-click can't open two tabs.
   private opening = new Set<string>();
   // Clicks are ignored until App.init has restored the session and run the
@@ -94,6 +114,7 @@ export class BookmarksPanel {
 
   constructor(container: HTMLElement, host: BookmarksHost) {
     this.host = host;
+    const keys = shortcutKeys('toggle-bookmarks');
 
     this.panel = document.createElement('nav');
     this.panel.id = 'bookmarks-panel';
@@ -102,7 +123,11 @@ export class BookmarksPanel {
     this.panel.innerHTML = `
       <div class="bookmarks-header">
         <span id="bookmarks-heading">Bookmarks</span>
-        <button type="button" class="bookmarks-add" aria-label="Add bookmark" aria-haspopup="menu" title="Add bookmark">+</button>
+        <div class="bookmarks-header-actions">
+          <button type="button" class="bookmarks-add" aria-label="Add bookmark" aria-haspopup="menu" title="Add bookmark">+</button>
+          <button type="button" class="bookmarks-hide" aria-label="Hide bookmarks" aria-controls="bookmarks-panel"
+            aria-expanded="true" title="Hide bookmarks (${keys})">${ICON_HIDE}</button>
+        </div>
       </div>
       <form class="bookmarks-form" hidden aria-label="Add artifact link">
         <input class="bookmarks-form-url" type="text" inputmode="url" spellcheck="false"
@@ -122,6 +147,19 @@ export class BookmarksPanel {
     // Docked left: first in #main's row, before #content.
     container.insertBefore(this.panel, container.firstChild);
 
+    // What stays of the sidebar while it is hidden: a narrow strip whose whole
+    // height is the button, marked with a small "+" level with the header.
+    this.rail = document.createElement('button');
+    this.rail.type = 'button';
+    this.rail.id = 'bookmarks-rail';
+    this.rail.setAttribute('aria-label', 'Show bookmarks');
+    this.rail.setAttribute('aria-controls', 'bookmarks-panel');
+    this.rail.setAttribute('aria-expanded', 'false');
+    this.rail.title = `Show bookmarks (${keys})`;
+    this.rail.innerHTML = `<span class="bookmarks-rail-mark" aria-hidden="true">${ICON_PLUS}</span>`;
+    container.insertBefore(this.rail, this.panel);
+
+    this.hideButton = this.panel.querySelector('.bookmarks-hide') as HTMLButtonElement;
     this.listEl = this.panel.querySelector('.bookmarks-list') as HTMLElement;
     this.form = this.panel.querySelector('.bookmarks-form') as HTMLFormElement;
     this.urlInput = this.panel.querySelector('.bookmarks-form-url') as HTMLInputElement;
@@ -135,8 +173,10 @@ export class BookmarksPanel {
     }
 
     this.setupHeader();
+    this.setupRail();
     this.setupForm();
     this.setupListKeys();
+    this.setupDragReorder();
     this.setupResizer();
 
     // Escape anywhere in the panel hands focus back to the terminal; the
@@ -158,8 +198,15 @@ export class BookmarksPanel {
       }),
     );
 
-    if (localStorage.getItem(OPEN_STORAGE_KEY) === '1') {
-      this.show(false).catch((err) => rlog('warn', '[BOOKMARK] Could not restore panel', err));
+    // Saved open: keep the strip out of the way while the list loads, so the
+    // terminal is resized once (to the panel) rather than twice.
+    const restoreOpen = localStorage.getItem(OPEN_STORAGE_KEY) === '1';
+    this.rail.hidden = restoreOpen;
+    if (restoreOpen) {
+      this.show(false).catch((err) => {
+        this.rail.hidden = false;
+        rlog('warn', '[BOOKMARK] Could not restore panel', err);
+      });
     }
   }
 
@@ -238,6 +285,7 @@ export class BookmarksPanel {
   private async show(focus: boolean): Promise<void> {
     await this.ensureLoaded();
     this.panel.classList.remove('collapsed');
+    this.rail.hidden = true;
     localStorage.setItem(OPEN_STORAGE_KEY, '1');
     this.refreshMissing();
     this.render();
@@ -254,6 +302,7 @@ export class BookmarksPanel {
     if (!this.isOpen) return;
     this.cancelForm();
     this.panel.classList.add('collapsed');
+    this.rail.hidden = false;
     this.lastRendered = ''; // rebuild on the next show
     localStorage.setItem(OPEN_STORAGE_KEY, '0');
     announce('Bookmarks closed', 'polite');
@@ -374,7 +423,7 @@ export class BookmarksPanel {
   // ── Rendering ──
 
   private render(): void {
-    if (this.renamingId || !this.isOpen) return;
+    if (this.renamingId || this.dragId || !this.isOpen) return;
 
     const tabs = this.host.getTabs();
     const active = this.host.getActiveTab();
@@ -430,7 +479,7 @@ export class BookmarksPanel {
       ul.className = 'bookmarks-items';
       for (const bookmark of items) {
         const state = states.get(bookmark.id) ?? { isOpen: false, isCurrent: false };
-        ul.appendChild(this.renderRow(bookmark, state.isOpen, state.isCurrent));
+        ul.appendChild(this.renderRow(bookmark, state.isOpen, state.isCurrent, items.length > 1));
       }
       section.appendChild(ul);
       this.listEl.appendChild(section);
@@ -439,7 +488,7 @@ export class BookmarksPanel {
     if (hadFocusId) this.focusRow(hadFocusId);
   }
 
-  private renderRow(bookmark: Bookmark, isOpen: boolean, isCurrent: boolean): HTMLElement {
+  private renderRow(bookmark: Bookmark, isOpen: boolean, isCurrent: boolean, canDrag: boolean): HTMLElement {
     const li = document.createElement('li');
     const row = document.createElement('button');
     row.type = 'button';
@@ -475,6 +524,32 @@ export class BookmarksPanel {
     text.append(label, sub);
     row.appendChild(text);
 
+    if (canDrag) {
+      // The whole row drags; the grip only says so, on hover.
+      row.draggable = true;
+      const grip = document.createElement('span');
+      grip.className = 'bookmark-grip';
+      grip.setAttribute('aria-hidden', 'true');
+      grip.textContent = '\u2847'; // ⡇ braille dots, the tab bar's grip
+      row.appendChild(grip);
+
+      row.addEventListener('dragstart', (e) => {
+        if (!e.dataTransfer) return;
+        this.dragId = bookmark.id;
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData(DRAG_TYPE, bookmark.id);
+        // The drag image is painted from the row as it stands when this handler
+        // returns: give it a card look for that one paint, then dim the row
+        // left behind in the list.
+        row.classList.add('drag-ghost');
+        requestAnimationFrame(() => {
+          row.classList.remove('drag-ghost');
+          if (this.dragId === bookmark.id) row.classList.add('is-dragging');
+        });
+      });
+      row.addEventListener('dragend', () => this.endDrag());
+    }
+
     row.addEventListener('click', () => {
       this.open(bookmark).catch((err) => rlog('error', '[BOOKMARK] open failed', String(err)));
     });
@@ -490,6 +565,107 @@ export class BookmarksPanel {
   private focusRow(id: string): void {
     const row = this.listEl.querySelector<HTMLElement>(`.bookmark-row[data-bookmark-id="${CSS.escape(id)}"]`);
     row?.focus();
+  }
+
+  // ── Drag to reorder, within a group ──
+
+  private setupDragReorder(): void {
+    const hitRow = (e: DragEvent): { li: HTMLElement; id: string } | null => {
+      const row = (e.target as Element | null)?.closest?.<HTMLElement>('.bookmark-row');
+      const id = row?.dataset.bookmarkId;
+      const li = row?.parentElement;
+      return id && li ? { li, id } : null;
+    };
+    // Lower half of a row = drop after it.
+    const isAfter = (e: DragEvent, li: HTMLElement): boolean => {
+      const rect = li.getBoundingClientRect();
+      return e.clientY > rect.top + rect.height / 2;
+    };
+
+    const onDragOver = (e: DragEvent) => {
+      if (!this.dragId || !e.dataTransfer) return; // a file or text from elsewhere: not ours
+      const hit = hitRow(e);
+      const dragged = this.bookmarks.find((b) => b.id === this.dragId);
+      const target = hit ? this.bookmarks.find((b) => b.id === hit.id) : undefined;
+      if (!hit || !dragged || !target || target.kind !== dragged.kind) {
+        // Between groups or off the rows: no drop here (the cursor says so).
+        this.clearDropMarks();
+        return;
+      }
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      const after = isAfter(e, hit.li);
+      // Mark only a drop that would change the order: not the row itself, nor
+      // the gap it already sits in.
+      const wouldMove = this.reordered(this.dragId, hit.id, after) !== null;
+      const cls = after ? 'drop-after' : 'drop-before';
+      if (wouldMove && hit.li.classList.contains(cls)) return; // unchanged: no restyle
+      this.clearDropMarks();
+      if (wouldMove) hit.li.classList.add(cls);
+    };
+    const onDragLeave = (e: DragEvent) => {
+      const into = e.relatedTarget as Node | null;
+      if (!into || !this.listEl.contains(into)) this.clearDropMarks();
+    };
+    const onDrop = (e: DragEvent) => {
+      const dragId = this.dragId;
+      const hit = hitRow(e);
+      if (!dragId || !hit) return;
+      e.preventDefault();
+      const next = this.reordered(dragId, hit.id, isAfter(e, hit.li));
+      this.endDrag();
+      if (next) this.commitReorder(dragId, next).catch((err) => rlog('error', '[BOOKMARK] reorder failed', String(err)));
+    };
+
+    this.listEl.addEventListener('dragover', onDragOver);
+    this.listEl.addEventListener('dragleave', onDragLeave);
+    this.listEl.addEventListener('drop', onDrop);
+    this.disposables.push(
+      () => this.listEl.removeEventListener('dragover', onDragOver),
+      () => this.listEl.removeEventListener('dragleave', onDragLeave),
+      () => this.listEl.removeEventListener('drop', onDrop),
+    );
+  }
+
+  private clearDropMarks(): void {
+    this.listEl.querySelectorAll('.drop-before, .drop-after').forEach((el) => el.classList.remove('drop-before', 'drop-after'));
+  }
+
+  /** The drag is over (dropped, or cancelled with Escape or outside the list). */
+  private endDrag(): void {
+    if (!this.dragId) return;
+    this.dragId = null;
+    this.clearDropMarks();
+    this.listEl.querySelectorAll('.is-dragging, .drag-ghost').forEach((el) => el.classList.remove('is-dragging', 'drag-ghost'));
+    this.render(); // catch up on any change held back during the drag
+  }
+
+  /** The list with `dragId` moved before or after `targetId`, or null when that
+   *  crosses groups or leaves the group's order as it was. Works on the whole
+   *  list: rows are drawn grouped by kind, so placing it next to a row of its own
+   *  kind is enough. "As it was" is judged within the group, because the stored
+   *  list interleaves kinds: moving a project past a link changes the list but
+   *  not a single row on screen. */
+  private reordered(dragId: string, targetId: string, after: boolean): Bookmark[] | null {
+    const dragged = this.bookmarks.find((b) => b.id === dragId);
+    const target = this.bookmarks.find((b) => b.id === targetId);
+    if (!dragged || !target || dragged.kind !== target.kind || dragId === targetId) return null;
+    const next = this.bookmarks.filter((b) => b.id !== dragId);
+    next.splice(next.indexOf(target) + (after ? 1 : 0), 0, dragged);
+    const groupOrder = (list: Bookmark[]) => list.filter((b) => b.kind === dragged.kind).map((b) => b.id).join('\n');
+    return groupOrder(next) !== groupOrder(this.bookmarks) ? next : null;
+  }
+
+  private async commitReorder(dragId: string, next: Bookmark[]): Promise<void> {
+    const bookmark = this.bookmarks.find((b) => b.id === dragId);
+    if (!bookmark) return;
+    const positionIn = (list: Bookmark[]) => list.filter((b) => b.kind === bookmark.kind).findIndex((b) => b.id === dragId);
+    const from = positionIn(this.bookmarks);
+    const to = positionIn(next);
+    if (await this.save(next)) {
+      rlog('info', '[BOOKMARK] reordered', { kind: bookmark.kind, from, to });
+      announce(`Moved ${bookmark.label} to position ${to + 1}`);
+    }
   }
 
   // ── Row menu: rename, move, remove ──
@@ -610,6 +786,22 @@ export class BookmarksPanel {
     };
     this.addButton.addEventListener('click', openMenu);
     this.disposables.push(() => this.addButton.removeEventListener('click', openMenu));
+
+    const onHide = () => {
+      rlog('info', '[BOOKMARK] panel hidden', { via: 'button' });
+      this.hide();
+    };
+    this.hideButton.addEventListener('click', onHide);
+    this.disposables.push(() => this.hideButton.removeEventListener('click', onHide));
+  }
+
+  private setupRail(): void {
+    const onShow = () => {
+      rlog('info', '[BOOKMARK] panel shown', { via: 'strip' });
+      this.show(true).catch((err) => rlog('warn', '[BOOKMARK] Could not open panel', err));
+    };
+    this.rail.addEventListener('click', onShow);
+    this.disposables.push(() => this.rail.removeEventListener('click', onShow));
   }
 
   private setupForm(): void {
@@ -762,6 +954,7 @@ export class BookmarksPanel {
     for (const d of this.disposables) d();
     this.contextMenu.dispose();
     this.confirmDialog.dispose();
+    this.rail.remove();
     this.panel.remove();
   }
 }

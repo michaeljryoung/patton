@@ -98,7 +98,15 @@ const config: ForgeConfig = {
         // installing a released DMG over the running app.
         // Trade-off: files that disappear in a newer build can linger here, so
         // remove /Applications/Patton.app by hand if you need a clean install.
+        //
+        // PATTON_NO_INSTALL=1 stops here: built and signed in out/, the
+        // installed app untouched — for verifying a change while Patton is in
+        // use. The post-commit hook inherits it from the commit's environment.
         const dest = '/Applications/Patton.app';
+        if (process.env.PATTON_NO_INSTALL) {
+          console.log(`\nℹ️  PATTON_NO_INSTALL set: built at ${appPath}; ${dest} untouched`);
+          continue;
+        }
         execSync(`ditto "${appPath}" "${dest}"`, { stdio: 'inherit' });
         console.log(`\n✅ Installed to ${dest}`);
       }
