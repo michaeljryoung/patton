@@ -5,6 +5,8 @@ export interface EditorInputCallbacks {
   onHistoryDown: () => string | null;
   onTab: () => void;
   onEscape?: () => void;
+  /** Paste with no text on the clipboard — it may hold an image. */
+  onImagePaste?: () => void;
 }
 
 export class EditorInput {
@@ -44,7 +46,10 @@ export class EditorInput {
     const pasteHandler = (e: ClipboardEvent) => {
       e.preventDefault();
       const text = e.clipboardData?.getData('text') || '';
-      if (!text) return;
+      if (!text) {
+        this.callbacks.onImagePaste?.();
+        return;
+      }
       this.textarea.focus();
       document.execCommand('insertText', false, text);
       this.autoResize();

@@ -7,6 +7,7 @@ import { IPC } from '../shared/constants';
 import { PtyManager } from './pty-manager';
 import { isSafeAbsolutePath, resolveProject } from './projects';
 import * as store from './store';
+import { registerClipboardImageHandlers } from './clipboard-image';
 import type { PtyCreateOptions, RenderSnapshot, SessionState } from '../shared/types';
 
 /** Open an http(s) URL in the default browser. Anything else — other schemes
@@ -541,4 +542,8 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
       win.setPosition(Math.round(x + dx), Math.round(y + dy));
     }
   });
+
+  // --- image paste ---
+  registerClipboardImageHandlers();
+  // --- end image paste ---
 }

@@ -65,6 +65,12 @@ const api: PattonAPI = {
   log: {
     send: (level, args) => ipcRenderer.send(IPC.LOG_RENDERER, level, args),
   },
+  // --- image paste ---
+  clipboard: {
+    readImage: () => ipcRenderer.invoke(IPC.CLIPBOARD_READ_IMAGE),
+    saveImage: () => ipcRenderer.invoke(IPC.CLIPBOARD_SAVE_IMAGE),
+  },
+  // --- end image paste ---
   app: {
     onSettings: (cb) => {
       const listener = () => cb();

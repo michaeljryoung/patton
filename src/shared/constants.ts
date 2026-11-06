@@ -65,6 +65,11 @@ export const IPC = {
   DIAGNOSTICS_SAVE_SNAPSHOT: 'diagnostics:save-snapshot',
 
   LOG_RENDERER: 'log:renderer',
+
+  // --- image paste ---
+  CLIPBOARD_READ_IMAGE: 'clipboard:readImage',
+  CLIPBOARD_SAVE_IMAGE: 'clipboard:saveImage',
+  // --- end image paste ---
 } as const;
 
 export const DEFAULTS = {
