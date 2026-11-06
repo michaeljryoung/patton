@@ -30,13 +30,15 @@ flowchart TD
   end
   subgraph P4["Phase 4 — Look"]
     look_mocks[five look mocks published]:::done
-    look_pick[Michael picks a direction]:::blocked
-    look_implement[restyle chrome per pick]:::todo
+    look_mixer[mixer page in the Trial Stack style]:::done
+    look_pick[Michael picks a combination]:::done
+    look_implement[restyle chrome per pick]:::done
   end
   subgraph P5["Phase 5 — Typing and release"]
     compose_reason[report why compose is not default]:::done
-    compose_default[compose-first mode for Claude tabs]:::blocked
+    compose_default[compose-first mode + toggle]:::done
     merge_release[merge, review, release v1.11.0]:::done
+    release_v1_12[release v1.12.0: look + compose-first]:::live
   end
   hook_script --> parked_state
   osc777_parse --> parked_state
@@ -49,7 +51,8 @@ flowchart TD
   bookmarks_store --> bookmarks_panel
   bookmarks_panel --> bookmark_open
   bookmark_open --> bookmarks_verify
-  look_mocks --> look_pick
+  look_mocks --> look_mixer
+  look_mixer --> look_pick
   look_pick --> look_implement
   compose_reason --> compose_default
   hook_script --> compose_default
@@ -61,6 +64,9 @@ flowchart TD
   merge_release --> signals_verify
   merge_release --> paste_verify
   merge_release --> bookmarks_verify
+  compose_default --> release_v1_12
+  look_implement --> release_v1_12
+  merge_release --> release_v1_12
   classDef done fill:#1a7f37,color:#fff
   classDef live fill:#0969da,color:#fff
   classDef todo fill:#8c959f,color:#fff
@@ -85,10 +91,12 @@ flowchart TD
 | `bookmark_open` | Click project: activate the tab already in that project, else new tab at the folder running the startup command; click artifact: open in the browser (https only) | done | `bookmarks_panel` | `bookmarks-panel.ts::open` · `src/renderer/services/startup-command.ts` · `ce7526b` · `43cb3c7` |
 | `bookmarks_verify` | Live: bookmark two projects and an artifact; open, re-click (no second tab), artifact opens | live | `bookmark_open`, `merge_release` | asar literals present; LIVE RUN PENDING: harness green, field-unexercised |
 | `look_mocks` | Five directions on one published page, each with Patton's chrome and a Claude session inside; note what Patton controls vs Claude Code | done | — | `docs/mocks/look-directions.html` · published https://claude.ai/code/artifact/f6ab1b78-e193-4e00-940a-594b5a01f5c2 |
-| `look_pick` | Michael picks one (or mixes) | blocked | `look_mocks` | BLOCKED: Michael's pick |
-| `look_implement` | Restyle tokens, tab bar, sidebar, compose, dialogs per the pick; terminal themes untouched | todo | `look_pick` | — |
+| `look_mixer` | One live Patton window in the Trial Stack AI aesthetic with seven switchable components, three preset iterations, selection in the URL hash (pattern: defence-website `themes/martello-mixer.html`) | done | `look_mocks` | `docs/mocks/patton-mixer.html` · https://claude.ai/code/artifact/478e85b3-a125-4a6c-9cbd-36878c0d6ea2 |
+| `look_pick` | Michael picks a combination from the mixer | done | `look_mixer` | Michael 2026-11-06 11:13: `tabs=c&glyphs=a&rows=c&scale=b&compose=a&tone=light&lines=ink` (ledger-strip tabs, coloured glyphs, dense rows, compact scale, boxed compose + Send, light, ink hairlines) |
+| `look_implement` | Restyle tokens, tab bar, sidebar, compose, dialogs per the pick; terminal themes untouched | done | `look_pick` | `448d5ed` `5c4941c` `d540d76` · `src/renderer/styles/main.css` tokens · Send button in `editor-input.ts` |
 | `compose_reason` | Report the recorded reason the compose panel is not the default input | done | — | `98a216e` · `0abba75` (ModeDetector removed 2026-03-09; terminal always owns input) |
-| `compose_default` | Compose-first mode for Claude tabs, if Michael wants it after the report; hook channel can hand focus back for dialogs | blocked | `compose_reason`, `hook_script` | BLOCKED: Michael's decision |
+| `compose_default` | Compose-first mode for Claude tabs behind a Settings toggle (default on) and a per-tab palette override; Enter/arrows/Tab/Esc pass through from an empty box, Esc hands focus over from a draft | done | `compose_reason`, `hook_script` | `cb38c2c` `6258544` `cd5fc68` `8af2355` · `src/renderer/components/pane.ts::canTakeKeyboard` · Settings toggle `composeFirst` |
+| `release_v1_12` | Push the afternoon's commits, CI release v1.12.0 on macos-15, cask green, checksum verified | live | `compose_default`, `look_implement`, `merge_release` | — |
 | `merge_release` | Merge `feat/image-paste` and `feat/bookmarks` into main, code review, `npm run lint && npm run package`, release v1.11.0, Homebrew step green | done | `parked_state`, `wake_yellow`, `hook_install`, `paste_thumbnail`, `bookmark_open` | tag `v1.11.0` (release run 42203278111, macos-15; cask 1.11.0 pushed by CI) |
 <!-- MAP:END -->
 
@@ -100,9 +108,9 @@ CLAUDE.md's `## Next Steps` section points here; this is the canonical list. Ite
 
 ## Live
 
-- [ ] **S40 live checks** (the three the map waits on; first launch of the installed 1.11.0 build is the test) → `signals_verify` `paste_verify` `bookmarks_verify`. (a) A Claude tab whose turn ends while a background agent runs shows the hollow ring, no sound, and goes green when the session truly stops; `grep '\[DOT\]' ~/Library/Application\ Support/Patton/logs/main.log` shows `stored`/`applied` with source `hook`. Settings → Claude Code should read "Hook installed". (b) Type `wake` in a tab: yellow flag; Ctrl+C: gone. (c) ⌘V a screenshot into a Claude tab: `[Image #1]` in Claude, a thumbnail chip above the compose bar; in a plain shell the PNG's path is typed. (d) ⌃⌘B: bookmark two projects and an artifact; re-clicking an open project activates its tab; the artifact opens in the browser. If any fails, `main.log` has `[DOT]`, `[PASTE]`, `[BOOKMARK]`, `[HOOK]` lines.
-- [ ] **Pick a look direction** → `look_pick`. Five mocks: https://claude.ai/code/artifact/f6ab1b78-e193-4e00-940a-594b5a01f5c2 (Vitrine, Scope, Graphite, Ledger, Phosphor).
-- [ ] **Compose-first mode decision** → `compose_default`. Reason it isn't the default: `98a216e` (2026-03-09). The hook channel can now hand focus to Claude's dialogs (Notification hook `permission_prompt`), so an always-open compose box for Claude tabs with Esc/arrow hand-off is feasible.
+- [ ] **S40 live checks** (first launch of the installed 1.12.0 build is the test; add: (e) compose-first engages in a Claude tab, arrows/Enter pass through from an empty box, Esc with a draft hands over and ◐ reclaims, a multi-line draft arrives as one block, Settings toggle off collapses every tab; (f) the new look in light and dark, especially dark hairlines; (g) a split pane gets the same font/renderer as its sibling) → `signals_verify` `paste_verify` `bookmarks_verify`. (a) A Claude tab whose turn ends while a background agent runs shows the hollow ring, no sound, and goes green when the session truly stops; `grep '\[DOT\]' ~/Library/Application\ Support/Patton/logs/main.log` shows `stored`/`applied` with source `hook`. Settings → Claude Code should read "Hook installed". (b) Type `wake` in a tab: yellow flag; Ctrl+C: gone. (c) ⌘V a screenshot into a Claude tab: `[Image #1]` in Claude, a thumbnail chip above the compose bar; in a plain shell the PNG's path is typed. (d) ⌃⌘B: bookmark two projects and an artifact; re-clicking an open project activates its tab; the artifact opens in the browser. If any fails, `main.log` has `[DOT]`, `[PASTE]`, `[BOOKMARK]`, `[HOOK]` lines.
+- [x] **DONE — Session 40**: **Pick a look combination from the mixer** → `look_pick` (`tabs=c&glyphs=a&rows=c&scale=b&compose=a&tone=light&lines=ink`). The five static directions were rejected; the aesthetic is Trial Stack AI's table page (Helvetica Neue, ink on white, hairlines, square corners, uppercase tracked labels, glyph status).
+- [x] **DONE — Session 40**: **Compose-first mode** (Michael's go 2026-11-06: "a setting where you can choose to toggle it default on or off") → `compose_default`. Reason it isn't the default: `98a216e` (2026-03-09). The hook channel can now hand focus to Claude's dialogs (Notification hook `permission_prompt`), so an always-open compose box for Claude tabs with Esc/arrow hand-off is feasible.
 - [ ] **Forge 8 upgrade** (offered). Would remove the need for `scripts/forge-package.sh` under Node 26; CI pins Node 20 either way.
 - [-] DROPPED (2026-11-03, evening): "i dont think we need any of that test, i can just login to other account"; "we know the setup works fine from this switch". Switching accounts is `/login` in Claude Code. Was: **An account per tab, with a switch key** (queued 2026-11-03, not started). Each tab runs Claude Code on a chosen account, a key moves a session to the other account, and both accounts' usage is in view. Switching stays a keypress, never automatic. Test first that a session resumes on the other account (`CLAUDE_CONFIG_DIR` per account sharing setup and history, then `claude --resume`). Today's startup command is one global setting (`src/renderer/components/app.ts:196`), and `~/.claude/launcher.sh` hard-codes `claude` at three launches. Why and when: the private AI Brain exit map, node `patton_account_switch`. *(S38, 2026-11-03: the resume test is planned for the next couple of weeks.)*
 - [ ] **Validate project tab names in real use** (S37). Tabs now default to their project's one-word name (project = nearest git repo, else the top-level `~/Projects` folder; name = last word of the folder, `fantasy-football` → "football"). Double-click still renames one tab, and an **emptied** box now clears that tab's own name; right-click → **Set Default Tab Name for Project…** (labelled "Rename Project…" in v1.10.0) names every tab in the project, in every window, and persists (electron-store `projectNames`). Verified by lint + types + a green build + asar literals + a 29-check script run against real folders — **not driven through a live UI**. Worth exercising: `cd` between projects (the name should follow at once — the cwd is re-read at every shell prompt since `0253530`), split panes in different projects, the empty-box reset on both rename paths, a second window picking up a rename, and that Claude Code's "·" title still raises the attention dot on a project-named tab.

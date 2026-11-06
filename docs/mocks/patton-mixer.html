@@ -1,0 +1,426 @@
+<title>Patton Mixer</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: the live Patton window on the left, sticky; one radio group per component on the right,
+   three preset iterations above both. The page's own chrome stays neutral so the window carries the mix.
+   Page tokens follow the Trial Stack AI sheet: white, one grey surface, near-black ink, 1 px hairlines. */
+:root {
+  --bg: #ffffff;
+  --surface: #f4f5f7;
+  --ink: #0b0d12;
+  --muted: #596170;
+  --line: #e3e6ec;
+  --focus: #2f6bff;
+  --font-ui: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font-mono: Menlo, Monaco, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --bg: #111214; --surface: #17191d; --ink: #dbe3ee; --muted: #8b95a5; --line: #2a2f37; --focus: #7aa2ff; color-scheme: dark; }
+}
+:root[data-theme="dark"] { --bg: #111214; --surface: #17191d; --ink: #dbe3ee; --muted: #8b95a5; --line: #2a2f37; --focus: #7aa2ff; color-scheme: dark; }
+
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink); font-family: var(--font-ui); font-size: 15px; line-height: 1.5;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 36px 96px;
+}
+.wrap { max-width: 1360px; margin: 0 auto; display: grid; gap: 32px; }
+.intro { display: grid; gap: 10px; max-width: 72ch; }
+.eyebrow, legend, .head { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 0; }
+h1 { font-size: clamp(28px, 3.6vw, 40px); line-height: 1.08; font-weight: 500; letter-spacing: -.015em; margin: 0; text-wrap: balance; }
+.intro p { margin: 0; color: var(--muted); }
+
+/* --- Presets --- */
+.presets { display: flex; flex-wrap: wrap; gap: 8px; }
+.preset { display: grid; gap: 2px; text-align: left; font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 0; padding: 8px 12px; cursor: pointer; min-width: 200px; }
+.preset b { font-weight: 500; font-size: 14px; }
+.preset small { font-size: 12px; color: var(--muted); }
+.preset[aria-pressed="true"] { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
+.preset:focus-visible, .opt input:focus-visible + label, .copy:focus-visible, .combo input:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+/* --- Two columns --- */
+.mixer { display: grid; grid-template-columns: minmax(0, 1.9fr) minmax(300px, 1fr); gap: 28px; align-items: start; }
+.preview { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 12px); display: grid; gap: 10px; }
+.frame { overflow-x: auto; }
+.caption { margin: 0; font-size: 13px; color: var(--muted); }
+
+/* --- Controls --- */
+.controls { display: grid; gap: 22px; }
+fieldset { border: 0; margin: 0; padding: 0; min-width: 0; display: grid; gap: 6px; }
+legend { padding: 0; margin-bottom: 4px; }
+.opts { display: grid; gap: 6px; }
+.opt { position: relative; }
+.opt input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.opt label { display: grid; grid-template-columns: 28px 1fr; gap: 10px; align-items: center; padding: 7px 10px; border: 1px solid var(--line); cursor: pointer; background: var(--bg); font-size: 14px; line-height: 1.3; }
+.opt input:checked + label { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
+.opt small { display: block; color: var(--muted); font-size: 12px; }
+.key { font-family: var(--font-mono); font-size: 12px; color: var(--muted); border: 1px solid var(--line); height: 24px; display: grid; place-items: center; }
+.key.sw { border-color: transparent; }
+.combo { display: grid; gap: 6px; border-top: 1px solid var(--line); padding-top: 18px; }
+.combo-row { display: flex; gap: 6px; }
+.combo input { flex: 1; min-width: 0; font: 13px var(--font-mono); color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 0; padding: 7px 9px; }
+.copy { font: 13px var(--font-ui); color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 0; padding: 6px 12px; cursor: pointer; }
+.copy:hover { border-color: var(--ink); }
+.combo p { margin: 0; font-size: 12px; color: var(--muted); }
+
+@media (max-width: 960px) { .mixer { grid-template-columns: 1fr; } .preview { position: static; } }
+@media (prefers-reduced-motion: reduce) { .win * { animation: none !important; } }
+
+/* --- The Patton window ---
+   Its palette is its own, driven by data-tone and data-lines on .win, independent of the page theme.
+   Accents are used only for meaning: green = needs you, amber = wake flag, blue = open in a tab. */
+.win {
+  --c-green: #12b886; --c-amber: #f5a524; --c-blue: #2f6bff; --c-red: #ff4d5e;
+  display: grid; grid-template-rows: auto minmax(0, 1fr); height: 600px; min-width: 860px;
+  font-family: var(--font-ui); font-size: var(--ui); line-height: 1.3;
+  background: var(--w-bg); color: var(--w-ink);
+  border: 1px solid var(--line); border-radius: 9px; overflow: hidden;
+  box-shadow: 0 10px 30px rgba(11, 13, 18, .10);
+}
+.win[data-tone="light"] {
+  --w-bg: #ffffff; --w-surface: #f4f5f7; --w-ink: #0b0d12; --w-muted: #596170; --w-grey: #e3e6ec; --w-thumb: #c9cfd8;
+  --t-bg: #ffffff; --t-fg: #24292f; --t-dim: #6e7781; --t-blue: #0969da; --t-green: #1a7f37; --t-purple: #8250df; --t-amber: #9a6700;
+  color-scheme: light;
+}
+.win[data-tone="dark"] {
+  --w-bg: #111214; --w-surface: #17191d; --w-ink: #dbe3ee; --w-muted: #8b95a5; --w-grey: #2a2f37; --w-thumb: #3a404a;
+  --t-bg: #0d1117; --t-fg: #c9d1d9; --t-dim: #8b949e; --t-blue: #58a6ff; --t-green: #3fb950; --t-purple: #bc8cff; --t-amber: #d29922;
+  color-scheme: dark;
+}
+.win[data-lines="grey"] { --w-line: var(--w-grey); }
+.win[data-lines="ink"] { --w-line: var(--w-ink); }
+
+/* Type scale and density */
+.win[data-scale="a"] { --ui: 13px; --row: 36px; --head: 11px; --head-ls: .06em; --tabh: 38px; }
+.win[data-scale="b"] { --ui: 12px; --row: 28px; --head: 10.5px; --head-ls: .06em; --tabh: 32px; }
+.win[data-scale="c"] { --ui: 14px; --row: 40px; --head: 11px; --head-ls: .14em; --tabh: 40px; }
+.win[data-tabs="c"] { --tabh: 28px; }
+
+.win .head-type { font-size: var(--head); letter-spacing: var(--head-ls); text-transform: uppercase; color: var(--w-muted); }
+.win button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: default; }
+.win svg { display: block; }
+
+/* --- Tab bar --- */
+.tabbar { position: relative; display: flex; align-items: stretch; height: var(--tabh); padding-left: 78px; background: var(--w-surface); border-bottom: 1px solid var(--w-line); }
+.lights { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); display: flex; gap: 8px; }
+.lights i { width: 12px; height: 12px; border-radius: 50%; display: block; }
+.lights i:nth-child(1) { background: #ff5f57; } .lights i:nth-child(2) { background: #febc2e; } .lights i:nth-child(3) { background: #28c840; }
+.tabs { display: flex; align-items: stretch; flex: 1; min-width: 0; }
+.tab { position: relative; display: flex; align-items: center; gap: 7px; padding: 0 14px; color: var(--w-muted); white-space: nowrap; }
+.tab.active { color: var(--w-ink); }
+.tab-new { padding: 0 12px; color: var(--w-muted); font-size: 16px; display: flex; align-items: center; }
+.tab-settings { display: flex; align-items: center; padding: 0 12px; color: var(--w-muted); }
+.tab-settings svg { width: 14px; height: 14px; }
+
+/* (a) boxed: 1 px borders, square corners, the active tab opens into the content */
+.win[data-tabs="a"] .tabs { align-items: flex-end; gap: 0; }
+.win[data-tabs="a"] .tab { height: calc(100% - 6px); border: 1px solid var(--w-line); border-bottom: 0; margin-right: -1px; background: var(--w-surface); }
+.win[data-tabs="a"] .tab.active { height: calc(100% - 3px); background: var(--w-bg); }
+.win[data-tabs="a"] .tab.active::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 1px; background: var(--w-bg); }
+/* (b) underline: text on a hairline rule, active underlined 2 px ink */
+.win[data-tabs="b"] .tabbar { background: var(--w-bg); }
+.win[data-tabs="b"] .tab.active { box-shadow: inset 0 -2px 0 var(--w-ink); }
+/* (c) ledger: a thin strip, tabs as text with a vertical hairline between, active in bold */
+.win[data-tabs="c"] .tab { padding: 0 12px; font-size: calc(var(--ui) - 1px); }
+.win[data-tabs="c"] .tab + .tab, .win[data-tabs="c"] .tab-new, .win[data-tabs="c"] .tab-settings { border-left: 1px solid var(--w-line); }
+.win[data-tabs="c"] .tab.active { font-weight: 700; }
+.win[data-tabs="c"] .tab-new { font-size: 14px; }
+
+/* --- Status glyphs: the slot before a tab's name, and the open marker on a sidebar row --- */
+.st { display: inline-grid; place-items: center; flex: none; }
+.st[data-state="none"] { display: none; }
+.mk { display: inline-grid; place-items: center; flex: none; width: 10px; }
+/* (a) coloured dot, flag and ring, as today */
+.win[data-glyphs="a"] .st { width: 9px; height: 9px; border-radius: 50%; }
+.win[data-glyphs="a"] .st[data-state="needs"] { background: var(--c-green); box-shadow: 0 0 6px var(--c-green); animation: pulse 1.8s ease-in-out infinite; }
+.win[data-glyphs="a"] .st[data-state="wake"] { background: var(--c-amber); }
+.win[data-glyphs="a"] .st[data-state="parked"] { border: 2px solid var(--w-muted); }
+.win[data-glyphs="a"] .mk::before { content: ""; width: 6px; height: 6px; border-radius: 50%; }
+.win[data-glyphs="a"] .row[data-open="yes"] .mk::before { background: var(--c-blue); }
+/* (b) ink glyphs ● ◐ ○, colour only on the needs-you dot */
+.win[data-glyphs="b"] .st, .win[data-glyphs="b"] .mk { font-size: 11px; line-height: 1; }
+.win[data-glyphs="b"] .st[data-state="needs"]::before { content: "●"; color: var(--c-green); }
+.win[data-glyphs="b"] .st[data-state="wake"]::before { content: "◐"; color: var(--w-ink); }
+.win[data-glyphs="b"] .st[data-state="parked"]::before { content: "○"; color: var(--w-ink); }
+.win[data-glyphs="b"] .row[data-open="yes"] .mk::before { content: "●"; color: var(--w-ink); }
+.win[data-glyphs="b"] .row[data-open="no"] .mk::before { content: "○"; color: var(--w-muted); }
+/* (c) square blocks ■ □, the progress-block style */
+.win[data-glyphs="c"] .st, .win[data-glyphs="c"] .mk { font-size: 10px; line-height: 1; }
+.win[data-glyphs="c"] .st[data-state="needs"]::before { content: "■"; color: var(--c-green); }
+.win[data-glyphs="c"] .st[data-state="wake"]::before { content: "■"; color: var(--c-amber); }
+.win[data-glyphs="c"] .st[data-state="parked"]::before { content: "□"; color: var(--w-ink); }
+.win[data-glyphs="c"] .row[data-open="yes"] .mk::before { content: "■"; color: var(--w-ink); }
+.win[data-glyphs="c"] .row[data-open="no"] .mk::before { content: "□"; color: var(--w-muted); }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .5; } }
+
+/* --- Main: sidebar | content | collapsed notes --- */
+.main { display: grid; grid-template-columns: 196px minmax(0, 1fr) auto; min-height: 0; }
+
+/* --- Bookmarks sidebar --- */
+.side { display: flex; flex-direction: column; min-height: 0; background: var(--w-surface); border-right: 1px solid var(--w-line); }
+.side-h { display: flex; align-items: center; justify-content: space-between; height: var(--row); padding: 0 8px 0 12px; border-bottom: 1px solid var(--w-line); }
+.side-add { width: 20px; height: 20px; border: 1px solid var(--w-line); border-radius: 2px; color: var(--w-muted); font-size: 14px; line-height: 1; display: grid; place-items: center; }
+.grp-h { display: flex; justify-content: space-between; padding: 12px 12px 4px; }
+.grp-h .cnt { display: none; font-variant-numeric: tabular-nums; }
+.row { display: flex; align-items: center; gap: 8px; height: var(--row); padding: 0 12px; color: var(--w-muted); }
+.row[data-open="yes"] { color: var(--w-ink); }
+.row .txt { display: grid; min-width: 0; }
+.row .lbl { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row .sub { display: none; font-size: calc(var(--ui) - 2px); color: var(--w-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* (a) bordered rows: a hairline between rows, the active row on the window ground with an ink edge */
+.win[data-rows="a"] .row { border-bottom: 1px solid var(--w-line); }
+.win[data-rows="a"] .row[data-open="yes"] .lbl { font-weight: 600; }
+.win[data-rows="a"] .row[data-active="yes"] { background: var(--w-bg); box-shadow: inset 2px 0 0 var(--w-ink); }
+/* (b) plain list: no rules, open and closed told by the glyph, the active row in bold ink */
+.win[data-rows="b"] .row[data-active="yes"] .lbl { font-weight: 700; }
+.win[data-rows="b"] .grp-h { padding-top: 14px; }
+/* (c) dense two-line rows: path or host under the name, uppercase group heads with counts */
+.win[data-rows="c"] .grp-h { padding: 10px 12px 6px; border-bottom: 1px solid var(--w-line); }
+.win[data-rows="c"] .grp-h .cnt { display: inline; }
+.win[data-rows="c"] .row { height: calc(var(--row) + 6px); line-height: 1.2; }
+.win[data-rows="c"] .row .sub { display: block; }
+.win[data-rows="c"] .row[data-open="yes"] .lbl { font-weight: 600; }
+.win[data-rows="c"] .row[data-active="yes"] { background: var(--w-bg); box-shadow: inset 2px 0 0 var(--w-ink); }
+
+/* --- Content: terminal over compose --- */
+.content { display: grid; grid-template-rows: minmax(0, 1fr) auto; min-height: 0; background: var(--t-bg); }
+.term { font: 12.5px/1.55 var(--font-mono); color: var(--t-fg); padding: 10px 16px; overflow: hidden; white-space: pre; }
+.term .u { color: var(--t-fg); }
+.term .dim { color: var(--t-dim); }
+.term .g { color: var(--t-green); }
+.term .b { color: var(--t-blue); }
+.term .p { color: var(--t-purple); }
+.term .am { color: var(--t-amber); }
+.term b { font-weight: 700; }
+.term .spin { display: inline-block; width: 1ch; }
+
+/* --- Compose bar --- */
+.compose { background: var(--w-bg); border-top: 1px solid var(--w-line); padding: 8px 12px; font-size: var(--ui); }
+.ccard { display: grid; gap: 8px; }
+.chips { display: flex; gap: 8px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 4px 2px 2px; border: 1px solid var(--w-line); border-radius: 2px; background: var(--w-surface); color: var(--w-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.chip .thumb { width: 40px; height: 25px; background: var(--w-thumb); display: block; }
+.chip .x { color: var(--w-muted); font-size: 13px; padding: 0 3px; }
+.field { display: flex; align-items: center; gap: 8px; }
+.field .input { flex: 1; min-width: 0; font: 12.5px/1.4 var(--font-mono); color: var(--w-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.field .send { color: var(--w-ink); white-space: nowrap; }
+/* (a) boxed field with a 1 px border and a square Send button */
+.win[data-compose="a"] .field .input { border: 1px solid var(--w-line); padding: 7px 10px; }
+.win[data-compose="a"] .field .send { border: 1px solid var(--w-line); padding: 6px 14px; background: var(--w-bg); }
+/* (b) a single top hairline, no box: the bar is the rule, Send is text */
+.win[data-compose="b"] .compose { padding: 10px 16px; }
+.win[data-compose="b"] .field .input { padding: 2px 0; }
+.win[data-compose="b"] .field .send { color: var(--w-muted); }
+/* (c) a card on the surface, chips and field inside it */
+.win[data-compose="c"] .compose { background: var(--w-surface); }
+.win[data-compose="c"] .ccard { border: 1px solid var(--w-line); background: var(--w-bg); padding: 8px 10px; }
+.win[data-compose="c"] .field .input { padding: 4px 0; }
+.win[data-compose="c"] .field .send { border: 1px solid var(--w-line); padding: 5px 12px; }
+
+/* --- Collapsed notes: a strip on the right edge --- */
+.notes { width: 26px; border-left: 1px solid var(--w-line); background: var(--w-surface); display: flex; justify-content: center; padding-top: 12px; }
+.notes span { writing-mode: vertical-rl; white-space: nowrap; }
+</style>
+
+<div class="wrap">
+  <header class="intro">
+    <p class="eyebrow">Patton · chrome mixer</p>
+    <h1>Mix the Patton chrome</h1>
+    <p>One window, the same session in every mix. Pick a variant of each component on the right and the window updates. The three iterations each set all seven at once.</p>
+    <p>When a mix looks right, copy the Combination line under the controls and send it back. The page address carries it too.</p>
+    <div class="presets" id="presets" role="group" aria-label="Preset iterations"></div>
+  </header>
+
+  <section class="mixer" aria-label="Mixer">
+    <div class="preview">
+      <div class="frame" id="frame">
+        <div class="win" id="win" data-tabs="a" data-glyphs="a" data-rows="a" data-scale="a" data-compose="a" data-tone="light" data-lines="grey" role="img" aria-label="A Patton window in the current mix: four project tabs, the Bookmarks sidebar, a Claude Code session and the compose bar">
+          <div class="tabbar">
+            <div class="lights" aria-hidden="true"><i></i><i></i><i></i></div>
+            <div class="tabs">
+              <div class="tab active"><span class="st" data-state="none"></span><span class="tt">finance</span></div>
+              <div class="tab"><span class="st" data-state="needs" title="Needs you"></span><span class="tt">patton</span></div>
+              <div class="tab"><span class="st" data-state="wake" title="Wake flag"></span><span class="tt">rimworld</span></div>
+              <div class="tab"><span class="st" data-state="parked" title="Parked: waiting on its own background agent"></span><span class="tt">voice</span></div>
+              <div class="tab-new">+</div>
+            </div>
+            <div class="tab-settings" title="Settings (⌘,)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></div>
+          </div>
+          <div class="main">
+            <div class="side">
+              <div class="side-h"><span class="head-type">Bookmarks</span><span class="side-add">+</span></div>
+              <div class="grp-h head-type"><span>Projects</span><span class="cnt">4</span></div>
+              <div class="row" data-open="yes" data-active="yes"><span class="mk"></span><span class="txt"><span class="lbl">finance</span><span class="sub">~/Projects/finance</span></span></div>
+              <div class="row" data-open="yes" data-active="no"><span class="mk"></span><span class="txt"><span class="lbl">patton</span><span class="sub">~/Projects/betterterm</span></span></div>
+              <div class="row" data-open="no" data-active="no"><span class="mk"></span><span class="txt"><span class="lbl">rimworld</span><span class="sub">~/Projects/rimworld</span></span></div>
+              <div class="row" data-open="no" data-active="no"><span class="mk"></span><span class="txt"><span class="lbl">voice</span><span class="sub">~/Projects/voice</span></span></div>
+              <div class="grp-h head-type"><span>Artifacts</span><span class="cnt">2</span></div>
+              <div class="row" data-open="no" data-active="no"><span class="mk"></span><span class="txt"><span class="lbl">Net worth page</span><span class="sub">claude.ai</span></span></div>
+              <div class="row" data-open="no" data-active="no"><span class="mk"></span><span class="txt"><span class="lbl">Deck v3</span><span class="sub">claude.ai</span></span></div>
+            </div>
+            <div class="content">
+              <div class="term" aria-hidden="true"><span class="dim">&gt;</span> <span class="u">stop the parked ring pulsing when the tab is also flagged</span>
+
+<span class="g">⏺</span> <b>Read</b>(src/renderer/components/pane.ts)
+  <span class="dim">⎿  Read 120 lines</span>
+
+<span class="dim">⏺</span> The ring and the flag share one slot in <span class="b">tab-bar.ts:219</span>; the flag wins
+  and the pulse comes from the needs-you class, not the ring. I'll gate the
+  animation on the slot's state so a parked tab stays still whatever else it
+  carries.
+
+  <b>## Open</b>
+
+  <b>Needs you</b> — decisions only you can make.
+  — none
+
+<span class="am"><span class="spin" id="spin">◐</span> Editing…</span> <span class="dim">(6s · esc to interrupt)</span>
+
+<span class="dim">──────────────────────────────────────────────────────────────────</span>
+<span class="dim">&gt;</span>
+<span class="dim">──────────────────────────────────────────────────────────────────</span>
+<span class="dim">  ⏵⏵ bypass permissions on · 42% context</span></div>
+              <div class="compose">
+                <div class="ccard">
+                  <div class="chips"><span class="chip"><span class="thumb" role="img" aria-label="Pasted screenshot"></span>1280×800<span class="x">×</span></span></div>
+                  <div class="field"><span class="input">Enter to send, Shift+Enter for newline, Esc to dismiss</span><span class="send">Send</span></div>
+                </div>
+              </div>
+            </div>
+            <div class="notes"><span class="head-type">Notes ⌃⌘N</span></div>
+          </div>
+        </div>
+      </div>
+      <p class="caption">The terminal's colours are the user's own theme and stay out of the mix: GitHub Light under light chrome here, GitHub Dark under dark.</p>
+    </div>
+    <form class="controls" id="controls" aria-label="Components">
+      <div class="combo">
+        <span class="head">Combination</span>
+        <div class="combo-row">
+          <input type="text" id="combo" readonly aria-label="Combination string">
+          <button type="button" class="copy" id="copy">Copy</button>
+        </div>
+        <p id="copy-note">Send this line back, or the page address, which carries the same mix.</p>
+      </div>
+    </form>
+  </section>
+</div>
+
+<script>
+const DIMS = [
+  { key: 'tabs', label: 'Tab bar', opts: {
+    a: { name: 'Boxed', desc: '1 px borders, square corners, the active tab opens into the content' },
+    b: { name: 'Underline', desc: 'text on a hairline rule, active tab underlined 2 px in ink' },
+    c: { name: 'Ledger', desc: 'a thin strip, a vertical hairline between tabs, active in bold' } } },
+  { key: 'glyphs', label: 'Status glyphs', opts: {
+    a: { name: 'Coloured', desc: 'green dot, amber flag, hollow ring, as today' },
+    b: { name: 'Ink glyphs', desc: '● ◐ ○ in ink, colour only on the needs-you dot' },
+    c: { name: 'Square blocks', desc: '■ □ in the progress-block style' } } },
+  { key: 'rows', label: 'Sidebar rows', opts: {
+    a: { name: 'Bordered', desc: 'a hairline between rows, active row edged in ink' },
+    b: { name: 'Plain list', desc: 'no rules, open rows marked by the glyph alone' },
+    c: { name: 'Dense two-line', desc: 'path under each name, uppercase group heads with counts' } } },
+  { key: 'scale', label: 'Type scale and density', opts: {
+    a: { name: 'Comfortable', desc: '13 px UI, 36 px rows' },
+    b: { name: 'Compact', desc: '12 px UI, 28 px rows' },
+    c: { name: 'Editorial', desc: '14 px UI, 40 px rows, wider-spaced heads' } } },
+  { key: 'compose', label: 'Compose bar', opts: {
+    a: { name: 'Boxed field', desc: '1 px border on the field, a square Send button' },
+    b: { name: 'Top hairline', desc: 'one rule above, no box, Send as text' },
+    c: { name: 'Card', desc: 'a card on the surface with the thumbnail row inside' } } },
+  { key: 'tone', label: 'Chrome tone', opts: {
+    light: { name: 'Light', desc: 'white, grey surface, near-black ink', sw: '#ffffff' },
+    dark: { name: 'Dark', desc: 'the site’s dark palette', sw: '#17191d' } } },
+  { key: 'lines', label: 'Hairline tone', opts: {
+    grey: { name: 'Grey', desc: '#e3e6ec, the site’s rule colour', sw: '#e3e6ec' },
+    ink: { name: 'Ink', desc: 'ink at 1 px, the stricter newspaper look', sw: '#0b0d12' } } }
+];
+const PRESETS = [
+  { name: 'Iteration 1', mix: { tabs: 'a', glyphs: 'a', rows: 'a', scale: 'a', compose: 'a', tone: 'light', lines: 'grey' } },
+  { name: 'Iteration 2', mix: { tabs: 'b', glyphs: 'b', rows: 'b', scale: 'b', compose: 'b', tone: 'light', lines: 'ink' } },
+  { name: 'Iteration 3', mix: { tabs: 'c', glyphs: 'c', rows: 'c', scale: 'c', compose: 'c', tone: 'dark', lines: 'grey' } }
+];
+const dim = key => DIMS.find(d => d.key === key);
+const encode = m => DIMS.map(d => `${d.key}=${m[d.key]}`).join('&');
+function decode(hash) {
+  const out = {}, p = new URLSearchParams(hash.replace(/^#/, ''));
+  DIMS.forEach(d => { const v = p.get(d.key); if (v && d.opts[v]) out[d.key] = v; });
+  return out;
+}
+function viewerPrefersDark() {
+  const t = document.documentElement.getAttribute('data-theme');
+  if (t === 'dark' || t === 'light') return t === 'dark';
+  return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+}
+let mix = Object.assign({}, PRESETS[0].mix, { tone: viewerPrefersDark() ? 'dark' : 'light' }, decode(location.hash));
+
+function H(tag, attrs, kids) {
+  const e = document.createElement(tag);
+  if (attrs) for (const k in attrs) if (attrs[k] != null) e.setAttribute(k, attrs[k]);
+  if (kids != null) for (const c of [kids].flat(Infinity)) if (c != null && c !== false) e.append(c instanceof Node ? c : String(c));
+  return e;
+}
+
+const win = document.getElementById('win');
+const controls = document.getElementById('controls');
+const presets = document.getElementById('presets');
+const combo = document.getElementById('combo');
+
+// Controls: one radio group per component, inserted above the Combination block.
+const comboBlock = controls.querySelector('.combo');
+DIMS.forEach(d => {
+  const fs = H('fieldset', null, [
+    H('legend', null, d.label),
+    H('div', { class: 'opts' }, Object.keys(d.opts).map(k => {
+      const o = d.opts[k], id = `${d.key}-${k}`;
+      const input = H('input', { type: 'radio', name: d.key, id, value: k });
+      input.addEventListener('change', () => { mix[d.key] = k; apply(); });
+      const key = H('span', { class: 'key' + (o.sw ? ' sw' : ''), 'aria-hidden': 'true' }, o.sw ? null : k);
+      if (o.sw) { key.style.background = o.sw; key.style.boxShadow = 'inset 0 0 0 1px rgba(128,128,128,.45)'; }
+      return H('div', { class: 'opt' }, [input, H('label', { for: id }, [key, H('span', null, [o.name, H('small', null, o.desc)])])]);
+    }))
+  ]);
+  controls.insertBefore(fs, comboBlock);
+});
+controls.addEventListener('submit', e => e.preventDefault());
+
+// Presets: each sets all seven at once.
+PRESETS.forEach(p => {
+  const b = H('button', { type: 'button', class: 'preset' }, [
+    H('b', null, p.name),
+    H('small', null, DIMS.map(d => d.opts[p.mix[d.key]].name.toLowerCase()).join(' · '))
+  ]);
+  b.addEventListener('click', () => { mix = Object.assign({}, p.mix); apply(); });
+  presets.append(b);
+});
+
+function apply() {
+  DIMS.forEach(d => {
+    win.dataset[d.key] = mix[d.key];
+    const r = document.getElementById(`${d.key}-${mix[d.key]}`);
+    if (r) r.checked = true;
+  });
+  const code = encode(mix);
+  combo.value = code;
+  presets.querySelectorAll('.preset').forEach((b, i) => b.setAttribute('aria-pressed', String(encode(PRESETS[i].mix) === code)));
+  if (location.hash.replace(/^#/, '') !== code) history.replaceState(null, '', '#' + code);
+}
+window.addEventListener('hashchange', () => { Object.assign(mix, decode(location.hash)); apply(); });
+
+// Copy the combination; if the clipboard is refused, select the text so a plain ⌘C works.
+const note = document.getElementById('copy-note');
+document.getElementById('copy').addEventListener('click', () => {
+  const done = () => { note.textContent = 'Copied. Paste it into the chat.'; };
+  const manual = () => { combo.focus(); combo.select(); note.textContent = 'Selected: press ⌘C to copy.'; };
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(combo.value).then(done, manual); else manual();
+});
+
+// Claude Code's working spinner alternates ◐ and ◑ about every 960 ms; still under reduced motion.
+const spin = document.getElementById('spin');
+if (!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches)) {
+  setInterval(() => { spin.textContent = spin.textContent === '◐' ? '◑' : '◐'; }, 960);
+}
+
+apply();
+</script>
