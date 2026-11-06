@@ -10,12 +10,17 @@
  *
  * Threat notes: this edits a file that controls what Claude Code runs. It only
  * ever runs on an explicit click in Settings; it refuses to touch a
- * settings.json it can't parse; it writes a timestamped backup first; and the
- * only command it adds is the absolute path of a script Patton itself wrote
- * (mode 0755, in the user's own userData folder).
+ * settings.json it can't parse; it writes a timestamped backup first (newest
+ * five kept, with the file's own mode, since settings.json can hold `env`
+ * secrets); it replaces files by rename, keeping settings.json's mode; and the
+ * only command it adds is the single-quoted absolute path of a script Patton
+ * itself wrote (mode 0755, in the user's own userData folder).
  */
-import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import {
+  chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync,
+  renameSync, statSync, unlinkSync, writeFileSync,
+} from 'node:fs';
+import { basename, dirname, join } from 'node:path';
 import type { ClaudeHookStatus } from '../shared/types';
 
 export interface ClaudeHookPaths {
@@ -30,14 +35,62 @@ export interface ClaudeHookPaths {
 interface HookCommand { type?: unknown; command?: unknown; [key: string]: unknown }
 interface MatcherGroup { matcher?: unknown; hooks?: unknown; [key: string]: unknown }
 
-/** The command Claude Code runs through a shell; userData contains a space
- *  ("Application Support"), so the path is quoted. */
-export function hookCommand(paths: ClaudeHookPaths): string {
-  return `"${paths.installedScript}"`;
+/** Single-quote a string for a POSIX shell: nothing inside expands. */
+export function shellQuote(s: string): string {
+  return `'${s.replace(/'/g, `'\\''`)}'`;
 }
 
+/** The command Claude Code runs through a shell (`sh -c`); userData contains a
+ *  space ("Application Support"), so the path is quoted — single quotes, so a
+ *  `$` or backtick in it can't expand. */
+export function hookCommand(paths: ClaudeHookPaths): string {
+  return shellQuote(paths.installedScript);
+}
+
+/** Ours in any form Patton has written: the current single-quoted one, the
+ *  earlier double-quoted one, or the bare path. */
 function isOurCommand(cmd: unknown, paths: ClaudeHookPaths): boolean {
-  return typeof cmd === 'string' && (cmd === hookCommand(paths) || cmd === paths.installedScript);
+  return typeof cmd === 'string' && (
+    cmd === hookCommand(paths) || cmd === `"${paths.installedScript}"` || cmd === paths.installedScript
+  );
+}
+
+const BACKUP_KEEP = 5;
+
+/** Keep only the newest BACKUP_KEEP of Patton's own backups of `target`
+ *  (`<name>.patton-bak-<ISO time>`, which sorts by time as plain text). */
+function pruneBackups(target: string): void {
+  const prefix = `${basename(target)}.patton-bak-`;
+  const backups = readdirSync(dirname(target)).filter((n) => n.startsWith(prefix)).sort();
+  for (const name of backups.slice(0, Math.max(0, backups.length - BACKUP_KEEP))) {
+    try {
+      unlinkSync(join(dirname(target), name));
+      console.info('[HOOK] Pruned old settings backup', { backup: name });
+    } catch (err) {
+      console.warn('[HOOK] Could not prune settings backup', { backup: name, error: (err as Error).message });
+    }
+  }
+}
+
+/** Replace `target` atomically: write a sibling temp file with `mode`, then
+ *  rename it over. A reader (Claude Code, or bash mid-way through the hook
+ *  script) sees the old file or the new one, never a half-written one. */
+function replaceFile(target: string, data: string | Buffer, mode: number): void {
+  const tmp = join(dirname(target), `.${basename(target)}.patton-tmp-${process.pid}`);
+  try {
+    writeFileSync(tmp, data, { mode });
+    chmodSync(tmp, mode); // the umask may have narrowed it
+    renameSync(tmp, target);
+  } catch (err) {
+    try { unlinkSync(tmp); } catch { /* already gone */ }
+    throw err;
+  }
+}
+
+/** Install this build's script at the installed path (0755), by rename. */
+function copyScript(paths: ClaudeHookPaths): void {
+  mkdirSync(dirname(paths.installedScript), { recursive: true });
+  replaceFile(paths.installedScript, readFileSync(paths.bundledScript), 0o755);
 }
 
 /** Read and parse settings.json. A missing file is `{}`; anything that isn't a
@@ -77,15 +130,18 @@ function hasOurEntry(settings: Record<string, unknown>, paths: ClaudeHookPaths):
 function writeSettings(file: string, settings: Record<string, unknown>): void {
   const target = existsSync(file) ? realpathSync(file) : file;
   mkdirSync(dirname(target), { recursive: true });
+  // Keep the file's mode (it can hold `env` secrets); a new file is 0600.
+  let mode = 0o600;
   if (existsSync(target)) {
-    const backup = `${target}.bak-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+    mode = statSync(target).mode & 0o777;
+    const backup = `${target}.patton-bak-${new Date().toISOString().replace(/[:.]/g, '-')}`;
     copyFileSync(target, backup);
+    chmodSync(backup, mode);
     console.info('[HOOK] Backed up settings', { backup });
+    pruneBackups(target);
   }
-  const tmp = `${target}.patton-tmp-${process.pid}`;
-  writeFileSync(tmp, JSON.stringify(settings, null, 2) + '\n', 'utf8');
-  renameSync(tmp, target);
-  console.info('[HOOK] Wrote settings', { file: target });
+  replaceFile(target, JSON.stringify(settings, null, 2) + '\n', mode);
+  console.info('[HOOK] Wrote settings', { file: target, mode: mode.toString(8) });
 }
 
 export function getHookStatus(paths: ClaudeHookPaths): ClaudeHookStatus {
@@ -102,8 +158,7 @@ export function getHookStatus(paths: ClaudeHookPaths): ClaudeHookStatus {
   if (scriptPresent && existsSync(paths.bundledScript)) {
     try {
       if (readFileSync(paths.bundledScript, 'utf8') !== readFileSync(paths.installedScript, 'utf8')) {
-        copyFileSync(paths.bundledScript, paths.installedScript);
-        chmodSync(paths.installedScript, 0o755);
+        copyScript(paths);
         console.info('[HOOK] Refreshed installed script from this build', { script: paths.installedScript });
       }
     } catch (err) {
@@ -127,9 +182,7 @@ export function installHook(paths: ClaudeHookPaths): ClaudeHookStatus {
   if (!existsSync(paths.bundledScript)) {
     throw new Error(`Bundled hook script not found at ${paths.bundledScript}`);
   }
-  mkdirSync(dirname(paths.installedScript), { recursive: true });
-  copyFileSync(paths.bundledScript, paths.installedScript);
-  chmodSync(paths.installedScript, 0o755);
+  copyScript(paths);
   console.info('[HOOK] Copied script', { script: paths.installedScript });
 
   if (hasOurEntry(settings, paths)) {
