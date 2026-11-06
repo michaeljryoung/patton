@@ -80,7 +80,6 @@ export const IPC = {
   // --- end Claude Code Stop hook ---
   // --- image paste ---
   CLIPBOARD_READ_IMAGE: 'clipboard:readImage',
-  CLIPBOARD_SAVE_IMAGE: 'clipboard:saveImage',
   // --- end image paste ---
 } as const;
 

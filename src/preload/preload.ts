@@ -85,8 +85,7 @@ const api: PattonAPI = {
   // --- end Claude Code Stop hook ---
   // --- image paste ---
   clipboard: {
-    readImage: () => ipcRenderer.invoke(IPC.CLIPBOARD_READ_IMAGE),
-    saveImage: () => ipcRenderer.invoke(IPC.CLIPBOARD_SAVE_IMAGE),
+    readImage: (save: boolean) => ipcRenderer.invoke(IPC.CLIPBOARD_READ_IMAGE, save),
   },
   // --- end image paste ---
   app: {

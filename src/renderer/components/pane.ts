@@ -91,6 +91,7 @@ export class Pane {
   // last prompt: Claude Code is running in this pane, so image pastes go to it
   // as Ctrl+V (it reads the clipboard itself) instead of as a file path.
   private claudeActive = false;
+  private disposed = false;
 
   // --- Pasted-image thumbnails (see pasteImage) ---
   private static readonly PASTE_CHIP_TTL_MS = 10 * 60 * 1000;
@@ -138,7 +139,9 @@ export class Pane {
   /** Follow Claude Code's working/stopped state from its title. Going from
    *  working to stopped is the moment it needs the user. */
   private trackClaudeState(title: string): void {
-    if (Pane.CLAUDE_WORKING.test(title) || Pane.CLAUDE_STOPPED.test(title)) this.claudeActive = true;
+    // A title with neither glyph means Claude is gone (fish, or shell
+    // integration off, never sends the OSC 133 prompt that would clear this).
+    this.claudeActive = Pane.CLAUDE_WORKING.test(title) || Pane.CLAUDE_STOPPED.test(title);
     if (Pane.CLAUDE_WORKING.test(title)) {
       if (Date.now() - this.lastHookVerdictMs < Pane.HOOK_SPINNER_GRACE_MS) return;
       this.cancelClaudeStop(); // the ✳ was only a flash between turns
@@ -277,7 +280,7 @@ export class Pane {
       onHistoryDown: () => this.historyManager.down(),
       onTab: () => this.handleTab(),
       onEscape: () => this.collapseCompose(),
-      onImagePaste: () => { void this.pasteImage('paste'); },
+      onImagePaste: () => { void this.pasteImage('compose'); },
     });
 
     // Create search overlay
@@ -325,7 +328,7 @@ export class Pane {
       // Ctrl+V reaches Claude Code unchanged (it reads the clipboard image
       // itself); Patton only shows a thumbnail of what was pasted.
       if (e.type === 'keydown' && e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === 'v') {
-        if (this.claudeActive) void this.pasteImage('ctrl-v-key');
+        if (this.claudeActive && !e.repeat) void this.pasteImage('ctrl-v-key'); // a held key adds one chip
         return true;
       }
       return true; // let xterm handle all other keys
@@ -451,18 +454,22 @@ export class Pane {
     resizeObserver.observe(this.terminalContainer);
     this.disposables.push(() => resizeObserver.disconnect());
 
-    // Security: Intercept paste to sanitize and warn on multi-line
-    const pasteHandler = async (e: ClipboardEvent) => {
+    // Security: intercept paste to sanitize and warn on multi-line.
+    // xterm registers its own paste listeners on its textarea and .xterm and
+    // calls stopPropagation() (Clipboard.ts handlePasteEvent), so a bubble
+    // listener up here never sees a paste in the terminal. Capture runs first.
+    // Text is sanitised, confirmed, then handed to terminal.paste() so
+    // bracketed-paste mode stays intact; an empty paste may be an image.
+    const onPasteCapture = (e: ClipboardEvent) => {
+      if (!(e.target as Element | null)?.closest?.('.xterm')) return; // e.g. the search box
       e.preventDefault();
+      e.stopPropagation(); // else xterm sends an empty paste and the image attaches twice
       const raw = e.clipboardData?.getData('text') || '';
-      if (!raw) {
-        await this.pasteImage('paste'); // no text: the clipboard may hold an image
-        return;
-      }
-      await this.safePaste(raw);
+      if (raw) void this.safePaste(raw);
+      else void this.pasteImage('paste');
     };
-    this.terminalContainer.addEventListener('paste', pasteHandler as EventListener);
-    this.disposables.push(() => this.terminalContainer.removeEventListener('paste', pasteHandler as EventListener));
+    this.terminalContainer.addEventListener('paste', onPasteCapture as EventListener, true);
+    this.disposables.push(() => this.terminalContainer.removeEventListener('paste', onPasteCapture as EventListener, true));
 
     // Right-click context menu
     const contextMenuHandler = (e: MouseEvent) => {
@@ -605,28 +612,32 @@ export class Pane {
 
   /**
    * Paste the clipboard image, if there is one. With Claude Code active we send
-   * Ctrl+V (it reads the clipboard itself); otherwise the PNG is saved and its
-   * quoted path typed at the prompt. Either way a thumbnail chip is shown.
+   * Ctrl+V (it reads the clipboard itself); otherwise the image is saved and its
+   * quoted path typed at the prompt (inserted into the compose panel when the
+   * paste came from there, so it lands where the caret is, not ahead of the
+   * composed text). Either way a thumbnail chip is shown.
    * 'ctrl-v-key' means the user typed Ctrl+V, which already reached the PTY, so
    * only the thumbnail is added.
    */
-  private async pasteImage(source: 'paste' | 'menu' | 'ctrl-v-key'): Promise<void> {
-    if (this.ptyId === null) return;
+  private async pasteImage(source: 'paste' | 'menu' | 'ctrl-v-key' | 'compose'): Promise<void> {
+    if (this.ptyId === null || this.disposed) return;
     try {
-      const thumb = await window.patton.clipboard.readImage();
-      if (!thumb) return;
+      const sendCtrlV = this.claudeActive;
+      const image = await window.patton.clipboard.readImage(!sendCtrlV);
+      if (!image || this.disposed || this.ptyId === null) return;
       let route: 'ctrl-v' | 'path';
-      if (this.claudeActive) {
+      if (sendCtrlV) {
         route = 'ctrl-v';
         if (source !== 'ctrl-v-key') window.patton.pty.write(this.ptyId, '\x16');
       } else {
-        const file = await window.patton.clipboard.saveImage();
-        if (!file || this.ptyId === null) return;
+        if (!image.path) return;
         route = 'path';
-        window.patton.pty.write(this.ptyId, "'" + file.replace(/'/g, "'\\''") + "'");
+        const quoted = "'" + image.path.replace(/'/g, "'\\''") + "'";
+        if (source === 'compose') this.editorInput.insertText(quoted);
+        else window.patton.pty.write(this.ptyId, quoted);
       }
-      this.addPasteChip(thumb.dataUrl, thumb.width, thumb.height);
-      rlog('info', '[PASTE] image', { pane: this.id, route, width: thumb.width, height: thumb.height });
+      this.addPasteChip(image.dataUrl, image.width, image.height);
+      rlog('info', '[PASTE] image', { pane: this.id, route, width: image.width, height: image.height });
     } catch (err) {
       rlog('warn', '[PASTE] image paste failed', { pane: this.id, error: String(err) });
     }
@@ -667,21 +678,33 @@ export class Pane {
     this.pasteChips.push(entry);
     while (this.pasteChips.length > Pane.PASTE_CHIP_MAX) this.removePasteChip(this.pasteChips[0]);
     this.pasteStrip.appendChild(chip);
-    this.pasteStrip.hidden = false;
+    this.setPasteStripVisible(true);
   }
 
   private removePasteChip(entry: { el: HTMLElement; timer: ReturnType<typeof setTimeout> }): void {
     clearTimeout(entry.timer);
     entry.el.remove();
     this.pasteChips = this.pasteChips.filter((c) => c !== entry);
-    if (this.pasteChips.length === 0) this.pasteStrip.hidden = true;
+    if (this.pasteChips.length === 0) this.setPasteStripVisible(false);
+  }
+
+  /** Showing or hiding the strip changes the terminal's height: re-fit and tell the PTY now. */
+  private setPasteStripVisible(visible: boolean): void {
+    if (this.pasteStrip.hidden === !visible) return;
+    this.pasteStrip.hidden = !visible;
+    if (this.disposed) return;
+    this.terminalView.fit();
+    if (this.ptyId !== null) {
+      const dims = this.terminalView.getDimensions();
+      window.patton.pty.resize(this.ptyId, dims.cols, dims.rows);
+    }
   }
 
   private clearPasteChips(): void {
     for (const entry of [...this.pasteChips]) this.removePasteChip(entry);
   }
 
-  /** Sanitize pasted text and confirm multi-line pastes before writing to PTY */
+  /** Sanitize pasted text and confirm multi-line pastes before pasting into the terminal */
   private async safePaste(raw: string): Promise<void> {
     if (this.ptyId === null || !raw) return;
     // Strip dangerous control characters (keep \n, \t, \r, printable)
@@ -689,12 +712,14 @@ export class Pane {
     const sanitized = raw.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '');
     if (!sanitized) return;
 
-    const lines = sanitized.split('\n');
+    const lines = sanitized.split(/\r\n|\r|\n/);
     if (lines.length >= 3) {
       const confirmed = await this.pasteDialog.confirm(sanitized, lines.length);
-      if (!confirmed) return;
+      if (!confirmed || this.disposed || this.ptyId === null) return;
     }
-    window.patton.pty.write(this.ptyId, sanitized);
+    // xterm's own paste: converts newlines and keeps bracketed-paste mode, so
+    // Claude Code sees one paste, not Enter presses. Never pty.write pasted text.
+    this.terminalView.terminal.paste(sanitized);
   }
 
   // --- Compose panel ---
@@ -879,6 +904,7 @@ export class Pane {
   }
 
   dispose(): void {
+    this.disposed = true;
     if (this.resizeTimer) clearTimeout(this.resizeTimer);
     this.clearPasteChips();
     for (const d of this.disposables) d();

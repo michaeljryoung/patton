@@ -127,6 +127,8 @@ export interface ClipboardImageThumb {
   /** Size of the original clipboard image, in pixels */
   width: number;
   height: number;
+  /** Only when the caller asked to save: the image file under userData/pastes */
+  path?: string;
 }
 // --- end image paste ---
 
@@ -197,9 +199,8 @@ export interface PattonAPI {
   // --- end Claude Code Stop hook ---
   // --- image paste ---
   clipboard: {
-    readImage: () => Promise<ClipboardImageThumb | null>;
-    /** Save the clipboard image as a PNG under userData/pastes; returns its path. */
-    saveImage: () => Promise<string | null>;
+    /** Reads the clipboard image once; save=true also writes it under userData/pastes and returns `path`. */
+    readImage: (save: boolean) => Promise<ClipboardImageThumb | null>;
   };
   // --- end image paste ---
   app: {

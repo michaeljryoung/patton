@@ -31,7 +31,7 @@ Patton implements defense-in-depth for a desktop Electron application:
 - Navigation to external URLs is blocked
 - `window.open` is denied
 - URL validation: WebLinksAddon only opens `http://` and `https://` links
-- Paste sanitization: control characters stripped, multi-line pastes require confirmation
+- Paste sanitization: control characters stripped, multi-line pastes require confirmation (a capture-phase paste listener runs before xterm's own, which stops propagation; confirmed text goes in through `terminal.paste()`, keeping bracketed paste)
 
 ### Data Security
 - Settings stored via electron-store with machine-specific encryption key (SHA-256 of hostname + username)

@@ -226,5 +226,9 @@
 .paste-chip-remove:focus-visible {
   background: var(--hover-strong);
   color: var(--text-primary);
-  outline: none;
+}
+
+.paste-chip-remove:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }

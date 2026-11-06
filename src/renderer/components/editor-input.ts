@@ -131,6 +131,13 @@ export class EditorInput {
     this.textarea.focus();
   }
 
+  /** Insert text at the caret (keeps undo history), as if typed. */
+  insertText(text: string): void {
+    this.textarea.focus();
+    document.execCommand('insertText', false, text);
+    this.autoResize();
+  }
+
   clear(): void {
     this.textarea.value = '';
     this.autoResize();
