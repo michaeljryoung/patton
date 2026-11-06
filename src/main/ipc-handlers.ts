@@ -9,6 +9,7 @@ import { isSafeAbsolutePath, resolveProject } from './projects';
 import { getHookStatus, installHook, removeHook, type ClaudeHookPaths } from './claude-hook';
 import { getResourcesPath } from './resources-path';
 import * as store from './store';
+import { registerClipboardImageHandlers } from './clipboard-image';
 import type { PtyCreateOptions, RenderSnapshot, SessionState } from '../shared/types';
 
 /** Open an http(s) URL in the default browser. Anything else — other schemes
@@ -570,4 +571,7 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
     }
   });
   // --- end Claude Code Stop hook ---
+  // --- image paste ---
+  registerClipboardImageHandlers();
+  // --- end image paste ---
 }

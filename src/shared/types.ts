@@ -101,6 +101,16 @@ export interface RenderSnapshot {
   scrollbackTail: string;
 }
 
+// --- image paste ---
+export interface ClipboardImageThumb {
+  /** PNG data URL, downscaled to at most 160 px on the long side */
+  dataUrl: string;
+  /** Size of the original clipboard image, in pixels */
+  width: number;
+  height: number;
+}
+// --- end image paste ---
+
 export interface PattonAPI {
   pty: {
     create: (opts?: PtyCreateOptions) => Promise<number>;
@@ -158,6 +168,13 @@ export interface PattonAPI {
     remove: () => Promise<ClaudeHookStatus>;
   };
   // --- end Claude Code Stop hook ---
+  // --- image paste ---
+  clipboard: {
+    readImage: () => Promise<ClipboardImageThumb | null>;
+    /** Save the clipboard image as a PNG under userData/pastes; returns its path. */
+    saveImage: () => Promise<string | null>;
+  };
+  // --- end image paste ---
   app: {
     onSettings: (callback: () => void) => () => void;
     onToggleNotes: (callback: () => void) => () => void;

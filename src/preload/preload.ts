@@ -72,6 +72,12 @@ const api: PattonAPI = {
     remove: () => ipcRenderer.invoke(IPC.CLAUDE_HOOK_REMOVE),
   },
   // --- end Claude Code Stop hook ---
+  // --- image paste ---
+  clipboard: {
+    readImage: () => ipcRenderer.invoke(IPC.CLIPBOARD_READ_IMAGE),
+    saveImage: () => ipcRenderer.invoke(IPC.CLIPBOARD_SAVE_IMAGE),
+  },
+  // --- end image paste ---
   app: {
     onSettings: (cb) => {
       const listener = () => cb();

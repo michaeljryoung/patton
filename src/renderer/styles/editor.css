@@ -168,3 +168,63 @@
   color: var(--text-muted);
   font-size: 13px;
 }
+
+/* --- Pasted-image thumbnails (above the compose bar) --- */
+.paste-strip {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  overflow-x: auto;
+  border-top: 1px solid var(--border-light);
+  background: var(--bg-tertiary);
+  flex-shrink: 0;
+}
+
+.paste-strip[hidden] {
+  display: none;
+}
+
+.paste-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 2px 4px 2px 2px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-secondary);
+}
+
+.paste-chip-img {
+  display: block;
+  max-height: 48px;
+  max-width: 96px;
+  object-fit: contain;
+  border-radius: 2px;
+}
+
+.paste-chip-label {
+  font-family: var(--font-ui);
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.paste-chip-remove {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.paste-chip-remove:hover,
+.paste-chip-remove:focus-visible {
+  background: var(--hover-strong);
+  color: var(--text-primary);
+  outline: none;
+}

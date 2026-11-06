@@ -71,6 +71,10 @@ export const IPC = {
   CLAUDE_HOOK_INSTALL: 'claude:installHook',
   CLAUDE_HOOK_REMOVE: 'claude:removeHook',
   // --- end Claude Code Stop hook ---
+  // --- image paste ---
+  CLIPBOARD_READ_IMAGE: 'clipboard:readImage',
+  CLIPBOARD_SAVE_IMAGE: 'clipboard:saveImage',
+  // --- end image paste ---
 } as const;
 
 /** The notification sounds Patton ships; settings outside this list are ignored. */

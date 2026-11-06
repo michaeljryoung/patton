@@ -87,6 +87,16 @@ export class Pane {
   private static readonly CLAUDE_STOP_SETTLE_MS = 1500;
   private claudeWorking = false;
   private claudeStopTimer: ReturnType<typeof setTimeout> | null = null;
+  // True once a Claude title glyph (◐ ◑ ✳) has been seen since the shell's
+  // last prompt: Claude Code is running in this pane, so image pastes go to it
+  // as Ctrl+V (it reads the clipboard itself) instead of as a file path.
+  private claudeActive = false;
+
+  // --- Pasted-image thumbnails (see pasteImage) ---
+  private static readonly PASTE_CHIP_TTL_MS = 10 * 60 * 1000;
+  private static readonly PASTE_CHIP_MAX = 6;
+  private pasteStrip!: HTMLElement;
+  private pasteChips: { el: HTMLElement; timer: ReturnType<typeof setTimeout> }[] = [];
 
   // --- Claude Code Stop hook (OSC 777 `patton;stop;tasks=N;crons=M`) ---
   // Claude Code 2.1.318 shows ◐/◑ only while its main loop is busy and ✳
@@ -128,6 +138,7 @@ export class Pane {
   /** Follow Claude Code's working/stopped state from its title. Going from
    *  working to stopped is the moment it needs the user. */
   private trackClaudeState(title: string): void {
+    if (Pane.CLAUDE_WORKING.test(title) || Pane.CLAUDE_STOPPED.test(title)) this.claudeActive = true;
     if (Pane.CLAUDE_WORKING.test(title)) {
       if (Date.now() - this.lastHookVerdictMs < Pane.HOOK_SPINNER_GRACE_MS) return;
       this.cancelClaudeStop(); // the ✳ was only a flash between turns
@@ -137,6 +148,7 @@ export class Pane {
       // duplicate of the last one, so it mustn't be debounced away.
       this.lastCommandDoneMs = 0;
       this.setParked(null);
+      this.clearPasteChips(); // the pasted image has been sent along with the prompt
       this.callbacks.onWorkStarted?.();
     } else if (this.claudeWorking) {
       this.claudeWorking = false;
@@ -235,6 +247,15 @@ export class Pane {
     this.terminalContainer.className = 'terminal-container';
     this.element.appendChild(this.terminalContainer);
 
+    this.pasteStrip = document.createElement('div');
+    this.pasteStrip.className = 'paste-strip';
+    this.pasteStrip.setAttribute('role', 'group');
+    this.pasteStrip.setAttribute('aria-label', 'Pasted images');
+    this.pasteStrip.hidden = true;
+    // Never take focus from the terminal when a chip is clicked.
+    this.pasteStrip.addEventListener('mousedown', (e) => e.preventDefault());
+    this.element.appendChild(this.pasteStrip);
+
     this.editorContainer = document.createElement('div');
     this.editorContainer.className = 'editor-container collapsed';
     this.element.appendChild(this.editorContainer);
@@ -256,6 +277,7 @@ export class Pane {
       onHistoryDown: () => this.historyManager.down(),
       onTab: () => this.handleTab(),
       onEscape: () => this.collapseCompose(),
+      onImagePaste: () => { void this.pasteImage('paste'); },
     });
 
     // Create search overlay
@@ -299,6 +321,12 @@ export class Pane {
           window.patton.pty.write(this.ptyId, '\x1b[13;2u');
         }
         return false; // block both keydown AND keypress to prevent xterm sending \r
+      }
+      // Ctrl+V reaches Claude Code unchanged (it reads the clipboard image
+      // itself); Patton only shows a thumbnail of what was pasted.
+      if (e.type === 'keydown' && e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === 'v') {
+        if (this.claudeActive) void this.pasteImage('ctrl-v-key');
+        return true;
       }
       return true; // let xterm handle all other keys
     });
@@ -427,6 +455,10 @@ export class Pane {
     const pasteHandler = async (e: ClipboardEvent) => {
       e.preventDefault();
       const raw = e.clipboardData?.getData('text') || '';
+      if (!raw) {
+        await this.pasteImage('paste'); // no text: the clipboard may hold an image
+        return;
+      }
       await this.safePaste(raw);
     };
     this.terminalContainer.addEventListener('paste', pasteHandler as EventListener);
@@ -451,6 +483,7 @@ export class Pane {
           action: () => {
             navigator.clipboard.readText().then(text => {
               if (text) this.safePaste(text);
+              else void this.pasteImage('menu');
             });
           },
         },
@@ -506,8 +539,10 @@ export class Pane {
         // this, the next `claude` launch's first ✳ would read as a stop.
         if (state === 'prompt') {
           this.claudeWorking = false;
+          this.claudeActive = false;
           this.cancelClaudeStop();
           this.setParked(null);
+          this.clearPasteChips();
         }
       }),
     );
@@ -566,6 +601,84 @@ export class Pane {
     const active = document.activeElement;
     if (!active) return false;
     return active.closest('[role="dialog"], .search-overlay, .paste-dialog-overlay') !== null;
+  }
+
+  /**
+   * Paste the clipboard image, if there is one. With Claude Code active we send
+   * Ctrl+V (it reads the clipboard itself); otherwise the PNG is saved and its
+   * quoted path typed at the prompt. Either way a thumbnail chip is shown.
+   * 'ctrl-v-key' means the user typed Ctrl+V, which already reached the PTY, so
+   * only the thumbnail is added.
+   */
+  private async pasteImage(source: 'paste' | 'menu' | 'ctrl-v-key'): Promise<void> {
+    if (this.ptyId === null) return;
+    try {
+      const thumb = await window.patton.clipboard.readImage();
+      if (!thumb) return;
+      let route: 'ctrl-v' | 'path';
+      if (this.claudeActive) {
+        route = 'ctrl-v';
+        if (source !== 'ctrl-v-key') window.patton.pty.write(this.ptyId, '\x16');
+      } else {
+        const file = await window.patton.clipboard.saveImage();
+        if (!file || this.ptyId === null) return;
+        route = 'path';
+        window.patton.pty.write(this.ptyId, "'" + file.replace(/'/g, "'\\''") + "'");
+      }
+      this.addPasteChip(thumb.dataUrl, thumb.width, thumb.height);
+      rlog('info', '[PASTE] image', { pane: this.id, route, width: thumb.width, height: thumb.height });
+    } catch (err) {
+      rlog('warn', '[PASTE] image paste failed', { pane: this.id, error: String(err) });
+    }
+  }
+
+  private addPasteChip(dataUrl: string, width: number, height: number): void {
+    const label = `${width}\u00d7${height}`;
+    const chip = document.createElement('div');
+    chip.className = 'paste-chip';
+
+    const img = document.createElement('img');
+    img.className = 'paste-chip-img';
+    img.src = dataUrl;
+    img.alt = `Pasted image, ${label}`;
+    chip.appendChild(img);
+
+    const text = document.createElement('span');
+    text.className = 'paste-chip-label';
+    text.textContent = label;
+    chip.appendChild(text);
+
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'paste-chip-remove';
+    remove.setAttribute('aria-label', `Remove pasted image preview, ${label}`);
+    remove.textContent = '\u00d7';
+    chip.appendChild(remove);
+
+    const entry = {
+      el: chip,
+      timer: setTimeout(() => this.removePasteChip(entry), Pane.PASTE_CHIP_TTL_MS),
+    };
+    remove.addEventListener('click', () => {
+      this.removePasteChip(entry);
+      this.terminalView.focus();
+    });
+
+    this.pasteChips.push(entry);
+    while (this.pasteChips.length > Pane.PASTE_CHIP_MAX) this.removePasteChip(this.pasteChips[0]);
+    this.pasteStrip.appendChild(chip);
+    this.pasteStrip.hidden = false;
+  }
+
+  private removePasteChip(entry: { el: HTMLElement; timer: ReturnType<typeof setTimeout> }): void {
+    clearTimeout(entry.timer);
+    entry.el.remove();
+    this.pasteChips = this.pasteChips.filter((c) => c !== entry);
+    if (this.pasteChips.length === 0) this.pasteStrip.hidden = true;
+  }
+
+  private clearPasteChips(): void {
+    for (const entry of [...this.pasteChips]) this.removePasteChip(entry);
   }
 
   /** Sanitize pasted text and confirm multi-line pastes before writing to PTY */
@@ -767,6 +880,7 @@ export class Pane {
 
   dispose(): void {
     if (this.resizeTimer) clearTimeout(this.resizeTimer);
+    this.clearPasteChips();
     for (const d of this.disposables) d();
     if (this.ptyId !== null && !this.ptyExited) {
       window.patton.pty.destroy(this.ptyId);
