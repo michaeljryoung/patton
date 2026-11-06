@@ -1,4 +1,4 @@
-import { Pane } from './pane';
+import { Pane, type ParkedInfo } from './pane';
 import { SplitContainer } from './split-container';
 import { SearchOverlay } from './search-overlay';
 import { HistoryManager } from '../services/history-manager';
@@ -59,6 +59,9 @@ export class Tab {
   // is never touched by shell activity or by activating the tab — only the user
   // sets or clears it. See TabFlag in shared/types.ts.
   private _flag: TabFlag | null = null;
+  // Panes whose Claude Code session ended its turn but is waiting on its own
+  // background tasks or timers (Stop hook). Runtime only, never persisted.
+  private _parkedPanes = new Map<Pane, ParkedInfo>();
 
   constructor(initialCwd?: string) {
     this.id = `tab-${++tabIdCounter}`;
@@ -104,6 +107,7 @@ export class Tab {
         this.onCommandDone?.();
       },
       onWorkStarted: () => this.clearAwaitingInput(pane),
+      onParked: (p, info) => this.setPaneParked(p, info),
       onBroadcastWrite: (data) => {
         if (!this._broadcastInput) return;
         // Write to all OTHER panes
@@ -148,6 +152,30 @@ export class Tab {
 
   get awaitingInput(): boolean {
     return this._panesNeedingYou.size > 0;
+  }
+
+  private setPaneParked(pane: Pane, info: ParkedInfo | null): void {
+    if (info) {
+      this._parkedPanes.set(pane, info);
+      // A parked pane doesn't need you, even if the ✳ title path got there
+      // first and raised the dot: the hook's verdict is the better signal.
+      this._panesNeedingYou.delete(pane);
+    } else if (!this._parkedPanes.delete(pane)) {
+      return;
+    }
+    this.onTitleChanged?.();
+  }
+
+  /** Summed background work across this tab's parked panes, or null if none is parked. */
+  get parked(): ParkedInfo | null {
+    if (this._parkedPanes.size === 0) return null;
+    let tasks = 0;
+    let crons = 0;
+    for (const info of this._parkedPanes.values()) {
+      tasks += info.tasks;
+      crons += info.crons;
+    }
+    return { tasks, crons };
   }
 
   setRegistrationCallbacks(
@@ -347,6 +375,7 @@ export class Tab {
     const idx = this._panes.indexOf(pane);
     if (idx !== -1) this._panes.splice(idx, 1);
     this.clearAwaitingInput(pane); // a closed pane can't still need you
+    this.setPaneParked(pane, null);
     pane.dispose();
 
     this.rootNode = newRoot;

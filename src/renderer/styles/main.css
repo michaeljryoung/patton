@@ -21,6 +21,7 @@
   --broadcast: #f0b429;
   --prompt-ready: #22c55e;
   --prompt-ready-glow: rgba(34, 197, 94, 0.4);
+  --parked: #64748b;
   --font-mono: 'SF Mono', 'Menlo', 'Monaco', 'Courier New', monospace;
   --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
@@ -48,6 +49,7 @@
     --broadcast: #f0b429;
     --prompt-ready: #22c55e;
     --prompt-ready-glow: rgba(34, 197, 94, 0.4);
+    --parked: #94a3b8;
     --font-mono: 'SF Mono', 'Menlo', 'Monaco', 'Courier New', monospace;
     --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   }

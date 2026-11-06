@@ -23,6 +23,8 @@ interface TabHeaderInfo {
   active: boolean;
   awaitingInput?: boolean;
   flag?: TabFlag | null;
+  /** Claude Code is waiting on its own background work (Stop hook), not on you. */
+  parked?: { tasks: number; crons: number } | null;
 }
 
 interface RenameOptions {
@@ -206,15 +208,18 @@ export class TabBar {
         }
       });
 
-      // One dot slot, two sources. A user-set flag wins and shows even on the
-      // active tab — it's a deliberate marker, so hiding it on the tab you're
-      // looking at would defeat the point. The automatic "awaiting input" dot
-      // stays inactive-only and pulses; a flag is static, so at a glance you
-      // can tell "something just happened here" from "I marked this".
-      if (tab.flag) {
+      // One dot slot, several sources, in this order. A user-set flag wins and
+      // shows even on the active tab — it's a deliberate marker, so hiding it
+      // on the tab you're looking at would defeat the point. The
+      // automatic "awaiting input" dot stays inactive-only and pulses; a flag
+      // is static, so at a glance you can tell "something just happened here"
+      // from "I marked this". A hollow ring means Claude Code is parked on its
+      // own background work: nothing for you yet.
+      const shownFlag = tab.flag ?? null;
+      if (shownFlag) {
         const dot = document.createElement('span');
-        dot.className = `tab-bar-tab-indicator flag-${tab.flag}`;
-        dot.setAttribute('aria-label', `Flagged ${tab.flag}`);
+        dot.className = `tab-bar-tab-indicator flag-${shownFlag}`;
+        dot.setAttribute('aria-label', `Flagged ${shownFlag}`);
         dot.setAttribute('role', 'img');
         el.appendChild(dot);
       } else if (tab.awaitingInput && !tab.active) {
@@ -223,6 +228,15 @@ export class TabBar {
         dot.setAttribute('aria-label', 'Awaiting input');
         dot.setAttribute('role', 'img');
         el.appendChild(dot);
+      } else if (tab.parked) {
+        const ring = document.createElement('span');
+        ring.className = 'tab-bar-tab-indicator parked';
+        const { tasks, crons } = tab.parked;
+        const text = `Waiting on its own background work (${tasks} ${tasks === 1 ? 'task' : 'tasks'}, ${crons} ${crons === 1 ? 'timer' : 'timers'})`;
+        ring.setAttribute('aria-label', text);
+        ring.title = text;
+        ring.setAttribute('role', 'img');
+        el.appendChild(ring);
       }
 
       const titleSpan = document.createElement('span');

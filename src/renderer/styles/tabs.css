@@ -195,6 +195,16 @@
   box-shadow: 0 0 2px #ef4444, 0 0 8px #ef4444;
 }
 
+/* --- Parked (Claude Code waiting on its own background work) ---
+ * A hollow, static ring in the dot's slot: not the pulsing "needs you" dot,
+ * and not a filled flag. Nothing to do yet; the dot follows when it stops. */
+.tab-bar-tab-indicator.parked {
+  background: transparent;
+  border: 2px solid var(--parked);
+  box-shadow: none;
+  animation: none;
+}
+
 .tab-bar-tab-rename {
   flex: 1;
   min-width: 40px;

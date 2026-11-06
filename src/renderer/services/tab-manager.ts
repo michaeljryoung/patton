@@ -565,6 +565,7 @@ export class TabManager {
         active: t.id === this.activeTab?.id,
         awaitingInput: t.awaitingInput,
         flag: t.flag,
+        parked: t.parked,
       })),
     );
   }

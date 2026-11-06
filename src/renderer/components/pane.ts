@@ -12,6 +12,12 @@ import { shortcutKeys } from '../../shared/shortcuts';
 
 import type { ITheme } from '@xterm/xterm';
 
+/** Background work a parked Claude Code session is waiting on (Stop hook). */
+export interface ParkedInfo {
+  tasks: number;
+  crons: number;
+}
+
 let paneIdCounter = 0;
 
 export interface PaneCallbacks {
@@ -23,6 +29,9 @@ export interface PaneCallbacks {
   onCommandDone?: () => void;
   /** Claude Code started working again, so any "needs you" signal is stale. */
   onWorkStarted?: () => void;
+  /** Claude Code ended its turn but is waiting on its own background tasks or
+   *  timers (info), or no longer is (null). Not a "needs you" event. */
+  onParked?: (pane: Pane, info: ParkedInfo | null) => void;
   onBroadcastWrite?: (data: string) => void;
   cwd?: string;
   shell?: string;
@@ -76,7 +85,25 @@ export class Pane {
   private claudeWorking = false;
   private claudeStopTimer: ReturnType<typeof setTimeout> | null = null;
 
-  private fireCommandDone(source: 'osc133' | 'claude' | 'bell' | 'osc9'): void {
+  // --- Claude Code Stop hook (OSC 777 `patton;stop;tasks=N;crons=M`) ---
+  // Claude Code 2.1.318 shows ◐/◑ only while its main loop is busy and ✳
+  // otherwise — including when the turn ended but subagents, background
+  // shells or scheduled wakeups are still in flight. So ✳ alone can't tell
+  // "parked on its own work" from "needs you"; Patton's Stop hook can (it
+  // reads `background_tasks` and `session_crons` from the Stop input). Once a
+  // pane has seen the hook, the title path waits longer so the hook's verdict
+  // normally lands first; the title path stays as the fallback for sessions
+  // without the hook.
+  private hookActive = false;
+  private static readonly CLAUDE_STOP_SETTLE_WITH_HOOK_MS = 4000;
+  // The Stop hook runs while the turn is still closing, so a spinner frame
+  // (◐/◑) can still arrive just after its verdict. Within this window such a
+  // frame is the old turn's tail, not new work.
+  private lastHookVerdictMs = 0;
+  private static readonly HOOK_SPINNER_GRACE_MS = 2000;
+  private parked: ParkedInfo | null = null;
+
+  private fireCommandDone(source: 'osc133' | 'claude' | 'bell' | 'osc9' | 'hook'): void {
     // While Claude works (or its stop is still settling), a bell or OSC 9 is
     // incidental — e.g. a BEL in tool output — not Claude asking for you. A
     // real stop arrives through the title anyway.
@@ -96,12 +123,14 @@ export class Pane {
    *  working to stopped is the moment it needs the user. */
   private trackClaudeState(title: string): void {
     if (Pane.CLAUDE_WORKING.test(title)) {
+      if (Date.now() - this.lastHookVerdictMs < Pane.HOOK_SPINNER_GRACE_MS) return;
       this.cancelClaudeStop(); // the ✳ was only a flash between turns
       if (this.claudeWorking) return;
       this.claudeWorking = true;
       // A new stretch of work: the next stop is a new event, never a
       // duplicate of the last one, so it mustn't be debounced away.
       this.lastCommandDoneMs = 0;
+      this.setParked(null);
       this.callbacks.onWorkStarted?.();
     } else if (this.claudeWorking) {
       this.claudeWorking = false;
@@ -109,10 +138,35 @@ export class Pane {
         this.claudeStopTimer = setTimeout(() => {
           this.claudeStopTimer = null;
           this.fireCommandDone('claude');
-        }, Pane.CLAUDE_STOP_SETTLE_MS);
+        }, this.hookActive ? Pane.CLAUDE_STOP_SETTLE_WITH_HOOK_MS : Pane.CLAUDE_STOP_SETTLE_MS);
       }
     }
   }
+
+  /** The Stop hook's verdict on a turn that just ended. Background tasks or
+   *  timers still pending → parked (not a "needs you"); none → it really
+   *  stopped, with no settle wait. Either way the ✳ title timer is moot. */
+  private handleHookStop(tasks: number, crons: number): void {
+    this.hookActive = true;
+    this.lastHookVerdictMs = Date.now();
+    this.cancelClaudeStop();
+    this.claudeWorking = false;
+    if (tasks + crons > 0) {
+      rlog('info', '[DOT] Parked', { pane: this.id, tasks, crons });
+      this.setParked({ tasks, crons });
+    } else {
+      this.setParked(null);
+      this.fireCommandDone('hook');
+    }
+  }
+
+  private setParked(info: ParkedInfo | null): void {
+    if (info === null && this.parked === null) return;
+    if (info && this.parked && info.tasks === this.parked.tasks && info.crons === this.parked.crons) return;
+    this.parked = info;
+    this.callbacks.onParked?.(this, info);
+  }
+
 
   /** Ask main for the shell's current folder (lsof) and report a change. */
   private refreshCwd(): void {
@@ -307,6 +361,13 @@ export class Pane {
         }
       }),
     );
+
+    // Claude Code Stop hook verdicts (OSC 777, see handleHookStop).
+    this.disposables.push(
+      this.terminalView.onPattonState((state) => {
+        if (state.kind === 'stop') this.handleHookStop(state.tasks, state.crons);
+      }),
+    );
     this.disposables.push(() => this.cancelClaudeStop());
 
     // Track the cwd for file link resolution and tab naming. With shell
@@ -428,6 +489,7 @@ export class Pane {
         if (state === 'prompt') {
           this.claudeWorking = false;
           this.cancelClaudeStop();
+          this.setParked(null);
         }
       }),
     );

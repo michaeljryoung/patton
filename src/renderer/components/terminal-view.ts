@@ -91,6 +91,15 @@ function tryGetGpuInfo(): string {
 
 export type PromptState = 'prompt' | 'command' | 'idle';
 
+/** A Claude Code Stop hook verdict (OSC 777 `patton;stop;…`): how many
+ *  background tasks are still in flight and how many timers are scheduled
+ *  when its turn ended. Both zero means it really stopped. */
+export interface PattonState {
+  kind: 'stop';
+  tasks: number;
+  crons: number;
+}
+
 export class TerminalView {
   readonly terminal: Terminal;
   readonly fitAddon: FitAddon;
@@ -104,6 +113,7 @@ export class TerminalView {
   private customTheme: ITheme | null = null;
   private promptListeners: ((state: PromptState) => void)[] = [];
   private osc9Listeners: (() => void)[] = [];
+  private pattonStateListeners: ((state: PattonState) => void)[] = [];
   private webglAddon: WebglAddon | null = null;
   // When false, the WebGL renderer is never (re)loaded and the terminal renders
   // via xterm's DOM renderer — which has no GPU glyph atlas and so is immune to
@@ -267,6 +277,29 @@ export class TerminalView {
     this.terminal.parser.registerOscHandler(9, (data) => {
       if (/^\d+(;|$)/.test(data)) return true;
       for (const cb of this.osc9Listeners) cb();
+      return true;
+    });
+
+    // OSC 777: Patton's own channel, plus the rxvt notification form.
+    //  - `patton;stop;tasks=N;crons=M` comes from Patton's Claude Code Stop
+    //    hook (resources/claude-code-stop-hook.sh), which Claude Code emits on
+    //    the hook's behalf through its `terminalSequence` output field (hooks
+    //    have no tty; the field allowlists OSC 0/1/2/9/99/777). Its title
+    //    shows ✳ both when a turn ended for good and when it is parked on
+    //    background agents, shells or scheduled wakeups; the hook can tell
+    //    them apart. OSC 9 can't carry this: any OSC 9 text already means
+    //    "needs you".
+    //  - `notify;title;body` (rxvt/urxvt convention) is a notification, the
+    //    same as a free-text OSC 9.
+    // Anything else is ignored but consumed.
+    this.terminal.parser.registerOscHandler(777, (data) => {
+      const stop = /^patton;stop;tasks=(\d+);crons=(\d+)$/.exec(data);
+      if (stop) {
+        const state: PattonState = { kind: 'stop', tasks: Number(stop[1]), crons: Number(stop[2]) };
+        for (const cb of this.pattonStateListeners) cb(state);
+      } else if (data.startsWith('notify;')) {
+        for (const cb of this.osc9Listeners) cb();
+      }
       return true;
     });
 
@@ -617,6 +650,14 @@ export class TerminalView {
     return () => disposable.dispose();
   }
 
+  /** Patton's own OSC 777 messages (currently only the Claude Code Stop hook's verdict). */
+  onPattonState(callback: (state: PattonState) => void): () => void {
+    this.pattonStateListeners.push(callback);
+    return () => {
+      this.pattonStateListeners = this.pattonStateListeners.filter(l => l !== callback);
+    };
+  }
+
   onOsc9(callback: () => void): () => void {
     this.osc9Listeners.push(callback);
     return () => {
@@ -669,6 +710,7 @@ export class TerminalView {
     this.disposed = true;
     this.promptListeners = [];
     this.osc9Listeners = [];
+    this.pattonStateListeners = [];
     this.mediaQuery.removeEventListener('change', this.themeHandler);
     if (this.resumeFlushHandler) {
       document.removeEventListener('visibilitychange', this.resumeFlushHandler);
