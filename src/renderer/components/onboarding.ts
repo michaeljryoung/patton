@@ -28,7 +28,7 @@ export class Onboarding {
             <span class="onboarding-icon">&#9998;</span>
             <div>
               <strong>Compose Panel</strong>
-              <p>Press <kbd>${shortcutKeys('toggle-compose')}</kbd> to open a text editor for drafting multi-line commands. <kbd>Enter</kbd> sends, <kbd>Esc</kbd> dismisses.</p>
+              <p>Press <kbd>${shortcutKeys('toggle-compose')}</kbd> to open a text editor for drafting multi-line commands. <kbd>Enter</kbd> sends, <kbd>Esc</kbd> dismisses. While Claude Code runs it stays open on its own (Settings → Compose-first).</p>
             </div>
           </div>
           <div class="onboarding-feature">
