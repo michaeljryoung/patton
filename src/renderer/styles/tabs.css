@@ -1,20 +1,30 @@
+/* --- Tab bar: the mock's ledger strip (variant c) ---
+ * A thin surface strip with an ink rule under it; tabs are text with a vertical
+ * hairline between them, the active one in bold ink. The strip drags the
+ * window; the 78 px left padding clears the traffic lights, which main
+ * centres in the strip (window-manager.ts trafficLightPosition). */
 .tab-bar {
   display: flex;
-  align-items: flex-end;
-  height: 38px;
-  background: var(--bg-secondary);
-  border-bottom: 1px solid var(--border);
+  align-items: stretch;
+  height: var(--tabh);
+  flex-shrink: 0;
+  background: var(--surface);
+  border-bottom: 1px solid var(--hairline);
   -webkit-app-region: drag;
-  padding-left: 80px; /* Space for macOS traffic lights */
+  padding-left: 78px; /* Space for macOS traffic lights */
   user-select: none;
+  font-family: var(--font-ui);
 }
 
 .tab-bar-settings {
   background: none;
   border: none;
-  color: var(--text-secondary);
+  border-left: 1px solid var(--hairline);
+  border-right: 1px solid var(--hairline);
+  border-radius: 0;
+  color: var(--muted);
   cursor: pointer;
-  padding: 0 10px;
+  padding: 0 12px;
   height: 100%;
   display: flex;
   align-items: center;
@@ -24,8 +34,8 @@
 }
 
 .tab-bar-settings:hover {
-  color: var(--text-primary);
-  background: var(--bg-input);
+  color: var(--ink);
+  background: var(--surface-hover);
 }
 
 .tab-bar-settings svg {
@@ -35,12 +45,20 @@
   flex-shrink: 0;
 }
 
+.tab-bar-settings:focus-visible,
+.tab-bar-new:focus-visible,
+.tab-bar-tab:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
 .tab-bar-tabs {
   display: flex;
   flex: 1;
+  min-width: 0;
   overflow-x: auto;
   height: 100%;
-  align-items: flex-end;
+  align-items: stretch;
   -webkit-app-region: no-drag;
 }
 
@@ -52,54 +70,35 @@
 .tab-bar-tab {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 0 14px;
-  height: calc(100% - 4px);
-  flex: 1;
+  gap: 7px;
+  padding: 0 12px;
+  height: 100%;
+  flex: 0 1 auto;
   min-width: 60px;
-  max-width: 200px;
+  max-width: 220px;
   background: transparent;
   cursor: pointer;
-  font-size: 12px;
-  color: var(--text-secondary);
+  font-size: calc(var(--ui) - 1px);
+  color: var(--muted);
+  white-space: nowrap;
   transition: background 0.15s, color 0.15s, opacity 0.15s;
   -webkit-app-region: no-drag;
-  border-radius: 8px 8px 0 0;
+  border-radius: 0;
   position: relative;
 }
 
+.tab-bar-tab + .tab-bar-tab {
+  border-left: 1px solid var(--hairline);
+}
+
 .tab-bar-tab:hover {
-  background: var(--hover);
-  color: var(--text-primary);
+  background: var(--surface-hover);
+  color: var(--ink);
 }
 
 .tab-bar-tab.active {
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  font-weight: 500;
-  height: calc(100% - 2px);
-}
-
-/* Hide the parent border-bottom behind the active tab */
-.tab-bar-tab.active::after {
-  content: '';
-  position: absolute;
-  bottom: -1px;
-  left: 0;
-  right: 0;
-  height: 1px;
-  background: var(--bg-primary);
-}
-
-/* Subtle separator between inactive tabs */
-.tab-bar-tab:not(.active) + .tab-bar-tab:not(.active)::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 20%;
-  height: 60%;
-  width: 1px;
-  background: var(--border-light);
+  color: var(--ink);
+  font-weight: 700;
 }
 
 /* Drag-to-reorder states */
@@ -113,7 +112,7 @@
 
 .tab-bar-tab-grip {
   cursor: grab;
-  color: var(--text-muted);
+  color: var(--muted);
   font-size: 10px;
   line-height: 1;
   opacity: 0;
@@ -144,20 +143,18 @@
  * inactive tab needs the user (Claude Code stopped working, a shell command
  * finished, OSC 9 notification, bell). Uses the same green
  * token as the prompt-ready editor glow so the visual language stays
- * consistent. Dual box-shadow (inner bright core + outer halo) plus a
- * slow pulse lift it above the glyph Claude Code puts at the start of its
- * title (◐/◑ working, ✳ stopped) so the user can tell them apart at a glance.
+ * consistent. A halo plus a slow pulse lift it above the glyph Claude Code
+ * puts at the start of its title (◐/◑ working, ✳ stopped) so the user can
+ * tell them apart at a glance. Sizes follow the mock's glyphs (variant a).
  *
  * The global prefers-reduced-motion rule in main.css zeroes animation
  * duration, giving motion-averse users a static dot for free. */
 .tab-bar-tab-indicator {
-  width: 10px;
-  height: 10px;
+  width: 9px;
+  height: 9px;
   border-radius: 50%;
   background: var(--prompt-ready);
-  box-shadow:
-    0 0 2px var(--prompt-ready),
-    0 0 8px var(--prompt-ready);
+  box-shadow: 0 0 6px var(--prompt-ready);
   flex-shrink: 0;
   align-self: center;
   animation: tab-indicator-pulse 1.8s ease-in-out infinite;
@@ -165,34 +162,31 @@
 
 @keyframes tab-indicator-pulse {
   0%, 100% { opacity: 1; }
-  50%      { opacity: 0.55; }
+  50%      { opacity: 0.5; }
 }
 
 /* --- Manual colour flags (right-click a tab → Flag) ---
- * Same dot, user-chosen colour. Deliberately NOT animated: the pulse means
- * "this just happened, look now", whereas a flag is a standing note-to-self.
- * Keeping the animation off is what lets you tell the two apart at a glance
- * when both kinds of dot are on screen. Colours are self-contained here rather
- * than new global tokens — nothing else in the app needs a "flag yellow". */
+ * Same dot, user-chosen colour. Deliberately NOT animated and without the
+ * halo: the pulse means "this just happened, look now", whereas a flag is a
+ * standing note-to-self. Keeping both off is what lets you tell the two apart
+ * at a glance when both kinds of dot are on screen. */
 .tab-bar-tab-indicator.flag-green,
 .tab-bar-tab-indicator.flag-yellow,
 .tab-bar-tab-indicator.flag-red {
   animation: none;
+  box-shadow: none;
 }
 
 .tab-bar-tab-indicator.flag-green {
-  background: #22c55e;
-  box-shadow: 0 0 2px #22c55e, 0 0 8px #22c55e;
+  background: var(--flag-green);
 }
 
 .tab-bar-tab-indicator.flag-yellow {
-  background: #eab308;
-  box-shadow: 0 0 2px #eab308, 0 0 8px #eab308;
+  background: var(--flag-yellow);
 }
 
 .tab-bar-tab-indicator.flag-red {
-  background: #ef4444;
-  box-shadow: 0 0 2px #ef4444, 0 0 8px #ef4444;
+  background: var(--flag-red);
 }
 
 /* --- Parked (Claude Code waiting on its own background work) ---
@@ -209,49 +203,56 @@
   flex: 1;
   min-width: 40px;
   max-width: 100%;
-  background: var(--bg-input);
-  color: var(--text-primary);
-  border: 1px solid var(--accent);
-  border-radius: 3px;
-  font-size: 12px;
+  background: var(--bg);
+  color: var(--ink);
+  border: 1px solid var(--focus);
+  border-radius: 0;
+  font-size: calc(var(--ui) - 1px);
+  font-weight: 400;
   font-family: var(--font-ui);
   padding: 1px 4px;
   outline: none;
 }
 
 .tab-bar-tab-rename::placeholder {
-  color: var(--text-muted);
+  color: var(--muted);
 }
 
 .tab-bar-tab-close {
   background: none;
   border: none;
-  font-size: 14px;
-  color: var(--text-muted);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--muted);
   cursor: pointer;
-  padding: 2px 4px;
+  padding: 1px 3px;
   line-height: 1;
-  border-radius: 4px;
+  border-radius: 2px;
   transition: background 0.12s, color 0.12s;
   -webkit-app-region: no-drag;
   opacity: 0;
 }
 
 .tab-bar-tab:hover .tab-bar-tab-close,
-.tab-bar-tab.active .tab-bar-tab-close {
+.tab-bar-tab.active .tab-bar-tab-close,
+.tab-bar-tab-close:focus-visible {
   opacity: 1;
 }
 
 .tab-bar-tab-close:hover {
-  background: var(--hover-strong);
-  color: var(--text-primary);
+  background: var(--grey);
+  color: var(--ink);
 }
 
 .tab-bar-new {
   background: none;
   border: none;
-  font-size: 18px;
-  color: var(--text-muted);
+  border-left: 1px solid var(--hairline);
+  border-radius: 0;
+  font-family: var(--font-ui);
+  font-size: 14px;
+  color: var(--muted);
   cursor: pointer;
   padding: 0 12px;
   height: 100%;
@@ -260,6 +261,6 @@
 }
 
 .tab-bar-new:hover {
-  color: var(--text-primary);
-  background: var(--bg-input);
+  color: var(--ink);
+  background: var(--surface-hover);
 }

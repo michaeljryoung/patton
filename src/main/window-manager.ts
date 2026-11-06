@@ -1,4 +1,4 @@
-import { BrowserWindow, dialog, screen } from 'electron';
+import { BrowserWindow, dialog, nativeTheme, screen } from 'electron';
 import path from 'node:path';
 import * as store from './store';
 import type { PtyManager } from './pty-manager';
@@ -18,8 +18,10 @@ export function createWindow(ptyManager?: PtyManager): BrowserWindow {
     minWidth: 400,
     minHeight: 300,
     titleBarStyle: 'hiddenInset',
-    trafficLightPosition: { x: 12, y: 12 },
-    backgroundColor: '#1e1e1e',
+    // Centres the 12 px lights in the renderer's 28 px tab strip (tabs.css --tabh).
+    trafficLightPosition: { x: 12, y: 8 },
+    // The chrome's own ground (main.css --bg) so the first paint doesn't flash.
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#111214' : '#ffffff',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,

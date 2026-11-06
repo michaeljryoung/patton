@@ -1,57 +1,67 @@
-/* --- Design tokens --- */
+/* --- Design tokens ---
+ * The chrome follows the approved mixer (docs/mocks/patton-mixer.html,
+ * tabs=c glyphs=a rows=c scale=b compose=a tone=light lines=ink): Helvetica
+ * Neue, ink on white, one grey surface, 1 px ink hairlines, square corners,
+ * colour only for meaning. The dark block below is the mock's dark tone; its
+ * hairlines stay "ink", which on dark is the light ink. The terminal keeps its
+ * own theme and font: nothing here reaches xterm. */
 :root {
-  --bg-primary: #ffffff;
-  --bg-secondary: #f0f0f0;
-  --bg-tertiary: #fafafa;
-  --bg-input: #e8e8e8;
-  --text-primary: #1e1e1e;
-  --text-secondary: #666;
-  --text-muted: #999;
-  --border: #ddd;
-  --border-light: #e0e0e0;
-  --accent: #0451a5;
-  --accent-light: #b5d5ff;
-  --hover: #f5f5f5;
-  --hover-strong: #d0d0d0;
-  --scrollbar: #c0c0c0;
-  --scrollbar-hover: #a0a0a0;
-  --shadow: rgba(0, 0, 0, 0.12);
-  --submit-flash: #e3f2fd;
-  --accent-text: #0451a5;
-  --broadcast: #f0b429;
-  --prompt-ready: #22c55e;
-  --prompt-ready-glow: rgba(34, 197, 94, 0.4);
-  --parked: #64748b;
+  /* Palette */
+  --ink: #0b0d12;
+  --bg: #ffffff;
+  --surface: #f4f5f7;
+  --surface-hover: #eceef2;
+  --muted: #596170;
+  --grey: #e3e6ec;
+  --thumb: #c9cfd8;
+  --hairline: var(--ink);
+  --focus: #2f6bff;
+  --error-text: #c41d33;
+  --scrim: rgba(11, 13, 18, 0.32);
+
+  /* Accents: used only for meaning */
+  --green: #12b886;
+  --amber: #f5a524;
+  --red: #ff4d5e;
+  --blue: #2f6bff;
+
+  /* Semantic */
+  --accent: var(--blue);
+  --inverse-bg: var(--ink);
+  --inverse-fg: var(--bg);
+  --broadcast: var(--amber);
+  --prompt-ready: var(--green);
+  --prompt-ready-glow: rgba(18, 184, 134, 0.4);
+  --parked: var(--muted);
+  --flag-green: var(--green);
+  --flag-yellow: var(--amber);
+  --flag-red: var(--red);
+
+  /* Type and density (the mock's compact scale) */
   --font-mono: 'SF Mono', 'Menlo', 'Monaco', 'Courier New', monospace;
-  --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-ui: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --ui: 12px;
+  --row: 28px;
+  --head: 10.5px;
+  --head-ls: 0.06em;
+  --tabh: 28px;
+
+  color-scheme: light;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg-primary: #1e1e1e;
-    --bg-secondary: #2d2d2d;
-    --bg-tertiary: #252525;
-    --bg-input: #3c3c3c;
-    --text-primary: #d4d4d4;
-    --text-secondary: #999;
-    --text-muted: #666;
-    --border: #444;
-    --border-light: #383838;
-    --accent: #4fc1ff;
-    --accent-light: #264f78;
-    --hover: #353535;
-    --hover-strong: #505050;
-    --scrollbar: #555;
-    --scrollbar-hover: #777;
-    --shadow: rgba(0, 0, 0, 0.3);
-    --submit-flash: #1a3a50;
-    --accent-text: #9cdcfe;
-    --broadcast: #f0b429;
-    --prompt-ready: #22c55e;
-    --prompt-ready-glow: rgba(34, 197, 94, 0.4);
-    --parked: #94a3b8;
-    --font-mono: 'SF Mono', 'Menlo', 'Monaco', 'Courier New', monospace;
-    --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --ink: #dbe3ee;
+    --bg: #111214;
+    --surface: #17191d;
+    --surface-hover: #1f2228;
+    --muted: #8b95a5;
+    --grey: #2a2f37;
+    --thumb: #3a404a;
+    --focus: #7aa2ff;
+    --error-text: #ff7a87;
+    --scrim: rgba(0, 0, 0, 0.55);
+    color-scheme: dark;
   }
 }
 
@@ -65,8 +75,10 @@ html, body {
   height: 100%;
   overflow: hidden;
   font-family: var(--font-ui);
-  background: var(--bg-primary);
-  color: var(--text-primary);
+  font-size: var(--ui);
+  line-height: 1.3;
+  background: var(--bg);
+  color: var(--ink);
 }
 
 #app {
@@ -90,6 +102,17 @@ html, body {
   min-width: 0;
 }
 
+/* Shared head type: uppercase, tracked, muted (section heads, column labels). */
+.notes-header,
+.bookmarks-header,
+.bookmarks-group-title {
+  font-size: var(--head);
+  font-weight: 400;
+  letter-spacing: var(--head-ls);
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
 /* --- Notes panel (Ctrl+Cmd+N scratchpad, docked right of the terminal) --- */
 #notes-panel {
   display: flex;
@@ -99,8 +122,8 @@ html, body {
   min-width: 200px;
   max-width: 80%;
   position: relative;
-  background: var(--bg-secondary);
-  border-left: 1px solid var(--border);
+  background: var(--surface);
+  border-left: 1px solid var(--hairline);
   overflow: hidden;
 }
 
@@ -112,23 +135,19 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 12px;
+  height: var(--row);
+  flex-shrink: 0;
+  padding: 0 12px;
   font-family: var(--font-ui);
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-muted);
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  border-bottom: 1px solid var(--border-light);
+  border-bottom: 1px solid var(--hairline);
   user-select: none;
   -webkit-app-region: no-drag;
 }
 
 .notes-header .notes-hint {
-  font-weight: 400;
   text-transform: none;
   letter-spacing: 0;
-  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
 }
 
 .notes-textarea {
@@ -138,18 +157,21 @@ html, body {
   resize: none;
   border: none;
   outline: none;
-  padding: 12px 14px;
-  background: transparent;
-  color: var(--text-primary);
+  padding: 10px 12px;
+  background: var(--bg);
+  color: var(--ink);
   font-family: var(--font-mono, var(--font-ui));
-  font-size: 13px;
+  font-size: 12.5px;
   line-height: 1.5;
   tab-size: 2;
 }
 
 .notes-textarea::placeholder {
-  color: var(--text-muted);
-  opacity: 0.6;
+  color: var(--muted);
+}
+
+.notes-textarea:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--focus);
 }
 
 /* Drag handle on the panel's left edge to resize it */
@@ -169,19 +191,23 @@ html, body {
   opacity: 0.4;
 }
 
-/* --- Bookmarks sidebar (Ctrl+Cmd+B, docked LEFT of the terminal) --- */
+/* --- Bookmarks sidebar (Ctrl+Cmd+B, docked LEFT of the terminal) ---
+ * The mock's dense two-line rows: name over path or host, uppercase group
+ * heads with counts, open rows in ink with a blue marker, the active tab's
+ * project on the window ground with a 2 px ink edge. */
 #bookmarks-panel {
   display: flex;
   flex-direction: column;
   flex: 0 0 auto;
-  width: 220px;
+  width: 196px;
   min-width: 160px;
   max-width: 50%;
   position: relative;
-  background: var(--bg-secondary);
-  border-right: 1px solid var(--border);
+  background: var(--surface);
+  border-right: 1px solid var(--hairline);
   overflow: hidden;
   font-family: var(--font-ui);
+  font-size: var(--ui);
 }
 
 #bookmarks-panel.collapsed {
@@ -192,38 +218,42 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 6px 8px 6px 12px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-muted);
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  border-bottom: 1px solid var(--border-light);
+  height: var(--row);
+  flex-shrink: 0;
+  padding: 0 8px 0 12px;
+  border-bottom: 1px solid var(--hairline);
   user-select: none;
   -webkit-app-region: no-drag;
 }
 
 .bookmarks-add {
-  width: 22px;
-  height: 22px;
-  border: none;
-  border-radius: 4px;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--hairline);
+  border-radius: 2px;
   background: transparent;
-  color: var(--text-secondary);
-  font-size: 16px;
+  color: var(--muted);
+  font-family: var(--font-ui);
+  font-size: 14px;
   line-height: 1;
   cursor: pointer;
 }
 
 .bookmarks-add:hover {
-  background: var(--hover-strong);
-  color: var(--text-primary);
+  background: var(--bg);
+  color: var(--ink);
 }
 
 .bookmarks-add:focus-visible,
-.bookmark-row:focus-visible,
 .bookmarks-form button:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+.bookmark-row:focus-visible {
+  outline: 2px solid var(--focus);
   outline-offset: -2px;
 }
 
@@ -231,8 +261,8 @@ html, body {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--border-light);
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--hairline);
 }
 
 .bookmarks-form[hidden] {
@@ -243,23 +273,28 @@ html, body {
 .bookmark-rename {
   width: 100%;
   padding: 4px 6px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--bg-input);
-  color: var(--text-primary);
+  border: 1px solid var(--hairline);
+  border-radius: 0;
+  background: var(--bg);
+  color: var(--ink);
   font-family: var(--font-ui);
-  font-size: 12px;
+  font-size: var(--ui);
   outline: none;
+}
+
+.bookmarks-form input::placeholder {
+  color: var(--muted);
 }
 
 .bookmarks-form input:focus,
 .bookmark-rename:focus {
-  border-color: var(--accent);
+  border-color: var(--focus);
+  box-shadow: inset 0 0 0 1px var(--focus);
 }
 
 .bookmarks-form-error {
   font-size: 11px;
-  color: var(--accent-text);
+  color: var(--error-text);
 }
 
 .bookmarks-form-error:empty {
@@ -274,50 +309,58 @@ html, body {
 
 .bookmarks-form-actions button {
   padding: 3px 10px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-  font-size: 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 2px;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: var(--ui);
   cursor: pointer;
 }
 
+.bookmarks-form-actions button:hover {
+  background: var(--surface-hover);
+}
+
 .bookmarks-form-actions .bookmarks-form-submit {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--bg-primary);
+  background: var(--inverse-bg);
+  border-color: var(--inverse-bg);
+  color: var(--inverse-fg);
+}
+
+.bookmarks-form-actions .bookmarks-form-submit:hover {
+  background: var(--inverse-bg);
+  opacity: 0.88;
 }
 
 .bookmarks-list {
   flex: 1;
   overflow-y: auto;
-  padding: 4px 0 8px;
+  padding: 0 0 8px;
   margin-right: 4px; /* keeps the resize handle off the scrollbar */
 }
 
 .bookmarks-empty {
   padding: 12px;
-  font-size: 12px;
+  font-size: var(--ui);
   line-height: 1.5;
-  color: var(--text-muted);
+  color: var(--muted);
 }
 
 .bookmarks-group-title {
-  padding: 8px 12px 2px;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--text-muted);
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  display: flex;
+  justify-content: space-between;
+  padding: 10px 12px 6px;
+  border-bottom: 1px solid var(--hairline);
   user-select: none;
+}
+
+.bookmarks-group-count {
+  font-variant-numeric: tabular-nums;
 }
 
 .bookmarks-items {
   list-style: none;
-}
-
-.bookmarks-items li {
-  padding: 1px 6px;
 }
 
 .bookmark-row {
@@ -325,13 +368,16 @@ html, body {
   align-items: center;
   gap: 8px;
   width: 100%;
-  padding: 4px 6px;
+  height: calc(var(--row) + 6px);
+  padding: 0 12px;
   border: none;
-  border-radius: 4px;
+  border-radius: 0;
   background: transparent;
-  color: var(--text-primary);
+  color: var(--muted);
   text-align: left;
   font-family: var(--font-ui);
+  font-size: var(--ui);
+  line-height: 1.2;
   cursor: pointer;
 }
 
@@ -340,7 +386,8 @@ html, body {
 }
 
 .bookmark-row:hover {
-  background: var(--hover);
+  background: var(--surface-hover);
+  color: var(--ink);
 }
 
 /* The project's folder is gone: shown but not openable (Remove still works). */
@@ -349,17 +396,22 @@ html, body {
   opacity: 0.6;
 }
 
-/* The project has a tab open in this window. */
+/* Open marker: the project has a tab open in this window. */
 .bookmark-dot {
   flex: 0 0 auto;
   width: 6px;
   height: 6px;
+  margin: 0 2px;
   border-radius: 50%;
   background: transparent;
 }
 
+.bookmark-row.is-open {
+  color: var(--ink);
+}
+
 .bookmark-row.is-open .bookmark-dot {
-  background: var(--accent);
+  background: var(--blue);
 }
 
 .bookmark-row.is-open .bookmark-label {
@@ -367,17 +419,14 @@ html, body {
 }
 
 /* The project of the active tab. */
-.bookmark-row.is-current {
-  background: var(--accent-light);
-}
-
-.bookmark-row.is-current .bookmark-subtitle {
-  color: var(--text-primary);
+.bookmark-row.is-current,
+.bookmark-row.is-current:hover {
+  background: var(--bg);
+  box-shadow: inset 2px 0 0 var(--ink);
 }
 
 .bookmark-text {
-  display: flex;
-  flex-direction: column;
+  display: grid;
   min-width: 0;
 }
 
@@ -388,13 +437,9 @@ html, body {
   text-overflow: ellipsis;
 }
 
-.bookmark-label {
-  font-size: 13px;
-}
-
 .bookmark-subtitle {
-  font-size: 11px;
-  color: var(--text-secondary);
+  font-size: calc(var(--ui) - 2px);
+  color: var(--muted);
 }
 
 /* Drag handle on the panel's right edge to resize it */
@@ -425,8 +470,9 @@ html, body {
 
 /* --- Focus indicators --- */
 button:focus-visible,
-input:focus-visible {
-  outline: 2px solid var(--accent);
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--focus);
   outline-offset: 1px;
 }
 
@@ -457,13 +503,13 @@ input:focus-visible {
   height: 22px;
   z-index: 10;
   cursor: grab;
-  font-size: 14px;
-  line-height: 22px;
+  font-size: 13px;
+  line-height: 20px;
   text-align: center;
-  color: var(--text-muted);
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-light);
-  border-radius: 4px;
+  color: var(--muted);
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 2px;
   opacity: 0;
   transition: opacity 0.15s;
   user-select: none;
@@ -479,8 +525,8 @@ input:focus-visible {
 
 .pane-drag-handle:hover {
   opacity: 1 !important;
-  color: var(--text-primary);
-  background: var(--hover);
+  color: var(--ink);
+  background: var(--surface-hover);
 }
 
 /* Pane being dragged */
@@ -497,14 +543,13 @@ input:focus-visible {
 .pane-drag-overlay {
   position: fixed;
   z-index: 9999;
-  padding: 6px 14px;
-  background: var(--bg-primary);
-  border: 1px solid var(--accent);
-  border-radius: 6px;
-  box-shadow: 0 4px 16px var(--shadow);
+  padding: 5px 12px;
+  background: var(--bg);
+  border: 1px solid var(--hairline);
+  border-radius: 0;
   font-family: var(--font-ui);
-  font-size: 12px;
-  color: var(--text-primary);
+  font-size: var(--ui);
+  color: var(--ink);
   pointer-events: none;
   white-space: nowrap;
   max-width: 200px;
@@ -527,32 +572,39 @@ input:focus-visible {
   flex-direction: column;
 }
 
-/* --- Split divider --- */
+/* --- Split divider ---
+ * A 1 px hairline drawn in the middle of a 5 px grab area. */
 .split-divider {
   flex-shrink: 0;
-  background: var(--border);
-  transition: background 0.15s;
+  background-color: transparent;
+  background-image: linear-gradient(var(--hairline), var(--hairline));
+  background-repeat: no-repeat;
+  background-position: center;
+  transition: background-color 0.15s;
   z-index: 1;
 }
 
 .split-divider.vertical {
-  width: 4px;
+  width: 5px;
+  background-size: 1px 100%;
   cursor: col-resize;
 }
 
 .split-divider.horizontal {
-  height: 4px;
+  height: 5px;
+  background-size: 100% 1px;
   cursor: row-resize;
 }
 
 .split-divider:hover,
 .split-divider:active {
-  background: var(--accent);
+  background-color: var(--accent);
 }
 
 /* --- Scrollbar --- */
 ::-webkit-scrollbar {
   width: 8px;
+  height: 8px;
 }
 
 ::-webkit-scrollbar-track {
@@ -560,12 +612,12 @@ input:focus-visible {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--scrollbar);
-  border-radius: 4px;
+  background: var(--thumb);
+  border-radius: 0;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--scrollbar-hover);
+  background: var(--muted);
 }
 
 /* --- Broadcast input indicator --- */
@@ -587,47 +639,49 @@ input:focus-visible {
 
 .context-menu {
   position: absolute;
-  background: var(--bg-primary);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  box-shadow: 0 4px 16px var(--shadow);
+  background: var(--bg);
+  border: 1px solid var(--hairline);
+  border-radius: 0;
   min-width: 180px;
   padding: 4px 0;
   overflow: hidden;
+  font-family: var(--font-ui);
 }
 
 .context-menu-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 6px 14px;
-  font-size: 13px;
-  color: var(--text-primary);
+  min-height: 24px;
+  padding: 4px 12px;
+  font-size: var(--ui);
+  color: var(--ink);
   cursor: pointer;
   transition: background 0.08s;
 }
 
 .context-menu-item:hover,
 .context-menu-item.focused {
-  background: var(--accent);
-  color: white;
+  background: var(--inverse-bg);
+  color: var(--inverse-fg);
   outline: none;
 }
 
 .context-menu-shortcut {
   font-size: 11px;
-  color: var(--text-muted);
+  color: var(--muted);
   margin-left: 24px;
 }
 
 .context-menu-item:hover .context-menu-shortcut,
 .context-menu-item.focused .context-menu-shortcut {
-  color: rgba(255, 255, 255, 0.7);
+  color: inherit;
+  opacity: 0.75;
 }
 
 .context-menu-separator {
   height: 1px;
-  background: var(--border-light);
+  background: var(--hairline);
   margin: 4px 0;
 }
 
@@ -649,17 +703,16 @@ input:focus-visible {
 .command-palette-backdrop {
   position: absolute;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--scrim);
 }
 
 .command-palette-panel {
   position: relative;
   width: 400px;
   max-height: 60vh;
-  background: var(--bg-primary);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  box-shadow: 0 8px 32px var(--shadow);
+  background: var(--bg);
+  border: 1px solid var(--hairline);
+  border-radius: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -667,18 +720,25 @@ input:focus-visible {
 
 .command-palette-input {
   width: 100%;
-  padding: 12px 16px;
-  font-size: 14px;
+  padding: 9px 12px;
+  font-size: 13px;
   font-family: var(--font-ui);
-  color: var(--text-primary);
-  background: var(--bg-input);
+  color: var(--ink);
+  background: var(--bg);
   border: none;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--hairline);
+  border-radius: 0;
   outline: none;
 }
 
 .command-palette-input::placeholder {
-  color: var(--text-muted);
+  color: var(--muted);
+}
+
+/* The input is the palette's only focus target: mark it on the rule below it. */
+.command-palette-input:focus-visible {
+  outline: none;
+  box-shadow: inset 0 -2px 0 var(--focus);
 }
 
 .command-palette-list {
@@ -691,41 +751,45 @@ input:focus-visible {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 16px;
+  min-height: var(--row);
+  padding: 0 12px;
   cursor: pointer;
+  color: var(--ink);
   transition: background 0.08s;
 }
 
 .command-palette-item:hover {
-  background: var(--hover);
+  background: var(--surface-hover);
 }
 
 .command-palette-item.selected {
-  background: var(--accent-light);
+  background: var(--inverse-bg);
+  color: var(--inverse-fg);
 }
 
 .command-palette-label {
-  font-size: 13px;
-  color: var(--text-primary);
+  font-size: var(--ui);
+  color: inherit;
   font-family: var(--font-ui);
 }
 
 .command-palette-shortcut {
   font-size: 11px;
-  color: var(--text-muted);
+  color: var(--muted);
   font-family: var(--font-mono);
   margin-left: 16px;
 }
 
 .command-palette-item.selected .command-palette-shortcut {
-  color: var(--text-secondary);
+  color: inherit;
+  opacity: 0.75;
 }
 
 .command-palette-empty {
-  padding: 24px 16px;
+  padding: 20px 12px;
   text-align: center;
-  font-size: 13px;
-  color: var(--text-muted);
+  font-size: var(--ui);
+  color: var(--muted);
   font-family: var(--font-ui);
 }
 
@@ -735,14 +799,13 @@ input:focus-visible {
   top: 40px;
   left: 50%;
   transform: translateX(-50%) translateY(-8px);
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 8px 16px;
-  font-size: 13px;
+  background: var(--bg);
+  color: var(--ink);
+  border: 1px solid var(--hairline);
+  border-radius: 0;
+  padding: 6px 12px;
+  font-size: var(--ui);
   font-family: var(--font-ui);
-  box-shadow: 0 4px 16px var(--shadow);
   z-index: 3000;
   opacity: 0;
   transition: opacity 0.2s, transform 0.2s;
