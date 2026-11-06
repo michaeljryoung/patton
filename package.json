@@ -7,8 +7,8 @@
   "private": true,
   "scripts": {
     "start": "electron-forge start",
-    "package": "npm audit --omit=dev --audit-level=high && electron-forge package",
-    "install-app": "electron-forge package",
+    "package": "npm audit --omit=dev --audit-level=high && bash scripts/forge-package.sh",
+    "install-app": "bash scripts/forge-package.sh",
     "make": "electron-forge make",
     "publish": "electron-forge publish",
     "lint": "eslint .",
