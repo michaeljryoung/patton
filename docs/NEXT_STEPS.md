@@ -7,55 +7,36 @@
 **Done when:** v1.11.0 is released and, live in it: a Claude tab whose turn ends with a background agent or timer shows "parked" and goes green only at a true stop (synthetic Stop-hook probe + one live run); ⌘V of a clipboard image in a Claude tab reaches Claude and shows a thumbnail; the sidebar activates an open project's tab rather than opening a second and opens an artifact in the browser; five look mocks are published; the compose-default reason is reported.
 **Last verified:** 2026-11-06 (Session 40, after the v1.11.0 release; the live checks run on the released build, per Michael's standing push rule)
 
+**Retired:** 10 finished nodes, in `docs/map-archive.md`
+
 ```mermaid
 flowchart TD
   subgraph P1["Phase 1 — Attention signals"]
-    hook_script[Stop-hook script, OSC 777 out]:::done
-    osc777_parse[parse OSC 777 in Patton]:::done
     parked_state[parked vs needs-you state]:::done
     wake_yellow[WAKE title → yellow flag]:::done
     hook_install[install hook from Settings]:::done
     signals_verify[probe + live run]:::live
   end
   subgraph P2["Phase 2 — Image paste"]
-    image_paste[⌘V image → Claude]:::done
     paste_thumbnail[thumbnail chip]:::done
     paste_verify[live paste check]:::live
   end
   subgraph P3["Phase 3 — Bookmarks"]
-    bookmarks_store[persisted bookmarks + IPC]:::done
-    bookmarks_panel[left sidebar panel]:::done
     bookmark_open[open or activate project; open artifact]:::done
     bookmarks_verify[live sidebar check]:::live
   end
   subgraph P4["Phase 4 — Look"]
-    look_mocks[five look mocks published]:::done
-    look_mixer[mixer page in the Trial Stack style]:::done
     look_pick[Michael picks a combination]:::done
-    look_implement[restyle chrome per pick]:::done
   end
   subgraph P5["Phase 5 — Typing and release"]
-    compose_reason[report why compose is not default]:::done
-    compose_default[compose-first mode + toggle]:::done
     merge_release[merge, review, release v1.11.0]:::done
     release_v1_12[release v1.12.0: look + compose-first]:::done
   end
-  hook_script --> parked_state
-  osc777_parse --> parked_state
-  hook_script --> hook_install
   parked_state --> signals_verify
   wake_yellow --> signals_verify
   hook_install --> signals_verify
-  image_paste --> paste_thumbnail
   paste_thumbnail --> paste_verify
-  bookmarks_store --> bookmarks_panel
-  bookmarks_panel --> bookmark_open
   bookmark_open --> bookmarks_verify
-  look_mocks --> look_mixer
-  look_mixer --> look_pick
-  look_pick --> look_implement
-  compose_reason --> compose_default
-  hook_script --> compose_default
   parked_state --> merge_release
   wake_yellow --> merge_release
   hook_install --> merge_release
@@ -64,8 +45,6 @@ flowchart TD
   merge_release --> signals_verify
   merge_release --> paste_verify
   merge_release --> bookmarks_verify
-  compose_default --> release_v1_12
-  look_implement --> release_v1_12
   merge_release --> release_v1_12
   classDef done fill:#1a7f37,color:#fff
   classDef live fill:#0969da,color:#fff
@@ -77,25 +56,15 @@ flowchart TD
 
 | ID | Task | Status | Depends on | Evidence |
 |----|------|--------|------------|----------|
-| `hook_script` | Stop-hook script shipped in `src/resources`: reads Claude Code's Stop JSON, emits `OSC 777;patton;stop;tasks=N;crons=M` via `terminalSequence` | done | — | `resources/claude-code-stop-hook.sh` · `scripts/probe-stop-hook.sh` green · `a5e7617` · `f703483` |
-| `osc777_parse` | `terminal-view.ts` parses OSC 777 (`patton;…` → state events; `notify;…` → attention) | done | — | `src/renderer/components/terminal-view.ts::registerOscHandler(777)` · `a5e7617` |
 | `parked_state` | Hook verdict parks (tasks/crons > 0: hollow marker, tooltip) or fires needs-you (= 0); parked clears when the title goes ◐; title path stays the fallback; `[DOT]` log names source `hook` | done | `hook_script`, `osc777_parse` | `src/renderer/components/pane.ts::handleHookStop` · `41eb69d` (verdict applied after a settled ✳) |
 | `wake_yellow` | Pane title exactly `WAKE` → automatic yellow flag on the tab (manual flag wins), cleared when the title changes | done | — | `src/renderer/components/pane.ts` WAKE title → `tab.ts` autoFlag · `0d1450c` · ordering `41eb69d` |
 | `hook_install` | Settings → "Install Claude Code hook": merges the Stop entry into `~/.claude/settings.json` (never overwrites); on this Mac wired per the estate guide | done | `hook_script` | `src/main/claude-hook.ts` · `5854a10` · `f703483`; installed on this Mac 2026-11-06 10:25 (backup `~/.claude/settings.json.patton-bak-2026-11-06T10-25-30-362Z`) |
 | `signals_verify` | Real hook fed synthetic Stop JSON (tasks>0, crons>0, both 0); OSC replay into a pane; then live: Claude tab with a background agent parks, goes green at the end; `wake` tab turns yellow | live | `parked_state`, `wake_yellow`, `hook_install`, `merge_release` | probe green (14 + ambient + quoted-path cases); installed script run with synthetic stdin; LIVE RUN PENDING: harness green, field-unexercised |
-| `image_paste` | ⌘V with a clipboard image: Claude pane gets Ctrl+V (`\x16`); other panes get the path of a PNG saved under Application Support; IPC reads the clipboard image | done | — | `src/main/clipboard-image.ts` · `src/renderer/components/pane.ts` capture-phase paste · `f7bb954` · `e778394` |
 | `paste_thumbnail` | Chip strip above the compose area: thumbnail, size, ×; clears when Claude starts working or on Esc; Ctrl+V shows it too | done | `image_paste` | `.paste-strip` in `pane.ts` · `src/renderer/styles/editor.css` · `f7bb954` · `e778394` |
 | `paste_verify` | Live: paste a screenshot into a Claude tab, Claude sees `[Image #1]`, the chip shows it | live | `paste_thumbnail`, `merge_release` | asar literals present in the 10:25 build; LIVE RUN PENDING: harness green, field-unexercised |
-| `bookmarks_store` | electron-store `bookmarks` (`project` with path, `artifact` with URL), IPC get/set, validated | done | — | `src/main/bookmarks.ts` · `src/main/store.ts` · `1f8eba8` · `43cb3c7` |
-| `bookmarks_panel` | Left docked panel (notes-panel pattern), registry shortcut, add current project / add artifact, rename, remove, reorder; open projects highlighted, active one emphasised | done | `bookmarks_store` | `src/renderer/components/bookmarks-panel.ts` · `f228caf` · `43cb3c7` |
 | `bookmark_open` | Click project: activate the tab already in that project, else new tab at the folder running the startup command; click artifact: open in the browser (https only) | done | `bookmarks_panel` | `bookmarks-panel.ts::open` · `src/renderer/services/startup-command.ts` · `ce7526b` · `43cb3c7` |
 | `bookmarks_verify` | Live: bookmark two projects and an artifact; open, re-click (no second tab), artifact opens | live | `bookmark_open`, `merge_release` | asar literals present; LIVE RUN PENDING: harness green, field-unexercised |
-| `look_mocks` | Five directions on one published page, each with Patton's chrome and a Claude session inside; note what Patton controls vs Claude Code | done | — | `docs/mocks/look-directions.html` · published https://claude.ai/code/artifact/f6ab1b78-e193-4e00-940a-594b5a01f5c2 |
-| `look_mixer` | One live Patton window in the Trial Stack AI aesthetic with seven switchable components, three preset iterations, selection in the URL hash (pattern: defence-website `themes/martello-mixer.html`) | done | `look_mocks` | `docs/mocks/patton-mixer.html` · https://claude.ai/code/artifact/478e85b3-a125-4a6c-9cbd-36878c0d6ea2 |
 | `look_pick` | Michael picks a combination from the mixer | done | `look_mixer` | Michael 2026-11-06 11:13: `tabs=c&glyphs=a&rows=c&scale=b&compose=a&tone=light&lines=ink` (ledger-strip tabs, coloured glyphs, dense rows, compact scale, boxed compose + Send, light, ink hairlines) |
-| `look_implement` | Restyle tokens, tab bar, sidebar, compose, dialogs per the pick; terminal themes untouched | done | `look_pick` | `448d5ed` `5c4941c` `d540d76` · `src/renderer/styles/main.css` tokens · Send button in `editor-input.ts` |
-| `compose_reason` | Report the recorded reason the compose panel is not the default input | done | — | `98a216e` · `0abba75` (ModeDetector removed 2026-03-09; terminal always owns input) |
-| `compose_default` | Compose-first mode for Claude tabs behind a Settings toggle (default on) and a per-tab palette override; Enter/arrows/Tab/Esc pass through from an empty box, Esc hands focus over from a draft | done | `compose_reason`, `hook_script` | `cb38c2c` `6258544` `cd5fc68` `8af2355` · `src/renderer/components/pane.ts::canTakeKeyboard` · Settings toggle `composeFirst` |
 | `release_v1_12` | Push the afternoon's commits, CI release v1.12.0 on macos-15, cask green, checksum verified | done | `compose_default`, `look_implement`, `merge_release` | tag `v1.12.0` (run 42209891435; cask 1.12.0, sha `5495ad3f…` matches the DMG) |
 | `merge_release` | Merge `feat/image-paste` and `feat/bookmarks` into main, code review, `npm run lint && npm run package`, release v1.11.0, Homebrew step green | done | `parked_state`, `wake_yellow`, `hook_install`, `paste_thumbnail`, `bookmark_open` | tag `v1.11.0` (release run 42203278111, macos-15; cask 1.11.0 pushed by CI) |
 <!-- MAP:END -->
@@ -111,13 +80,13 @@ CLAUDE.md's `## Next Steps` section points here; this is the canonical list. Ite
 - [ ] **S40 live checks** (first launch of the installed 1.12.0 build is the test; add: (e) compose-first engages in a Claude tab, arrows/Enter pass through from an empty box, Esc with a draft hands over and ◐ reclaims, a multi-line draft arrives as one block, Settings toggle off collapses every tab; (f) the new look in light and dark, especially dark hairlines; (g) a split pane gets the same font/renderer as its sibling) → `signals_verify` `paste_verify` `bookmarks_verify`. (a) A Claude tab whose turn ends while a background agent runs shows the hollow ring, no sound, and goes green when the session truly stops; `grep '\[DOT\]' ~/Library/Application\ Support/Patton/logs/main.log` shows `stored`/`applied` with source `hook`. Settings → Claude Code should read "Hook installed". (b) Type `wake` in a tab: yellow flag; Ctrl+C: gone. (c) ⌘V a screenshot into a Claude tab: `[Image #1]` in Claude, a thumbnail chip above the compose bar; in a plain shell the PNG's path is typed. (d) ⌃⌘B: bookmark two projects and an artifact; re-clicking an open project activates its tab; the artifact opens in the browser. If any fails, `main.log` has `[DOT]`, `[PASTE]`, `[BOOKMARK]`, `[HOOK]` lines.
 - [x] **DONE — Session 40**: **Pick a look combination from the mixer** → `look_pick` (`tabs=c&glyphs=a&rows=c&scale=b&compose=a&tone=light&lines=ink`). The five static directions were rejected; the aesthetic is Trial Stack AI's table page (Helvetica Neue, ink on white, hairlines, square corners, uppercase tracked labels, glyph status).
 - [x] **DONE — Session 40**: **Compose-first mode** (Michael's go 2026-11-06: "a setting where you can choose to toggle it default on or off") → `compose_default`. Reason it isn't the default: `98a216e` (2026-03-09). The hook channel can now hand focus to Claude's dialogs (Notification hook `permission_prompt`), so an always-open compose box for Claude tabs with Esc/arrow hand-off is feasible.
-- [ ] **Forge 8 upgrade** (offered). Would remove the need for `scripts/forge-package.sh` under Node 26; CI pins Node 20 either way.
+- [ ] **Forge 8 upgrade** (offered). Would remove the need for `scripts/forge-package.sh` under Node 26; CI pins Node 20 either way. *(S40, 2026-11-06: Michael asked "why not now?"; answer: Node 22.17+, ESM-only, Vite 5→8 and CI Node 20→22 for a wrapper that already works; deferred until after the 1.12.0 live run, then its own small release.)*
 - [-] DROPPED (2026-11-03, evening): "i dont think we need any of that test, i can just login to other account"; "we know the setup works fine from this switch". Switching accounts is `/login` in Claude Code. Was: **An account per tab, with a switch key** (queued 2026-11-03, not started). Each tab runs Claude Code on a chosen account, a key moves a session to the other account, and both accounts' usage is in view. Switching stays a keypress, never automatic. Test first that a session resumes on the other account (`CLAUDE_CONFIG_DIR` per account sharing setup and history, then `claude --resume`). Today's startup command is one global setting (`src/renderer/components/app.ts:196`), and `~/.claude/launcher.sh` hard-codes `claude` at three launches. Why and when: the private AI Brain exit map, node `patton_account_switch`. *(S38, 2026-11-03: the resume test is planned for the next couple of weeks.)*
 - [ ] **Validate project tab names in real use** (S37). Tabs now default to their project's one-word name (project = nearest git repo, else the top-level `~/Projects` folder; name = last word of the folder, `fantasy-football` → "football"). Double-click still renames one tab, and an **emptied** box now clears that tab's own name; right-click → **Set Default Tab Name for Project…** (labelled "Rename Project…" in v1.10.0) names every tab in the project, in every window, and persists (electron-store `projectNames`). Verified by lint + types + a green build + asar literals + a 29-check script run against real folders — **not driven through a live UI**. Worth exercising: `cd` between projects (the name should follow at once — the cwd is re-read at every shell prompt since `0253530`), split panes in different projects, the empty-box reset on both rename paths, a second window picking up a rename, and that Claude Code's "·" title still raises the attention dot on a project-named tab.
-- [ ] **Validate the S37 green-dot rework in real use** (S37). The dot (plus its sound and "Waiting for you in …" notification) should now light only when a session needs you: a Claude Code tab when Claude stops (finished, or asking something), never while it works; other tabs when a shell command finishes, on a bell, or on a free-text OSC 9. Signal source: Claude Code 2.1.296 titles start ◐/◑ while working, ✳ when stopped (read from its bundled source). If a dot appears while Claude is still working, `grep '\[DOT\]' ~/Library/Application\ Support/Patton/logs/main.log` names the source that fired. Also watch: a Claude update changing those glyphs would silently stop Claude dots (bell/OSC 9 would still work); Claude under tmux keeps a static ✳ title, so no Claude dots there.
-- [ ] **Validate Electron 44 in real use** (S37). Upgraded 40.8.0 → 44.7.0 (`519ec4e`). Verified headlessly: build, Electron 44 typings, installed bundle reports 44.7.0, and the shipped node-pty spawns a real zsh under Electron 44 (`ELECTRON_RUN_AS_NODE` with the dev binary; load it through `app.asar/…`, not `app.asar.unpacked/…` — node-pty rewrites `app.asar`→`app.asar.unpacked` in its helper path, so loading from the unpacked dir doubles it and fails with `posix_spawnp failed`). **Launched and used by the user on v1.10.0 (S37)** — shells, the tab menu and ⌘W all exercised (⌘W surfaced the close-guard race, fixed in v1.10.1). Still unverified — the real risk — whether macOS notifications still appear: since Electron 42 they need a code-signed app and Patton is self-signed; a refusal logs `[NOTIFY] Notification not shown` in `main.log`. If refused, the fix is a real signing identity (the Apple Developer ID item below). Also new: macOS 13+ required (the Homebrew cask declares it from the release after v1.10.1), and Save Terminal Output's dialog opens in ~/Downloads.
+- [ ] **Validate the S37 green-dot rework in real use** (S37). The dot (plus its sound and "Waiting for you in …" notification) should now light only when a session needs you: a Claude Code tab when Claude stops (finished, or asking something), never while it works; other tabs when a shell command finishes, on a bell, or on a free-text OSC 9. Signal source: Claude Code 2.1.296 titles start ◐/◑ while working, ✳ when stopped (read from its bundled source). If a dot appears while Claude is still working, `grep '\[DOT\]' ~/Library/Application\ Support/Patton/logs/main.log` names the source that fired. Also watch: a Claude update changing those glyphs would silently stop Claude dots (bell/OSC 9 would still work); Claude under tmux keeps a static ✳ title, so no Claude dots there. *(S40, 2026-11-06: the one failure Michael reported — green while a background agent still ran — is addressed by the Stop hook; the title path stays the fallback. Still unobserved live.)*
+- [ ] **Validate Electron 44 in real use** (S37). Upgraded 40.8.0 → 44.7.0 (`519ec4e`). Verified headlessly: build, Electron 44 typings, installed bundle reports 44.7.0, and the shipped node-pty spawns a real zsh under Electron 44 (`ELECTRON_RUN_AS_NODE` with the dev binary; load it through `app.asar/…`, not `app.asar.unpacked/…` — node-pty rewrites `app.asar`→`app.asar.unpacked` in its helper path, so loading from the unpacked dir doubles it and fails with `posix_spawnp failed`). **Launched and used by the user on v1.10.0 (S37)** — shells, the tab menu and ⌘W all exercised (⌘W surfaced the close-guard race, fixed in v1.10.1). Still unverified — the real risk — whether macOS notifications still appear: since Electron 42 they need a code-signed app and Patton is self-signed; a refusal logs `[NOTIFY] Notification not shown` in `main.log`. If refused, the fix is a real signing identity (the Apple Developer ID item below). Also new: macOS 13+ required (the Homebrew cask declares it from the release after v1.10.1), and Save Terminal Output's dialog opens in ~/Downloads. *(S40, 2026-11-06: `main.log` has no `[NOTIFY]` lines at all, so no refusal has been logged; whether notifications appear is still unobserved.)*
 - [ ] **Validate the v1.9.0 UI features in real use** (S36). Tab colour flags (right-click → Green/Yellow/Red/Clear) and the keyboard-drivable confirm dialog (←/→ then Enter) are verified by lint + types + a green build + asar literal inspection, but were **never driven through a live UI** — three verification routes failed (signed build refuses the Node inspector; dev mode raced Vite; isolated-profile launch popped a keychain prompt). The event wiring most worth exercising: right-click on a tab, which shares that element with drag, middle-click-close and click-to-select handlers. First real use is the test. **S37: right-click on a tab confirmed live** (the user's screenshot of the flag menu); applying a flag and the confirm dialog's ←/→ still unobserved.
-- [ ] **Confirm the `ditto` install fix holds** (S36). `forge.config.ts` no longer `rm -rf`s `/Applications/Patton.app` before copying, which is what killed a running Patton mid-session. The property that matters — a live app surviving a commit — is **not yet proven**; it needs a running Patton when the post-commit hook fires, and the app was already down when the fix landed. Validates itself on the next mid-session commit. If Patton dies again right after a commit, this is the first suspect.
+- [ ] **Confirm the `ditto` install fix holds** (S36). `forge.config.ts` no longer `rm -rf`s `/Applications/Patton.app` before copying, which is what killed a running Patton mid-session. The property that matters — a live app surviving a commit — is **not yet proven**; it needs a running Patton when the post-commit hook fires, and the app was already down when the fix landed. Validates itself on the next mid-session commit. If Patton dies again right after a commit, this is the first suspect. *(S40, 2026-11-06: still unproven — Patton was not running during any of the day's ~20 commits, each of which rebuilt /Applications.)*
 - [x] **DONE — Session 37**: **Local builds report the real version.** `forge.config.ts` derives it from `git describe` (`1.10.2`, or `1.10.2+3` after three unreleased commits) for Info.plist and the build's package.json; CI keeps stamping its own. Verified: a build on the v1.10.2 commit reports 1.10.2 in both places, signature valid.
 - [ ] **Dev-dependency CVE pass** (S29). Dev-only audit findings remain (webpack/inquirer/`tmp` via electron-forge tooling) — they don't ship in the app and don't block the `--omit=dev` build gate, so deferred to a deliberate dep-upgrade pass (risky major bumps). Prod tree is clean as of S37 (`fast-uri` re-pinned ^3.1.8). **Note the recurrence pattern**: a prod `overrides` pin is a point-in-time fix — S29 pinned `^3.1.2`; by S36 the advisory range had grown to cover 3.1.3, and by S37 to 3.1.7, each time silently blocking `npm run package` (the post-commit rebuild calls `electron-forge package` directly, so it skips the audit gate and never noticed). Re-check prod advisories at the start of any session that needs a build.
 - [-] DROPPED (2026-11-06, S40): Michael: "drop". No `github_pat_` token remains on disk (grep of `~/.claude/projects` and `~/.claude/references`, 0 hits, 6 Nov); only GitHub's own token page could show a live one. Was: **Revoke the burned `github_pat_` PAT** (security, S28). A fine-grained PAT was pasted into another chat transcript and is now on disk → revoke at https://github.com/settings/personal-access-tokens regardless of which token GitHub's expiry email named. User action only; nothing in Patton's auth path uses it (local push = gh keyring `gho_` OAuth, no expiry).
