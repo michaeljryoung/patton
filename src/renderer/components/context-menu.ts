@@ -71,8 +71,11 @@ export class ContextMenu {
    * control (a sidebar row, a "+" button): the first item is then focused so
    * the arrow keys work straight away, and focus goes back to the control when
    * the menu closes (an item's action can still move it elsewhere afterwards).
+   * `viaKeyboard: false` (a mouse-opened menu) skips the first-item highlight so
+   * it doesn't sit beside the hover highlight; focus still moves into the menu,
+   * so the arrow keys work.
    */
-  show(x: number, y: number, items: ContextMenuEntry[], returnFocusTo?: HTMLElement): void {
+  show(x: number, y: number, items: ContextMenuEntry[], returnFocusTo?: HTMLElement, viaKeyboard = true): void {
     this.returnFocusTo = returnFocusTo ?? null;
     this.menu.innerHTML = '';
     for (const item of items) {
@@ -115,9 +118,12 @@ export class ContextMenu {
 
     if (this.returnFocusTo) {
       const first = this.menu.querySelector<HTMLElement>('.context-menu-item');
-      if (first) {
+      if (first && viaKeyboard) {
         first.classList.add('focused');
         first.focus();
+      } else {
+        this.menu.setAttribute('tabindex', '-1');
+        this.menu.focus();
       }
     }
   }

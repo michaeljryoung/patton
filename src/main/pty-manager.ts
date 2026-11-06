@@ -88,16 +88,29 @@ export const ALLOWED_SHELLS = new Set([
 // --- Security: CWD path validation ---
 const ALLOWED_CWD_PREFIXES = ['/Users', '/home', '/tmp', '/var/folders'];
 
-function validateCwd(cwd: string | undefined): string {
-  if (!cwd || typeof cwd !== 'string') return homedir() || '/';
-  if (!cwd.startsWith('/')) return homedir() || '/';
+/**
+ * Is this an absolute, traversal-free path under HOME or an allowed prefix?
+ * (Does not check that it exists.) Shared with the bookmarks validator so a
+ * bookmark can't name a folder a tab would refuse to open in.
+ */
+export function isAllowedCwdPath(cwd: unknown): boolean {
+  if (!cwd || typeof cwd !== 'string') return false;
+  if (!cwd.startsWith('/')) return false;
   // Reject path traversal
-  if (/(?:^|\/)\.\.(?:\/|$)/.test(cwd)) return homedir() || '/';
+  if (/(?:^|\/)\.\.(?:\/|$)/.test(cwd)) return false;
   // Validate against allowed prefixes (HOME always allowed)
   const home = homedir() || '/Users';
   const allowed = [home, ...ALLOWED_CWD_PREFIXES];
-  if (!allowed.some(prefix => cwd.startsWith(prefix))) {
-    console.warn('[SECURITY] CWD rejected — outside allowed prefixes', { cwd });
+  return allowed.some(prefix => cwd === prefix || cwd.startsWith(prefix.endsWith('/') ? prefix : prefix + '/'));
+}
+
+function validateCwd(cwd: string | undefined): string {
+  const home = homedir() || '/';
+  if (!cwd || typeof cwd !== 'string') return home;
+  if (!isAllowedCwdPath(cwd)) {
+    if (cwd.startsWith('/') && !/(?:^|\/)\.\.(?:\/|$)/.test(cwd)) {
+      console.warn('[SECURITY] CWD rejected — outside allowed prefixes', { cwd });
+    }
     return home;
   }
   // Verify path exists and is a directory

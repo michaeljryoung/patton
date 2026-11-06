@@ -1,7 +1,10 @@
 import { statSync } from 'node:fs';
+import { stat } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { DEFAULTS } from '../shared/constants';
 import type { Bookmark } from '../shared/types';
 import { isSafeAbsolutePath } from './projects';
+import { isAllowedCwdPath } from './pty-manager';
 
 /**
  * Validation for the bookmarks sidebar's list. The renderer sends the whole
@@ -42,8 +45,12 @@ export function cleanBookmarkLabel(raw: string): string {
     .slice(0, DEFAULTS.BOOKMARK_LABEL_MAX_CHARS);
 }
 
-/** Check one entry; returns the cleaned bookmark, or a reason it was refused. */
-function validateBookmark(raw: unknown): Bookmark | string {
+/** Check one entry; returns the cleaned bookmark, or a reason it was refused.
+ *  `stored` is the list already in the store: an entry that matches one of its
+ *  entries (same id and path) is not re-checked against the disk, so a bookmark
+ *  whose folder has since moved survives an unrelated add, rename or move (it
+ *  is shown as missing instead — see annotateBookmarks). */
+function validateBookmark(raw: unknown, stored: readonly Bookmark[]): Bookmark | string {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return 'not an object';
   const b = raw as Record<string, unknown>;
   if (typeof b.id !== 'string' || !ID_PATTERN.test(b.id)) return 'bad id';
@@ -54,7 +61,10 @@ function validateBookmark(raw: unknown): Bookmark | string {
 
   if (b.kind === 'project') {
     if (!isSafeAbsolutePath(b.path)) return 'unsafe path';
-    if (!isDirectory(b.path)) return 'path is not a directory';
+    if (typeof b.path !== 'string' || !isAllowedCwdPath(b.path)) return 'path outside the folders a tab can open in';
+    const path = b.path;
+    const alreadyStored = stored.some((s) => s.kind === 'project' && s.id === b.id && s.path === path);
+    if (!alreadyStored && !isDirectory(path)) return 'path is not a directory';
     return { id: b.id, kind: 'project', label, path: b.path, addedAt };
   }
   if (b.kind === 'artifact') {
@@ -64,16 +74,17 @@ function validateBookmark(raw: unknown): Bookmark | string {
   return 'unknown kind';
 }
 
-/** Validate a whole list from the renderer. Returns the entries worth storing. */
-export function validateBookmarks(raw: unknown): Bookmark[] {
+/** Validate a whole list from the renderer. Returns the entries worth storing,
+ *  or null when the payload isn't a list at all (the caller keeps what it has). */
+export function validateBookmarks(raw: unknown, stored: readonly Bookmark[]): Bookmark[] | null {
   if (!Array.isArray(raw)) {
     console.warn('[SECURITY] BOOKMARKS_SET rejected — not an array', { type: typeof raw });
-    return [];
+    return null;
   }
   const kept: Bookmark[] = [];
   const seenIds = new Set<string>();
   for (const entry of raw.slice(0, DEFAULTS.BOOKMARKS_MAX)) {
-    const result = validateBookmark(entry);
+    const result = validateBookmark(entry, stored);
     if (typeof result === 'string') {
       console.warn('[BOOKMARKS] Entry dropped', { reason: result });
       continue;
@@ -89,4 +100,30 @@ export function validateBookmarks(raw: unknown): Bookmark[] {
     console.warn('[BOOKMARKS] List truncated', { received: raw.length, max: DEFAULTS.BOOKMARKS_MAX });
   }
   return kept;
+}
+
+/** "/Users/me/Projects/x" → "~/Projects/x", collapsing only the real home folder. */
+function tildePath(path: string, home: string): string {
+  if (!home || home === '/') return path;
+  if (path === home) return '~';
+  return path.startsWith(home + '/') ? '~' + path.slice(home.length) : path;
+}
+
+/** Copy of the list with display-only fields for the sidebar: `missing: true` on
+ *  each project whose folder is gone, and `displayPath` (home shown as ~). Never
+ *  stored: validateBookmark rebuilds entries without them. */
+export async function annotateBookmarks(list: readonly Bookmark[]): Promise<Bookmark[]> {
+  const home = homedir();
+  return Promise.all(
+    list.map(async (b) => {
+      if (b.kind !== 'project' || !b.path) return { ...b };
+      const displayPath = tildePath(b.path, home);
+      try {
+        const info = await stat(b.path);
+        return info.isDirectory() ? { ...b, displayPath } : { ...b, displayPath, missing: true };
+      } catch {
+        return { ...b, displayPath, missing: true };
+      }
+    }),
+  );
 }

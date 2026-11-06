@@ -23,11 +23,6 @@ export interface BookmarksHost {
   focusTerminal(): void;
 }
 
-/** "/Users/michael/Projects/patton" → "~/Projects/patton" (macOS home layout). */
-function tildePath(path: string): string {
-  return path.replace(/^\/Users\/[^/]+(?=\/|$)/, '~');
-}
-
 function folderName(path: string): string {
   return path.split('/').filter(Boolean).pop() ?? path;
 }
@@ -88,10 +83,10 @@ export class BookmarksPanel {
   private renamingId: string | null = null;
   // Paths whose tab is being created, so a double-click can't open two tabs.
   private opening = new Set<string>();
-  // Tab id → bookmark path for tabs a bookmark opened. A new tab doesn't know
-  // its folder or project until the shell reports it; until then this is what
-  // ties the tab to its bookmark.
-  private openedBy = new Map<string, string>();
+  // Clicks are ignored until App.init has restored the session and run the
+  // startup command: a tab opened meanwhile could become the active one and get
+  // the startup command twice.
+  private ready = false;
   // What the list last showed. Tab titles change every second while Claude
   // works and each change refreshes the panel, so an unchanged list is left
   // alone rather than rebuilt (which would also drop hover and an open row menu).
@@ -168,6 +163,11 @@ export class BookmarksPanel {
     }
   }
 
+  /** App.init is done; bookmark clicks may open tabs now. */
+  setReady(): void {
+    this.ready = true;
+  }
+
   get isOpen(): boolean {
     return !this.panel.classList.contains('collapsed');
   }
@@ -239,6 +239,7 @@ export class BookmarksPanel {
     await this.ensureLoaded();
     this.panel.classList.remove('collapsed');
     localStorage.setItem(OPEN_STORAGE_KEY, '1');
+    this.refreshMissing();
     this.render();
     if (focus) {
       announce('Bookmarks opened', 'polite');
@@ -262,15 +263,17 @@ export class BookmarksPanel {
   // ── Persistence ──
 
   /** Save the whole list; main validates it and answers with what it stored.
-   *  Returns false when an entry was refused (e.g. its folder is gone). */
+   *  Returns false when an entry was refused (e.g. a new link that isn't valid). */
   private async save(next: Bookmark[]): Promise<boolean> {
     try {
       const stored = await window.patton.bookmarks.set(next);
       this.bookmarks = stored;
       this.render();
-      if (stored.length < next.length) {
+      const storedIds = new Set(stored.map((b) => b.id));
+      const refused = next.filter((b) => !storedIds.has(b.id));
+      if (refused.length > 0) {
         announce('A bookmark could not be saved — its folder or link was not valid', 'assertive');
-        rlog('warn', '[BOOKMARK] main refused entries', { sent: next.length, stored: stored.length });
+        rlog('warn', '[BOOKMARK] main refused entries', { sent: next.length, stored: stored.length, refused: refused.length });
         return false;
       }
       return true;
@@ -283,12 +286,10 @@ export class BookmarksPanel {
 
   // ── Which tab belongs to a bookmark ──
 
+  /** The tab shows this project, or has a pane (focused or not) in this folder. */
   private tabMatches(tab: Tab, path: string): boolean {
     if (tab.project?.root === path) return true;
-    const cwd = tab.focusedPane.getCwd();
-    if (cwd === path) return true;
-    // Freshly opened by this bookmark and the shell hasn't reported its folder yet.
-    return !tab.project && !cwd && this.openedBy.get(tab.id) === path;
+    return tab.panes.some((pane) => pane.getCwd() === path);
   }
 
   /** The tab already showing this project — the active tab first, if it is one. */
@@ -309,6 +310,11 @@ export class BookmarksPanel {
     }
     const path = bookmark.path;
     if (!path) return;
+    if (!this.ready) return; // startup is still restoring tabs
+    if (bookmark.missing || (await this.isMissingNow(bookmark))) {
+      announce(`${bookmark.label}'s folder is missing — remove the bookmark or restore the folder`, 'assertive');
+      return;
+    }
 
     const existing = this.findTabFor(path);
     if (existing) {
@@ -324,7 +330,6 @@ export class BookmarksPanel {
     try {
       const settings = await window.patton.settings.get();
       const tab = await this.host.createTab(path);
-      this.openedBy.set(tab.id, path);
       if (settings.startupCommand) runStartupCommand(tab, settings.startupCommand);
       rlog('info', '[BOOKMARK] open', {
         kind: 'project', label: bookmark.label, action: 'new tab', startupCommand: Boolean(settings.startupCommand),
@@ -339,16 +344,39 @@ export class BookmarksPanel {
     }
   }
 
+  /** Re-read the list from main (which re-checks each folder), so a folder
+   *  deleted since the list was loaded greys its row. */
+  private refreshMissing(): void {
+    window.patton.bookmarks.get()
+      .then((list) => {
+        this.bookmarks = list;
+        this.render();
+      })
+      .catch((err) => rlog('warn', '[BOOKMARK] Could not refresh bookmarks', err));
+  }
+
+  /** A fresh check at click time: the row may not have been greyed yet. */
+  private async isMissingNow(bookmark: Bookmark): Promise<boolean> {
+    try {
+      const list = await window.patton.bookmarks.get();
+      const fresh = list.find((b) => b.id === bookmark.id);
+      if (fresh?.missing) {
+        this.bookmarks = list;
+        this.render();
+        return true;
+      }
+    } catch (err) {
+      rlog('warn', '[BOOKMARK] Could not re-check folder', err);
+    }
+    return false;
+  }
+
   // ── Rendering ──
 
   private render(): void {
     if (this.renamingId || !this.isOpen) return;
 
     const tabs = this.host.getTabs();
-    // Forget tabs that have closed.
-    for (const tabId of [...this.openedBy.keys()]) {
-      if (!tabs.some((t) => t.id === tabId)) this.openedBy.delete(tabId);
-    }
     const active = this.host.getActiveTab();
     const states = new Map<string, { isOpen: boolean; isCurrent: boolean }>();
     for (const bookmark of this.bookmarks) {
@@ -415,10 +443,14 @@ export class BookmarksPanel {
     if (isCurrent) row.setAttribute('aria-current', 'true');
     row.setAttribute('aria-haspopup', 'menu');
 
-    const subtitle = bookmark.kind === 'project' ? tildePath(bookmark.path ?? '') : hostOf(bookmark.url ?? '');
+    row.classList.toggle('is-missing', bookmark.missing === true);
+    const subtitle = bookmark.kind === 'project'
+      ? (bookmark.missing ? 'Folder missing' : (bookmark.displayPath ?? bookmark.path ?? ''))
+      : hostOf(bookmark.url ?? '');
     const state = isCurrent ? ', open in the active tab' : isOpen ? ', open' : '';
     row.setAttribute('aria-label', `${bookmark.label}, ${subtitle}${state}`);
     row.title = bookmark.kind === 'project' ? (bookmark.path ?? '') : (bookmark.url ?? '');
+    if (bookmark.missing) row.setAttribute('aria-disabled', 'true');
 
     const dot = document.createElement('span');
     dot.className = 'bookmark-dot';
@@ -441,7 +473,7 @@ export class BookmarksPanel {
     });
     row.addEventListener('contextmenu', (e) => {
       e.preventDefault();
-      this.showRowMenu(bookmark, e.clientX, e.clientY, row);
+      this.showRowMenu(bookmark, e.clientX, e.clientY, row, false);
     });
 
     li.appendChild(row);
@@ -455,7 +487,7 @@ export class BookmarksPanel {
 
   // ── Row menu: rename, move, remove ──
 
-  private showRowMenu(bookmark: Bookmark, x: number, y: number, row: HTMLElement): void {
+  private showRowMenu(bookmark: Bookmark, x: number, y: number, row: HTMLElement, viaKeyboard: boolean): void {
     const sameKind = this.bookmarks.filter((b) => b.kind === bookmark.kind);
     const pos = sameKind.findIndex((b) => b.id === bookmark.id);
     this.contextMenu.show(x, y, [
@@ -465,7 +497,7 @@ export class BookmarksPanel {
       ...(pos < sameKind.length - 1 ? [{ label: 'Move Down', action: () => { this.move(bookmark, 1).catch(console.error); } }] : []),
       { separator: true as const },
       { label: 'Remove…', action: () => { this.remove(bookmark).catch(console.error); } },
-    ], row);
+    ], row, viaKeyboard);
   }
 
   /** Swap with the neighbouring bookmark of the same kind (groups are by kind). */
@@ -492,13 +524,17 @@ export class BookmarksPanel {
       this.focusRow(bookmark.id);
       return;
     }
-    const index = this.bookmarks.findIndex((b) => b.id === bookmark.id);
+    // Position among the rows as drawn (DOM order, grouped by kind), so focus can
+    // land on the row that takes its place.
+    const domIds = Array.from(this.listEl.querySelectorAll<HTMLElement>('.bookmark-row')).map((r) => r.dataset.bookmarkId);
+    const index = domIds.indexOf(bookmark.id);
     const saved = await this.save(this.bookmarks.filter((b) => b.id !== bookmark.id));
     if (saved) {
       rlog('info', '[BOOKMARK] removed', { kind: bookmark.kind, label: bookmark.label });
       announce(`Removed ${bookmark.label}`);
       const rows = this.listEl.querySelectorAll<HTMLElement>('.bookmark-row');
-      (rows[Math.min(index, rows.length - 1)] ?? this.addButton).focus();
+      // The row now at the removed row's position, else the one before it.
+      (rows[Math.min(Math.max(index, 0), rows.length - 1)] ?? this.addButton).focus();
     }
   }
 
@@ -552,7 +588,8 @@ export class BookmarksPanel {
   // ── Header "+" menu and the artifact form ──
 
   private setupHeader(): void {
-    const openMenu = () => {
+    const openMenu = (e?: MouseEvent) => {
+      const viaKeyboard = !e || e.detail === 0; // Enter/Space on the button fires a click with detail 0
       const tab = this.host.getActiveTab();
       const hasProject = !!tab?.project;
       const rect = this.addButton.getBoundingClientRect();
@@ -562,7 +599,7 @@ export class BookmarksPanel {
           action: () => { this.addProjectFromTab(tab).catch(console.error); },
         },
         { label: 'Add Artifact Link…', action: () => { this.openForm().catch(console.error); } },
-      ], this.addButton);
+      ], this.addButton, viaKeyboard);
     };
     this.addButton.addEventListener('click', openMenu);
     this.disposables.push(() => this.addButton.removeEventListener('click', openMenu));
@@ -655,7 +692,7 @@ export class BookmarksPanel {
         e.preventDefault();
         const bookmark = this.bookmarks.find((b) => b.id === target.dataset.bookmarkId);
         const rect = target.getBoundingClientRect();
-        if (bookmark) this.showRowMenu(bookmark, rect.left + 12, rect.bottom, target);
+        if (bookmark) this.showRowMenu(bookmark, rect.left + 12, rect.bottom, target, true);
         return;
       } else {
         return;

@@ -206,6 +206,8 @@ export class App {
     if (settings.startupCommand && firstTab) {
       runStartupCommand(firstTab, settings.startupCommand);
     }
+    // Startup is done: bookmark clicks may open tabs now (earlier ones are ignored).
+    this.bookmarksPanel.setReady();
 
     // Save session on window unload (app close)
     const beforeUnloadHandler = () => {

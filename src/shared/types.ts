@@ -99,6 +99,10 @@ export interface Bookmark {
   /** Artifact bookmarks: an https URL. */
   url?: string;
   addedAt: number;
+  /** Set by main on what it sends the sidebar (never stored): the project's folder is gone. */
+  missing?: boolean;
+  /** Set by main, never stored: `path` with the home folder shown as ~. */
+  displayPath?: string;
 }
 // --- end bookmarks ---
 

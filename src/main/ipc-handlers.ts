@@ -10,7 +10,7 @@ import { getHookStatus, installHook, removeHook, type ClaudeHookPaths } from './
 import { getResourcesPath } from './resources-path';
 import * as store from './store';
 import { registerClipboardImageHandlers } from './clipboard-image';
-import { validateBookmarks } from './bookmarks'; // bookmarks sidebar
+import { annotateBookmarks, validateBookmarks } from './bookmarks'; // bookmarks sidebar
 import type { PtyCreateOptions, RenderSnapshot, SessionState } from '../shared/types';
 
 /** Open an http(s) URL in the default browser. Anything else — other schemes
@@ -310,22 +310,24 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
   // remove). Main validates each entry, stores what passes, and broadcasts the
   // stored list so every window's sidebar shows the same bookmarks.
   ipcMain.handle(IPC.BOOKMARKS_GET, () => {
-    return store.getBookmarks();
+    return annotateBookmarks(store.getBookmarks());
   });
 
   const bookmarksSetLimiter = new RateLimiter(10);
-  ipcMain.handle(IPC.BOOKMARKS_SET, (_event, list: unknown) => {
+  ipcMain.handle(IPC.BOOKMARKS_SET, async (_event, list: unknown) => {
     if (!bookmarksSetLimiter.allow()) {
       console.warn('[SECURITY] Rate limit exceeded', { channel: IPC.BOOKMARKS_SET });
-      return store.getBookmarks();
+      return annotateBookmarks(store.getBookmarks());
     }
-    const kept = validateBookmarks(list);
+    const kept = validateBookmarks(list, store.getBookmarks());
+    if (kept === null) return annotateBookmarks(store.getBookmarks()); // not a list: keep what is stored
     store.setBookmarks(kept);
     console.info('[BOOKMARKS] Saved', { count: kept.length });
+    const shown = await annotateBookmarks(kept);
     for (const win of BrowserWindow.getAllWindows()) {
-      if (!win.isDestroyed()) win.webContents.send(IPC.BOOKMARKS_CHANGED, kept);
+      if (!win.isDestroyed()) win.webContents.send(IPC.BOOKMARKS_CHANGED, shown);
     }
-    return kept;
+    return shown;
   });
   // --- end bookmarks ---
 
