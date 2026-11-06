@@ -23,6 +23,8 @@ interface TabHeaderInfo {
   active: boolean;
   awaitingInput?: boolean;
   flag?: TabFlag | null;
+  /** Set from the pane title (`WAKE` → yellow); shown only when no manual flag is. */
+  autoFlag?: TabFlag | null;
   /** Claude Code is waiting on its own background work (Stop hook), not on you. */
   parked?: { tasks: number; crons: number } | null;
 }
@@ -210,12 +212,13 @@ export class TabBar {
 
       // One dot slot, several sources, in this order. A user-set flag wins and
       // shows even on the active tab — it's a deliberate marker, so hiding it
-      // on the tab you're looking at would defeat the point. The
+      // on the tab you're looking at would defeat the point; an automatic flag
+      // (a `WAKE` title) uses the same styles when no manual one is set. The
       // automatic "awaiting input" dot stays inactive-only and pulses; a flag
       // is static, so at a glance you can tell "something just happened here"
       // from "I marked this". A hollow ring means Claude Code is parked on its
       // own background work: nothing for you yet.
-      const shownFlag = tab.flag ?? null;
+      const shownFlag = tab.flag ?? tab.autoFlag ?? null;
       if (shownFlag) {
         const dot = document.createElement('span');
         dot.className = `tab-bar-tab-indicator flag-${shownFlag}`;

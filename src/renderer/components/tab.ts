@@ -59,6 +59,10 @@ export class Tab {
   // is never touched by shell activity or by activating the tab — only the user
   // sets or clears it. See TabFlag in shared/types.ts.
   private _flag: TabFlag | null = null;
+  // Automatic flags raised by a pane's title (a `WAKE` title → yellow). Runtime
+  // only, never persisted; the manual flag wins when both are set, and
+  // "Clear Flag" clears only the manual one.
+  private _autoFlags = new Map<Pane, TabFlag>();
   // Panes whose Claude Code session ended its turn but is waiting on its own
   // background tasks or timers (Stop hook). Runtime only, never persisted.
   private _parkedPanes = new Map<Pane, ParkedInfo>();
@@ -108,6 +112,7 @@ export class Tab {
       },
       onWorkStarted: () => this.clearAwaitingInput(pane),
       onParked: (p, info) => this.setPaneParked(p, info),
+      onAutoFlag: (p, flag) => this.setPaneAutoFlag(p, flag),
       onBroadcastWrite: (data) => {
         if (!this._broadcastInput) return;
         // Write to all OTHER panes
@@ -176,6 +181,19 @@ export class Tab {
       crons += info.crons;
     }
     return { tasks, crons };
+  }
+
+  private setPaneAutoFlag(pane: Pane, flag: TabFlag | null): void {
+    const before = this.autoFlag;
+    if (flag) this._autoFlags.set(pane, flag);
+    else this._autoFlags.delete(pane);
+    if (this.autoFlag !== before) this.onTitleChanged?.();
+  }
+
+  /** The automatic flag, if any pane raised one (see _autoFlags). */
+  get autoFlag(): TabFlag | null {
+    for (const flag of this._autoFlags.values()) return flag;
+    return null;
   }
 
   setRegistrationCallbacks(
@@ -376,6 +394,7 @@ export class Tab {
     if (idx !== -1) this._panes.splice(idx, 1);
     this.clearAwaitingInput(pane); // a closed pane can't still need you
     this.setPaneParked(pane, null);
+    this.setPaneAutoFlag(pane, null);
     pane.dispose();
 
     this.rootNode = newRoot;

@@ -11,6 +11,7 @@ import { PATTON_QUOTES } from '../../shared/constants';
 import { shortcutKeys } from '../../shared/shortcuts';
 
 import type { ITheme } from '@xterm/xterm';
+import type { TabFlag } from '../../shared/types';
 
 /** Background work a parked Claude Code session is waiting on (Stop hook). */
 export interface ParkedInfo {
@@ -32,6 +33,8 @@ export interface PaneCallbacks {
   /** Claude Code ended its turn but is waiting on its own background tasks or
    *  timers (info), or no longer is (null). Not a "needs you" event. */
   onParked?: (pane: Pane, info: ParkedInfo | null) => void;
+  /** An automatic tab flag from the pane's title (`WAKE` → yellow), or null to drop it. */
+  onAutoFlag?: (pane: Pane, flag: TabFlag | null) => void;
   onBroadcastWrite?: (data: string) => void;
   cwd?: string;
   shell?: string;
@@ -102,6 +105,9 @@ export class Pane {
   private lastHookVerdictMs = 0;
   private static readonly HOOK_SPINNER_GRACE_MS = 2000;
   private parked: ParkedInfo | null = null;
+  // `wake` (Michael's zsh function) titles the pane exactly WAKE while it
+  // keeps the Mac awake; the tab gets a yellow flag for as long as it does.
+  private autoFlagged = false;
 
   private fireCommandDone(source: 'osc133' | 'claude' | 'bell' | 'osc9' | 'hook'): void {
     // While Claude works (or its stop is still settling), a bell or OSC 9 is
@@ -167,6 +173,17 @@ export class Pane {
     this.callbacks.onParked?.(this, info);
   }
 
+  /** `WAKE` as the whole title → yellow tab flag; any other title drops it. */
+  private trackAutoFlag(title: string): void {
+    if (title === 'WAKE') {
+      if (this.autoFlagged) return;
+      this.autoFlagged = true;
+      this.callbacks.onAutoFlag?.(this, 'yellow');
+    } else if (this.autoFlagged) {
+      this.autoFlagged = false;
+      this.callbacks.onAutoFlag?.(this, null);
+    }
+  }
 
   /** Ask main for the shell's current folder (lsof) and report a change. */
   private refreshCwd(): void {
@@ -357,6 +374,7 @@ export class Pane {
           this.title = title;
           // Tab title first, so a "needs you" alert names the tab as it is now.
           this.callbacks.onTitleChange(this);
+          this.trackAutoFlag(title);
           this.trackClaudeState(title);
         }
       }),
