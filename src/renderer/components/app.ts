@@ -7,6 +7,7 @@ import { SettingsPanel } from './settings-panel';
 import { CommandPalette } from './command-palette';
 import { QuickTerminal } from './quick-terminal';
 import { NotesPanel } from './notes-panel';
+import { runStartupCommand } from '../services/startup-command';
 import { Onboarding } from './onboarding';
 import { DEFAULTS } from '../../shared/constants';
 import { paletteShortcuts, displayKeys } from '../../shared/shortcuts';
@@ -186,39 +187,10 @@ export class App {
 
     // Execute startup command in the active tab (restored or fresh).
     // Restore only recovers tab layout + scrollback — all PTYs are fresh shells,
-    // so the startup command is always safe to run.
-    //
-    // Timing: wait for the shell's first prompt signal (OSC 133;B) rather than
-    // a fixed 500ms. A slow shell (plugins, slow .zshrc) can exceed 500ms on
-    // cold start, making the old code race — the startup command gets swallowed
-    // by the not-yet-ready shell. The 500ms fallback covers shells without
-    // shell integration (no OSC 133 emit).
-    if (settings.startupCommand) {
-      const activeTab = this.tabManager.getActiveTab();
-      const ptyId = activeTab?.ptyId ?? null;
-      if (ptyId !== null && activeTab) {
-        const cmd = settings.startupCommand;
-        let fired = false;
-        const fire = () => {
-          if (fired || ptyId === null) return;
-          fired = true;
-          window.patton.pty.write(ptyId, cmd + '\r');
-        };
-        const dispose = activeTab.focusedPane.terminalView.onPromptState((state) => {
-          if (state === 'prompt' && !fired) {
-            fire();
-            dispose?.();
-          }
-        });
-        // Fallback if no prompt signal arrives (shell integration disabled,
-        // exotic shell, etc.)
-        setTimeout(() => {
-          if (!fired) {
-            fire();
-            dispose?.();
-          }
-        }, 1500);
-      }
+    // so the startup command is always safe to run. Timing lives in the helper.
+    const firstTab = this.tabManager.getActiveTab();
+    if (settings.startupCommand && firstTab) {
+      runStartupCommand(firstTab, settings.startupCommand);
     }
 
     // Save session on window unload (app close)
