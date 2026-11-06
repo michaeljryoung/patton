@@ -360,9 +360,11 @@ input:focus-visible {
   transition: background 0.08s;
 }
 
-.context-menu-item:hover {
+.context-menu-item:hover,
+.context-menu-item.focused {
   background: var(--accent);
   color: white;
+  outline: none;
 }
 
 .context-menu-shortcut {
@@ -371,7 +373,8 @@ input:focus-visible {
   margin-left: 24px;
 }
 
-.context-menu-item:hover .context-menu-shortcut {
+.context-menu-item:hover .context-menu-shortcut,
+.context-menu-item.focused .context-menu-shortcut {
   color: rgba(255, 255, 255, 0.7);
 }
 

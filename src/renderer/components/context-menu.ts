@@ -14,6 +14,8 @@ export class ContextMenu {
   private overlay: HTMLElement;
   private menu: HTMLElement;
   private disposeListener: (() => void) | null = null;
+  /** Where focus goes when the menu closes, for menus opened from a control. */
+  private returnFocusTo: HTMLElement | null = null;
 
   constructor() {
     this.overlay = document.createElement('div');
@@ -64,7 +66,14 @@ export class ContextMenu {
     document.body.appendChild(this.overlay);
   }
 
-  show(x: number, y: number, items: ContextMenuEntry[]): void {
+  /**
+   * Show the menu. Pass `returnFocusTo` when the menu belongs to a focusable
+   * control (a sidebar row, a "+" button): the first item is then focused so
+   * the arrow keys work straight away, and focus goes back to the control when
+   * the menu closes (an item's action can still move it elsewhere afterwards).
+   */
+  show(x: number, y: number, items: ContextMenuEntry[], returnFocusTo?: HTMLElement): void {
+    this.returnFocusTo = returnFocusTo ?? null;
     this.menu.innerHTML = '';
     for (const item of items) {
       if ('separator' in item) {
@@ -103,10 +112,21 @@ export class ContextMenu {
     const maxY = window.innerHeight - menuRect.height - 4;
     this.menu.style.left = `${Math.min(x, maxX)}px`;
     this.menu.style.top = `${Math.min(y, maxY)}px`;
+
+    if (this.returnFocusTo) {
+      const first = this.menu.querySelector<HTMLElement>('.context-menu-item');
+      if (first) {
+        first.classList.add('focused');
+        first.focus();
+      }
+    }
   }
 
   hide(): void {
     this.overlay.classList.remove('visible');
+    const target = this.returnFocusTo;
+    this.returnFocusTo = null;
+    if (target?.isConnected) target.focus();
   }
 
   dispose(): void {
