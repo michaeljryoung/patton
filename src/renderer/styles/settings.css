@@ -1,3 +1,7 @@
+/* Dialogs and panels follow the chrome's system: square panels with a 1 px
+   ink rule and no shadow, uppercase tracked section heads, boxed buttons
+   (the primary one in ink), Helvetica Neue at the compact scale. */
+
 /* --- Settings panel --- */
 .settings-overlay {
   position: fixed;
@@ -9,6 +13,8 @@
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.2s ease;
+  font-family: var(--font-ui);
+  font-size: var(--ui);
 }
 
 .settings-overlay.visible {
@@ -19,15 +25,14 @@
 .settings-backdrop {
   position: absolute;
   inset: 0;
-  background: rgba(0, 0, 0, 0.4);
+  background: var(--scrim);
 }
 
 .settings-panel {
   position: relative;
-  background: var(--bg-primary);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  box-shadow: 0 8px 32px var(--shadow);
+  background: var(--bg);
+  border: 1px solid var(--hairline);
+  border-radius: 0;
   width: 420px;
   max-width: 90vw;
   max-height: 80vh;
@@ -38,126 +43,147 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--border-light);
+  height: 36px;
+  padding: 0 8px 0 16px;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--surface);
+  position: sticky;
+  top: 0;
+  z-index: 1;
 }
 
 .settings-header h2 {
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink);
 }
 
 .settings-close {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
   background: none;
-  border: none;
-  font-size: 20px;
-  color: var(--text-muted);
+  border: 1px solid var(--hairline);
+  border-radius: 2px;
+  font-family: var(--font-ui);
+  font-size: 15px;
+  color: var(--muted);
   cursor: pointer;
-  padding: 4px 8px;
-  border-radius: 4px;
+  padding: 0;
   line-height: 1;
   transition: color 0.12s, background 0.12s;
 }
 
 .settings-close:hover {
-  color: var(--text-primary);
-  background: var(--hover);
+  color: var(--ink);
+  background: var(--surface-hover);
 }
 
 .settings-body {
-  padding: 16px 20px;
+  padding: 14px 16px 16px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 14px;
 }
 
 .settings-group {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 5px;
 }
 
+/* Column-style label above a field. */
 .settings-label {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-secondary);
+  font-size: var(--head);
+  font-weight: 400;
+  letter-spacing: var(--head-ls);
+  text-transform: uppercase;
+  color: var(--muted);
 }
 
 .settings-input {
-  padding: 8px 12px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
+  padding: 6px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 0;
+  background: var(--bg);
+  color: var(--ink);
   font-family: var(--font-mono);
-  font-size: 13px;
+  font-size: var(--ui);
   outline: none;
   transition: border-color 0.15s;
 }
 
-.settings-input:focus {
-  border-color: var(--accent);
+.settings-input:focus,
+.settings-input:focus-visible {
+  border-color: var(--focus);
+  box-shadow: inset 0 0 0 1px var(--focus);
+  outline: none;
 }
 
 .shortcuts-section {
-  border-top: 1px solid var(--border-light);
-  padding-top: 16px;
+  border-top: 1px solid var(--hairline);
+  padding-top: 12px;
 }
 
 .shortcuts-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin: 0 0 12px;
+  font-size: var(--head);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink);
+  margin: 0 0 10px;
 }
 
 .shortcuts-grid {
   display: grid;
   grid-template-columns: auto 1fr;
-  gap: 8px 12px;
+  gap: 6px 12px;
   align-items: center;
 }
 
 .shortcuts-grid kbd {
   font-family: var(--font-mono);
   font-size: 11px;
-  color: var(--text-secondary);
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 2px 6px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 2px;
+  padding: 1px 6px;
   white-space: nowrap;
   text-align: center;
 }
 
 .shortcuts-grid span {
-  font-size: 12px;
-  color: var(--text-secondary);
+  font-size: var(--ui);
+  color: var(--muted);
 }
 
 /* --- Claude Code hook (Settings → Claude Code) --- */
 .claude-hook-status {
-  font-size: 12px;
-  color: var(--text-secondary);
+  font-size: var(--ui);
+  color: var(--muted);
 }
 
 .claude-hook-button {
   padding: 4px 12px;
-  border-radius: 6px;
-  font-size: 12px;
+  border-radius: 2px;
+  font-family: var(--font-ui);
+  font-size: var(--ui);
   cursor: pointer;
-  border: 1px solid var(--border);
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
+  border: 1px solid var(--hairline);
+  background: var(--bg);
+  color: var(--ink);
 }
 
 .claude-hook-button:hover:not(:disabled) {
-  background: var(--hover);
+  background: var(--surface-hover);
 }
 
 .claude-hook-button:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
 
@@ -167,7 +193,7 @@
 }
 
 .claude-hook-error {
-  color: var(--text-primary);
+  color: var(--error-text);
 }
 
 /* --- Toggle switch --- */
@@ -178,20 +204,26 @@
   gap: 8px;
 }
 
+/* Beside a switch the label reads as a sentence, not a column head. */
 .settings-group-toggle .settings-label {
   flex: 1;
+  font-size: var(--ui);
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ink);
 }
 
 .settings-hint {
   width: 100%;
-  font-size: 12px;
-  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--muted);
 }
 
 .settings-toggle {
   position: relative;
-  width: 40px;
-  height: 22px;
+  width: 34px;
+  height: 18px;
   flex-shrink: 0;
   cursor: pointer;
 }
@@ -206,42 +238,90 @@
 .settings-toggle-slider {
   position: absolute;
   inset: 0;
-  background: var(--bg-input);
-  border: 1px solid var(--border);
-  border-radius: 11px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 2px;
   transition: background 0.2s, border-color 0.2s;
 }
 
 .settings-toggle-slider::before {
   content: '';
   position: absolute;
-  width: 16px;
-  height: 16px;
+  width: 12px;
+  height: 12px;
   left: 2px;
   top: 2px;
-  background: white;
-  border-radius: 50%;
-  transition: transform 0.2s;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  background: var(--muted);
+  border-radius: 1px;
+  transition: transform 0.2s, background 0.2s;
 }
 
 .settings-toggle input:checked + .settings-toggle-slider {
-  background: var(--accent);
-  border-color: var(--accent);
+  background: var(--inverse-bg);
+  border-color: var(--inverse-bg);
 }
 
 .settings-toggle input:checked + .settings-toggle-slider::before {
-  transform: translateX(18px);
+  background: var(--inverse-fg);
+  transform: translateX(16px);
 }
 
+.settings-toggle input:focus-visible + .settings-toggle-slider {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* The arrow is drawn with two gradients so it follows the palette (a data-URI
+   SVG can't read a CSS variable). */
 select.settings-input {
   cursor: pointer;
   -webkit-appearance: none;
   appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23999' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+    linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+  background-position:
+    right 15px center,
+    right 11px center;
+  background-size: 4px 4px, 4px 4px;
   background-repeat: no-repeat;
-  background-position: right 12px center;
-  padding-right: 32px;
+  padding-right: 30px;
+  font-family: var(--font-ui);
+}
+
+/* --- Dialog buttons: boxed, square, the confirm one in ink --- */
+.paste-dialog-footer button,
+.confirm-dialog-footer button {
+  padding: 5px 14px;
+  border-radius: 0;
+  font-family: var(--font-ui);
+  font-size: var(--ui);
+  cursor: pointer;
+  border: 1px solid var(--hairline);
+  transition: background 0.12s, opacity 0.12s;
+}
+
+.paste-dialog-cancel,
+.confirm-dialog-cancel {
+  background: var(--bg);
+  color: var(--ink);
+}
+
+.paste-dialog-cancel:hover,
+.confirm-dialog-cancel:hover {
+  background: var(--surface-hover);
+}
+
+.paste-dialog-confirm,
+.confirm-dialog-confirm {
+  background: var(--inverse-bg);
+  color: var(--inverse-fg);
+  border-color: var(--inverse-bg) !important;
+}
+
+.paste-dialog-confirm:hover,
+.confirm-dialog-confirm:hover {
+  opacity: 0.88;
 }
 
 /* --- Paste confirmation dialog --- */
@@ -255,6 +335,7 @@ select.settings-input {
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.15s ease;
+  font-family: var(--font-ui);
 }
 
 .paste-dialog-overlay.visible {
@@ -266,15 +347,14 @@ select.settings-input {
   content: '';
   position: absolute;
   inset: 0;
-  background: rgba(0, 0, 0, 0.4);
+  background: var(--scrim);
 }
 
 .paste-dialog {
   position: relative;
-  background: var(--bg-primary);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  box-shadow: 0 8px 32px var(--shadow);
+  background: var(--bg);
+  border: 1px solid var(--hairline);
+  border-radius: 0;
   width: 420px;
   max-width: 90vw;
   max-height: 60vh;
@@ -282,31 +362,34 @@ select.settings-input {
 }
 
 .paste-dialog-header {
-  padding: 14px 18px;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-primary);
-  border-bottom: 1px solid var(--border-light);
+  padding: 10px 16px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink);
+  background: var(--surface);
+  border-bottom: 1px solid var(--hairline);
 }
 
 .paste-dialog-body {
-  padding: 14px 18px;
+  padding: 12px 16px;
 }
 
 .paste-dialog-message {
-  font-size: 13px;
-  color: var(--text-secondary);
+  font-size: var(--ui);
+  color: var(--muted);
   margin-bottom: 10px;
 }
 
 .paste-dialog-preview {
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border-light);
-  border-radius: 6px;
-  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 0;
+  padding: 8px 10px;
   font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--text-primary);
+  font-size: var(--ui);
+  color: var(--ink);
   max-height: 160px;
   overflow-y: auto;
   white-space: pre-wrap;
@@ -319,36 +402,8 @@ select.settings-input {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-  padding: 12px 18px;
-  border-top: 1px solid var(--border-light);
-}
-
-.paste-dialog-footer button {
-  padding: 6px 16px;
-  border-radius: 6px;
-  font-size: 13px;
-  cursor: pointer;
-  border: 1px solid var(--border);
-  transition: background 0.12s;
-}
-
-.paste-dialog-cancel {
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-}
-
-.paste-dialog-cancel:hover {
-  background: var(--hover);
-}
-
-.paste-dialog-confirm {
-  background: var(--accent);
-  color: white;
-  border-color: var(--accent) !important;
-}
-
-.paste-dialog-confirm:hover {
-  opacity: 0.9;
+  padding: 10px 16px;
+  border-top: 1px solid var(--hairline);
 }
 
 /* --- Confirm dialog (generic yes/no, e.g. close-tab guard) --- */
@@ -362,6 +417,7 @@ select.settings-input {
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.15s ease;
+  font-family: var(--font-ui);
 }
 
 .confirm-dialog-overlay.visible {
@@ -373,48 +429,38 @@ select.settings-input {
   content: '';
   position: absolute;
   inset: 0;
-  background: rgba(0, 0, 0, 0.4);
+  background: var(--scrim);
 }
 
 .confirm-dialog {
   position: relative;
-  background: var(--bg-primary);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  box-shadow: 0 8px 32px var(--shadow);
+  background: var(--bg);
+  border: 1px solid var(--hairline);
+  border-radius: 0;
   width: 420px;
   max-width: 90vw;
   overflow: hidden;
 }
 
 .confirm-dialog-title {
-  padding: 14px 18px 0;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-primary);
+  padding: 14px 16px 0;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink);
 }
 
 .confirm-dialog-message {
-  padding: 8px 18px 4px;
-  font-size: 13px;
+  padding: 6px 16px 4px;
+  font-size: var(--ui);
   line-height: 1.5;
-  color: var(--text-secondary);
+  color: var(--muted);
 }
 
 .confirm-dialog-footer {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-  padding: 14px 18px;
-}
-
-.confirm-dialog-footer button {
-  padding: 6px 16px;
-  border-radius: 6px;
-  font-size: 13px;
-  cursor: pointer;
-  border: 1px solid var(--border);
-  transition: background 0.12s;
+  padding: 14px 16px;
 }
 
 /* The dialog is driven with ←/→ + Enter, so the focused button must be
@@ -422,27 +468,8 @@ select.settings-input {
    the dialog reads as mouse-only. Not :focus-visible: focus here is moved
    programmatically and by arrow keys, which :focus-visible may not match. */
 .confirm-dialog-footer button:focus {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--focus);
   outline-offset: 2px;
-}
-
-.confirm-dialog-cancel {
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-}
-
-.confirm-dialog-cancel:hover {
-  background: var(--hover);
-}
-
-.confirm-dialog-confirm {
-  background: var(--accent);
-  color: white;
-  border-color: var(--accent) !important;
-}
-
-.confirm-dialog-confirm:hover {
-  opacity: 0.9;
 }
 
 /* --- Onboarding --- */
@@ -453,10 +480,11 @@ select.settings-input {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--scrim);
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.2s ease;
+  font-family: var(--font-ui);
 }
 
 .onboarding-overlay.visible {
@@ -465,63 +493,67 @@ select.settings-input {
 }
 
 .onboarding-panel {
-  background: var(--bg-primary);
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  box-shadow: 0 12px 40px var(--shadow);
+  background: var(--bg);
+  border: 1px solid var(--hairline);
+  border-radius: 0;
   width: 440px;
   max-width: 90vw;
-  padding: 28px 32px;
-  text-align: center;
+  padding: 24px 28px;
+  text-align: left;
 }
 
 .onboarding-title {
-  font-size: 20px;
-  font-weight: 700;
-  color: var(--text-primary);
+  font-size: 22px;
+  font-weight: 500;
+  letter-spacing: -0.015em;
+  line-height: 1.1;
+  color: var(--ink);
   margin: 0 0 6px;
 }
 
 .onboarding-subtitle {
-  font-size: 14px;
-  color: var(--text-secondary);
-  margin: 0 0 24px;
+  font-size: 13px;
+  color: var(--muted);
+  margin: 0 0 20px;
 }
 
 .onboarding-features {
   text-align: left;
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  margin-bottom: 24px;
+  gap: 0;
+  margin-bottom: 20px;
+  border-top: 1px solid var(--hairline);
 }
 
 .onboarding-feature {
   display: flex;
   gap: 12px;
   align-items: flex-start;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--hairline);
 }
 
 .onboarding-icon {
-  font-size: 20px;
+  font-size: 18px;
   line-height: 1;
   flex-shrink: 0;
-  width: 28px;
+  width: 24px;
   text-align: center;
-  margin-top: 2px;
+  margin-top: 1px;
 }
 
 .onboarding-feature strong {
   display: block;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-primary);
+  font-size: var(--ui);
+  font-weight: 700;
+  color: var(--ink);
   margin-bottom: 2px;
 }
 
 .onboarding-feature p {
-  font-size: 12px;
-  color: var(--text-secondary);
+  font-size: var(--ui);
+  color: var(--muted);
   margin: 0;
   line-height: 1.4;
 }
@@ -529,26 +561,33 @@ select.settings-input {
 .onboarding-feature kbd {
   font-family: var(--font-mono);
   font-size: 11px;
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  padding: 1px 4px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 2px;
+  padding: 0 4px;
 }
 
 .onboarding-dismiss {
-  background: var(--accent);
-  color: white;
-  border: none;
-  border-radius: 8px;
-  padding: 10px 28px;
-  font-size: 14px;
+  background: var(--inverse-bg);
+  color: var(--inverse-fg);
+  border: 1px solid var(--inverse-bg);
+  border-radius: 0;
+  padding: 7px 20px;
+  font-family: var(--font-ui);
+  font-size: var(--ui);
   font-weight: 500;
   cursor: pointer;
   transition: opacity 0.12s;
 }
 
 .onboarding-dismiss:hover {
-  opacity: 0.9;
+  opacity: 0.88;
+}
+
+.onboarding-dismiss:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
 }
 
 /* --- Settings range slider --- */
@@ -562,22 +601,26 @@ select.settings-input {
   flex: 1;
   -webkit-appearance: none;
   appearance: none;
-  height: 4px;
-  background: var(--bg-input);
-  border-radius: 2px;
+  height: 2px;
+  background: var(--hairline);
+  border-radius: 0;
   outline: none;
   cursor: pointer;
+}
+
+.settings-range:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 6px;
 }
 
 .settings-range::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: var(--accent);
-  border: 2px solid var(--bg-primary);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  background: var(--inverse-bg);
+  border: 1px solid var(--bg);
   cursor: pointer;
   transition: transform 0.1s;
 }
@@ -587,9 +630,10 @@ select.settings-input {
 }
 
 .settings-range-value {
-  font-size: 13px;
+  font-size: var(--ui);
   font-family: var(--font-mono);
-  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
   min-width: 40px;
   text-align: right;
 }
@@ -600,7 +644,7 @@ select.settings-input {
   inset: 0;
   z-index: 1500;
   display: none;
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--scrim);
 }
 
 .quick-terminal-overlay.visible {
@@ -613,9 +657,8 @@ select.settings-input {
   left: 0;
   right: 0;
   height: 50vh;
-  background: var(--bg-primary);
-  border-bottom: 2px solid var(--accent);
-  box-shadow: 0 4px 24px var(--shadow);
+  background: var(--bg);
+  border-bottom: 1px solid var(--hairline);
   display: flex;
   flex-direction: column;
   transform: translateY(-100%);

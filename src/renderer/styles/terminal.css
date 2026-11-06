@@ -13,7 +13,7 @@
   overflow-y: auto !important;
 }
 
-/* --- Search overlay with animation --- */
+/* --- Search overlay: a boxed strip on the terminal's top edge --- */
 .search-overlay {
   position: absolute;
   top: 8px;
@@ -21,16 +21,16 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  background: var(--bg-primary);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 6px 10px;
-  box-shadow: 0 2px 8px var(--shadow);
+  background: var(--bg);
+  border: 1px solid var(--hairline);
+  border-radius: 0;
+  padding: 4px 6px 4px 10px;
   z-index: 100;
   opacity: 0;
   transform: translateY(-8px);
   pointer-events: none;
   transition: opacity 0.2s ease, transform 0.2s ease;
+  font-family: var(--font-ui);
 }
 
 .search-overlay.visible {
@@ -39,42 +39,57 @@
   pointer-events: auto;
 }
 
+.search-overlay:focus-within {
+  box-shadow: inset 0 0 0 1px var(--focus);
+  border-color: var(--focus);
+}
+
 .search-input {
   border: none;
   outline: none;
-  font-size: 13px;
+  font-size: var(--ui);
   font-family: var(--font-ui);
   width: 200px;
   padding: 2px 0;
   background: transparent;
-  color: var(--text-primary);
+  color: var(--ink);
+}
+
+.search-input:focus-visible {
+  outline: none;
 }
 
 .search-input::placeholder {
-  color: var(--text-muted);
+  color: var(--muted);
 }
 
 .search-count {
   font-size: 11px;
-  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
   white-space: nowrap;
   min-width: 40px;
   text-align: right;
 }
 
 .search-close {
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
   background: none;
-  border: none;
-  font-size: 16px;
-  color: var(--text-muted);
+  border: 1px solid var(--hairline);
+  border-radius: 2px;
+  font-family: var(--font-ui);
+  font-size: 13px;
+  color: var(--muted);
   cursor: pointer;
-  padding: 2px 4px;
+  padding: 0;
   line-height: 1;
-  border-radius: 3px;
   transition: color 0.12s, background 0.12s;
 }
 
 .search-close:hover {
-  color: var(--text-primary);
-  background: var(--hover);
+  color: var(--ink);
+  background: var(--surface-hover);
 }
