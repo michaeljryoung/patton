@@ -213,20 +213,22 @@ export class TabBar {
 
       // One dot slot, several sources, in this order. A user-set flag wins and
       // shows even on the active tab — it's a deliberate marker, so hiding it
-      // on the tab you're looking at would defeat the point; an automatic flag
-      // (a `WAKE` title) uses the same styles when no manual one is set. The
-      // automatic "awaiting input" dot stays inactive-only and pulses; a flag
-      // is static, so at a glance you can tell "something just happened here"
-      // from "I marked this". A hollow ring means Claude Code is parked on its
-      // own background work: nothing for you yet.
-      const shownFlag = tab.flag ?? tab.autoFlag ?? null;
+      // on the tab you're looking at would defeat the point. The automatic
+      // "awaiting input" dot comes next (inactive tabs only, pulsing), so a
+      // pane that needs you is never hidden behind an automatic flag (a
+      // `WAKE` title in a split pane), which uses the flag styles otherwise.
+      // A flag is static, so at a glance you can tell "something just
+      // happened here" from "I marked this". A hollow ring means Claude Code
+      // is parked on its own background work: nothing for you yet.
+      const needsYou = tab.awaitingInput && !tab.active;
+      const shownFlag = tab.flag ?? (needsYou ? null : tab.autoFlag) ?? null;
       if (shownFlag) {
         const dot = document.createElement('span');
         dot.className = `tab-bar-tab-indicator flag-${shownFlag}`;
         dot.setAttribute('aria-label', `Flagged ${shownFlag}`);
         dot.setAttribute('role', 'img');
         el.appendChild(dot);
-      } else if (tab.awaitingInput && !tab.active) {
+      } else if (needsYou) {
         const dot = document.createElement('span');
         dot.className = 'tab-bar-tab-indicator';
         dot.setAttribute('aria-label', 'Awaiting input');

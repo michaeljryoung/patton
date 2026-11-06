@@ -104,17 +104,38 @@ export class Pane {
   // otherwise — including when the turn ended but subagents, background
   // shells or scheduled wakeups are still in flight. So ✳ alone can't tell
   // "parked on its own work" from "needs you"; Patton's Stop hook can (it
-  // reads `background_tasks` and `session_crons` from the Stop input). Once a
-  // pane has seen the hook, the title path waits longer so the hook's verdict
-  // normally lands first; the title path stays as the fallback for sessions
-  // without the hook.
+  // reads `background_tasks` and `session_crons` from the Stop input).
+  //
+  // A verdict is only a candidate: another Stop hook can return `block` (the
+  // turn carries on) and a queued prompt starts a new turn, and Patton's hook,
+  // finishing in ~30 ms, lands before either shows. It is not known whether
+  // the title is still ◐ or already ✳ while Stop hooks run, so the machine
+  // below is right in both orders: a verdict is applied only once ✳ has held
+  // for the normal settle, exactly like a title-only stop.
+  //
+  // States: WORKING (claudeWorking), SETTLING (claudeStopTimer armed),
+  // PARKED (parked set), STOPPED (none). `pendingVerdict` rides alongside.
+  //   verdict      WORKING: store it (replaces an older one; expires 10 s
+  //                after arrival). Otherwise: store it and (re)arm the settle
+  //                timer at CLAUDE_STOP_SETTLE_MS.
+  //   ✳ (from      → SETTLING: CLAUDE_STOP_SETTLE_MS if a verdict is stored,
+  //   WORKING)       else the title-only wait (4 s once the pane has seen the
+  //                  hook, so a late verdict can still land; 1.5 s without).
+  //   settle fires verdict stored: apply it (tasks+crons > 0 → PARKED, no
+  //                dot; 0 → STOPPED + needs-you, source `hook`). No verdict:
+  //                PARKED stays silent, else STOPPED + needs-you (`claude`).
+  //   ◐/◑          cancel the settle; WORKING (clears PARKED, resets the
+  //                debounce, onWorkStarted). The stored verdict is kept, so a
+  //                spinner tail frame after it is harmless; expiry or the next
+  //                verdict retires it.
+  //   OSC 133      prompt: Claude has exited → STOPPED, stored verdict dropped.
+  //   bell/OSC 9   ignored in WORKING and SETTLING; otherwise needs-you
+  //                (5 s debounce, shared with every source).
   private hookActive = false;
   private static readonly CLAUDE_STOP_SETTLE_WITH_HOOK_MS = 4000;
-  // The Stop hook runs while the turn is still closing, so a spinner frame
-  // (◐/◑) can still arrive just after its verdict. Within this window such a
-  // frame is the old turn's tail, not new work.
-  private lastHookVerdictMs = 0;
-  private static readonly HOOK_SPINNER_GRACE_MS = 2000;
+  private static readonly HOOK_VERDICT_TTL_MS = 10_000;
+  private pendingVerdict: ParkedInfo | null = null;
+  private pendingVerdictTimer: ReturnType<typeof setTimeout> | null = null;
   private parked: ParkedInfo | null = null;
   // `wake` (Michael's zsh function) titles the pane exactly WAKE while it
   // keeps the Mac awake; the tab gets a yellow flag for as long as it does.
@@ -137,13 +158,12 @@ export class Pane {
   }
 
   /** Follow Claude Code's working/stopped state from its title. Going from
-   *  working to stopped is the moment it needs the user. */
+   *  working to stopped is the moment it needs the user (after the settle). */
   private trackClaudeState(title: string): void {
     // A title with neither glyph means Claude is gone (fish, or shell
     // integration off, never sends the OSC 133 prompt that would clear this).
     this.claudeActive = Pane.CLAUDE_WORKING.test(title) || Pane.CLAUDE_STOPPED.test(title);
     if (Pane.CLAUDE_WORKING.test(title)) {
-      if (Date.now() - this.lastHookVerdictMs < Pane.HOOK_SPINNER_GRACE_MS) return;
       this.cancelClaudeStop(); // the ✳ was only a flash between turns
       if (this.claudeWorking) return;
       this.claudeWorking = true;
@@ -156,29 +176,73 @@ export class Pane {
     } else if (this.claudeWorking) {
       this.claudeWorking = false;
       if (Pane.CLAUDE_STOPPED.test(title)) {
-        this.claudeStopTimer = setTimeout(() => {
-          this.claudeStopTimer = null;
-          this.fireCommandDone('claude');
-        }, this.hookActive ? Pane.CLAUDE_STOP_SETTLE_WITH_HOOK_MS : Pane.CLAUDE_STOP_SETTLE_MS);
+        const wait = this.pendingVerdict || !this.hookActive
+          ? Pane.CLAUDE_STOP_SETTLE_MS
+          : Pane.CLAUDE_STOP_SETTLE_WITH_HOOK_MS;
+        this.armClaudeStop(wait);
       }
     }
   }
 
-  /** The Stop hook's verdict on a turn that just ended. Background tasks or
-   *  timers still pending → parked (not a "needs you"); none → it really
-   *  stopped, with no settle wait. Either way the ✳ title timer is moot. */
+  /** Arm (or re-arm) the settle timer; when it fires, the stop is real. */
+  private armClaudeStop(ms: number): void {
+    this.cancelClaudeStop();
+    this.claudeStopTimer = setTimeout(() => {
+      this.claudeStopTimer = null;
+      this.settleClaudeStop();
+    }, ms);
+  }
+
+  /** ✳ has held for the settle: apply the stored verdict, else the title path. */
+  private settleClaudeStop(): void {
+    const verdict = this.takeVerdict();
+    if (verdict) {
+      const { tasks, crons } = verdict;
+      rlog('info', '[DOT] Hook verdict applied', { pane: this.id, tasks, crons });
+      if (tasks + crons > 0) {
+        rlog('info', '[DOT] Parked', { pane: this.id, tasks, crons, source: 'hook' });
+        this.setParked({ tasks, crons });
+      } else {
+        this.setParked(null);
+        this.fireCommandDone('hook');
+      }
+      return;
+    }
+    // A parked pane waits on its own work; ✳ alone mustn't turn that into a dot.
+    if (this.parked) return;
+    this.fireCommandDone('claude');
+  }
+
+  /** The Stop hook's verdict on a turn that is closing. Stored, never acted on
+   *  at once (see the state machine above the hook fields). */
   private handleHookStop(tasks: number, crons: number): void {
     this.hookActive = true;
-    this.lastHookVerdictMs = Date.now();
-    this.cancelClaudeStop();
-    this.claudeWorking = false;
-    if (tasks + crons > 0) {
-      rlog('info', '[DOT] Parked', { pane: this.id, tasks, crons });
-      this.setParked({ tasks, crons });
-    } else {
-      this.setParked(null);
-      this.fireCommandDone('hook');
+    if (this.pendingVerdictTimer) clearTimeout(this.pendingVerdictTimer);
+    const replaced = this.pendingVerdict !== null;
+    this.pendingVerdict = { tasks, crons };
+    this.pendingVerdictTimer = setTimeout(() => {
+      this.pendingVerdictTimer = null;
+      if (!this.pendingVerdict) return;
+      rlog('info', '[DOT] Hook verdict expired', { pane: this.id, ...this.pendingVerdict });
+      this.pendingVerdict = null;
+    }, Pane.HOOK_VERDICT_TTL_MS);
+    rlog('info', '[DOT] Hook verdict stored', {
+      pane: this.id, tasks, crons, working: this.claudeWorking, replaced,
+    });
+    // Already off the spinner (✳, or no Claude title at all): settle now.
+    // While working, the ✳ transition arms the settle.
+    if (!this.claudeWorking) this.armClaudeStop(Pane.CLAUDE_STOP_SETTLE_MS);
+  }
+
+  /** Remove and return the stored verdict, stopping its expiry timer. */
+  private takeVerdict(): ParkedInfo | null {
+    const verdict = this.pendingVerdict;
+    this.pendingVerdict = null;
+    if (this.pendingVerdictTimer) {
+      clearTimeout(this.pendingVerdictTimer);
+      this.pendingVerdictTimer = null;
     }
+    return verdict;
   }
 
   private setParked(info: ParkedInfo | null): void {
@@ -417,7 +481,10 @@ export class Pane {
         if (state.kind === 'stop') this.handleHookStop(state.tasks, state.crons);
       }),
     );
-    this.disposables.push(() => this.cancelClaudeStop());
+    this.disposables.push(() => {
+      this.cancelClaudeStop();
+      this.takeVerdict();
+    });
 
     // Track the cwd for file link resolution and tab naming. With shell
     // integration the folder is re-read at every prompt (see the
@@ -548,6 +615,7 @@ export class Pane {
           this.claudeWorking = false;
           this.claudeActive = false;
           this.cancelClaudeStop();
+          if (this.takeVerdict()) rlog('info', '[DOT] Hook verdict dropped: shell prompt', { pane: this.id });
           this.setParked(null);
           this.clearPasteChips();
         }

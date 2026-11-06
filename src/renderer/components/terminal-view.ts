@@ -292,8 +292,11 @@ export class TerminalView {
     //  - `notify;title;body` (rxvt/urxvt convention) is a notification, the
     //    same as a free-text OSC 9.
     // Anything else is ignored but consumed.
+    // Trust: any program writing to this pane can send these, as it can a
+    // bell. Accepted on the same terms: the worst a spoof does is raise or
+    // hide this pane's own dot. Counts are capped at four digits.
     this.terminal.parser.registerOscHandler(777, (data) => {
-      const stop = /^patton;stop;tasks=(\d+);crons=(\d+)$/.exec(data);
+      const stop = /^patton;stop;tasks=(\d{1,4});crons=(\d{1,4})$/.exec(data);
       if (stop) {
         const state: PattonState = { kind: 'stop', tasks: Number(stop[1]), crons: Number(stop[2]) };
         for (const cb of this.pattonStateListeners) cb(state);
