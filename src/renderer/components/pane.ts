@@ -142,7 +142,7 @@ export class Pane {
   //
   // States: WORKING (claudeWorking), SETTLING (claudeStopTimer armed),
   // PARKED (parked set), STOPPED (none). `pendingVerdict` rides alongside.
-  //   verdict      WORKING: store it (replaces an older one; expires 60 s
+  //   verdict      WORKING: store it (replaces an older one; expires 40 s
   //                after arrival). Otherwise: store it and (re)arm the settle
   //                timer at CLAUDE_STOP_SETTLE_MS.
   //   ✳ (from      → SETTLING: CLAUDE_STOP_SETTLE_MS if a verdict is stored,
@@ -164,11 +164,14 @@ export class Pane {
   // between this verdict and ✳ is the slowest other Stop hook. On Michael's
   // setup (closing-block-gate, source-critic) it measured 4.5–31 s on
   // 2026-11-06; at 10 s, 19 stops fell through to the title path and 2 of
-  // those went green while the hook had reported background work. A stop that
-  // another hook blocks gets its verdict replaced by the next stop's, so the
-  // TTL only bounds a turn that ends with no Stop hook at all (Esc, an API
-  // error), where a stale verdict could park instead of alerting.
-  private static readonly HOOK_VERDICT_TTL_MS = 60_000;
+  // those went green while the hook had reported background work. The TTL
+  // also bounds the opposite failure: a stop another hook blocks keeps its
+  // verdict while Claude carries on, and if Claude then shows ✳ with no Stop
+  // hook (a question or permission dialog, Esc, an API error) a stale
+  // tasks > 0 verdict parks the pane silently instead of alerting. Hence
+  // just above the measured maximum, not more; `afterMs` on "Hook verdict
+  // applied" is the data to retune it.
+  private static readonly HOOK_VERDICT_TTL_MS = 40_000;
   private pendingVerdict: ParkedInfo | null = null;
   private pendingVerdictAtMs = 0;
   private pendingVerdictTimer: ReturnType<typeof setTimeout> | null = null;
