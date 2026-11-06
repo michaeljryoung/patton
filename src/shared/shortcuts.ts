@@ -98,6 +98,13 @@ export const SHORTCUTS: Shortcut[] = [
     accelerator: 'Control+Command+N',
     palette: true,
   },
+  {
+    id: 'toggle-bookmarks',
+    label: 'Toggle Bookmarks',
+    // Ctrl+Cmd+B — the left-hand sibling of ⌃⌘N (Notes), and clear of ⌘⇧B (Broadcast).
+    accelerator: 'Control+Command+B',
+    palette: true,
+  },
   { id: 'save-terminal', label: 'Save Terminal Output', accelerator: 'CmdOrCtrl+S', menuLabel: 'Save Terminal Output...', palette: true },
   // Keys come from the configurable `globalHotkey` setting, so they are filled
   // in at render time rather than fixed here.

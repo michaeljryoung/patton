@@ -68,6 +68,7 @@ export function buildMenu(ptyManager?: PtyManager): void {
         sendItem('broadcast', IPC.APP_BROADCAST_INPUT),
         { type: 'separator' },
         sendItem('toggle-notes', IPC.APP_TOGGLE_NOTES),
+        sendItem('toggle-bookmarks', IPC.APP_TOGGLE_BOOKMARKS),
         menuItem('new-window', () => {
           createWindow(ptyManager);
         }),

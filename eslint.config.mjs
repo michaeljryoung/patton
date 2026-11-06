@@ -32,6 +32,6 @@ export default [
   importPlugin.flatConfigs.electron,
   importPlugin.flatConfigs.typescript,
   {
-    ignores: ['node_modules/', 'dist/', '.vite/', 'out/', 'eslint.config.mjs'],
+    ignores: ['node_modules/', 'dist/', '.vite/', 'out/', '.worktrees/', 'eslint.config.mjs'],
   },
 ];

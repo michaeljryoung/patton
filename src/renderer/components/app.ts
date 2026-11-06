@@ -7,6 +7,8 @@ import { SettingsPanel } from './settings-panel';
 import { CommandPalette } from './command-palette';
 import { QuickTerminal } from './quick-terminal';
 import { NotesPanel } from './notes-panel';
+import { BookmarksPanel } from './bookmarks-panel';
+import { runStartupCommand } from '../services/startup-command';
 import { Onboarding } from './onboarding';
 import { DEFAULTS } from '../../shared/constants';
 import { paletteShortcuts, displayKeys } from '../../shared/shortcuts';
@@ -18,6 +20,7 @@ export class App {
   private commandPalette: CommandPalette;
   private quickTerminal: QuickTerminal;
   private notesPanel: NotesPanel;
+  private bookmarksPanel: BookmarksPanel;
   private notificationSound: NotificationSound;
   private fontSize: number = DEFAULTS.FONT_SIZE;
   private disposables: (() => void)[] = [];
@@ -44,6 +47,9 @@ export class App {
           window.patton.notify('Patton', `Waiting for you in ${tabTitle}`, tabId);
         }
       },
+      // The bookmarks sidebar is created below; these only fire after startup.
+      onTabsChanged: () => this.bookmarksPanel?.scheduleRefresh(),
+      onBookmarkProject: (tab) => { this.bookmarksPanel.addProjectFromTab(tab).catch(console.error); },
     });
     this.keybindingManager = new KeybindingManager(this.tabManager);
     this.settingsPanel = new SettingsPanel(appEl, (settings) => {
@@ -90,6 +96,15 @@ export class App {
     // terminal. On close, hand focus back to the active terminal pane.
     this.notesPanel = new NotesPanel(mainEl, {
       onClose: () => this.tabManager.getActiveTab()?.focusedPane.focus(),
+    });
+
+    // Bookmarks sidebar (Ctrl+Cmd+B): projects and artifact links, docked left.
+    this.bookmarksPanel = new BookmarksPanel(mainEl, {
+      getTabs: () => this.tabManager.getTabs(),
+      getActiveTab: () => this.tabManager.getActiveTab(),
+      switchToTab: (id) => this.tabManager.switchToId(id),
+      createTab: (cwd) => this.tabManager.createTab(cwd),
+      focusTerminal: () => this.tabManager.getActiveTab()?.focusedPane.focus(),
     });
 
     this.registerAppListeners();
@@ -186,39 +201,10 @@ export class App {
 
     // Execute startup command in the active tab (restored or fresh).
     // Restore only recovers tab layout + scrollback — all PTYs are fresh shells,
-    // so the startup command is always safe to run.
-    //
-    // Timing: wait for the shell's first prompt signal (OSC 133;B) rather than
-    // a fixed 500ms. A slow shell (plugins, slow .zshrc) can exceed 500ms on
-    // cold start, making the old code race — the startup command gets swallowed
-    // by the not-yet-ready shell. The 500ms fallback covers shells without
-    // shell integration (no OSC 133 emit).
-    if (settings.startupCommand) {
-      const activeTab = this.tabManager.getActiveTab();
-      const ptyId = activeTab?.ptyId ?? null;
-      if (ptyId !== null && activeTab) {
-        const cmd = settings.startupCommand;
-        let fired = false;
-        const fire = () => {
-          if (fired || ptyId === null) return;
-          fired = true;
-          window.patton.pty.write(ptyId, cmd + '\r');
-        };
-        const dispose = activeTab.focusedPane.terminalView.onPromptState((state) => {
-          if (state === 'prompt' && !fired) {
-            fire();
-            dispose?.();
-          }
-        });
-        // Fallback if no prompt signal arrives (shell integration disabled,
-        // exotic shell, etc.)
-        setTimeout(() => {
-          if (!fired) {
-            fire();
-            dispose?.();
-          }
-        }, 1500);
-      }
+    // so the startup command is always safe to run. Timing lives in the helper.
+    const firstTab = this.tabManager.getActiveTab();
+    if (settings.startupCommand && firstTab) {
+      runStartupCommand(firstTab, settings.startupCommand);
     }
 
     // Save session on window unload (app close)
@@ -250,6 +236,12 @@ export class App {
     this.disposables.push(
       window.patton.app.onToggleNotes(() => {
         this.notesPanel.toggle().catch(console.error);
+      }),
+    );
+
+    this.disposables.push(
+      window.patton.app.onToggleBookmarks(() => {
+        this.bookmarksPanel.toggle().catch(console.error);
       }),
     );
 
@@ -469,6 +461,9 @@ export class App {
       case 'toggle-notes':
         this.notesPanel.toggle().catch(console.error);
         break;
+      case 'toggle-bookmarks':
+        this.bookmarksPanel.toggle().catch(console.error);
+        break;
       case 'save-terminal': {
         if (!tab) break;
         const content = tab.getScrollbackContent();
@@ -549,6 +544,7 @@ export class App {
     this.commandPalette.dispose();
     this.quickTerminal.dispose();
     this.notesPanel.dispose();
+    this.bookmarksPanel.dispose();
     this.notificationSound.dispose();
     this.tabManager.dispose();
   }

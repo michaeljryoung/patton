@@ -33,11 +33,21 @@ export class TabManager {
   private currentCopyOnSelect = false;
   private currentTerminalTheme: ITheme | null = null;
   private currentRenderer: RendererMode = 'webgl';
+  private onTabsChanged: (() => void) | null = null; // bookmarks sidebar
 
   constructor(
     tabBarContainer: HTMLElement,
     contentContainer: HTMLElement,
-    options?: { onSettings?: () => void; onCommandDone?: (tabId: string, tabTitle: string) => void },
+    options?: {
+      onSettings?: () => void;
+      onCommandDone?: (tabId: string, tabTitle: string) => void;
+      // --- Bookmarks ---
+      /** Tabs created, closed or activated, or a tab's title/project changed. */
+      onTabsChanged?: () => void;
+      /** Tab right-click → Bookmark Project. */
+      onBookmarkProject?: (tab: Tab) => void;
+      // --- end bookmarks ---
+    },
   ) {
     this.contentContainer = contentContainer;
     this.confirmDialog = new ConfirmDialog(document.body);
@@ -51,8 +61,15 @@ export class TabManager {
       onRename: (id, name) => this.renameTab(id, name),
       onRenameProject: (id, name) => this.renameProject(id, name),
       onSetFlag: (id, flag) => this.setTabFlag(id, flag),
+      // --- Bookmarks ---
+      onBookmarkProject: (id) => {
+        const tab = this.tabs.find(t => t.id === id);
+        if (tab) options?.onBookmarkProject?.(tab);
+      },
+      // --- end bookmarks ---
     });
     this.onCommandDone = options?.onCommandDone || null;
+    this.onTabsChanged = options?.onTabsChanged ?? null;
 
     // Tabs are named after their project. A project renamed in any window
     // renames its tabs here too.
@@ -392,6 +409,11 @@ export class TabManager {
     return this.activeTab;
   }
 
+  /** Every tab in this window, in tab-bar order (the bookmarks sidebar reads it). */
+  getTabs(): readonly Tab[] {
+    return this.tabs;
+  }
+
   getTabCount(): number {
     return this.tabs.length;
   }
@@ -569,6 +591,8 @@ export class TabManager {
         parked: t.parked,
       })),
     );
+    // Every tab change funnels through here, so the bookmarks sidebar hears it too.
+    this.onTabsChanged?.();
   }
 
   dispose(): void {

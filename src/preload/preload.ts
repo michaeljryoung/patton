@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import { IPC } from '../shared/constants';
-import type { PattonAPI, RenderSnapshot } from '../shared/types';
+import type { Bookmark, PattonAPI, RenderSnapshot } from '../shared/types';
 
 const api: PattonAPI = {
   pty: {
@@ -49,6 +49,17 @@ const api: PattonAPI = {
       return () => ipcRenderer.removeListener(IPC.PROJECT_NAMES_CHANGED, listener);
     },
   },
+  // --- Bookmarks ---
+  bookmarks: {
+    get: () => ipcRenderer.invoke(IPC.BOOKMARKS_GET),
+    set: (bookmarks) => ipcRenderer.invoke(IPC.BOOKMARKS_SET, bookmarks),
+    onChanged: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, list: Bookmark[]) => callback(list);
+      ipcRenderer.on(IPC.BOOKMARKS_CHANGED, listener);
+      return () => ipcRenderer.removeListener(IPC.BOOKMARKS_CHANGED, listener);
+    },
+  },
+  // --- end bookmarks ---
   session: {
     get: () => ipcRenderer.invoke(IPC.SESSION_GET),
     set: (session) => ipcRenderer.invoke(IPC.SESSION_SET, session),
@@ -89,6 +100,13 @@ const api: PattonAPI = {
       ipcRenderer.on(IPC.APP_TOGGLE_NOTES, listener);
       return () => ipcRenderer.removeListener(IPC.APP_TOGGLE_NOTES, listener);
     },
+    // --- Bookmarks ---
+    onToggleBookmarks: (cb) => {
+      const listener = () => cb();
+      ipcRenderer.on(IPC.APP_TOGGLE_BOOKMARKS, listener);
+      return () => ipcRenderer.removeListener(IPC.APP_TOGGLE_BOOKMARKS, listener);
+    },
+    // --- end bookmarks ---
     onNewTab: (cb) => {
       const listener = () => cb();
       ipcRenderer.on(IPC.APP_NEW_TAB, listener);

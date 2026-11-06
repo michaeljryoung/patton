@@ -48,6 +48,7 @@ Then open the app normally. This clears the macOS quarantine attribute entirely.
 
 - **Always-Passthrough Terminal** -- Full terminal input at all times (xterm.js), no mode switching
 - **Compose Panel** -- Expandable multi-line editor for drafting commands (`Cmd+E`)
+- **Bookmarks** -- Left sidebar of projects and artifact links (`Ctrl+Cmd+B`); a project opens in its own tab with the startup command, or jumps to its tab if one is already open
 - **Split Panes** -- Vertical and horizontal splits with drag-to-resize dividers (up to 5 per tab)
 - **Tabs** -- Drag-to-reorder, middle-click close, tab renaming
 - **Command Palette** -- Quick access to all actions via fuzzy search (`Cmd+Shift+P`)
@@ -79,6 +80,7 @@ Then open the app normally. This clears the macOS quarantine attribute entirely.
 | `Cmd+Shift+P` | Command palette |
 | `Cmd+Shift+Up/Down` | Jump between prompts |
 | `Cmd+E` | Toggle compose panel |
+| `Ctrl+Cmd+B` | Toggle bookmarks sidebar |
 | `Cmd+K` | Clear terminal |
 | `Cmd+F` | Find |
 | `Cmd+,` | Settings |

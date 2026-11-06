@@ -87,6 +87,21 @@ export interface ProjectInfo {
   defaultName: string;
 }
 
+// --- Bookmarks ---
+/** A sidebar bookmark: a project folder (opens a tab there) or an https link
+ *  to an artifact (opens in the browser). Validated in main/bookmarks.ts. */
+export interface Bookmark {
+  id: string;
+  kind: 'project' | 'artifact';
+  label: string;
+  /** Project bookmarks: absolute folder path (a project root, or a plain folder). */
+  path?: string;
+  /** Artifact bookmarks: an https URL. */
+  url?: string;
+  addedAt: number;
+}
+// --- end bookmarks ---
+
 export interface RenderSnapshot {
   reason: string;
   timestamp: string;
@@ -142,6 +157,14 @@ export interface PattonAPI {
     setName: (root: string, name: string) => Promise<void>;
     onNamesChanged: (callback: (names: Record<string, string>) => void) => () => void;
   };
+  // --- Bookmarks ---
+  bookmarks: {
+    get: () => Promise<Bookmark[]>;
+    /** Replace the whole list; main validates it and returns what it stored. */
+    set: (bookmarks: Bookmark[]) => Promise<Bookmark[]>;
+    onChanged: (callback: (bookmarks: Bookmark[]) => void) => () => void;
+  };
+  // --- end bookmarks ---
   session: {
     get: () => Promise<SessionState | null>;
     set: (session: SessionState | null) => Promise<void>;
@@ -178,6 +201,7 @@ export interface PattonAPI {
   app: {
     onSettings: (callback: () => void) => () => void;
     onToggleNotes: (callback: () => void) => () => void;
+    onToggleBookmarks: (callback: () => void) => () => void; // bookmarks
     onNewTab: (callback: () => void) => () => void;
     onCloseTab: (callback: () => void) => () => void;
     onNextTab: (callback: () => void) => () => void;
