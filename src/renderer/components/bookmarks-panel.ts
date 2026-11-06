@@ -124,9 +124,9 @@ export class BookmarksPanel {
       <div class="bookmarks-header">
         <span id="bookmarks-heading">Bookmarks</span>
         <div class="bookmarks-header-actions">
-          <button type="button" class="bookmarks-add" aria-label="Add bookmark" aria-haspopup="menu" title="Add bookmark">+</button>
           <button type="button" class="bookmarks-hide" aria-label="Hide bookmarks" aria-controls="bookmarks-panel"
             aria-expanded="true" title="Hide bookmarks (${keys})">${ICON_HIDE}</button>
+          <button type="button" class="bookmarks-add" aria-label="Add bookmark" aria-haspopup="menu" title="Add bookmark">+</button>
         </div>
       </div>
       <form class="bookmarks-form" hidden aria-label="Add artifact link">
@@ -617,10 +617,17 @@ export class BookmarksPanel {
       if (next) this.commitReorder(dragId, next).catch((err) => rlog('error', '[BOOKMARK] reorder failed', String(err)));
     };
 
+    // Chromium skips dragend when a drag is torn down inside dragstart (a
+    // DevTools break, say). A new press in the panel means any earlier drag is
+    // over, so it releases a hold that would otherwise freeze the list.
+    const onPointerDown = () => this.endDrag();
+
     this.listEl.addEventListener('dragover', onDragOver);
     this.listEl.addEventListener('dragleave', onDragLeave);
     this.listEl.addEventListener('drop', onDrop);
+    this.panel.addEventListener('mousedown', onPointerDown, true);
     this.disposables.push(
+      () => this.panel.removeEventListener('mousedown', onPointerDown, true),
       () => this.listEl.removeEventListener('dragover', onDragOver),
       () => this.listEl.removeEventListener('dragleave', onDragLeave),
       () => this.listEl.removeEventListener('drop', onDrop),
@@ -659,13 +666,36 @@ export class BookmarksPanel {
   private async commitReorder(dragId: string, next: Bookmark[]): Promise<void> {
     const bookmark = this.bookmarks.find((b) => b.id === dragId);
     if (!bookmark) return;
-    const positionIn = (list: Bookmark[]) => list.filter((b) => b.kind === bookmark.kind).findIndex((b) => b.id === dragId);
-    const from = positionIn(this.bookmarks);
-    const to = positionIn(next);
-    if (await this.save(next)) {
-      rlog('info', '[BOOKMARK] reordered', { kind: bookmark.kind, from, to });
-      announce(`Moved ${bookmark.label} to position ${to + 1}`);
+    const group = (list: Bookmark[]) => list.filter((b) => b.kind === bookmark.kind);
+    const from = group(this.bookmarks).findIndex((b) => b.id === dragId);
+    const to = group(next).findIndex((b) => b.id === dragId);
+    if (await this.saveOrder(next)) {
+      rlog('info', '[BOOKMARK] reordered', { kind: bookmark.kind, from, to, via: 'drag' });
+      announce(`Moved ${bookmark.label} to position ${to + 1} of ${group(next).length}`);
     }
+  }
+
+  /** Save a reordered list, drawing the new order at once rather than after the
+   *  IPC round trip (which would show the old order for a moment and then jump).
+   *  True only when main stored exactly this order: its rate limit answers with
+   *  the old list, which save() alone would count as success. */
+  private async saveOrder(next: Bookmark[]): Promise<boolean> {
+    const prev = this.bookmarks;
+    this.bookmarks = next;
+    this.render();
+    const saved = await this.save(next);
+    if (this.bookmarks === next) {
+      // save() threw before main answered: put back what was there.
+      this.bookmarks = prev;
+      this.render();
+    }
+    const ids = (list: Bookmark[]) => list.map((b) => b.id).join('\n');
+    if (saved && ids(this.bookmarks) === ids(next)) return true;
+    if (saved) {
+      rlog('warn', '[BOOKMARK] order not stored', { sent: next.length, stored: this.bookmarks.length });
+      announce('The new order could not be saved', 'assertive');
+    }
+    return false;
   }
 
   // ── Row menu: rename, move, remove ──
@@ -692,9 +722,12 @@ export class BookmarksPanel {
     while (to >= 0 && to < next.length && next[to].kind !== bookmark.kind) to += direction;
     if (to < 0 || to >= next.length) return;
     [next[from], next[to]] = [next[to], next[from]];
-    await this.save(next);
+    const moved = await this.saveOrder(next);
     this.focusRow(bookmark.id);
-    announce(`Moved ${bookmark.label} ${direction < 0 ? 'up' : 'down'}`);
+    if (moved) {
+      rlog('info', '[BOOKMARK] reordered', { kind: bookmark.kind, via: 'menu', direction });
+      announce(`Moved ${bookmark.label} ${direction < 0 ? 'up' : 'down'}`);
+    }
   }
 
   private async remove(bookmark: Bookmark): Promise<void> {

@@ -529,7 +529,10 @@ html, body {
   opacity: 0.35;
 }
 
-.bookmark-row.drag-ghost {
+/* :hover too: the pointer is over the row when the image is painted, and the
+ * active row's hover rule would otherwise outrank this one. */
+.bookmark-row.drag-ghost,
+.bookmark-row.drag-ghost:hover {
   background: var(--bg);
   color: var(--ink);
   box-shadow: inset 0 0 0 1px var(--hairline);
