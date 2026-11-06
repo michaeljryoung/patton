@@ -4,7 +4,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir, userInfo } from 'node:os';
-import { DEFAULTS } from '../shared/constants';
+import { DEFAULTS, isNotificationSoundType } from '../shared/constants';
 import { ALLOWED_SHELLS } from './pty-manager';
 import { cleanProjectName } from './projects';
 import type { HistoryEntry, AppSettings, WindowState, SessionState, ProjectInfo } from '../shared/types';
@@ -229,8 +229,8 @@ export function setSettings(partial: Partial<AppSettings>): void {
   }
 
   if (partial.notificationSoundType !== undefined) {
-    const t = String(partial.notificationSoundType);
-    if (['chime', 'bugle', 'bullet'].includes(t)) {
+    const t = partial.notificationSoundType;
+    if (isNotificationSoundType(t)) {
       validated.notificationSoundType = t;
     }
   }

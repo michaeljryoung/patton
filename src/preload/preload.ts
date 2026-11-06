@@ -65,6 +65,13 @@ const api: PattonAPI = {
   log: {
     send: (level, args) => ipcRenderer.send(IPC.LOG_RENDERER, level, args),
   },
+  // --- Claude Code Stop hook ---
+  claudeHook: {
+    status: () => ipcRenderer.invoke(IPC.CLAUDE_HOOK_STATUS),
+    install: () => ipcRenderer.invoke(IPC.CLAUDE_HOOK_INSTALL),
+    remove: () => ipcRenderer.invoke(IPC.CLAUDE_HOOK_REMOVE),
+  },
+  // --- end Claude Code Stop hook ---
   app: {
     onSettings: (cb) => {
       const listener = () => cb();

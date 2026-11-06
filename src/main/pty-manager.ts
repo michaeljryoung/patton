@@ -4,7 +4,8 @@ import type { IPty } from 'node-pty';
 // Handle CJS/ESM interop for externalized module
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- CJS/ESM interop requires runtime check
 const pty = ((ptyModule as any).default || ptyModule) as typeof ptyModule;
-import { app, BrowserWindow, nativeTheme } from 'electron';
+import { BrowserWindow, nativeTheme } from 'electron';
+import { getResourcesPath } from './resources-path';
 import { execFile } from 'node:child_process';
 import { existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
@@ -48,14 +49,6 @@ const SAFE_ENV_KEYS = new Set([
   'GH_TOKEN_FILE', 'GIT_CONFIG_GLOBAL',
   'SSH_AGENT_PID',
 ]);
-
-/** Resolve the resources directory (works in both dev and packaged mode) */
-function getResourcesPath(): string {
-  if (app.isPackaged) {
-    return join(process.resourcesPath, 'resources');
-  }
-  return join(app.getAppPath(), 'resources');
-}
 
 function getSafeEnv(shellIntegration = true, isDark?: boolean): Record<string, string> {
   const safe: Record<string, string> = {};

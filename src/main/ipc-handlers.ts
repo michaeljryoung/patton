@@ -6,6 +6,8 @@ import { join } from 'node:path';
 import { IPC } from '../shared/constants';
 import { PtyManager } from './pty-manager';
 import { isSafeAbsolutePath, resolveProject } from './projects';
+import { getHookStatus, installHook, removeHook, type ClaudeHookPaths } from './claude-hook';
+import { getResourcesPath } from './resources-path';
 import * as store from './store';
 import type { PtyCreateOptions, RenderSnapshot, SessionState } from '../shared/types';
 
@@ -541,4 +543,31 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
       win.setPosition(Math.round(x + dx), Math.round(y + dy));
     }
   });
+
+  // --- Claude Code Stop hook (Settings → Claude Code; logic in claude-hook.ts) ---
+  // Install and remove throw with a readable message (e.g. settings.json won't
+  // parse); the rejection reaches the Settings panel, which shows it.
+  const claudeHookPaths = (): ClaudeHookPaths => ({
+    bundledScript: join(getResourcesPath(), 'claude-code-stop-hook.sh'),
+    installedScript: join(app.getPath('userData'), 'hooks', 'claude-code-stop-hook.sh'),
+    settingsFile: join(homedir(), '.claude', 'settings.json'),
+  });
+  ipcMain.handle(IPC.CLAUDE_HOOK_STATUS, () => getHookStatus(claudeHookPaths()));
+  ipcMain.handle(IPC.CLAUDE_HOOK_INSTALL, () => {
+    try {
+      return installHook(claudeHookPaths());
+    } catch (err) {
+      console.warn('[HOOK] Install failed', { error: (err as Error).message });
+      throw err;
+    }
+  });
+  ipcMain.handle(IPC.CLAUDE_HOOK_REMOVE, () => {
+    try {
+      return removeHook(claudeHookPaths());
+    } catch (err) {
+      console.warn('[HOOK] Remove failed', { error: (err as Error).message });
+      throw err;
+    }
+  });
+  // --- end Claude Code Stop hook ---
 }

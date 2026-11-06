@@ -1,0 +1,184 @@
+/**
+ * Install / remove Patton's Claude Code Stop hook (resources/claude-code-stop-hook.sh).
+ *
+ * The hook tells Patton whether a Claude Code turn that just ended is parked on
+ * its own background work or really waiting on the user (see pane.ts
+ * handleHookStop). Installing copies the script into Patton's userData folder,
+ * so its path survives app updates, and adds one Stop entry to
+ * ~/.claude/settings.json. Nothing here imports Electron: the caller passes
+ * the paths, which keeps it testable outside the app.
+ *
+ * Threat notes: this edits a file that controls what Claude Code runs. It only
+ * ever runs on an explicit click in Settings; it refuses to touch a
+ * settings.json it can't parse; it writes a timestamped backup first; and the
+ * only command it adds is the absolute path of a script Patton itself wrote
+ * (mode 0755, in the user's own userData folder).
+ */
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
+import type { ClaudeHookStatus } from '../shared/types';
+
+export interface ClaudeHookPaths {
+  /** The script bundled with this Patton build. */
+  bundledScript: string;
+  /** Where the installed copy lives (userData/hooks/claude-code-stop-hook.sh). */
+  installedScript: string;
+  /** ~/.claude/settings.json */
+  settingsFile: string;
+}
+
+interface HookCommand { type?: unknown; command?: unknown; [key: string]: unknown }
+interface MatcherGroup { matcher?: unknown; hooks?: unknown; [key: string]: unknown }
+
+/** The command Claude Code runs through a shell; userData contains a space
+ *  ("Application Support"), so the path is quoted. */
+export function hookCommand(paths: ClaudeHookPaths): string {
+  return `"${paths.installedScript}"`;
+}
+
+function isOurCommand(cmd: unknown, paths: ClaudeHookPaths): boolean {
+  return typeof cmd === 'string' && (cmd === hookCommand(paths) || cmd === paths.installedScript);
+}
+
+/** Read and parse settings.json. A missing file is `{}`; anything that isn't a
+ *  JSON object throws, so callers change nothing. */
+function readSettings(file: string): Record<string, unknown> {
+  if (!existsSync(file)) return {};
+  const raw = readFileSync(file, 'utf8');
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`${file} is not valid JSON (${(err as Error).message}); left unchanged`);
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`${file} is not a JSON object; left unchanged`);
+  }
+  return parsed as Record<string, unknown>;
+}
+
+function stopGroups(settings: Record<string, unknown>): MatcherGroup[] | null {
+  const hooks = settings.hooks;
+  if (!hooks || typeof hooks !== 'object' || Array.isArray(hooks)) return null;
+  const stop = (hooks as Record<string, unknown>).Stop;
+  return Array.isArray(stop) ? (stop as MatcherGroup[]) : null;
+}
+
+function hasOurEntry(settings: Record<string, unknown>, paths: ClaudeHookPaths): boolean {
+  for (const group of stopGroups(settings) ?? []) {
+    if (!group || !Array.isArray(group.hooks)) continue;
+    if ((group.hooks as HookCommand[]).some((h) => h && isOurCommand(h.command, paths))) return true;
+  }
+  return false;
+}
+
+/** Back up, then replace atomically. A symlinked settings.json is written
+ *  through to its target, so the link survives. */
+function writeSettings(file: string, settings: Record<string, unknown>): void {
+  const target = existsSync(file) ? realpathSync(file) : file;
+  mkdirSync(dirname(target), { recursive: true });
+  if (existsSync(target)) {
+    const backup = `${target}.bak-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+    copyFileSync(target, backup);
+    console.info('[HOOK] Backed up settings', { backup });
+  }
+  const tmp = `${target}.patton-tmp-${process.pid}`;
+  writeFileSync(tmp, JSON.stringify(settings, null, 2) + '\n', 'utf8');
+  renameSync(tmp, target);
+  console.info('[HOOK] Wrote settings', { file: target });
+}
+
+export function getHookStatus(paths: ClaudeHookPaths): ClaudeHookStatus {
+  const scriptPresent = existsSync(paths.installedScript);
+  let entryPresent = false;
+  let error: string | undefined;
+  try {
+    entryPresent = hasOurEntry(readSettings(paths.settingsFile), paths);
+  } catch (err) {
+    error = (err as Error).message;
+  }
+  // Keep an installed copy in step with this build's script, so a Patton
+  // update that changes the hook reaches Claude Code without a reinstall.
+  if (scriptPresent && existsSync(paths.bundledScript)) {
+    try {
+      if (readFileSync(paths.bundledScript, 'utf8') !== readFileSync(paths.installedScript, 'utf8')) {
+        copyFileSync(paths.bundledScript, paths.installedScript);
+        chmodSync(paths.installedScript, 0o755);
+        console.info('[HOOK] Refreshed installed script from this build', { script: paths.installedScript });
+      }
+    } catch (err) {
+      console.warn('[HOOK] Could not refresh installed script', { error: (err as Error).message });
+    }
+  }
+  return {
+    installed: scriptPresent && entryPresent,
+    scriptPresent,
+    entryPresent,
+    scriptPath: paths.installedScript,
+    ...(error ? { error } : {}),
+  };
+}
+
+export function installHook(paths: ClaudeHookPaths): ClaudeHookStatus {
+  console.info('[HOOK] Install requested', { settings: paths.settingsFile });
+  // Parse first: a broken settings.json aborts before anything is written.
+  const settings = readSettings(paths.settingsFile);
+
+  if (!existsSync(paths.bundledScript)) {
+    throw new Error(`Bundled hook script not found at ${paths.bundledScript}`);
+  }
+  mkdirSync(dirname(paths.installedScript), { recursive: true });
+  copyFileSync(paths.bundledScript, paths.installedScript);
+  chmodSync(paths.installedScript, 0o755);
+  console.info('[HOOK] Copied script', { script: paths.installedScript });
+
+  if (hasOurEntry(settings, paths)) {
+    console.info('[HOOK] Stop entry already present; settings left unchanged');
+  } else {
+    if (!settings.hooks || typeof settings.hooks !== 'object' || Array.isArray(settings.hooks)) {
+      if (settings.hooks !== undefined) {
+        throw new Error('settings.json has a "hooks" value that is not an object; left unchanged');
+      }
+      settings.hooks = {};
+    }
+    const hooks = settings.hooks as Record<string, unknown>;
+    if (hooks.Stop === undefined) hooks.Stop = [];
+    if (!Array.isArray(hooks.Stop)) {
+      throw new Error('settings.json has a "hooks.Stop" value that is not an array; left unchanged');
+    }
+    (hooks.Stop as MatcherGroup[]).push({
+      matcher: '',
+      hooks: [{ type: 'command', command: hookCommand(paths), timeout: 10 }],
+    });
+    writeSettings(paths.settingsFile, settings);
+    console.info('[HOOK] Added Stop entry', { command: hookCommand(paths) });
+  }
+  return getHookStatus(paths);
+}
+
+/** Remove only Patton's own command. A matcher group left with no hooks is
+ *  dropped; the Stop array itself is left alone even if it ends up empty. The
+ *  installed script stays (harmless, and an Install puts the entry back). */
+export function removeHook(paths: ClaudeHookPaths): ClaudeHookStatus {
+  console.info('[HOOK] Remove requested', { settings: paths.settingsFile });
+  const settings = readSettings(paths.settingsFile);
+  const groups = stopGroups(settings);
+  if (!groups || !hasOurEntry(settings, paths)) {
+    console.info('[HOOK] No Patton Stop entry; settings left unchanged');
+    return getHookStatus(paths);
+  }
+  const kept: MatcherGroup[] = [];
+  for (const group of groups) {
+    if (!group || !Array.isArray(group.hooks)) {
+      kept.push(group);
+      continue;
+    }
+    const remaining = (group.hooks as HookCommand[]).filter((h) => !(h && isOurCommand(h.command, paths)));
+    if (remaining.length === group.hooks.length) kept.push(group);
+    else if (remaining.length > 0) kept.push({ ...group, hooks: remaining });
+  }
+  (settings.hooks as Record<string, unknown>).Stop = kept;
+  writeSettings(paths.settingsFile, settings);
+  console.info('[HOOK] Removed Stop entry');
+  return getHookStatus(paths);
+}

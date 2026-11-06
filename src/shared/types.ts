@@ -1,3 +1,5 @@
+import type { NotificationSoundType } from './constants';
+
 export interface PtyCreateOptions {
   shell?: string;
   cwd?: string;
@@ -30,7 +32,7 @@ export interface AppSettings {
   scrollback: number;
   shell: string;
   notificationSound: boolean;
-  notificationSoundType: 'chime' | 'bugle' | 'bullet';
+  notificationSoundType: NotificationSoundType;
   copyOnSelect: boolean;
   globalHotkey: string;
   theme: string;
@@ -148,6 +150,14 @@ export interface PattonAPI {
   log: {
     send: (level: 'info' | 'warn' | 'error', args: unknown[]) => void;
   };
+  // --- Claude Code Stop hook ---
+  claudeHook: {
+    status: () => Promise<ClaudeHookStatus>;
+    /** Resolves with the new status; rejects with a readable message if settings.json can't be edited. */
+    install: () => Promise<ClaudeHookStatus>;
+    remove: () => Promise<ClaudeHookStatus>;
+  };
+  // --- end Claude Code Stop hook ---
   app: {
     onSettings: (callback: () => void) => () => void;
     onToggleNotes: (callback: () => void) => () => void;
@@ -181,6 +191,19 @@ export interface PattonAPI {
   openExternal: (url: string) => Promise<void>;
   moveWindowBy: (dx: number, dy: number) => void;
 }
+
+// --- Claude Code Stop hook ---
+/** Whether Patton's Stop hook is installed for Claude Code (Settings → Claude Code). */
+export interface ClaudeHookStatus {
+  /** Script copied AND its entry present in ~/.claude/settings.json. */
+  installed: boolean;
+  scriptPresent: boolean;
+  entryPresent: boolean;
+  scriptPath: string;
+  /** settings.json couldn't be read or parsed. */
+  error?: string;
+}
+// --- end Claude Code Stop hook ---
 
 declare global {
   interface Window {

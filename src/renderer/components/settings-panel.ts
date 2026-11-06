@@ -1,7 +1,8 @@
-import type { AppSettings } from '../../shared/types';
-import { DEFAULTS } from '../../shared/constants';
+import type { AppSettings, ClaudeHookStatus } from '../../shared/types';
+import { DEFAULTS, isNotificationSoundType } from '../../shared/constants';
 import { settingsShortcuts, displayKeys, acceleratorToDisplay } from '../../shared/shortcuts';
 import { trapFocus } from '../services/focus-trap';
+import { rlog } from '../services/renderer-logger';
 
 export class SettingsPanel {
   private overlay: HTMLElement;
@@ -139,6 +140,16 @@ export class SettingsPanel {
             </label>
             <span class="settings-hint">Inject OSC 133 markers for prompt detection (new tabs only)</span>
           </div>
+          <div class="shortcuts-section" aria-labelledby="claude-hook-title">
+            <h3 class="shortcuts-title" id="claude-hook-title">Claude Code</h3>
+            <div class="settings-group settings-group-toggle">
+              <span class="settings-label">Background-work hook</span>
+              <span class="claude-hook-status" id="claude-hook-status" role="status" aria-live="polite">Checking…</span>
+              <button type="button" class="claude-hook-button" id="claude-hook-button" disabled>Install</button>
+              <span class="settings-hint">Lets the green dot tell a Claude session waiting on you from one waiting on its own background agents or timers (adds a Stop hook to ~/.claude/settings.json; a backup is written first)</span>
+              <span class="settings-hint claude-hook-error" id="claude-hook-error" role="alert" hidden></span>
+            </div>
+          </div>
           <div class="shortcuts-section">
             <h3 class="shortcuts-title">Keyboard Shortcuts</h3>
             <!-- Rendered from the shortcuts registry by renderShortcuts(). Never
@@ -219,7 +230,14 @@ export class SettingsPanel {
 
     const soundTypeInput = this.overlay.querySelector('#setting-notification-sound-type') as HTMLSelectElement;
     listen(soundTypeInput, 'change', () => {
-      this.saveAndNotify({ notificationSoundType: soundTypeInput.value });
+      if (isNotificationSoundType(soundTypeInput.value)) {
+        this.saveAndNotify({ notificationSoundType: soundTypeInput.value });
+      }
+    });
+
+    const hookButton = this.overlay.querySelector('#claude-hook-button') as HTMLButtonElement;
+    listen(hookButton, 'click', () => {
+      void this.toggleClaudeHook();
     });
 
     const opacityInput = this.overlay.querySelector('#setting-opacity') as HTMLInputElement;
@@ -302,6 +320,7 @@ export class SettingsPanel {
     if (this.cachedSettings) {
       this.populateValues(this.cachedSettings);
     }
+    void this.refreshClaudeHook();
     this.visible = true;
     this.overlay.classList.add('visible');
     (this.overlay.querySelector('#setting-font-size') as HTMLInputElement).focus();
@@ -355,6 +374,50 @@ export class SettingsPanel {
       this.show();
     }
   }
+
+  // --- Claude Code Stop hook ---
+  private claudeHookInstalled = false;
+
+  private renderClaudeHook(status: ClaudeHookStatus | null, error?: string): void {
+    const statusEl = this.overlay.querySelector('#claude-hook-status') as HTMLElement;
+    const button = this.overlay.querySelector('#claude-hook-button') as HTMLButtonElement;
+    const errorEl = this.overlay.querySelector('#claude-hook-error') as HTMLElement;
+    this.claudeHookInstalled = !!status?.installed;
+    statusEl.textContent = !status ? 'Unknown' : status.installed ? 'Hook installed' : 'Not installed';
+    button.textContent = this.claudeHookInstalled ? 'Remove' : 'Install';
+    button.setAttribute('aria-label', this.claudeHookInstalled ? 'Remove the Claude Code hook' : 'Install the Claude Code hook');
+    button.disabled = !status;
+    const message = error ?? status?.error;
+    errorEl.textContent = message ?? '';
+    errorEl.hidden = !message;
+  }
+
+  /** Re-read the status; `error` (a failed install/remove) is shown alongside it. */
+  private async refreshClaudeHook(error?: string): Promise<void> {
+    try {
+      this.renderClaudeHook(await window.patton.claudeHook.status(), error);
+    } catch (err) {
+      this.renderClaudeHook(null, error ?? 'Could not read the hook status');
+      rlog('warn', '[HOOK] Status check failed', { error: (err as Error).message });
+    }
+  }
+
+  private async toggleClaudeHook(): Promise<void> {
+    const button = this.overlay.querySelector('#claude-hook-button') as HTMLButtonElement;
+    const removing = this.claudeHookInstalled;
+    button.disabled = true;
+    try {
+      const status = removing ? await window.patton.claudeHook.remove() : await window.patton.claudeHook.install();
+      rlog('info', removing ? '[HOOK] Removed from Settings' : '[HOOK] Installed from Settings', { installed: status.installed });
+      this.renderClaudeHook(status);
+    } catch (err) {
+      // Electron prefixes main-process errors with "Error invoking remote method …: Error: ".
+      const message = (err as Error).message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+      rlog('warn', '[HOOK] Settings action failed', { removing, error: message });
+      await this.refreshClaudeHook(message);
+    }
+  }
+  // --- end Claude Code Stop hook ---
 
   dispose(): void {
     for (const d of this.disposables) d();

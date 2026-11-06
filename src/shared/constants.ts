@@ -65,7 +65,21 @@ export const IPC = {
   DIAGNOSTICS_SAVE_SNAPSHOT: 'diagnostics:save-snapshot',
 
   LOG_RENDERER: 'log:renderer',
+
+  // --- Claude Code Stop hook (Settings → Claude Code) ---
+  CLAUDE_HOOK_STATUS: 'claude:hookStatus',
+  CLAUDE_HOOK_INSTALL: 'claude:installHook',
+  CLAUDE_HOOK_REMOVE: 'claude:removeHook',
+  // --- end Claude Code Stop hook ---
 } as const;
+
+/** The notification sounds Patton ships; settings outside this list are ignored. */
+export const NOTIFICATION_SOUND_TYPES = ['chime', 'bugle', 'bullet'] as const;
+export type NotificationSoundType = (typeof NOTIFICATION_SOUND_TYPES)[number];
+
+export function isNotificationSoundType(value: unknown): value is NotificationSoundType {
+  return typeof value === 'string' && (NOTIFICATION_SOUND_TYPES as readonly string[]).includes(value);
+}
 
 export const DEFAULTS = {
   SHELL: '/bin/zsh',
