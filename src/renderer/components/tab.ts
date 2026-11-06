@@ -45,6 +45,15 @@ export class Tab {
   // session-only override from the palette (null = follow the setting).
   private _composeFirstSetting = false;
   private _composeFirstOverride: boolean | null = null;
+  // The window's terminal settings, kept here so a pane made later (a split)
+  // gets them too, not only the panes open when they were set. Unset = the
+  // terminal's own defaults.
+  private _fontSize: number | undefined;
+  private _fontFamily: string | undefined;
+  private _scrollback: number | undefined;
+  private _copyOnSelect = false;
+  private _renderer: 'webgl' | 'dom' | undefined;
+  private _terminalTheme: ITheme | null = null;
   private _zoomed = false;
   private _shell: string | undefined;
   private _historyManager: HistoryManager | undefined;
@@ -126,8 +135,20 @@ export class Tab {
           }
         }
       },
+      onBroadcastPaste: (text) => {
+        if (!this._broadcastInput) return;
+        for (const p of this._panes) {
+          if (p !== pane) p.pasteBroadcast(text);
+        }
+      },
     });
     pane.setComposeFirst(this._composeFirstSetting, this._composeFirstOverride);
+    if (this._fontSize !== undefined) pane.setFontSize(this._fontSize);
+    if (this._fontFamily !== undefined) pane.setFontFamily(this._fontFamily);
+    if (this._scrollback !== undefined) pane.setScrollback(this._scrollback);
+    if (this._copyOnSelect) pane.setCopyOnSelect(true);
+    if (this._renderer !== undefined) pane.setRenderer(this._renderer);
+    if (this._terminalTheme) pane.setTerminalTheme(this._terminalTheme);
     pane.element.addEventListener('pane-split', ((e: CustomEvent) => {
       if (e.detail === 'vertical') this.splitVertical().catch(console.error);
       else if (e.detail === 'horizontal') this.splitHorizontal().catch(console.error);
@@ -561,36 +582,42 @@ export class Tab {
   }
 
   setFontSize(size: number): void {
+    this._fontSize = size;
     for (const pane of this._panes) {
       pane.setFontSize(size);
     }
   }
 
   setFontFamily(family: string): void {
+    this._fontFamily = family;
     for (const pane of this._panes) {
       pane.setFontFamily(family);
     }
   }
 
   setScrollback(lines: number): void {
+    this._scrollback = lines;
     for (const pane of this._panes) {
       pane.setScrollback(lines);
     }
   }
 
   setCopyOnSelect(enabled: boolean): void {
+    this._copyOnSelect = enabled;
     for (const pane of this._panes) {
       pane.setCopyOnSelect(enabled);
     }
   }
 
   setRenderer(mode: 'webgl' | 'dom'): void {
+    this._renderer = mode;
     for (const pane of this._panes) {
       pane.setRenderer(mode);
     }
   }
 
   setTerminalTheme(theme: ITheme | null): void {
+    this._terminalTheme = theme;
     for (const pane of this._panes) {
       pane.setTerminalTheme(theme);
     }

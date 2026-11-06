@@ -117,7 +117,7 @@ export class SettingsPanel {
               <input type="checkbox" id="setting-compose-first" />
               <span class="settings-toggle-slider"></span>
             </label>
-            <span class="settings-hint">Keep the compose panel open and focused while Claude Code runs. Esc hands the keyboard to Claude's own prompt; Enter in an empty box, arrows and Tab pass through to it.</span>
+            <span class="settings-hint">Keeps the compose panel open and focused while Claude Code runs. In an empty box, Esc (which interrupts a running reply), Enter, Tab and the arrows go to Claude; with a draft, Esc hands the keyboard to Claude and keeps the draft.</span>
           </div>
           <div class="settings-group">
             <label class="settings-label" for="setting-opacity">Window Opacity</label>

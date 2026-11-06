@@ -1,3 +1,5 @@
+import { stripPasteControls } from '../services/paste-sanitize';
+
 export interface EditorInputCallbacks {
   onSubmit: (command: string) => void;
   onInterrupt: () => void;
@@ -55,11 +57,15 @@ export class EditorInput {
     // correctly terminating any IME composition state.
     const pasteHandler = (e: ClipboardEvent) => {
       e.preventDefault();
-      const text = e.clipboardData?.getData('text') || '';
-      if (!text) {
+      const raw = e.clipboardData?.getData('text') || '';
+      if (!raw) {
         this.callbacks.onImagePaste?.();
         return;
       }
+      // Same strip as a terminal paste: an ESC[201~ in the text would end the
+      // bracketed paste that sends a multi-line draft, and run the rest as keys.
+      const text = stripPasteControls(raw);
+      if (!text) return;
       this.textarea.focus();
       document.execCommand('insertText', false, text);
       this.autoResize();
@@ -139,6 +145,9 @@ export class EditorInput {
   }
 
   private autoResize(): void {
+    // In a hidden tab (display:none) scrollHeight is 0, and writing it would
+    // leave a zero-height box; Pane.show() redoes this once it's visible.
+    if (this.textarea.getClientRects().length === 0) return;
     const cap = this.callbacks.getMaxHeight?.() ?? 200;
     this.textarea.style.height = 'auto';
     const full = this.textarea.scrollHeight;

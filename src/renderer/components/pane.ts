@@ -7,6 +7,7 @@ import { ContextMenu } from './context-menu';
 import { HistoryManager } from '../services/history-manager';
 import { FileLinkProvider } from '../services/file-link-provider';
 import { rlog } from '../services/renderer-logger';
+import { stripPasteControls } from '../services/paste-sanitize';
 import { PATTON_QUOTES } from '../../shared/constants';
 import { shortcutKeys } from '../../shared/shortcuts';
 
@@ -36,6 +37,9 @@ export interface PaneCallbacks {
   /** An automatic tab flag from the pane's title (`WAKE` → yellow), or null to drop it. */
   onAutoFlag?: (pane: Pane, flag: TabFlag | null) => void;
   onBroadcastWrite?: (data: string) => void;
+  /** Broadcast a paste: each other pane pastes it through its own terminal,
+   *  so the bracketing follows that pane's mode, not this one's. */
+  onBroadcastPaste?: (text: string) => void;
   cwd?: string;
   shell?: string;
   historyManager?: HistoryManager;
@@ -110,7 +114,7 @@ export class Pane {
   // exits or the mode changes, instead of reopening at the next title.
   private composeDismissed = false;
   private static readonly COMPOSE_FIRST_PLACEHOLDER =
-    "Message Claude · Enter to send · Shift+Enter newline · Esc to Claude's prompt";
+    'Message Claude · Enter sends · Shift+Enter newline · Esc interrupts';
   private static readonly COMPOSE_FIRST_MAX_FRACTION = 0.4; // of the pane's height
   private static readonly COMPOSE_FIRST_MIN_PX = 60;
   private static readonly COMPOSE_DEFAULT_MAX_PX = 200;
@@ -386,6 +390,7 @@ export class Pane {
     // mousedown → onFocus → focus() path reads composeHandedOff.
     const terminalMouseDown = (e: MouseEvent) => {
       if (!this.composeFirstEngaged) return;
+      if (e.button !== 0) return; // a right-click (context menu) keeps the keyboard where it is
       if ((e.target as Element | null)?.closest?.('.search-overlay')) return;
       this.handOffCompose('click');
     };
@@ -690,31 +695,41 @@ export class Pane {
     // Broadcast mode: also write to all other panes in the tab
     const broadcast = this.callbacks.onBroadcastWrite;
 
+    // Never send the box's text with its own control characters: an ESC[201~
+    // inside it would end the bracketed paste early (see paste-sanitize.ts).
+    command = stripPasteControls(command);
+
     // Compose-first sends a multi-line draft to Claude Code as a bracketed
     // paste (terminal.paste wraps it in ESC[200~ … ESC[201~ when the program
     // asked for that, which Claude Code does), so it arrives as one block of
     // text: typed raw, each newline would be an Enter and send the first line
-    // alone. The Enter follows after a longer gap than a typed line's, so
-    // Claude has finished taking in the paste before the submit arrives.
-    const route: 'paste' | 'type' = this.composeFirstEngaged && command.includes('\n') ? 'paste' : 'type';
-    rlog('info', '[COMPOSE] submit', {
-      pane: this.id, lines: command ? command.split('\n').length : 0, route,
-    });
+    // alone. Without bracketed-paste mode a paste is no better than typing, so
+    // the mode is read when the submit actually runs, not when it is queued.
+    const multiLineCompose = this.composeFirstEngaged && command.includes('\n');
+    const lines = command ? command.split('\n').length : 0;
 
     // Queue submits sequentially to prevent rapid double-submit from dropping the first Enter.
     // Each submit writes text then Enter with a small gap, and the next submit waits for the previous.
     this.submitQueue = this.submitQueue.then(() => new Promise<void>((resolve) => {
       if (this.ptyId === null) { resolve(); return; }
+      const route: 'paste' | 'type' =
+        multiLineCompose && this.terminalView.terminal.modes.bracketedPasteMode ? 'paste' : 'type';
+      rlog('info', '[COMPOSE] submit', { pane: this.id, lines, route });
+      // xterm's scrollOnUserInput only sees its own keys, not the box's.
+      this.terminalView.terminal.scrollToBottom();
       if (route === 'paste') {
         this.terminalView.terminal.paste(command);
-        broadcast?.(`\x1b[200~${command.replace(/\r?\n/g, '\r')}\x1b[201~`);
+        this.callbacks.onBroadcastPaste?.(command);
+        // The Enter waits longer than a typed line's so Claude Code has taken
+        // in the whole paste first: 60 ms is meant to clear its paste debounce
+        // (a margin chosen by reading, not yet measured live).
         setTimeout(() => {
           if (this.ptyId !== null) {
             window.patton.pty.write(this.ptyId, '\r');
             broadcast?.('\r');
           }
           resolve();
-        }, 30);
+        }, 60);
       } else if (command) {
         window.patton.pty.write(this.ptyId, command);
         broadcast?.(command);
@@ -753,6 +768,19 @@ export class Pane {
     const active = document.activeElement;
     if (!active) return false;
     return active.closest('[role="dialog"], .search-overlay, .paste-dialog-overlay') !== null;
+  }
+
+  /**
+   * Whether compose-first may move the keyboard into the box unasked (on
+   * engage, or when Claude starts working again): only in the tab's focused
+   * pane, and only when the keyboard is in this pane or nowhere, so it never
+   * takes it from the notes panel, the bookmarks sidebar, a tab-rename box, a
+   * context menu or a dialog while the user is typing there.
+   */
+  private canTakeKeyboard(): boolean {
+    if (!this._isFocused || Pane.isOverlayFocused()) return false;
+    const active = document.activeElement;
+    return !active || active === document.body || this.element.contains(active);
   }
 
   /**
@@ -853,8 +881,7 @@ export class Pane {
   private async safePaste(raw: string): Promise<void> {
     if (this.ptyId === null || !raw) return;
     // Strip dangerous control characters (keep \n, \t, \r, printable)
-    // eslint-disable-next-line no-control-regex -- intentional: sanitize pasted control chars
-    const sanitized = raw.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '');
+    const sanitized = stripPasteControls(raw);
     if (!sanitized) return;
 
     const lines = sanitized.split(/\r\n|\r|\n/);
@@ -904,8 +931,16 @@ export class Pane {
     this.editorInput.setSpellcheck(true); // messages to Claude are prose
     this.editorInput.refreshSize();
     rlog('info', '[COMPOSE] engage', { pane: this.id, reason });
-    // Only the tab's focused pane takes the keyboard, and never from a dialog.
-    if (this._isFocused && !Pane.isOverlayFocused()) this.editorInput.focus();
+    // Only the tab's focused pane takes the keyboard, and never from a panel,
+    // menu or dialog the user is typing in.
+    if (this.canTakeKeyboard()) {
+      this.editorInput.focus();
+    } else if (this._isFocused && Pane.isOverlayFocused() && this.element.getClientRects().length > 0) {
+      // A dialog (Settings, where the mode is switched on) hands focus back to
+      // the terminal when it closes; count that as a hand-off, so Claude's
+      // next ◐ brings the keyboard to the box.
+      this.composeHandedOff = true;
+    }
   }
 
   private disengageComposeFirst(reason: string): void {
@@ -933,9 +968,12 @@ export class Pane {
   /** Claude started working again: the box takes the keyboard back after a hand-off. */
   private reclaimCompose(reason: string): void {
     if (!this.composeFirstEngaged || !this.composeHandedOff) return;
+    // Keep the hand-off when the box can't take the keyboard now, so a later
+    // ◐ (or a click in the box) still brings it back.
+    if (!this.canTakeKeyboard()) return;
     this.composeHandedOff = false;
     rlog('info', '[COMPOSE] reclaim', { pane: this.id, reason });
-    if (this._isFocused && !Pane.isOverlayFocused()) this.editorInput.focus();
+    this.editorInput.focus();
   }
 
   /**
@@ -949,6 +987,7 @@ export class Pane {
     const seq = this.composeKeySequence(e);
     if (seq === null) return false;
     window.patton.pty.write(this.ptyId, seq);
+    this.terminalView.terminal.scrollToBottom(); // as xterm's scrollOnUserInput would
     rlog('info', '[COMPOSE] handoff', {
       pane: this.id, key: e.shiftKey ? `Shift+${e.key}` : e.key, route: 'pty',
     });
@@ -1009,6 +1048,14 @@ export class Pane {
   }
 
   toggleCompose(): void {
+    // Compose-first box open but the keyboard elsewhere (handed off): ⌘E
+    // brings the keyboard back to it; only ⌘E from inside the box closes it.
+    if (this.composeFirstEngaged && !this.editorInput.hasFocus()) {
+      this.composeHandedOff = false;
+      rlog('info', '[COMPOSE] reclaim', { pane: this.id, reason: 'toggle-key' });
+      this.editorInput.focus();
+      return;
+    }
     if (this.isComposeExpanded()) {
       this.collapseCompose();
     } else {
@@ -1041,7 +1088,8 @@ export class Pane {
   show(): void {
     this.element.style.display = 'flex';
     this.terminalView.fit();
-    if (this.composeFirstEngaged) this.editorInput.refreshSize(); // capped by the pane's height
+    // Always: a resize skipped while the tab was hidden (display:none) is redone here.
+    this.editorInput.refreshSize();
   }
 
   hide(): void {
@@ -1060,6 +1108,13 @@ export class Pane {
 
   setScrollback(lines: number): void {
     this.terminalView.setScrollback(lines);
+  }
+
+  /** A broadcast paste from another pane: through this terminal, so its own
+   *  bracketed-paste mode decides the wrapping. */
+  pasteBroadcast(text: string): void {
+    if (this.ptyId === null || this.disposed) return;
+    this.terminalView.terminal.paste(stripPasteControls(text));
   }
 
   setCopyOnSelect(enabled: boolean): void {
