@@ -11,6 +11,7 @@ export interface TabBarCallbacks {
   onRename: (id: string, name: string) => void;
   onRenameProject: (id: string, name: string) => void;
   onSetFlag: (id: string, flag: TabFlag | null) => void;
+  onBookmarkProject?: (id: string) => void; // bookmarks sidebar
 }
 
 interface TabHeaderInfo {
@@ -259,6 +260,16 @@ export class TabBar {
             label: 'Clear Flag',
             action: () => this.callbacks.onSetFlag(tab.id, null),
           },
+          // --- Bookmarks ---
+          ...(this.callbacks.onBookmarkProject ? [
+            { separator: true as const },
+            {
+              // Outside any project the tab's folder is bookmarked instead.
+              label: project ? 'Bookmark Project' : 'Bookmark Folder (not a project)',
+              action: () => this.callbacks.onBookmarkProject?.(tab.id),
+            },
+          ] : []),
+          // --- end bookmarks ---
           // Unlike double-click, this names every tab in the project, now and later.
           ...(project ? [
             { separator: true as const },

@@ -7,6 +7,7 @@ import { SettingsPanel } from './settings-panel';
 import { CommandPalette } from './command-palette';
 import { QuickTerminal } from './quick-terminal';
 import { NotesPanel } from './notes-panel';
+import { BookmarksPanel } from './bookmarks-panel';
 import { runStartupCommand } from '../services/startup-command';
 import { Onboarding } from './onboarding';
 import { DEFAULTS } from '../../shared/constants';
@@ -19,6 +20,7 @@ export class App {
   private commandPalette: CommandPalette;
   private quickTerminal: QuickTerminal;
   private notesPanel: NotesPanel;
+  private bookmarksPanel: BookmarksPanel;
   private notificationSound: NotificationSound;
   private fontSize: number = DEFAULTS.FONT_SIZE;
   private disposables: (() => void)[] = [];
@@ -45,6 +47,9 @@ export class App {
           window.patton.notify('Patton', `Waiting for you in ${tabTitle}`, tabId);
         }
       },
+      // The bookmarks sidebar is created below; these only fire after startup.
+      onTabsChanged: () => this.bookmarksPanel?.scheduleRefresh(),
+      onBookmarkProject: (tab) => { this.bookmarksPanel.addProjectFromTab(tab).catch(console.error); },
     });
     this.keybindingManager = new KeybindingManager(this.tabManager);
     this.settingsPanel = new SettingsPanel(appEl, (settings) => {
@@ -91,6 +96,15 @@ export class App {
     // terminal. On close, hand focus back to the active terminal pane.
     this.notesPanel = new NotesPanel(mainEl, {
       onClose: () => this.tabManager.getActiveTab()?.focusedPane.focus(),
+    });
+
+    // Bookmarks sidebar (Ctrl+Cmd+B): projects and artifact links, docked left.
+    this.bookmarksPanel = new BookmarksPanel(mainEl, {
+      getTabs: () => this.tabManager.getTabs(),
+      getActiveTab: () => this.tabManager.getActiveTab(),
+      switchToTab: (id) => this.tabManager.switchToId(id),
+      createTab: (cwd) => this.tabManager.createTab(cwd),
+      focusTerminal: () => this.tabManager.getActiveTab()?.focusedPane.focus(),
     });
 
     this.registerAppListeners();
@@ -222,6 +236,12 @@ export class App {
     this.disposables.push(
       window.patton.app.onToggleNotes(() => {
         this.notesPanel.toggle().catch(console.error);
+      }),
+    );
+
+    this.disposables.push(
+      window.patton.app.onToggleBookmarks(() => {
+        this.bookmarksPanel.toggle().catch(console.error);
       }),
     );
 
@@ -441,6 +461,9 @@ export class App {
       case 'toggle-notes':
         this.notesPanel.toggle().catch(console.error);
         break;
+      case 'toggle-bookmarks':
+        this.bookmarksPanel.toggle().catch(console.error);
+        break;
       case 'save-terminal': {
         if (!tab) break;
         const content = tab.getScrollbackContent();
@@ -521,6 +544,7 @@ export class App {
     this.commandPalette.dispose();
     this.quickTerminal.dispose();
     this.notesPanel.dispose();
+    this.bookmarksPanel.dispose();
     this.notificationSound.dispose();
     this.tabManager.dispose();
   }
