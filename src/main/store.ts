@@ -7,7 +7,7 @@ import { homedir, userInfo } from 'node:os';
 import { DEFAULTS } from '../shared/constants';
 import { ALLOWED_SHELLS } from './pty-manager';
 import { cleanProjectName } from './projects';
-import type { HistoryEntry, AppSettings, WindowState, SessionState, ProjectInfo } from '../shared/types';
+import type { HistoryEntry, AppSettings, WindowState, SessionState, ProjectInfo, Bookmark } from '../shared/types';
 
 // Keychain-protected random encryption key for electron-store.
 // The key itself is 32 random bytes, stored in userData/key.enc encrypted by
@@ -69,6 +69,7 @@ interface StoreSchema {
   session: SessionState | null;
   notes: string;
   projectNames: Record<string, string>;
+  bookmarks: Bookmark[]; // bookmarks sidebar
 }
 
 const defaults: StoreSchema = {
@@ -97,6 +98,7 @@ const defaults: StoreSchema = {
   session: null,
   notes: '',
   projectNames: {},
+  bookmarks: [], // bookmarks sidebar
 };
 
 let store: ElectronStore<StoreSchema> | null = null;
@@ -331,6 +333,19 @@ export function setProjectName(project: ProjectInfo, rawName: string): Record<st
   getStore().set('projectNames', names);
   return names;
 }
+
+// --- Bookmarks (sidebar of projects + artifact links) ---
+// The list arrives already validated (main/bookmarks.ts), so these only guard
+// the stored shape.
+export function getBookmarks(): Bookmark[] {
+  const list = getStore().get('bookmarks', []);
+  return Array.isArray(list) ? list : [];
+}
+
+export function setBookmarks(list: Bookmark[]): void {
+  getStore().set('bookmarks', list);
+}
+// --- end bookmarks ---
 
 export function getWindowState(): WindowState {
   return getStore().get('windowState', defaults.windowState);

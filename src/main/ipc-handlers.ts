@@ -7,6 +7,7 @@ import { IPC } from '../shared/constants';
 import { PtyManager } from './pty-manager';
 import { isSafeAbsolutePath, resolveProject } from './projects';
 import * as store from './store';
+import { validateBookmarks } from './bookmarks'; // bookmarks sidebar
 import type { PtyCreateOptions, RenderSnapshot, SessionState } from '../shared/types';
 
 /** Open an http(s) URL in the default browser. Anything else — other schemes
@@ -300,6 +301,30 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
       if (!win.isDestroyed()) win.webContents.send(IPC.PROJECT_NAMES_CHANGED, names);
     }
   });
+
+  // --- Bookmarks ---
+  // The sidebar sends its whole list on every change (add, rename, move,
+  // remove). Main validates each entry, stores what passes, and broadcasts the
+  // stored list so every window's sidebar shows the same bookmarks.
+  ipcMain.handle(IPC.BOOKMARKS_GET, () => {
+    return store.getBookmarks();
+  });
+
+  const bookmarksSetLimiter = new RateLimiter(10);
+  ipcMain.handle(IPC.BOOKMARKS_SET, (_event, list: unknown) => {
+    if (!bookmarksSetLimiter.allow()) {
+      console.warn('[SECURITY] Rate limit exceeded', { channel: IPC.BOOKMARKS_SET });
+      return store.getBookmarks();
+    }
+    const kept = validateBookmarks(list);
+    store.setBookmarks(kept);
+    console.info('[BOOKMARKS] Saved', { count: kept.length });
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) win.webContents.send(IPC.BOOKMARKS_CHANGED, kept);
+    }
+    return kept;
+  });
+  // --- end bookmarks ---
 
   // --- Session restore ---
   ipcMain.handle(IPC.SESSION_GET, () => {

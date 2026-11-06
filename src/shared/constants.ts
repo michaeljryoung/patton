@@ -23,6 +23,13 @@ export const IPC = {
   PROJECT_NAME_SET: 'project:name-set',
   PROJECT_NAMES_CHANGED: 'project:names-changed',
 
+  // --- Bookmarks (left sidebar of projects + artifact links) ---
+  BOOKMARKS_GET: 'bookmarks:get',
+  BOOKMARKS_SET: 'bookmarks:set',
+  BOOKMARKS_CHANGED: 'bookmarks:changed',
+  APP_TOGGLE_BOOKMARKS: 'app:toggle-bookmarks',
+  // --- end bookmarks ---
+
   APP_SETTINGS: 'app:settings',
   APP_TOGGLE_NOTES: 'app:toggle-notes',
   APP_NEW_TAB: 'app:new-tab',
@@ -95,6 +102,12 @@ export const DEFAULTS = {
   // and how many projects' names are stored before new ones are refused.
   PROJECT_NAME_MAX_CHARS: 60,
   PROJECT_NAMES_MAX: 500,
+  // --- Bookmarks sidebar: longest label, most entries, default panel width ---
+  BOOKMARK_LABEL_MAX_CHARS: 60,
+  BOOKMARKS_MAX: 200,
+  BOOKMARKS_PANEL_WIDTH: 220,
+  BOOKMARKS_PANEL_MIN_WIDTH: 160,
+  // --- end bookmarks ---
   // Quick-terminal global hotkey. Configurable via the `globalHotkey` setting;
   // this is the fallback used by main.ts and shown in Settings when unset.
   GLOBAL_HOTKEY: 'Control+`',
