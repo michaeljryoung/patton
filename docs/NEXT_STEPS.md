@@ -38,7 +38,7 @@ flowchart TD
     compose_reason[report why compose is not default]:::done
     compose_default[compose-first mode + toggle]:::done
     merge_release[merge, review, release v1.11.0]:::done
-    release_v1_12[release v1.12.0: look + compose-first]:::live
+    release_v1_12[release v1.12.0: look + compose-first]:::done
   end
   hook_script --> parked_state
   osc777_parse --> parked_state
@@ -96,7 +96,7 @@ flowchart TD
 | `look_implement` | Restyle tokens, tab bar, sidebar, compose, dialogs per the pick; terminal themes untouched | done | `look_pick` | `448d5ed` `5c4941c` `d540d76` · `src/renderer/styles/main.css` tokens · Send button in `editor-input.ts` |
 | `compose_reason` | Report the recorded reason the compose panel is not the default input | done | — | `98a216e` · `0abba75` (ModeDetector removed 2026-03-09; terminal always owns input) |
 | `compose_default` | Compose-first mode for Claude tabs behind a Settings toggle (default on) and a per-tab palette override; Enter/arrows/Tab/Esc pass through from an empty box, Esc hands focus over from a draft | done | `compose_reason`, `hook_script` | `cb38c2c` `6258544` `cd5fc68` `8af2355` · `src/renderer/components/pane.ts::canTakeKeyboard` · Settings toggle `composeFirst` |
-| `release_v1_12` | Push the afternoon's commits, CI release v1.12.0 on macos-15, cask green, checksum verified | live | `compose_default`, `look_implement`, `merge_release` | — |
+| `release_v1_12` | Push the afternoon's commits, CI release v1.12.0 on macos-15, cask green, checksum verified | done | `compose_default`, `look_implement`, `merge_release` | tag `v1.12.0` (run 42209891435; cask 1.12.0, sha `5495ad3f…` matches the DMG) |
 | `merge_release` | Merge `feat/image-paste` and `feat/bookmarks` into main, code review, `npm run lint && npm run package`, release v1.11.0, Homebrew step green | done | `parked_state`, `wake_yellow`, `hook_install`, `paste_thumbnail`, `bookmark_open` | tag `v1.11.0` (release run 42203278111, macos-15; cask 1.11.0 pushed by CI) |
 <!-- MAP:END -->
 
