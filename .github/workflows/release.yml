@@ -12,7 +12,7 @@ jobs:
   release:
     # Skip [no-release] commits
     if: "!contains(github.event.head_commit.message, '[no-release]')"
-    runs-on: macos-14
+    runs-on: macos-15
     permissions:
       contents: write
     steps:
