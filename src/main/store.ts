@@ -90,6 +90,7 @@ const defaults: StoreSchema = {
     shellIntegration: true,
     renderer: DEFAULTS.RENDERER,
     composeFirst: DEFAULTS.COMPOSE_FIRST,
+    confirmMultilinePaste: DEFAULTS.CONFIRM_MULTILINE_PASTE,
   },
   windowState: {
     width: 900,
@@ -240,6 +241,10 @@ export function setSettings(partial: Partial<AppSettings>): void {
 
   if (partial.copyOnSelect !== undefined) {
     validated.copyOnSelect = !!partial.copyOnSelect;
+  }
+
+  if (partial.confirmMultilinePaste !== undefined) {
+    validated.confirmMultilinePaste = !!partial.confirmMultilinePaste;
   }
 
   if (partial.globalHotkey !== undefined) {

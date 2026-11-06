@@ -112,6 +112,9 @@ export const DEFAULTS = {
   STARTUP_COMMAND: '' as const,
   // Compose-first in Claude Code tabs (Settings, per tab from the palette).
   COMPOSE_FIRST: true,
+  // Multi-line paste confirmation: off since Michael's dictation (pasted text)
+  // tripped it on every message (2026-11-06).
+  CONFIRM_MULTILINE_PASTE: false,
   MAX_PANES_PER_TAB: 5,
   // Notes scratchpad: max stored characters (a generous ~1 MB cap so a runaway
   // paste can't bloat the encrypted config file) and the panel's default width.

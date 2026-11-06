@@ -8,6 +8,7 @@ import { HistoryManager } from '../services/history-manager';
 import { FileLinkProvider } from '../services/file-link-provider';
 import { rlog } from '../services/renderer-logger';
 import { stripPasteControls } from '../services/paste-sanitize';
+import { shouldConfirmMultilinePaste } from '../services/paste-confirm';
 import { PATTON_QUOTES } from '../../shared/constants';
 import { shortcutKeys } from '../../shared/shortcuts';
 
@@ -877,7 +878,8 @@ export class Pane {
     for (const entry of [...this.pasteChips]) this.removePasteChip(entry);
   }
 
-  /** Sanitize pasted text and confirm multi-line pastes before pasting into the terminal */
+  /** Sanitize pasted text and, if the setting asks for it, confirm multi-line
+   *  pastes before pasting into the terminal. */
   private async safePaste(raw: string): Promise<void> {
     if (this.ptyId === null || !raw) return;
     // Strip dangerous control characters (keep \n, \t, \r, printable)
@@ -886,8 +888,15 @@ export class Pane {
 
     const lines = sanitized.split(/\r\n|\r|\n/);
     if (lines.length >= 3) {
-      const confirmed = await this.pasteDialog.confirm(sanitized, lines.length);
-      if (!confirmed || this.disposed || this.ptyId === null) return;
+      const ask = shouldConfirmMultilinePaste();
+      rlog('info', '[PASTE] multi-line text', {
+        pane: this.id, lines: lines.length, confirm: ask,
+        bracketed: this.terminalView.terminal.modes.bracketedPasteMode,
+      });
+      if (ask) {
+        const confirmed = await this.pasteDialog.confirm(sanitized, lines.length);
+        if (!confirmed || this.disposed || this.ptyId === null) return;
+      }
     }
     // xterm's own paste: converts newlines and keeps bracketed-paste mode, so
     // Claude Code sees one paste, not Enter presses. Never pty.write pasted text.

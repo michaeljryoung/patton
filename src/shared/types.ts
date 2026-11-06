@@ -45,6 +45,9 @@ export interface AppSettings {
    *  panel open and focused. Absent in settings saved before it existed, so
    *  read it as `!== false` (on by default). */
   composeFirst: boolean;
+  /** Ask before pasting 3+ lines into the terminal. Absent in settings saved
+   *  before it existed, so read it as `=== true` (off by default). */
+  confirmMultilinePaste: boolean;
 }
 
 export interface SessionPaneState {

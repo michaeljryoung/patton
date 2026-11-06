@@ -31,7 +31,7 @@ Patton implements defense-in-depth for a desktop Electron application:
 - Navigation to external URLs is blocked
 - `window.open` is denied
 - URL validation: WebLinksAddon only opens `http://` and `https://` links
-- Paste sanitization: control characters stripped, multi-line pastes require confirmation (a capture-phase paste listener runs before xterm's own, which stops propagation; confirmed text goes in through `terminal.paste()`, keeping bracketed paste)
+- Paste sanitization: control characters stripped; multi-line pastes (3+ lines) ask first only when Settings → "Confirm multi-line pastes" is on (off by default since v1.13.1: dictation tools paste their text, so the dialog fired on every dictated message). With it off, a shell without bracketed paste (macOS's built-in bash 3.2) runs each pasted line as it arrives; zsh, bash 5.1+ and Claude Code hold the paste until Enter. Pastes go through a capture-phase paste listener runs before xterm's own, which stops propagation; confirmed text goes in through `terminal.paste()`, keeping bracketed paste)
 
 ### Data Security
 - Settings stored via electron-store with machine-specific encryption key (SHA-256 of hostname + username)

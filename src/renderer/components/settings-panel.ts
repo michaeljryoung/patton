@@ -119,6 +119,14 @@ export class SettingsPanel {
             </label>
             <span class="settings-hint">Keeps the compose panel open and focused while Claude Code runs. In an empty box, Esc (which interrupts a running reply), Enter, Tab and the arrows go to Claude; with a draft, Esc hands the keyboard to Claude and keeps the draft.</span>
           </div>
+          <div class="settings-group settings-group-toggle">
+            <label class="settings-label" for="setting-confirm-multiline-paste">Confirm multi-line pastes</label>
+            <label class="settings-toggle">
+              <input type="checkbox" id="setting-confirm-multiline-paste" />
+              <span class="settings-toggle-slider"></span>
+            </label>
+            <span class="settings-hint">Asks before pasting 3 or more lines into the terminal. Claude Code, zsh and bash 5.1+ take a paste as one block that waits for Enter; a shell without bracketed paste (macOS's built-in bash 3.2) runs each pasted line as it arrives.</span>
+          </div>
           <div class="settings-group">
             <label class="settings-label" for="setting-opacity">Window Opacity</label>
             <div class="settings-range-row">
@@ -241,6 +249,11 @@ export class SettingsPanel {
       this.saveAndNotify({ composeFirst: composeFirstInput.checked });
     });
 
+    const confirmPasteInput = this.overlay.querySelector('#setting-confirm-multiline-paste') as HTMLInputElement;
+    listen(confirmPasteInput, 'change', () => {
+      this.saveAndNotify({ confirmMultilinePaste: confirmPasteInput.checked });
+    });
+
     const soundTypeInput = this.overlay.querySelector('#setting-notification-sound-type') as HTMLSelectElement;
     listen(soundTypeInput, 'change', () => {
       if (isNotificationSoundType(soundTypeInput.value)) {
@@ -352,6 +365,7 @@ export class SettingsPanel {
     (this.overlay.querySelector('#setting-notification-sound-type') as HTMLSelectElement).value = settings.notificationSoundType || 'chime';
     (this.overlay.querySelector('#setting-copy-on-select') as HTMLInputElement).checked = settings.copyOnSelect === true;
     (this.overlay.querySelector('#setting-compose-first') as HTMLInputElement).checked = settings.composeFirst !== false;
+    (this.overlay.querySelector('#setting-confirm-multiline-paste') as HTMLInputElement).checked = settings.confirmMultilinePaste === true;
     (this.overlay.querySelector('#setting-startup-command') as HTMLInputElement).value = settings.startupCommand || '';
     (this.overlay.querySelector('#setting-restore-session') as HTMLInputElement).checked = settings.restoreSession !== false;
     (this.overlay.querySelector('#setting-shell-integration') as HTMLInputElement).checked = settings.shellIntegration !== false;

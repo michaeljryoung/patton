@@ -11,6 +11,7 @@ import { BookmarksPanel } from './bookmarks-panel';
 import { runStartupCommand } from '../services/startup-command';
 import { Onboarding } from './onboarding';
 import { DEFAULTS } from '../../shared/constants';
+import { setConfirmMultilinePaste } from '../services/paste-confirm';
 import { paletteShortcuts, displayKeys } from '../../shared/shortcuts';
 
 export class App {
@@ -82,6 +83,9 @@ export class App {
       }
       if (settings.composeFirst !== undefined) {
         this.tabManager.setComposeFirst(settings.composeFirst);
+      }
+      if (settings.confirmMultilinePaste !== undefined) {
+        setConfirmMultilinePaste(settings.confirmMultilinePaste);
       }
       if (settings.theme !== undefined) {
         this.applyTheme(settings.theme);
@@ -169,6 +173,7 @@ export class App {
     }
     this.tabManager.setCopyOnSelect(settings.copyOnSelect === true);
     this.tabManager.setComposeFirst(settings.composeFirst !== false);
+    setConfirmMultilinePaste(settings.confirmMultilinePaste === true);
     this.settingsPanel.loadSettings(settings);
     if (settings.theme && settings.theme !== 'system') {
       this.applyTheme(settings.theme);
