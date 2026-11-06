@@ -142,7 +142,7 @@ export class Pane {
   //
   // States: WORKING (claudeWorking), SETTLING (claudeStopTimer armed),
   // PARKED (parked set), STOPPED (none). `pendingVerdict` rides alongside.
-  //   verdict      WORKING: store it (replaces an older one; expires 10 s
+  //   verdict      WORKING: store it (replaces an older one; expires 60 s
   //                after arrival). Otherwise: store it and (re)arm the settle
   //                timer at CLAUDE_STOP_SETTLE_MS.
   //   ✳ (from      → SETTLING: CLAUDE_STOP_SETTLE_MS if a verdict is stored,
@@ -160,8 +160,17 @@ export class Pane {
   //                (5 s debounce, shared with every source).
   private hookActive = false;
   private static readonly CLAUDE_STOP_SETTLE_WITH_HOOK_MS = 4000;
-  private static readonly HOOK_VERDICT_TTL_MS = 10_000;
+  // Claude Code shows ✳ only once every Stop hook has finished, so the gap
+  // between this verdict and ✳ is the slowest other Stop hook. On Michael's
+  // setup (closing-block-gate, source-critic) it measured 4.5–31 s on
+  // 2026-11-06; at 10 s, 19 stops fell through to the title path and 2 of
+  // those went green while the hook had reported background work. A stop that
+  // another hook blocks gets its verdict replaced by the next stop's, so the
+  // TTL only bounds a turn that ends with no Stop hook at all (Esc, an API
+  // error), where a stale verdict could park instead of alerting.
+  private static readonly HOOK_VERDICT_TTL_MS = 60_000;
   private pendingVerdict: ParkedInfo | null = null;
+  private pendingVerdictAtMs = 0;
   private pendingVerdictTimer: ReturnType<typeof setTimeout> | null = null;
   private parked: ParkedInfo | null = null;
   // `wake` (Michael's zsh function) titles the pane exactly WAKE while it
@@ -224,10 +233,11 @@ export class Pane {
 
   /** ✳ has held for the settle: apply the stored verdict, else the title path. */
   private settleClaudeStop(): void {
+    const verdictAgeMs = Date.now() - this.pendingVerdictAtMs;
     const verdict = this.takeVerdict();
     if (verdict) {
       const { tasks, crons } = verdict;
-      rlog('info', '[DOT] Hook verdict applied', { pane: this.id, tasks, crons });
+      rlog('info', '[DOT] Hook verdict applied', { pane: this.id, tasks, crons, afterMs: verdictAgeMs });
       if (tasks + crons > 0) {
         rlog('info', '[DOT] Parked', { pane: this.id, tasks, crons, source: 'hook' });
         this.setParked({ tasks, crons });
@@ -249,6 +259,7 @@ export class Pane {
     if (this.pendingVerdictTimer) clearTimeout(this.pendingVerdictTimer);
     const replaced = this.pendingVerdict !== null;
     this.pendingVerdict = { tasks, crons };
+    this.pendingVerdictAtMs = Date.now();
     this.pendingVerdictTimer = setTimeout(() => {
       this.pendingVerdictTimer = null;
       if (!this.pendingVerdict) return;
