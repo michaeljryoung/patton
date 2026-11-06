@@ -7,7 +7,17 @@ export interface EditorInputCallbacks {
   onEscape?: () => void;
   /** Paste with no text on the clipboard — it may hold an image. */
   onImagePaste?: () => void;
+  /**
+   * A key pressed while the box is empty. Return true when the owner has
+   * handled it (compose-first forwards it to the program in the terminal);
+   * the box then does nothing else with it.
+   */
+  onEmptyBoxKey?: (e: KeyboardEvent) => boolean;
+  /** Tallest the textarea may grow, in px (default 200). Read on every resize. */
+  getMaxHeight?: () => number;
 }
+
+export const DEFAULT_COMPOSE_PLACEHOLDER = 'Enter to send, Shift+Enter for newline, Esc to dismiss';
 
 export class EditorInput {
   private textarea: HTMLTextAreaElement;
@@ -24,7 +34,7 @@ export class EditorInput {
 
     this.textarea = document.createElement('textarea');
     this.textarea.className = 'editor-textarea';
-    this.textarea.placeholder = 'Enter to send, Shift+Enter for newline, Esc to dismiss';
+    this.textarea.placeholder = DEFAULT_COMPOSE_PLACEHOLDER;
     this.textarea.rows = 1;
     this.textarea.spellcheck = false;
     this.textarea.autocomplete = 'off';
@@ -58,6 +68,12 @@ export class EditorInput {
     this.disposables.push(() => this.textarea.removeEventListener('paste', pasteHandler as EventListener));
 
     const keydownHandler = (e: KeyboardEvent) => {
+      // Mid-IME composition the box's value isn't settled yet, so never pass through.
+      if (!e.isComposing && this.textarea.value === '' && this.callbacks.onEmptyBoxKey?.(e)) {
+        e.preventDefault();
+        return;
+      }
+
       if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
         e.preventDefault();
         const text = this.textarea.value;
@@ -123,8 +139,29 @@ export class EditorInput {
   }
 
   private autoResize(): void {
+    const cap = this.callbacks.getMaxHeight?.() ?? 200;
     this.textarea.style.height = 'auto';
-    this.textarea.style.height = Math.min(this.textarea.scrollHeight, 200) + 'px';
+    const full = this.textarea.scrollHeight;
+    this.textarea.style.height = Math.min(full, cap) + 'px';
+    // Past the cap the textarea scrolls itself, with a visible scrollbar.
+    this.textarea.style.overflowY = full > cap ? 'auto' : 'hidden';
+  }
+
+  /** Re-apply the height cap (after the cap or the pane's size changed). */
+  refreshSize(): void {
+    this.autoResize();
+  }
+
+  setPlaceholder(text: string): void {
+    this.textarea.placeholder = text;
+  }
+
+  setSpellcheck(enabled: boolean): void {
+    this.textarea.spellcheck = enabled;
+  }
+
+  hasFocus(): boolean {
+    return document.activeElement === this.textarea;
   }
 
   focus(): void {

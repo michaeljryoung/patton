@@ -78,6 +78,24 @@
   background: var(--text-muted);
 }
 
+/* Compose-first (Claude Code tabs): the box is the input while Claude runs.
+   Its height is capped in JS at 40% of the pane (EditorInput getMaxHeight), so
+   the 200px cap above is lifted; a stronger top hairline sets it off from
+   Claude's output; and it is never dimmed, though the shell counts Claude as
+   a running command. */
+.editor-container.compose-first {
+  max-height: none;
+  border-top-color: var(--hover-strong);
+}
+
+.editor-container.compose-first.command-running {
+  opacity: 1;
+}
+
+.editor-container.compose-first.command-running::before {
+  background: var(--accent);
+}
+
 /* --- History search (Ctrl+R) --- */
 .history-search {
   position: absolute;

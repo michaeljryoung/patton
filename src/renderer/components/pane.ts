@@ -1,5 +1,5 @@
 import { TerminalView } from './terminal-view';
-import { EditorInput } from './editor-input';
+import { EditorInput, DEFAULT_COMPOSE_PLACEHOLDER } from './editor-input';
 import { SearchOverlay } from './search-overlay';
 import { HistorySearch } from './history-search';
 import { PasteDialog } from './paste-dialog';
@@ -98,6 +98,22 @@ export class Pane {
   // the setting); the effective mode is override ?? setting.
   private composeFirstSetting = false;
   private composeFirstOverride: boolean | null = null;
+  // Engaged: the box is open because Claude Code runs here in compose-first
+  // mode. Nothing is guessed: Claude's presence is claudeActive (its title
+  // glyph), and the box takes focus only on engage, after a submit, and when
+  // Claude starts working again after a hand-off.
+  private composeFirstEngaged = false;
+  // The user gave the keyboard to the terminal (Esc in a non-empty box, or a
+  // click in the terminal); nothing refocuses the box until Claude's next ◐.
+  private composeHandedOff = false;
+  // The user closed the box (⌘E) while engaged: it stays shut until Claude
+  // exits or the mode changes, instead of reopening at the next title.
+  private composeDismissed = false;
+  private static readonly COMPOSE_FIRST_PLACEHOLDER =
+    "Message Claude · Enter to send · Shift+Enter newline · Esc to Claude's prompt";
+  private static readonly COMPOSE_FIRST_MAX_FRACTION = 0.4; // of the pane's height
+  private static readonly COMPOSE_FIRST_MIN_PX = 60;
+  private static readonly COMPOSE_DEFAULT_MAX_PX = 200;
 
   // --- Pasted-image thumbnails (see pasteImage) ---
   private static readonly PASTE_CHIP_TTL_MS = 10 * 60 * 1000;
@@ -169,6 +185,7 @@ export class Pane {
     // A title with neither glyph means Claude is gone (fish, or shell
     // integration off, never sends the OSC 133 prompt that would clear this).
     this.claudeActive = Pane.CLAUDE_WORKING.test(title) || Pane.CLAUDE_STOPPED.test(title);
+    this.syncComposeFirst('title');
     if (Pane.CLAUDE_WORKING.test(title)) {
       this.cancelClaudeStop(); // the ✳ was only a flash between turns
       if (this.claudeWorking) return;
@@ -179,6 +196,7 @@ export class Pane {
       this.setParked(null);
       this.clearPasteChips(); // the pasted image has been sent along with the prompt
       this.callbacks.onWorkStarted?.();
+      this.reclaimCompose('work-started');
     } else if (this.claudeWorking) {
       this.claudeWorking = false;
       if (Pane.CLAUDE_STOPPED.test(title)) {
@@ -340,18 +358,47 @@ export class Pane {
     this.editorInput = new EditorInput(this.editorContainer, {
       onSubmit: (command) => {
         this.handleSubmit(command);
-        this.collapseCompose();
+        // Compose-first keeps the box open and focused for the next message.
+        if (!this.composeFirstEngaged) this.collapseCompose();
       },
       onInterrupt: () => {
         this.handleInterrupt();
-        this.collapseCompose();
+        if (!this.composeFirstEngaged) this.collapseCompose();
       },
       onHistoryUp: () => this.historyManager.up(this.editorInput.getValue()),
       onHistoryDown: () => this.historyManager.down(),
       onTab: () => this.handleTab(),
-      onEscape: () => this.collapseCompose(),
+      // Reached only with text in the box when compose-first is engaged (an
+      // empty box's Esc goes to Claude via onEmptyBoxKey): keep the draft and
+      // hand the keyboard to Claude's own prompt.
+      onEscape: () => {
+        if (this.composeFirstEngaged) this.handOffCompose('Escape');
+        else this.collapseCompose();
+      },
       onImagePaste: () => { void this.pasteImage('compose'); },
+      onEmptyBoxKey: (e) => this.forwardEmptyBoxKey(e),
+      getMaxHeight: () => this.composeMaxHeight(),
     });
+
+    // Compose-first: a click in the terminal hands it the keyboard (so the
+    // box mustn't take focus back until Claude's next ◐); a click in the box
+    // takes it back. Capture phase, so this runs before the pane's own
+    // mousedown → onFocus → focus() path reads composeHandedOff.
+    const terminalMouseDown = (e: MouseEvent) => {
+      if (!this.composeFirstEngaged) return;
+      if ((e.target as Element | null)?.closest?.('.search-overlay')) return;
+      this.handOffCompose('click');
+    };
+    this.terminalContainer.addEventListener('mousedown', terminalMouseDown, true);
+    this.disposables.push(() => this.terminalContainer.removeEventListener('mousedown', terminalMouseDown, true));
+    const editorMouseDown = () => {
+      if (this.composeFirstEngaged && this.composeHandedOff) {
+        this.composeHandedOff = false;
+        rlog('info', '[COMPOSE] reclaim', { pane: this.id, reason: 'click' });
+      }
+    };
+    this.editorContainer.addEventListener('mousedown', editorMouseDown, true);
+    this.disposables.push(() => this.editorContainer.removeEventListener('mousedown', editorMouseDown, true));
 
     // Create search overlay
     this.searchOverlay = new SearchOverlay(
@@ -522,6 +569,8 @@ export class Pane {
           const dims = this.terminalView.getDimensions();
           window.patton.pty.resize(this.ptyId, dims.cols, dims.rows);
         }
+        // The box's cap is a share of the pane's height, so follow resizes.
+        if (this.composeFirstEngaged) this.editorInput.refreshSize();
       }, 100);
     });
     resizeObserver.observe(this.terminalContainer);
@@ -620,6 +669,7 @@ export class Pane {
         if (state === 'prompt') {
           this.claudeWorking = false;
           this.claudeActive = false;
+          this.syncComposeFirst('shell-prompt');
           this.cancelClaudeStop();
           if (this.takeVerdict()) rlog('info', '[DOT] Hook verdict dropped: shell prompt', { pane: this.id });
           this.setParked(null);
@@ -640,11 +690,32 @@ export class Pane {
     // Broadcast mode: also write to all other panes in the tab
     const broadcast = this.callbacks.onBroadcastWrite;
 
+    // Compose-first sends a multi-line draft to Claude Code as a bracketed
+    // paste (terminal.paste wraps it in ESC[200~ … ESC[201~ when the program
+    // asked for that, which Claude Code does), so it arrives as one block of
+    // text: typed raw, each newline would be an Enter and send the first line
+    // alone. The Enter follows after a longer gap than a typed line's, so
+    // Claude has finished taking in the paste before the submit arrives.
+    const route: 'paste' | 'type' = this.composeFirstEngaged && command.includes('\n') ? 'paste' : 'type';
+    rlog('info', '[COMPOSE] submit', {
+      pane: this.id, lines: command ? command.split('\n').length : 0, route,
+    });
+
     // Queue submits sequentially to prevent rapid double-submit from dropping the first Enter.
     // Each submit writes text then Enter with a small gap, and the next submit waits for the previous.
     this.submitQueue = this.submitQueue.then(() => new Promise<void>((resolve) => {
       if (this.ptyId === null) { resolve(); return; }
-      if (command) {
+      if (route === 'paste') {
+        this.terminalView.terminal.paste(command);
+        broadcast?.(`\x1b[200~${command.replace(/\r?\n/g, '\r')}\x1b[201~`);
+        setTimeout(() => {
+          if (this.ptyId !== null) {
+            window.patton.pty.write(this.ptyId, '\r');
+            broadcast?.('\r');
+          }
+          resolve();
+        }, 30);
+      } else if (command) {
         window.patton.pty.write(this.ptyId, command);
         broadcast?.(command);
         setTimeout(() => {
@@ -810,6 +881,104 @@ export class Pane {
     rlog('info', '[COMPOSE] first-mode', {
       pane: this.id, setting, override, effective: this.composeFirstEffective,
     });
+    this.syncComposeFirst('mode-change');
+  }
+
+  /** Open or close the compose-first box to match the mode and Claude's presence. */
+  private syncComposeFirst(reason: string): void {
+    // A dismissal (⌘E) lasts until Claude leaves or the mode changes.
+    if (!this.claudeActive || !this.composeFirstEffective || reason === 'mode-change') {
+      this.composeDismissed = false;
+    }
+    const want = this.composeFirstEffective && this.claudeActive && !this.composeDismissed;
+    if (want && !this.composeFirstEngaged) this.engageComposeFirst(reason);
+    else if (!want && this.composeFirstEngaged) this.disengageComposeFirst(reason);
+  }
+
+  private engageComposeFirst(reason: string): void {
+    this.composeFirstEngaged = true;
+    this.composeHandedOff = false;
+    this.editorContainer.classList.add('compose-first');
+    this.editorContainer.classList.remove('collapsed');
+    this.editorInput.setPlaceholder(Pane.COMPOSE_FIRST_PLACEHOLDER);
+    this.editorInput.setSpellcheck(true); // messages to Claude are prose
+    this.editorInput.refreshSize();
+    rlog('info', '[COMPOSE] engage', { pane: this.id, reason });
+    // Only the tab's focused pane takes the keyboard, and never from a dialog.
+    if (this._isFocused && !Pane.isOverlayFocused()) this.editorInput.focus();
+  }
+
+  private disengageComposeFirst(reason: string): void {
+    const hadFocus = this.editorInput.hasFocus();
+    this.composeFirstEngaged = false;
+    this.composeHandedOff = false;
+    this.editorContainer.classList.remove('compose-first');
+    this.editorContainer.classList.add('collapsed'); // the draft stays; ⌘E shows it
+    this.editorInput.setPlaceholder(DEFAULT_COMPOSE_PLACEHOLDER);
+    this.editorInput.setSpellcheck(false);
+    this.editorInput.refreshSize();
+    rlog('info', '[COMPOSE] disengage', { pane: this.id, reason });
+    if (hadFocus) this.terminalView.focus();
+  }
+
+  /** Give the keyboard to the terminal (Claude's own prompt), keeping the draft. */
+  private handOffCompose(key: 'Escape' | 'click'): void {
+    if (!this.composeHandedOff) {
+      this.composeHandedOff = true;
+      rlog('info', '[COMPOSE] handoff', { pane: this.id, key, route: 'focus' });
+    }
+    if (key === 'Escape') this.terminalView.focus(); // a click focuses xterm itself
+  }
+
+  /** Claude started working again: the box takes the keyboard back after a hand-off. */
+  private reclaimCompose(reason: string): void {
+    if (!this.composeFirstEngaged || !this.composeHandedOff) return;
+    this.composeHandedOff = false;
+    rlog('info', '[COMPOSE] reclaim', { pane: this.id, reason });
+    if (this._isFocused && !Pane.isOverlayFocused()) this.editorInput.focus();
+  }
+
+  /**
+   * Compose-first, empty box: navigation and answer keys go to Claude Code as
+   * the bytes xterm would send, so its menus, pickers and question dialogs
+   * work from the box. Returns false for anything the box should handle.
+   */
+  private forwardEmptyBoxKey(e: KeyboardEvent): boolean {
+    if (!this.composeFirstEngaged || this.ptyId === null) return false;
+    if (e.metaKey || e.ctrlKey || e.altKey) return false;
+    const seq = this.composeKeySequence(e);
+    if (seq === null) return false;
+    window.patton.pty.write(this.ptyId, seq);
+    rlog('info', '[COMPOSE] handoff', {
+      pane: this.id, key: e.shiftKey ? `Shift+${e.key}` : e.key, route: 'pty',
+    });
+    return true;
+  }
+
+  private composeKeySequence(e: KeyboardEvent): string | null {
+    // Cursor keys follow DECCKM, as xterm's own keyboard handling does.
+    const cursor = this.terminalView.terminal.modes.applicationCursorKeysMode ? '\x1bO' : '\x1b[';
+    if (e.key === 'Tab') return e.shiftKey ? '\x1b[Z' : '\t'; // Shift+Tab cycles Claude's modes
+    if (e.shiftKey) return null; // Shift+Enter is a newline in the box
+    switch (e.key) {
+      case 'ArrowUp': return cursor + 'A';
+      case 'ArrowDown': return cursor + 'B';
+      case 'ArrowRight': return cursor + 'C';
+      case 'ArrowLeft': return cursor + 'D';
+      case 'Home': return cursor + 'H';
+      case 'End': return cursor + 'F';
+      case 'PageUp': return '\x1b[5~';
+      case 'PageDown': return '\x1b[6~';
+      case 'Enter': return '\r';
+      case 'Escape': return '\x1b';
+      default: return null;
+    }
+  }
+
+  private composeMaxHeight(): number {
+    if (!this.composeFirstEngaged) return Pane.COMPOSE_DEFAULT_MAX_PX;
+    const share = Math.floor(this.element.clientHeight * Pane.COMPOSE_FIRST_MAX_FRACTION);
+    return Math.max(Pane.COMPOSE_FIRST_MIN_PX, share);
   }
 
   isComposeExpanded(): boolean {
@@ -817,11 +986,24 @@ export class Pane {
   }
 
   expandCompose(): void {
+    // ⌘E after dismissing the compose-first box brings compose-first back.
+    if (this.composeFirstEffective && this.claudeActive && !this.composeFirstEngaged) {
+      this.composeDismissed = false;
+      this.engageComposeFirst('expand');
+      this.editorInput.focus();
+      return;
+    }
     this.editorContainer.classList.remove('collapsed');
     this.editorInput.focus();
   }
 
   collapseCompose(): void {
+    if (this.composeFirstEngaged) {
+      this.composeDismissed = true;
+      this.disengageComposeFirst('dismissed');
+      this.terminalView.focus();
+      return;
+    }
     this.editorContainer.classList.add('collapsed');
     this.terminalView.focus();
   }
@@ -849,7 +1031,7 @@ export class Pane {
   }
 
   focus(): void {
-    if (this.isComposeExpanded() && !Pane.isOverlayFocused()) {
+    if (this.isComposeExpanded() && !this.composeHandedOff && !Pane.isOverlayFocused()) {
       this.editorInput.focus();
     } else {
       this.terminalView.focus();
@@ -859,6 +1041,7 @@ export class Pane {
   show(): void {
     this.element.style.display = 'flex';
     this.terminalView.fit();
+    if (this.composeFirstEngaged) this.editorInput.refreshSize(); // capped by the pane's height
   }
 
   hide(): void {
