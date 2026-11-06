@@ -416,7 +416,14 @@ export class BookmarksPanel {
       const heading = document.createElement('div');
       heading.className = 'bookmarks-group-title';
       heading.id = headingId;
-      heading.textContent = group.title;
+      const headingTitle = document.createElement('span');
+      headingTitle.textContent = group.title;
+      // The count is visual: each row is announced on its own.
+      const headingCount = document.createElement('span');
+      headingCount.className = 'bookmarks-group-count';
+      headingCount.setAttribute('aria-hidden', 'true');
+      headingCount.textContent = String(items.length);
+      heading.append(headingTitle, headingCount);
       section.appendChild(heading);
 
       const ul = document.createElement('ul');

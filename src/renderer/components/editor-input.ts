@@ -23,6 +23,8 @@ export const DEFAULT_COMPOSE_PLACEHOLDER = 'Enter to send, Shift+Enter for newli
 
 export class EditorInput {
   private textarea: HTMLTextAreaElement;
+  private sendButton: HTMLButtonElement;
+  private field: HTMLElement;
   private container: HTMLElement;
   private callbacks: EditorInputCallbacks;
   private disposables: (() => void)[] = [];
@@ -31,8 +33,13 @@ export class EditorInput {
     this.container = container;
     this.callbacks = callbacks;
 
-    container.setAttribute('role', 'textbox');
+    // A group, not a textbox: it holds the textarea (the textbox) and Send.
+    container.setAttribute('role', 'group');
     container.setAttribute('aria-label', 'Compose panel');
+
+    this.field = document.createElement('div');
+    this.field.className = 'editor-field';
+    container.appendChild(this.field);
 
     this.textarea = document.createElement('textarea');
     this.textarea.className = 'editor-textarea';
@@ -40,10 +47,29 @@ export class EditorInput {
     this.textarea.rows = 1;
     this.textarea.spellcheck = false;
     this.textarea.autocomplete = 'off';
+    this.textarea.setAttribute('aria-label', 'Compose');
     if (fontSize) {
       this.textarea.style.fontSize = fontSize + 'px';
     }
-    container.appendChild(this.textarea);
+    this.field.appendChild(this.textarea);
+
+    // Send: a click does exactly what Enter does in the box.
+    this.sendButton = document.createElement('button');
+    this.sendButton.type = 'button';
+    this.sendButton.className = 'editor-send';
+    this.sendButton.textContent = 'Send';
+    this.sendButton.setAttribute('aria-label', 'Send');
+    this.sendButton.title = 'Send (Enter)';
+    this.field.appendChild(this.sendButton);
+    // A mouse click mustn't pull focus out of the box (compose-first keeps it there).
+    const sendMouseDown = (e: MouseEvent) => e.preventDefault();
+    const sendClick = () => this.sendLikeEnter();
+    this.sendButton.addEventListener('mousedown', sendMouseDown);
+    this.sendButton.addEventListener('click', sendClick);
+    this.disposables.push(() => {
+      this.sendButton.removeEventListener('mousedown', sendMouseDown);
+      this.sendButton.removeEventListener('click', sendClick);
+    });
 
     // Auto-resize textarea to content
     const inputHandler = () => this.autoResize();
@@ -82,11 +108,7 @@ export class EditorInput {
 
       if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
         e.preventDefault();
-        const text = this.textarea.value;
-        this.callbacks.onSubmit(text);
-        this.clear();
-        container.classList.add('submitting');
-        setTimeout(() => container.classList.remove('submitting'), 250);
+        this.submit();
         return;
       }
 
@@ -142,6 +164,26 @@ export class EditorInput {
     };
     this.textarea.addEventListener('keydown', keydownHandler);
     this.disposables.push(() => this.textarea.removeEventListener('keydown', keydownHandler));
+  }
+
+  /** Enter's submit: send the box's text, clear it, flash the bar. */
+  private submit(): void {
+    const text = this.textarea.value;
+    this.callbacks.onSubmit(text);
+    this.clear();
+    this.container.classList.add('submitting');
+    setTimeout(() => this.container.classList.remove('submitting'), 250);
+  }
+
+  /**
+   * The Send button: the same path a plain Enter takes in the keydown handler,
+   * including an empty box's Enter going to the program (compose-first).
+   */
+  private sendLikeEnter(): void {
+    if (this.textarea.value === '' && this.callbacks.onEmptyBoxKey?.(new KeyboardEvent('keydown', { key: 'Enter' }))) {
+      return;
+    }
+    this.submit();
   }
 
   private autoResize(): void {
@@ -210,6 +252,6 @@ export class EditorInput {
 
   dispose(): void {
     for (const d of this.disposables) d();
-    this.textarea.remove();
+    this.field.remove();
   }
 }

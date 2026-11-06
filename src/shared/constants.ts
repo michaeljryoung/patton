@@ -124,7 +124,7 @@ export const DEFAULTS = {
   // --- Bookmarks sidebar: longest label, most entries, default panel width ---
   BOOKMARK_LABEL_MAX_CHARS: 60,
   BOOKMARKS_MAX: 200,
-  BOOKMARKS_PANEL_WIDTH: 220,
+  BOOKMARKS_PANEL_WIDTH: 196,
   BOOKMARKS_PANEL_MIN_WIDTH: 160,
   // --- end bookmarks ---
   // Quick-terminal global hotkey. Configurable via the `globalHotkey` setting;
