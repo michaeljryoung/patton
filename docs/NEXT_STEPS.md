@@ -36,7 +36,7 @@ flowchart TD
   subgraph P5["Phase 5 — Typing and release"]
     compose_reason[report why compose is not default]:::done
     compose_default[compose-first mode for Claude tabs]:::blocked
-    merge_release[merge, review, release v1.11.0]:::live
+    merge_release[merge, review, release v1.11.0]:::done
   end
   hook_script --> parked_state
   osc777_parse --> parked_state
@@ -84,7 +84,7 @@ flowchart TD
 | `look_implement` | Restyle tokens, tab bar, sidebar, compose, dialogs per the pick; terminal themes untouched | todo | `look_pick` | — |
 | `compose_reason` | Report the recorded reason the compose panel is not the default input | done | — | `98a216e` · `0abba75` (ModeDetector removed 2026-03-09; terminal always owns input) |
 | `compose_default` | Compose-first mode for Claude tabs, if Michael wants it after the report; hook channel can hand focus back for dialogs | blocked | `compose_reason`, `hook_script` | BLOCKED: Michael's decision |
-| `merge_release` | Merge `feat/image-paste` and `feat/bookmarks` into main, code review, `npm run lint && npm run package`, release v1.11.0, Homebrew step green | live | `signals_verify`, `paste_verify`, `bookmarks_verify` | merges `439d874` `2a7f880`; reviews fixed `43cb3c7` `e778394` `41eb69d` `f703483`; wrapper `067da90`; push + CI pending |
+| `merge_release` | Merge `feat/image-paste` and `feat/bookmarks` into main, code review, `npm run lint && npm run package`, release v1.11.0, Homebrew step green | done | `signals_verify`, `paste_verify`, `bookmarks_verify` | tag `v1.11.0` (release run 42203278111, macos-15; cask 1.11.0 pushed by CI) |
 <!-- MAP:END -->
 
 Last updated: 2026-11-06 (Session 40)
