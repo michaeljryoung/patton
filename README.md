@@ -49,6 +49,8 @@ Then open the app normally. This clears the macOS quarantine attribute entirely.
 - **Always-Passthrough Terminal** -- Full terminal input at all times (xterm.js), no mode switching
 - **Compose Panel** -- Expandable multi-line editor for drafting commands (`Cmd+E`)
 - **Bookmarks** -- Left sidebar of projects and artifact links (`Ctrl+Cmd+B`); a project opens in its own tab with the startup command, or jumps to its tab if one is already open
+- **Image Paste** -- `Cmd+V` with an image on the clipboard sends it to Claude Code (or types a saved PNG's path in a plain shell) and shows a thumbnail chip above the compose bar
+- **Claude Code Awareness** -- Install the Stop hook from Settings → Claude Code and a tab shows a hollow "parked" ring, not the green needs-you dot, while its session waits on a background agent or timer; a pane titled `WAKE` flags its tab yellow
 - **Split Panes** -- Vertical and horizontal splits with drag-to-resize dividers (up to 5 per tab)
 - **Tabs** -- Drag-to-reorder, middle-click close, tab renaming
 - **Command Palette** -- Quick access to all actions via fuzzy search (`Cmd+Shift+P`)

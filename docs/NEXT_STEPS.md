@@ -1,6 +1,93 @@
 # Patton — Next Steps
 
-Last updated: 2026-11-04 (Session 39)
+<!-- MAP:BEGIN -->
+## 🗺 THE MAP — S40: signals, image paste, bookmarks, look
+
+**Goal:** Patton reads Claude Code sessions truthfully (parked ≠ needs you), takes a pasted image with a thumbnail, keeps project and artifact bookmarks in a left sidebar, and gets a look Michael picks from five mocks.
+**Done when:** v1.11.0 is released and, live in it: a Claude tab whose turn ends with a background agent or timer shows "parked" and goes green only at a true stop (synthetic Stop-hook probe + one live run); ⌘V of a clipboard image in a Claude tab reaches Claude and shows a thumbnail; the sidebar activates an open project's tab rather than opening a second and opens an artifact in the browser; five look mocks are published; the compose-default reason is reported.
+**Last verified:** 2026-11-06 (Session 40, after the S40 fix passes)
+
+```mermaid
+flowchart TD
+  subgraph P1["Phase 1 — Attention signals"]
+    hook_script[Stop-hook script, OSC 777 out]:::done
+    osc777_parse[parse OSC 777 in Patton]:::done
+    parked_state[parked vs needs-you state]:::done
+    wake_yellow[WAKE title → yellow flag]:::done
+    hook_install[install hook from Settings]:::done
+    signals_verify[probe + live run]:::live
+  end
+  subgraph P2["Phase 2 — Image paste"]
+    image_paste[⌘V image → Claude]:::done
+    paste_thumbnail[thumbnail chip]:::done
+    paste_verify[live paste check]:::live
+  end
+  subgraph P3["Phase 3 — Bookmarks"]
+    bookmarks_store[persisted bookmarks + IPC]:::done
+    bookmarks_panel[left sidebar panel]:::done
+    bookmark_open[open or activate project; open artifact]:::done
+    bookmarks_verify[live sidebar check]:::live
+  end
+  subgraph P4["Phase 4 — Look"]
+    look_mocks[five look mocks published]:::done
+    look_pick[Michael picks a direction]:::blocked
+    look_implement[restyle chrome per pick]:::todo
+  end
+  subgraph P5["Phase 5 — Typing and release"]
+    compose_reason[report why compose is not default]:::done
+    compose_default[compose-first mode for Claude tabs]:::blocked
+    merge_release[merge, review, release v1.11.0]:::live
+  end
+  hook_script --> parked_state
+  osc777_parse --> parked_state
+  hook_script --> hook_install
+  parked_state --> signals_verify
+  wake_yellow --> signals_verify
+  hook_install --> signals_verify
+  image_paste --> paste_thumbnail
+  paste_thumbnail --> paste_verify
+  bookmarks_store --> bookmarks_panel
+  bookmarks_panel --> bookmark_open
+  bookmark_open --> bookmarks_verify
+  look_mocks --> look_pick
+  look_pick --> look_implement
+  compose_reason --> compose_default
+  hook_script --> compose_default
+  signals_verify --> merge_release
+  paste_verify --> merge_release
+  bookmarks_verify --> merge_release
+  classDef done fill:#1a7f37,color:#fff
+  classDef live fill:#0969da,color:#fff
+  classDef todo fill:#8c959f,color:#fff
+  classDef blocked fill:#cf222e,color:#fff
+  classDef dropped fill:#eaeef2,color:#57606a
+  classDef superseded fill:#eaeef2,color:#57606a
+```
+
+| ID | Task | Status | Depends on | Evidence |
+|----|------|--------|------------|----------|
+| `hook_script` | Stop-hook script shipped in `src/resources`: reads Claude Code's Stop JSON, emits `OSC 777;patton;stop;tasks=N;crons=M` via `terminalSequence` | done | — | `resources/claude-code-stop-hook.sh` · `scripts/probe-stop-hook.sh` green · `a5e7617` · `f703483` |
+| `osc777_parse` | `terminal-view.ts` parses OSC 777 (`patton;…` → state events; `notify;…` → attention) | done | — | `src/renderer/components/terminal-view.ts::registerOscHandler(777)` · `a5e7617` |
+| `parked_state` | Hook verdict parks (tasks/crons > 0: hollow marker, tooltip) or fires needs-you (= 0); parked clears when the title goes ◐; title path stays the fallback; `[DOT]` log names source `hook` | done | `hook_script`, `osc777_parse` | `src/renderer/components/pane.ts::handleHookStop` · `41eb69d` (verdict applied after a settled ✳) |
+| `wake_yellow` | Pane title exactly `WAKE` → automatic yellow flag on the tab (manual flag wins), cleared when the title changes | done | — | `src/renderer/components/pane.ts` WAKE title → `tab.ts` autoFlag · `0d1450c` · ordering `41eb69d` |
+| `hook_install` | Settings → "Install Claude Code hook": merges the Stop entry into `~/.claude/settings.json` (never overwrites); on this Mac wired per the estate guide | done | `hook_script` | `src/main/claude-hook.ts` · `5854a10` · `f703483`; installed on this Mac 2026-11-06 10:25 (backup `~/.claude/settings.json.patton-bak-2026-11-06T10-25-30-362Z`) |
+| `signals_verify` | Real hook fed synthetic Stop JSON (tasks>0, crons>0, both 0); OSC replay into a pane; then live: Claude tab with a background agent parks, goes green at the end; `wake` tab turns yellow | live | `parked_state`, `wake_yellow`, `hook_install` | probe green (14 + ambient + quoted-path cases); installed script run with synthetic stdin; LIVE RUN PENDING: harness green, field-unexercised |
+| `image_paste` | ⌘V with a clipboard image: Claude pane gets Ctrl+V (`\x16`); other panes get the path of a PNG saved under Application Support; IPC reads the clipboard image | done | — | `src/main/clipboard-image.ts` · `src/renderer/components/pane.ts` capture-phase paste · `f7bb954` · `e778394` |
+| `paste_thumbnail` | Chip strip above the compose area: thumbnail, size, ×; clears when Claude starts working or on Esc; Ctrl+V shows it too | done | `image_paste` | `.paste-strip` in `pane.ts` · `src/renderer/styles/editor.css` · `f7bb954` · `e778394` |
+| `paste_verify` | Live: paste a screenshot into a Claude tab, Claude sees `[Image #1]`, the chip shows it | live | `paste_thumbnail` | asar literals present in the 10:25 build; LIVE RUN PENDING: harness green, field-unexercised |
+| `bookmarks_store` | electron-store `bookmarks` (`project` with path, `artifact` with URL), IPC get/set, validated | done | — | `src/main/bookmarks.ts` · `src/main/store.ts` · `1f8eba8` · `43cb3c7` |
+| `bookmarks_panel` | Left docked panel (notes-panel pattern), registry shortcut, add current project / add artifact, rename, remove, reorder; open projects highlighted, active one emphasised | done | `bookmarks_store` | `src/renderer/components/bookmarks-panel.ts` · `f228caf` · `43cb3c7` |
+| `bookmark_open` | Click project: activate the tab already in that project, else new tab at the folder running the startup command; click artifact: open in the browser (https only) | done | `bookmarks_panel` | `bookmarks-panel.ts::open` · `src/renderer/services/startup-command.ts` · `ce7526b` · `43cb3c7` |
+| `bookmarks_verify` | Live: bookmark two projects and an artifact; open, re-click (no second tab), artifact opens | live | `bookmark_open` | asar literals present; LIVE RUN PENDING: harness green, field-unexercised |
+| `look_mocks` | Five directions on one published page, each with Patton's chrome and a Claude session inside; note what Patton controls vs Claude Code | done | — | `docs/mocks/look-directions.html` · published https://claude.ai/code/artifact/f6ab1b78-e193-4e00-940a-594b5a01f5c2 |
+| `look_pick` | Michael picks one (or mixes) | blocked | `look_mocks` | BLOCKED: Michael's pick |
+| `look_implement` | Restyle tokens, tab bar, sidebar, compose, dialogs per the pick; terminal themes untouched | todo | `look_pick` | — |
+| `compose_reason` | Report the recorded reason the compose panel is not the default input | done | — | `98a216e` · `0abba75` (ModeDetector removed 2026-03-09; terminal always owns input) |
+| `compose_default` | Compose-first mode for Claude tabs, if Michael wants it after the report; hook channel can hand focus back for dialogs | blocked | `compose_reason`, `hook_script` | BLOCKED: Michael's decision |
+| `merge_release` | Merge `feat/image-paste` and `feat/bookmarks` into main, code review, `npm run lint && npm run package`, release v1.11.0, Homebrew step green | live | `signals_verify`, `paste_verify`, `bookmarks_verify` | merges `439d874` `2a7f880`; reviews fixed `43cb3c7` `e778394` `41eb69d` `f703483`; wrapper `067da90`; push + CI pending |
+<!-- MAP:END -->
+
+Last updated: 2026-11-06 (Session 40)
 
 CLAUDE.md's `## Next Steps` section points here; this is the canonical list. Items leave only via `[x] DONE — Session N`, `[~] SUPERSEDED — <pointer>`, or `[-] DROPPED: <reason>`. Marked items linger 10 checkpoints, then sweep to `docs/session-archive.md`.
 
@@ -8,6 +95,10 @@ CLAUDE.md's `## Next Steps` section points here; this is the canonical list. Ite
 
 ## Live
 
+- [ ] **S40 live checks** (the three the map waits on; first launch of the installed 1.11.0 build is the test) → `signals_verify` `paste_verify` `bookmarks_verify`. (a) A Claude tab whose turn ends while a background agent runs shows the hollow ring, no sound, and goes green when the session truly stops; `grep '\[DOT\]' ~/Library/Application\ Support/Patton/logs/main.log` shows `stored`/`applied` with source `hook`. Settings → Claude Code should read "Hook installed". (b) Type `wake` in a tab: yellow flag; Ctrl+C: gone. (c) ⌘V a screenshot into a Claude tab: `[Image #1]` in Claude, a thumbnail chip above the compose bar; in a plain shell the PNG's path is typed. (d) ⌃⌘B: bookmark two projects and an artifact; re-clicking an open project activates its tab; the artifact opens in the browser. If any fails, `main.log` has `[DOT]`, `[PASTE]`, `[BOOKMARK]`, `[HOOK]` lines.
+- [ ] **Pick a look direction** → `look_pick`. Five mocks: https://claude.ai/code/artifact/f6ab1b78-e193-4e00-940a-594b5a01f5c2 (Vitrine, Scope, Graphite, Ledger, Phosphor).
+- [ ] **Compose-first mode decision** → `compose_default`. Reason it isn't the default: `98a216e` (2026-03-09). The hook channel can now hand focus to Claude's dialogs (Notification hook `permission_prompt`), so an always-open compose box for Claude tabs with Esc/arrow hand-off is feasible.
+- [ ] **Forge 8 upgrade** (offered). Would remove the need for `scripts/forge-package.sh` under Node 26; CI pins Node 20 either way.
 - [-] DROPPED (2026-11-03, evening): "i dont think we need any of that test, i can just login to other account"; "we know the setup works fine from this switch". Switching accounts is `/login` in Claude Code. Was: **An account per tab, with a switch key** (queued 2026-11-03, not started). Each tab runs Claude Code on a chosen account, a key moves a session to the other account, and both accounts' usage is in view. Switching stays a keypress, never automatic. Test first that a session resumes on the other account (`CLAUDE_CONFIG_DIR` per account sharing setup and history, then `claude --resume`). Today's startup command is one global setting (`src/renderer/components/app.ts:196`), and `~/.claude/launcher.sh` hard-codes `claude` at three launches. Why and when: the private AI Brain exit map, node `patton_account_switch`. *(S38, 2026-11-03: the resume test is planned for the next couple of weeks.)*
 - [ ] **Validate project tab names in real use** (S37). Tabs now default to their project's one-word name (project = nearest git repo, else the top-level `~/Projects` folder; name = last word of the folder, `fantasy-football` → "football"). Double-click still renames one tab, and an **emptied** box now clears that tab's own name; right-click → **Set Default Tab Name for Project…** (labelled "Rename Project…" in v1.10.0) names every tab in the project, in every window, and persists (electron-store `projectNames`). Verified by lint + types + a green build + asar literals + a 29-check script run against real folders — **not driven through a live UI**. Worth exercising: `cd` between projects (the name should follow at once — the cwd is re-read at every shell prompt since `0253530`), split panes in different projects, the empty-box reset on both rename paths, a second window picking up a rename, and that Claude Code's "·" title still raises the attention dot on a project-named tab.
 - [ ] **Validate the S37 green-dot rework in real use** (S37). The dot (plus its sound and "Waiting for you in …" notification) should now light only when a session needs you: a Claude Code tab when Claude stops (finished, or asking something), never while it works; other tabs when a shell command finishes, on a bell, or on a free-text OSC 9. Signal source: Claude Code 2.1.296 titles start ◐/◑ while working, ✳ when stopped (read from its bundled source). If a dot appears while Claude is still working, `grep '\[DOT\]' ~/Library/Application\ Support/Patton/logs/main.log` names the source that fired. Also watch: a Claude update changing those glyphs would silently stop Claude dots (bell/OSC 9 would still work); Claude under tmux keeps a static ✳ title, so no Claude dots there.
@@ -16,7 +107,7 @@ CLAUDE.md's `## Next Steps` section points here; this is the canonical list. Ite
 - [ ] **Confirm the `ditto` install fix holds** (S36). `forge.config.ts` no longer `rm -rf`s `/Applications/Patton.app` before copying, which is what killed a running Patton mid-session. The property that matters — a live app surviving a commit — is **not yet proven**; it needs a running Patton when the post-commit hook fires, and the app was already down when the fix landed. Validates itself on the next mid-session commit. If Patton dies again right after a commit, this is the first suspect.
 - [x] **DONE — Session 37**: **Local builds report the real version.** `forge.config.ts` derives it from `git describe` (`1.10.2`, or `1.10.2+3` after three unreleased commits) for Info.plist and the build's package.json; CI keeps stamping its own. Verified: a build on the v1.10.2 commit reports 1.10.2 in both places, signature valid.
 - [ ] **Dev-dependency CVE pass** (S29). Dev-only audit findings remain (webpack/inquirer/`tmp` via electron-forge tooling) — they don't ship in the app and don't block the `--omit=dev` build gate, so deferred to a deliberate dep-upgrade pass (risky major bumps). Prod tree is clean as of S37 (`fast-uri` re-pinned ^3.1.8). **Note the recurrence pattern**: a prod `overrides` pin is a point-in-time fix — S29 pinned `^3.1.2`; by S36 the advisory range had grown to cover 3.1.3, and by S37 to 3.1.7, each time silently blocking `npm run package` (the post-commit rebuild calls `electron-forge package` directly, so it skips the audit gate and never noticed). Re-check prod advisories at the start of any session that needs a build.
-- [ ] **Revoke the burned `github_pat_` PAT** (security, S28). A fine-grained PAT was pasted into another chat transcript and is now on disk → revoke at https://github.com/settings/personal-access-tokens regardless of which token GitHub's expiry email named. User action only; nothing in Patton's auth path uses it (local push = gh keyring `gho_` OAuth, no expiry).
+- [-] DROPPED (2026-11-06, S40): Michael: "drop". No `github_pat_` token remains on disk (grep of `~/.claude/projects` and `~/.claude/references`, 0 hits, 6 Nov); only GitHub's own token page could show a live one. Was: **Revoke the burned `github_pat_` PAT** (security, S28). A fine-grained PAT was pasted into another chat transcript and is now on disk → revoke at https://github.com/settings/personal-access-tokens regardless of which token GitHub's expiry email named. User action only; nothing in Patton's auth path uses it (local push = gh keyring `gho_` OAuth, no expiry).
 - [x] **DONE — Session 37**: **Validated the S24 double-click links in real use.** `main.log` holds dozens of opens triggered by double-clicks (Aug–Oct), so `event.detail === 2` does fire through xterm's link dispatch. The failures among them were interpretation bugs, fixed S37: bare web addresses (`civitai.com`) opened as missing files, and `~/` paths lost their `~`.
 - [ ] **`/mcp`-auth Enter unresponsiveness — watching brief** (S23). On next recurrence of any Claude Code blocking prompt where Enter appears dead: (1) press Ctrl+C — if it aborts, stdin is flowing, it's a Claude Code bug, stop here. (2) press any letter key — if nothing happens, it's Patton keystroke-delivery; add a dev-toggleable keystroke tracer to `terminal-view.ts` that file-logs every `onKey` event and repro. Notes in `~/.claude/plans/enchanted-sauteeing-moonbeam.md`.
 - [ ] **Validate session 22 changes in real use** — Path A (command-done) verified live. Path B (Claude Code "·" title prefix) **removed S37** — current Claude Code never uses it; the ◐/◑ → ✳ title transition replaced it, and Path A's 3-second-quiet heuristic is gone too (see the S37 dot item above). Path C (OSC 9) still needs observation in everyday Claude Code workflow, now limited to free-text OSC 9. Quit-confirmation dialog still needs a real-world trigger to confirm UX.

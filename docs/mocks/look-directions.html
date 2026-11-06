@@ -1,0 +1,937 @@
+<title>Patton Look Directions</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;600&family=JetBrains+Mono:wght@400;600&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;600&family=Instrument+Sans:wght@400;500;600&family=Share+Tech+Mono&display=swap">
+<style>
+/* Layout: one column review sheet, 1120px max. Each direction = caption above, the window below;
+   windows keep a fixed minimum width and scroll sideways on a phone. Page chrome is quiet so the
+   five mocks carry the colour. */
+:root {
+  --bg: #f3f4f6;
+  --surface: #ffffff;
+  --ink: #17191d;
+  --ink-2: #555a63;
+  --ink-3: #868b95;
+  --line: #d9dce2;
+  --accent: #2457d6;
+  --font-ui: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  --font-mono: 'IBM Plex Mono', 'SF Mono', Menlo, Consolas, 'Courier New', monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #0f1013;
+    --surface: #17181c;
+    --ink: #e6e7ea;
+    --ink-2: #a3a7b0;
+    --ink-3: #6e727b;
+    --line: #2a2c32;
+    --accent: #7ea2ff;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0f1013;
+  --surface: #17181c;
+  --ink: #e6e7ea;
+  --ink-2: #a3a7b0;
+  --ink-3: #6e727b;
+  --line: #2a2c32;
+  --accent: #7ea2ff;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 15px;
+  line-height: 1.5;
+  padding-block: 32px 64px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.page { max-width: 1120px; margin: 0 auto; display: flex; flex-direction: column; gap: 40px; }
+h1 { font-size: 30px; font-weight: 600; letter-spacing: -0.01em; line-height: 1.15; text-wrap: balance; margin: 0; }
+h2 { font-size: 22px; font-weight: 600; letter-spacing: -0.01em; margin: 0; text-wrap: balance; }
+h3 { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-3); margin: 0; }
+p { margin: 0; max-width: 68ch; }
+a { color: var(--accent); }
+code { font-family: var(--font-mono); font-size: 0.92em; }
+.lede { color: var(--ink-2); font-size: 16px; }
+.intro { display: flex; flex-direction: column; gap: 14px; }
+
+/* Who controls what */
+.controls { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.controls > div { background: var(--surface); padding: 16px 18px; display: flex; flex-direction: column; gap: 8px; }
+.controls ul { margin: 0; padding-left: 18px; color: var(--ink-2); font-size: 14px; }
+.controls li { margin: 2px 0; }
+.tints { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 13px; color: var(--ink-2); margin-top: 4px; font-family: var(--font-mono); }
+.tints span { display: inline-flex; align-items: center; gap: 6px; }
+.tints i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; background: var(--s); }
+@media (max-width: 640px) { .controls { grid-template-columns: 1fr; } }
+
+/* Index strip */
+.index { display: flex; flex-wrap: wrap; gap: 8px; }
+.index a { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px 6px 8px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--ink); text-decoration: none; font-size: 14px; font-weight: 500; }
+.index a:hover, .index a:focus-visible { border-color: var(--accent); outline: none; }
+.index .chips { display: flex; gap: 2px; }
+.index .chips i { width: 10px; height: 10px; border-radius: 2px; display: block; background: var(--s); }
+.index small { color: var(--ink-3); font-weight: 400; }
+
+/* Direction sections */
+.dir { display: flex; flex-direction: column; gap: 16px; padding-top: 28px; border-top: 1px solid var(--line); }
+.dir-head { display: flex; gap: 16px; align-items: flex-start; }
+.dir-num { font-family: var(--font-mono); font-size: 13px; color: var(--ink-3); padding-top: 6px; min-width: 20px; }
+.dir-head .idea { color: var(--ink-2); margin-top: 4px; }
+.pending { color: var(--ink-3); font-style: italic; }
+
+.cap { display: grid; grid-template-columns: 1.6fr 1fr; gap: 16px 28px; align-items: start; }
+.changes { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px 16px; margin: 0; }
+.changes dt { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-3); font-weight: 600; }
+.changes dd { margin: 2px 0 0; font-size: 13.5px; color: var(--ink-2); }
+.pal { display: flex; flex-direction: column; gap: 8px; }
+.pal-main { display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: 12px; color: var(--ink-2); font-family: var(--font-mono); }
+.pal-main span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { width: 14px; height: 14px; border-radius: 3px; display: inline-block; background: var(--s); border: 1px solid rgba(128,128,128,0.25); }
+.ansi { display: grid; grid-template-columns: repeat(8, 1fr); gap: 3px; max-width: 260px; }
+.ansi i { display: block; height: 16px; border-radius: 2px; background: var(--s); border: 1px solid rgba(128,128,128,0.2); }
+.ansi-label { font-size: 11px; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.06em; }
+.claude-note { grid-column: 1 / -1; font-size: 13.5px; color: var(--ink-2); max-width: 90ch; }
+@media (max-width: 760px) { .cap { grid-template-columns: 1fr; } }
+
+/* ---- Shared mock structure. Each direction overrides the tokens on its .mock. ---- */
+.frame-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; border-radius: 14px; }
+.mock {
+  min-width: 920px; font-family: var(--ui-font); font-size: 12px; color: var(--c-text);
+  --radius: 6px; --tab-radius: 8px; --win-radius: 10px;
+  --dot-green: #22c55e; --dot-yellow: #eab308;
+}
+.win { background: var(--c-chrome); border: 1px solid var(--c-line); border-radius: var(--win-radius); overflow: hidden; box-shadow: var(--win-shadow, 0 24px 60px rgba(0,0,0,0.35)); display: flex; flex-direction: column; }
+.tabbar { display: flex; align-items: flex-end; height: 38px; background: var(--c-chrome); border-bottom: 1px solid var(--c-line); padding-left: 12px; flex: none; }
+.lights { display: flex; gap: 8px; align-self: center; margin-right: 16px; }
+.lights i { width: 12px; height: 12px; border-radius: 50%; display: block; background: #ff5f57; }
+.lights i:nth-child(2) { background: #febc2e; } .lights i:nth-child(3) { background: #28c840; }
+.tabs { display: flex; flex: 1; height: 100%; align-items: flex-end; min-width: 0; }
+.tab { display: flex; align-items: center; gap: 6px; padding: 0 14px; height: calc(100% - 4px); flex: 1; min-width: 60px; max-width: 170px; color: var(--c-text-2); border-radius: var(--tab-radius) var(--tab-radius) 0 0; position: relative; white-space: nowrap; }
+.tab.active { background: var(--c-active); color: var(--c-text); font-weight: 500; height: calc(100% - 2px); }
+.tab.active::after { content: ''; position: absolute; left: 0; right: 0; bottom: -1px; height: 1px; background: var(--c-active); }
+.tab:not(.active) + .tab:not(.active)::before { content: ''; position: absolute; left: 0; top: 20%; height: 60%; width: 1px; background: var(--c-line); }
+.tab .x { margin-left: auto; color: var(--c-text-3); font-size: 13px; line-height: 1; }
+.tab:not(.active) .x { visibility: hidden; }
+.dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+.dot.needs { background: var(--dot-green); box-shadow: 0 0 2px var(--dot-green), 0 0 8px var(--dot-green); animation: tab-pulse 1.8s ease-in-out infinite; }
+.dot.flag { background: var(--dot-yellow); box-shadow: 0 0 2px var(--dot-yellow), 0 0 8px var(--dot-yellow); }
+.ring { width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid var(--c-text-3); flex: none; box-sizing: border-box; }
+@keyframes tab-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
+.tab-new { padding: 0 12px; height: 100%; display: flex; align-items: center; color: var(--c-text-3); font-size: 18px; }
+.cog { padding: 0 12px; height: 100%; display: flex; align-items: center; color: var(--c-text-2); margin-left: auto; }
+.cog svg { width: 14px; height: 14px; display: block; }
+.body { display: flex; height: 496px; flex: none; }
+.side { width: 190px; flex: none; background: var(--c-surface); border-right: 1px solid var(--c-line); padding: 10px 8px; display: flex; flex-direction: column; gap: 1px; overflow: hidden; }
+.side h4 { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--c-text-3); padding: 2px 8px 8px; margin: 0; }
+.grp { font-size: 10.5px; color: var(--c-text-3); padding: 10px 8px 4px; text-transform: uppercase; letter-spacing: 0.05em; }
+.row { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: var(--radius); color: var(--c-text-2); position: relative; }
+.row .mark { width: 6px; height: 6px; border-radius: 50%; flex: none; background: transparent; border: 1px solid var(--c-text-3); box-sizing: border-box; }
+.row.open .mark { background: var(--c-text-2); border-color: var(--c-text-2); }
+.row.active { background: var(--c-active-row); color: var(--c-text); font-weight: 500; }
+.row.active .mark { background: var(--c-accent); border-color: var(--c-accent); }
+.row .mark.art { border-radius: 1px; }
+.row .k { margin-left: auto; font-size: 10px; color: var(--c-text-3); }
+.term { flex: 1; min-width: 0; background: var(--t-bg); color: var(--t-fg); font-family: var(--mono-font); font-size: 12.5px; line-height: 1.45; padding: 10px 14px; overflow: hidden; position: relative; }
+.term pre { margin: 0; font: inherit; white-space: pre-wrap; word-break: break-word; }
+.term b { font-weight: 700; color: var(--t-fg); }
+.p-cwd { color: var(--a4); } .p-git { color: var(--a5); } .p-ok { color: var(--a2); } .p-dim { color: var(--a8); }
+.cc-in { color: var(--cc-inactive); } .cc-dot { color: var(--cc-success); } .cc-sub { color: var(--cc-inactive); }
+.cc-claude { color: var(--cc-claude); } .cc-perm { color: var(--cc-error); } .cc-box { color: var(--cc-border); }
+.spin::before { content: '◐'; animation: cc-spin 1.92s steps(1, end) infinite; }
+@keyframes cc-spin { 50% { content: '◑'; } }
+.cursor { background: var(--t-cursor); color: var(--t-bg); }
+.notes-toggle { width: 22px; flex: none; background: var(--c-surface); border-left: 1px solid var(--c-line); display: flex; justify-content: center; padding-top: 8px; color: var(--c-text-3); font-size: 12px; }
+.compose { background: var(--c-panel); border-top: 1px solid var(--c-line); position: relative; padding: 8px 12px 8px 16px; flex: none; }
+.compose::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--c-accent); border-radius: 0 2px 2px 0; }
+.compose .typed { font-family: var(--mono-font); font-size: 13px; color: var(--c-text); line-height: 1.4; }
+.compose .hint { font-size: 11px; color: var(--c-text-3); margin-top: 5px; }
+
+/* The other theme, as a strip: a two-tab bar, one terminal line, the named swatches */
+.alt { display: grid; grid-template-columns: minmax(260px, 1.2fr) minmax(220px, 1fr); gap: 14px 20px; align-items: center; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+.alt .alt-label { grid-column: 1 / -1; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-3); font-weight: 600; }
+.alt .mock { min-width: 0; border-radius: 8px; overflow: hidden; border: 1px solid var(--c-line); }
+.alt .tabbar { height: 30px; padding-left: 8px; }
+.alt .tab { padding: 0 10px; font-size: 11px; }
+.alt .term { font-size: 11.5px; padding: 8px 10px; min-height: 64px; }
+.alt .pal-main { gap: 4px 10px; }
+@media (max-width: 640px) { .alt { grid-template-columns: 1fr; } }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; }
+}
+</style>
+
+<div class="page">
+  <div class="intro">
+    <h1>Patton Look Directions</h1>
+    <p class="lede">Five ways Patton could look more modern and high tech. Every mock shows the same window and the same Claude Code session; only the design changes. Pick one, or name the parts of two.</p>
+    <p>Dark mode is the primary view in each. The strip under every window shows that direction's other theme. Window chrome, the Bookmarks sidebar and the compose panel are Patton's to restyle; the terminal shows Claude's output under that direction's palette.</p>
+  </div>
+
+  <div class="controls">
+    <div>
+      <h3>What Patton controls</h3>
+      <ul>
+        <li>Window chrome, tab bar, the Bookmarks and notes sidebars, compose panel, dialogs, settings.</li>
+        <li>In the terminal: background, foreground, the 16 ANSI colours, font, size, line height, padding, cursor.</li>
+      </ul>
+    </div>
+    <div>
+      <h3>What Claude Code controls</h3>
+      <ul>
+        <li>Its own layout and glyphs (<code>⏺</code> <code>⎿</code> <code>◐◑</code> <code>✳</code> <code>⏵⏵</code>), and its <code>/theme</code> setting (dark, light, daltonized variants).</li>
+        <li>Some fixed RGB tints that ignore the terminal palette. A palette changes how Claude's text reads, never its layout.</li>
+      </ul>
+      <div class="tints" aria-label="Claude Code's fixed tints, dark theme, read from the 2.1.32 bundle">
+        <span><i style="--s:rgb(215,119,87)"></i>claude</span>
+        <span><i style="--s:rgb(177,185,249)"></i>permission</span>
+        <span><i style="--s:rgb(78,186,101)"></i>success</span>
+        <span><i style="--s:rgb(255,107,128)"></i>error</span>
+        <span><i style="--s:rgb(153,153,153)"></i>inactive</span>
+      </div>
+    </div>
+  </div>
+
+  <nav class="index" aria-label="Directions">
+    <a href="#vitrine"><span class="chips"><i style="--s:#101420"></i><i style="--s:#4f9cff"></i><i style="--s:#d8dce5"></i></span>Vitrine <small>glass</small></a>
+    <a href="#scope"><span class="chips"><i style="--s:#07080a"></i><i style="--s:#30c5ff"></i><i style="--s:#c9cdd2"></i></span>Scope <small>signal</small></a>
+    <a href="#graphite"><span class="chips"><i style="--s:#1b1c20"></i><i style="--s:#6e79ff"></i><i style="--s:#e3e4e8"></i></span>Graphite <small>linear</small></a>
+    <a href="#ledger"><span class="chips"><i style="--s:#ebe7dd"></i><i style="--s:#1f4bff"></i><i style="--s:#1d1c19"></i></span>Ledger <small>paper</small></a>
+    <a href="#phosphor"><span class="chips"><i style="--s:#0b0c0a"></i><i style="--s:#ffb000"></i><i style="--s:#d6d0bc"></i></span>Phosphor <small>console</small></a>
+  </nav>
+
+  <section class="dir d-vitrine" id="vitrine">
+    <header class="dir-head">
+      <div class="dir-num">1</div>
+      <div><h2>Vitrine</h2><p class="idea">Translucent dark chrome with blur and vibrancy, soft depth, the window reads as part of macOS.</p></div>
+    </header>
+    <style>
+      .d-vitrine .mock {
+        --ui-font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+        --mono-font: 'SF Mono', Menlo, 'IBM Plex Mono', Consolas, monospace;
+        --c-chrome: rgba(22,25,34,0.62); --c-surface: rgba(18,21,29,0.55); --c-panel: rgba(20,23,31,0.72);
+        --c-line: rgba(255,255,255,0.10); --c-text: #e9ecf2; --c-text-2: #aab0bd; --c-text-3: #727a8a;
+        --c-accent: #4f9cff; --c-active: rgba(255,255,255,0.09); --c-active-row: rgba(79,156,255,0.20);
+        --t-bg: rgba(10,12,18,0.80); --t-fg: #d8dce5; --t-cursor: #4f9cff;
+        --a0: #1c1f26; --a1: #ff6b6b; --a2: #5ad67d; --a3: #f2c94c; --a4: #5ea8ff; --a5: #c58fff; --a6: #5bd1e3; --a7: #d9dde6;
+        --a8: #4b5160; --a9: #ff8585; --a10: #7ee69a; --a11: #ffd86b; --a12: #86bfff; --a13: #d6adff; --a14: #8ae2ef; --a15: #ffffff;
+        --cc-claude: rgb(215,119,87); --cc-success: rgb(78,186,101); --cc-error: rgb(255,107,128); --cc-inactive: rgb(153,153,153); --cc-border: rgb(136,136,136);
+        --tab-radius: 7px; --win-radius: 12px; --radius: 6px;
+      }
+      .d-vitrine .frame-scroll { padding: 28px; background: #0b0d16 radial-gradient(60% 80% at 12% 10%, #2a3f8f 0%, transparent 60%), radial-gradient(50% 70% at 88% 20%, #6b2f7a 0%, transparent 60%), radial-gradient(60% 60% at 70% 95%, #0f6b7a 0%, transparent 60%); background-color: #0b0d16; }
+      .d-vitrine .win { backdrop-filter: blur(28px) saturate(1.6); -webkit-backdrop-filter: blur(28px) saturate(1.6); border-color: rgba(255,255,255,0.16); box-shadow: 0 30px 80px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.10); }
+      .d-vitrine .tab.active::after { display: none; }
+      .d-vitrine .tab.active { box-shadow: inset 0 1px 0 rgba(255,255,255,0.14); }
+      .d-vitrine .row.active { box-shadow: inset 0 0 0 1px rgba(79,156,255,0.25); }
+      .d-vitrine .alt .mock { background: linear-gradient(120deg, #dfe8ff, #f3e6f2 55%, #e2f3ea); }
+    </style>
+    <div class="cap">
+      <dl class="changes">
+        <div><dt>Chrome</dt><dd>Tab bar, sidebars and compose panel become frosted panes over the desktop (Electron <code>vibrancy: 'under-window'</code>). The terminal pane stays the most opaque part, 80%, so text keeps its contrast. A 1 px inner highlight on the window edge.</dd></div>
+        <div><dt>Radii</dt><dd>Window 12 px, tabs 7 px, sidebar rows 6 px. Softer than today's 8 px tab corners, no sharp edges anywhere.</dd></div>
+        <div><dt>Spacing</dt><dd>Unchanged from today: 38 px bar, 14 px tab padding, 5 × 8 px sidebar rows. The depth does the work, not the gaps.</dd></div>
+        <div><dt>Type</dt><dd>SF Pro 12 for chrome, SF Mono 12.5 in the terminal. Nothing new to bundle.</dd></div>
+        <div><dt>Motion</dt><dd>Tab and row selection cross-fade in 150 ms; the blur follows whatever is behind the window as you drag it. Dot pulse as now.</dd></div>
+      </dl>
+      <div class="pal">
+        <div class="pal-main">
+          <span><i class="sw" style="--s:#161922"></i>chrome</span>
+          <span><i class="sw" style="--s:#12151d"></i>surface</span>
+          <span><i class="sw" style="--s:#4f9cff"></i>accent</span>
+          <span><i class="sw" style="--s:#0c0e14"></i>term bg</span>
+          <span><i class="sw" style="--s:#d8dce5"></i>term fg</span>
+        </div>
+        <div class="ansi-label">16 ANSI</div>
+        <div class="ansi">
+          <i style="--s:#1c1f26"></i><i style="--s:#ff6b6b"></i><i style="--s:#5ad67d"></i><i style="--s:#f2c94c"></i><i style="--s:#5ea8ff"></i><i style="--s:#c58fff"></i><i style="--s:#5bd1e3"></i><i style="--s:#d9dde6"></i>
+          <i style="--s:#4b5160"></i><i style="--s:#ff8585"></i><i style="--s:#7ee69a"></i><i style="--s:#ffd86b"></i><i style="--s:#86bfff"></i><i style="--s:#d6adff"></i><i style="--s:#8ae2ef"></i><i style="--s:#ffffff"></i>
+        </div>
+      </div>
+      <p class="claude-note">Claude under it: the orange and permission blue sit comfortably on blue-black glass. Its inactive grey (153,153,153) only keeps 4.5:1 while the terminal pane stays near-opaque, which is why the translucency stops at the terminal edge. Dark <code>/theme</code>, as now.</p>
+    </div>
+    <div class="frame-scroll">
+      <div class="mock">
+        <div class="win">
+          <div class="tabbar">
+            <div class="lights"><i></i><i></i><i></i></div>
+            <div class="tabs">
+              <div class="tab active">finance<span class="x">×</span></div>
+              <div class="tab"><i class="dot needs"></i>patton<span class="x">×</span></div>
+              <div class="tab">rimworld<span class="x">×</span></div>
+              <div class="tab"><i class="dot flag"></i>wake<span class="x">×</span></div>
+              <div class="tab"><i class="ring"></i>voice<span class="x">×</span></div>
+              <div class="tab-new">+</div>
+            </div>
+            <div class="cog"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></div>
+          </div>
+          <div class="body">
+            <aside class="side">
+              <h4>Bookmarks</h4>
+              <div class="grp">Projects</div>
+              <div class="row active open"><i class="mark"></i>finance<span class="k">open</span></div>
+              <div class="row open"><i class="mark"></i>patton<span class="k">open</span></div>
+              <div class="row"><i class="mark"></i>rimworld</div>
+              <div class="row"><i class="mark"></i>voice</div>
+              <div class="grp">Artifacts</div>
+              <div class="row"><i class="mark art"></i>Net worth page</div>
+              <div class="row"><i class="mark art"></i>Deck v3</div>
+            </aside>
+            <div class="term"><pre><span class="p-cwd">~/Projects/finance</span> <span class="p-git">main</span> <span class="p-ok">❯</span> claude
+
+<span class="cc-in">&gt; why did ⌘W on the last tab quit without asking? read pane.ts before you answer</span>
+
+<span class="cc-dot">⏺</span> <b>Read</b>(src/renderer/components/pane.ts)
+  <span class="cc-sub">⎿  Read 120 lines</span>
+
+<span class="cc-dot">⏺</span> <b>Read</b>(src/main/main.ts)
+  <span class="cc-sub">⎿  Read 64 lines</span>
+
+<span class="cc-dot">⏺</span> The close guard only asks while the window's PTYs are alive. Closing the last
+  tab tore its PTY down before window.close() ran, so under Electron 44 the guard
+  saw an empty window and let it go. Handing the close to the main guard untouched
+  makes the prompt deterministic.
+
+  <b>## Open</b>
+
+  <b>Needs you</b> — decisions only you can make.
+  1. <b>Ship this as v1.10.1 now.</b> Options: now (one small release) / with the
+     OSC 8 work (one bigger one). Default: now.
+
+<span class="cc-claude"><span class="spin"></span> Pondering…</span> <span class="cc-sub">(esc to interrupt)</span>
+<span class="cc-box">╭──────────────────────────────────────────────────────────────────────╮
+│</span> &gt; <span class="cursor"> </span><span class="cc-box">                                                                 │
+╰──────────────────────────────────────────────────────────────────────╯</span>
+  <span class="cc-perm">⏵⏵ bypass permissions on</span> <span class="cc-sub">· 42% context</span></pre></div>
+            <div class="notes-toggle">‹</div>
+          </div>
+          <div class="compose">
+            <div class="typed">ship it as v1.10.1, push, and watch the release come back</div>
+            <div class="hint">Enter to send, Shift+Enter for newline, Esc to dismiss</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="alt">
+      <span class="alt-label">Light mode</span>
+      <div class="mock" style="--c-chrome:rgba(246,247,250,0.72); --c-surface:rgba(240,242,246,0.7); --c-panel:rgba(246,247,250,0.8); --c-line:rgba(0,0,0,0.09); --c-text:#1b1e26; --c-text-2:#555b68; --c-text-3:#8a909c; --c-accent:#0a6cff; --c-active:rgba(255,255,255,0.88); --c-active-row:rgba(10,108,255,0.14); --t-bg:rgba(255,255,255,0.86); --t-fg:#23262e; --t-cursor:#0a6cff; --a2:#1f8f3f; --a4:#0a6cff; --a5:#8a3fc9; --a8:#8a909c; --cc-inactive:rgb(102,102,102); --cc-success:rgb(44,122,57); --cc-error:rgb(171,43,63); --cc-border:rgb(153,153,153);">
+        <div class="tabbar">
+          <div class="lights"><i></i><i></i><i></i></div>
+          <div class="tabs">
+            <div class="tab active">finance</div>
+            <div class="tab"><i class="dot needs"></i>patton</div>
+            <div class="tab"><i class="ring"></i>voice</div>
+          </div>
+        </div>
+        <div class="term"><pre><span class="p-cwd">~/Projects/finance</span> <span class="p-git">main</span> <span class="p-ok">❯</span> claude
+<span class="cc-dot">⏺</span> <b>Read</b>(src/renderer/components/pane.ts)
+  <span class="cc-sub">⎿  Read 120 lines</span></pre></div>
+      </div>
+      <div class="pal-main">
+        <span><i class="sw" style="--s:#f3f4f8"></i>chrome</span>
+        <span><i class="sw" style="--s:#eceef3"></i>surface</span>
+        <span><i class="sw" style="--s:#0a6cff"></i>accent</span>
+        <span><i class="sw" style="--s:#ffffff"></i>term bg</span>
+        <span><i class="sw" style="--s:#23262e"></i>term fg</span>
+        <span><i class="sw" style="--s:#1f8f3f"></i>green</span>
+        <span><i class="sw" style="--s:#8a3fc9"></i>magenta</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="dir d-scope" id="scope">
+    <header class="dir-head">
+      <div class="dir-num">2</div>
+      <div><h2>Scope</h2><p class="idea">Near-black, one neon accent, hairline borders and monospace UI type: an instrument panel.</p></div>
+    </header>
+    <style>
+      .d-scope .mock {
+        --ui-font: 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;
+        --mono-font: 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace;
+        --c-chrome: #07080a; --c-surface: #090a0d; --c-panel: #0a0b0e; --c-line: #1c1f24;
+        --c-text: #e2e6ea; --c-text-2: #8f97a1; --c-text-3: #565d67;
+        --c-accent: #30c5ff; --c-glow: rgba(48,197,255,0.45); --c-active: #0d0f13; --c-active-row: rgba(48,197,255,0.07);
+        --t-bg: #07080a; --t-fg: #c9cdd2; --t-cursor: #30c5ff;
+        --a0: #15181b; --a1: #ff4d6d; --a2: #3ddc84; --a3: #ffd23f; --a4: #30c5ff; --a5: #d873ff; --a6: #2ee6d6; --a7: #c9cdd2;
+        --a8: #4d535a; --a9: #ff7a93; --a10: #6ff0a5; --a11: #ffe175; --a12: #7ad8ff; --a13: #e69dff; --a14: #7bf0e6; --a15: #ffffff;
+        --cc-claude: rgb(215,119,87); --cc-success: rgb(78,186,101); --cc-error: rgb(255,107,128); --cc-inactive: rgb(153,153,153); --cc-border: rgb(136,136,136);
+        --tab-radius: 0px; --win-radius: 4px; --radius: 2px; --win-shadow: 0 24px 60px rgba(0,0,0,0.6);
+        font-size: 11.5px; letter-spacing: 0.01em;
+      }
+      .d-scope .tabbar { height: 34px; }
+      .d-scope .tab { padding: 0 12px; height: 100%; }
+      .d-scope .tab.active { height: 100%; box-shadow: inset 0 2px 0 var(--c-accent); color: var(--c-accent); font-weight: 600; text-shadow: 0 0 8px var(--c-glow); background: var(--c-active); }
+      .d-scope .tab.active::after { display: none; }
+      .d-scope .side h4, .d-scope .grp { font-weight: 400; letter-spacing: 0.12em; font-size: 10px; }
+      .d-scope .row { padding: 4px 8px; border-radius: 0; }
+      .d-scope .row.active { box-shadow: inset 2px 0 0 var(--c-accent); font-weight: 600; }
+      .d-scope .row.active .mark { box-shadow: 0 0 6px var(--c-glow); }
+      .d-scope .dot.needs { box-shadow: 0 0 2px var(--dot-green), 0 0 10px var(--dot-green); }
+      .d-scope .compose::before { border-radius: 0; box-shadow: 0 0 8px var(--c-glow); }
+      .d-scope .compose .hint { text-transform: uppercase; letter-spacing: 0.08em; font-size: 10px; }
+      .d-scope .notes-toggle { font-size: 10px; letter-spacing: 0.1em; }
+    </style>
+    <div class="cap">
+      <dl class="changes">
+        <div><dt>Chrome</dt><dd>Near-black on every surface, every edge a 1 px hairline. No fills for state: the active tab carries a 2 px cyan rule along its top, the active row along its left, each with a faint glow. Nothing else lights up.</dd></div>
+        <div><dt>Radii</dt><dd>Window 4 px. Tabs, rows and the compose bar 0 to 2 px. Dots stay round, so they read as lamps.</dd></div>
+        <div><dt>Spacing</dt><dd>Tighter: 34 px tab bar, 12 px tab padding, 4 × 8 px rows. The denser grid is what makes it feel like a panel rather than a document.</dd></div>
+        <div><dt>Type</dt><dd>JetBrains Mono for the chrome as well as the terminal, 11.5 px. Group names and the compose hint set in 10 px uppercase with 0.1 em tracking.</dd></div>
+        <div><dt>Motion</dt><dd>None except the needs-you pulse and a 120 ms glow on focus. No easing anywhere; instruments switch, they don't slide.</dd></div>
+      </dl>
+      <div class="pal">
+        <div class="pal-main">
+          <span><i class="sw" style="--s:#07080a"></i>chrome</span>
+          <span><i class="sw" style="--s:#090a0d"></i>surface</span>
+          <span><i class="sw" style="--s:#30c5ff"></i>accent</span>
+          <span><i class="sw" style="--s:#07080a"></i>term bg</span>
+          <span><i class="sw" style="--s:#c9cdd2"></i>term fg</span>
+        </div>
+        <div class="ansi-label">16 ANSI</div>
+        <div class="ansi">
+          <i style="--s:#15181b"></i><i style="--s:#ff4d6d"></i><i style="--s:#3ddc84"></i><i style="--s:#ffd23f"></i><i style="--s:#30c5ff"></i><i style="--s:#d873ff"></i><i style="--s:#2ee6d6"></i><i style="--s:#c9cdd2"></i>
+          <i style="--s:#4d535a"></i><i style="--s:#ff7a93"></i><i style="--s:#6ff0a5"></i><i style="--s:#ffe175"></i><i style="--s:#7ad8ff"></i><i style="--s:#e69dff"></i><i style="--s:#7bf0e6"></i><i style="--s:#ffffff"></i>
+        </div>
+      </div>
+      <p class="claude-note">Claude under it: the chrome has one colour, so Claude's orange becomes the only warm thing on screen, which is the point. Its permission blue (177,185,249) sits near the cyan accent and reads as the same family. The inactive grey holds 7:1 on this black. Dark <code>/theme</code>.</p>
+    </div>
+    <div class="frame-scroll">
+      <div class="mock">
+        <div class="win">
+          <div class="tabbar">
+            <div class="lights"><i></i><i></i><i></i></div>
+            <div class="tabs">
+              <div class="tab active">finance<span class="x">×</span></div>
+              <div class="tab"><i class="dot needs"></i>patton<span class="x">×</span></div>
+              <div class="tab">rimworld<span class="x">×</span></div>
+              <div class="tab"><i class="dot flag"></i>wake<span class="x">×</span></div>
+              <div class="tab"><i class="ring"></i>voice<span class="x">×</span></div>
+              <div class="tab-new">+</div>
+            </div>
+            <div class="cog"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></div>
+          </div>
+          <div class="body">
+            <aside class="side">
+              <h4>Bookmarks</h4>
+              <div class="grp">Projects</div>
+              <div class="row active open"><i class="mark"></i>finance<span class="k">open</span></div>
+              <div class="row open"><i class="mark"></i>patton<span class="k">open</span></div>
+              <div class="row"><i class="mark"></i>rimworld</div>
+              <div class="row"><i class="mark"></i>voice</div>
+              <div class="grp">Artifacts</div>
+              <div class="row"><i class="mark art"></i>Net worth page</div>
+              <div class="row"><i class="mark art"></i>Deck v3</div>
+            </aside>
+            <div class="term"><pre><span class="p-cwd">~/Projects/finance</span> <span class="p-git">main</span> <span class="p-ok">❯</span> claude
+
+<span class="cc-in">&gt; why did ⌘W on the last tab quit without asking? read pane.ts before you answer</span>
+
+<span class="cc-dot">⏺</span> <b>Read</b>(src/renderer/components/pane.ts)
+  <span class="cc-sub">⎿  Read 120 lines</span>
+
+<span class="cc-dot">⏺</span> <b>Read</b>(src/main/main.ts)
+  <span class="cc-sub">⎿  Read 64 lines</span>
+
+<span class="cc-dot">⏺</span> The close guard only asks while the window's PTYs are alive. Closing the last
+  tab tore its PTY down before window.close() ran, so under Electron 44 the guard
+  saw an empty window and let it go. Handing the close to the main guard untouched
+  makes the prompt deterministic.
+
+  <b>## Open</b>
+
+  <b>Needs you</b> — decisions only you can make.
+  1. <b>Ship this as v1.10.1 now.</b> Options: now (one small release) / with the
+     OSC 8 work (one bigger one). Default: now.
+
+<span class="cc-claude"><span class="spin"></span> Pondering…</span> <span class="cc-sub">(esc to interrupt)</span>
+<span class="cc-box">╭──────────────────────────────────────────────────────────────────────╮
+│</span> &gt; <span class="cursor"> </span><span class="cc-box">                                                                 │
+╰──────────────────────────────────────────────────────────────────────╯</span>
+  <span class="cc-perm">⏵⏵ bypass permissions on</span> <span class="cc-sub">· 42% context</span></pre></div>
+            <div class="notes-toggle">‹</div>
+          </div>
+          <div class="compose">
+            <div class="typed">ship it as v1.10.1, push, and watch the release come back</div>
+            <div class="hint">Enter to send, Shift+Enter for newline, Esc to dismiss</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="alt">
+      <span class="alt-label">Light mode</span>
+      <div class="mock" style="--c-chrome:#f4f5f6; --c-surface:#eceef0; --c-panel:#f4f5f6; --c-line:#d4d8dd; --c-text:#15181b; --c-text-2:#5b626b; --c-text-3:#8c939b; --c-accent:#0077b6; --c-glow:transparent; --c-active:#ffffff; --c-active-row:rgba(0,119,182,0.08); --t-bg:#fafbfc; --t-fg:#1d2126; --t-cursor:#0077b6; --a2:#138a4f; --a4:#0077b6; --a5:#8d3fc2; --a8:#8c939b; --cc-inactive:rgb(102,102,102); --cc-success:rgb(44,122,57); --cc-error:rgb(171,43,63); --cc-border:rgb(153,153,153);">
+        <div class="tabbar">
+          <div class="lights"><i></i><i></i><i></i></div>
+          <div class="tabs">
+            <div class="tab active">finance</div>
+            <div class="tab"><i class="dot needs"></i>patton</div>
+            <div class="tab"><i class="ring"></i>voice</div>
+          </div>
+        </div>
+        <div class="term"><pre><span class="p-cwd">~/Projects/finance</span> <span class="p-git">main</span> <span class="p-ok">❯</span> claude
+<span class="cc-dot">⏺</span> <b>Read</b>(src/renderer/components/pane.ts)
+  <span class="cc-sub">⎿  Read 120 lines</span></pre></div>
+      </div>
+      <div class="pal-main">
+        <span><i class="sw" style="--s:#f4f5f6"></i>chrome</span>
+        <span><i class="sw" style="--s:#eceef0"></i>surface</span>
+        <span><i class="sw" style="--s:#0077b6"></i>accent</span>
+        <span><i class="sw" style="--s:#fafbfc"></i>term bg</span>
+        <span><i class="sw" style="--s:#1d2126"></i>term fg</span>
+        <span><i class="sw" style="--s:#138a4f"></i>green</span>
+        <span><i class="sw" style="--s:#8d3fc2"></i>magenta</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="dir d-graphite" id="graphite">
+    <header class="dir-head">
+      <div class="dir-num">3</div>
+      <div><h2>Graphite</h2><p class="idea">Flat charcoal, 5 px radii, muted secondary text and crisp hierarchy, the Linear and Raycast school.</p></div>
+    </header>
+    <style>
+      .d-graphite .mock {
+        --ui-font: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+        --mono-font: 'Geist Mono', 'SF Mono', Menlo, Consolas, monospace;
+        --c-chrome: #1b1c20; --c-surface: #19191d; --c-panel: #1b1c20; --c-line: #2a2b31; --c-edge: #33353c;
+        --c-text: #e3e4e8; --c-text-2: #9a9ca6; --c-text-3: #6b6e78;
+        --c-accent: #6e79ff; --c-active: #26272e; --c-active-row: #26272e;
+        --t-bg: #141417; --t-fg: #d4d6dc; --t-cursor: #6e79ff;
+        --a0: #1f2125; --a1: #f26d78; --a2: #5ec26a; --a3: #e5b454; --a4: #6f8cff; --a5: #b58cf2; --a6: #52b9c9; --a7: #d0d3d8;
+        --a8: #5a5e67; --a9: #ff8a93; --a10: #7fd88a; --a11: #f2c76d; --a12: #8fa5ff; --a13: #c9a6ff; --a14: #72cfdf; --a15: #ffffff;
+        --cc-claude: rgb(215,119,87); --cc-success: rgb(78,186,101); --cc-error: rgb(255,107,128); --cc-inactive: rgb(153,153,153); --cc-border: rgb(136,136,136);
+        --tab-radius: 5px; --win-radius: 10px; --radius: 5px; --win-shadow: 0 20px 50px rgba(0,0,0,0.45);
+      }
+      .d-graphite .tabbar { align-items: center; }
+      .d-graphite .tabs { align-items: center; gap: 2px; }
+      .d-graphite .tab { height: 26px; padding: 0 10px; flex: 0 1 auto; min-width: 0; border-radius: 5px; }
+      .d-graphite .tab.active { height: 26px; box-shadow: inset 0 0 0 1px var(--c-edge); }
+      .d-graphite .tab.active::after { display: none; }
+      .d-graphite .tab:not(.active) + .tab:not(.active)::before { display: none; }
+      .d-graphite .tab .x { margin-left: 4px; }
+      .d-graphite .side { padding: 12px 8px; gap: 2px; }
+      .d-graphite .row.active { box-shadow: inset 0 0 0 1px var(--c-edge); }
+      .d-graphite .dot.needs { box-shadow: 0 0 0 3px rgba(34,197,94,0.18); }
+      .d-graphite .dot.flag { box-shadow: 0 0 0 3px rgba(234,179,8,0.18); }
+    </style>
+    <div class="cap">
+      <dl class="changes">
+        <div><dt>Chrome</dt><dd>Flat charcoal, no gradients, no glow. Tabs become 26 px pills inside the bar instead of document tabs; the active one is a shade lighter with a 1 px inset edge. The indigo accent appears only on the active project's mark, the compose bar and the cursor.</dd></div>
+        <div><dt>Radii</dt><dd>Window 10 px; tabs, rows, dialogs and inputs all 5 px. One radius, everywhere.</dd></div>
+        <div><dt>Spacing</dt><dd>38 px bar kept, 10 px tab padding, 12 px sidebar inset, 5 × 8 px rows. A 4 px unit throughout, so edges line up across panels.</dd></div>
+        <div><dt>Type</dt><dd>Geist 12 for chrome (500 weight marks the active item, no colour needed), Geist Mono 12.5 in the terminal. Secondary text drops to a muted grey so the hierarchy comes from weight and tone.</dd></div>
+        <div><dt>Motion</dt><dd>150 ms ease-out on anything that changes state. Nothing pulses except the needs-you dot, which trades its glow for a flat 3 px halo.</dd></div>
+      </dl>
+      <div class="pal">
+        <div class="pal-main">
+          <span><i class="sw" style="--s:#1b1c20"></i>chrome</span>
+          <span><i class="sw" style="--s:#19191d"></i>surface</span>
+          <span><i class="sw" style="--s:#6e79ff"></i>accent</span>
+          <span><i class="sw" style="--s:#141417"></i>term bg</span>
+          <span><i class="sw" style="--s:#d4d6dc"></i>term fg</span>
+        </div>
+        <div class="ansi-label">16 ANSI</div>
+        <div class="ansi">
+          <i style="--s:#1f2125"></i><i style="--s:#f26d78"></i><i style="--s:#5ec26a"></i><i style="--s:#e5b454"></i><i style="--s:#6f8cff"></i><i style="--s:#b58cf2"></i><i style="--s:#52b9c9"></i><i style="--s:#d0d3d8"></i>
+          <i style="--s:#5a5e67"></i><i style="--s:#ff8a93"></i><i style="--s:#7fd88a"></i><i style="--s:#f2c76d"></i><i style="--s:#8fa5ff"></i><i style="--s:#c9a6ff"></i><i style="--s:#72cfdf"></i><i style="--s:#ffffff"></i>
+        </div>
+      </div>
+      <p class="claude-note">Claude under it: the orange and the permission tint both sit on the indigo-grey terminal without clashing, and the inactive grey holds 6.6:1 on #141417. This is the smallest step from today's Patton: same layout, same tab bar height, a calmer palette and one radius. Dark <code>/theme</code>.</p>
+    </div>
+    <div class="frame-scroll">
+      <div class="mock">
+        <div class="win">
+          <div class="tabbar">
+            <div class="lights"><i></i><i></i><i></i></div>
+            <div class="tabs">
+              <div class="tab active">finance<span class="x">×</span></div>
+              <div class="tab"><i class="dot needs"></i>patton<span class="x">×</span></div>
+              <div class="tab">rimworld<span class="x">×</span></div>
+              <div class="tab"><i class="dot flag"></i>wake<span class="x">×</span></div>
+              <div class="tab"><i class="ring"></i>voice<span class="x">×</span></div>
+              <div class="tab-new">+</div>
+            </div>
+            <div class="cog"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></div>
+          </div>
+          <div class="body">
+            <aside class="side">
+              <h4>Bookmarks</h4>
+              <div class="grp">Projects</div>
+              <div class="row active open"><i class="mark"></i>finance<span class="k">open</span></div>
+              <div class="row open"><i class="mark"></i>patton<span class="k">open</span></div>
+              <div class="row"><i class="mark"></i>rimworld</div>
+              <div class="row"><i class="mark"></i>voice</div>
+              <div class="grp">Artifacts</div>
+              <div class="row"><i class="mark art"></i>Net worth page</div>
+              <div class="row"><i class="mark art"></i>Deck v3</div>
+            </aside>
+            <div class="term"><pre><span class="p-cwd">~/Projects/finance</span> <span class="p-git">main</span> <span class="p-ok">❯</span> claude
+
+<span class="cc-in">&gt; why did ⌘W on the last tab quit without asking? read pane.ts before you answer</span>
+
+<span class="cc-dot">⏺</span> <b>Read</b>(src/renderer/components/pane.ts)
+  <span class="cc-sub">⎿  Read 120 lines</span>
+
+<span class="cc-dot">⏺</span> <b>Read</b>(src/main/main.ts)
+  <span class="cc-sub">⎿  Read 64 lines</span>
+
+<span class="cc-dot">⏺</span> The close guard only asks while the window's PTYs are alive. Closing the last
+  tab tore its PTY down before window.close() ran, so under Electron 44 the guard
+  saw an empty window and let it go. Handing the close to the main guard untouched
+  makes the prompt deterministic.
+
+  <b>## Open</b>
+
+  <b>Needs you</b> — decisions only you can make.
+  1. <b>Ship this as v1.10.1 now.</b> Options: now (one small release) / with the
+     OSC 8 work (one bigger one). Default: now.
+
+<span class="cc-claude"><span class="spin"></span> Pondering…</span> <span class="cc-sub">(esc to interrupt)</span>
+<span class="cc-box">╭──────────────────────────────────────────────────────────────────────╮
+│</span> &gt; <span class="cursor"> </span><span class="cc-box">                                                                 │
+╰──────────────────────────────────────────────────────────────────────╯</span>
+  <span class="cc-perm">⏵⏵ bypass permissions on</span> <span class="cc-sub">· 42% context</span></pre></div>
+            <div class="notes-toggle">‹</div>
+          </div>
+          <div class="compose">
+            <div class="typed">ship it as v1.10.1, push, and watch the release come back</div>
+            <div class="hint">Enter to send, Shift+Enter for newline, Esc to dismiss</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="alt">
+      <span class="alt-label">Light mode</span>
+      <div class="mock" style="--c-chrome:#f7f7f8; --c-surface:#f2f2f4; --c-panel:#f7f7f8; --c-line:#e1e2e6; --c-edge:#dcdde2; --c-text:#1b1c20; --c-text-2:#5f6270; --c-text-3:#8e919c; --c-accent:#5b63e6; --c-active:#ffffff; --c-active-row:#e9e9ee; --t-bg:#ffffff; --t-fg:#1f2126; --t-cursor:#5b63e6; --a2:#2f9e44; --a4:#4f63e0; --a5:#8b5cf6; --a8:#8e919c; --cc-inactive:rgb(102,102,102); --cc-success:rgb(44,122,57); --cc-error:rgb(171,43,63); --cc-border:rgb(153,153,153);">
+        <div class="tabbar">
+          <div class="lights"><i></i><i></i><i></i></div>
+          <div class="tabs">
+            <div class="tab active">finance</div>
+            <div class="tab"><i class="dot needs"></i>patton</div>
+            <div class="tab"><i class="ring"></i>voice</div>
+          </div>
+        </div>
+        <div class="term"><pre><span class="p-cwd">~/Projects/finance</span> <span class="p-git">main</span> <span class="p-ok">❯</span> claude
+<span class="cc-dot">⏺</span> <b>Read</b>(src/renderer/components/pane.ts)
+  <span class="cc-sub">⎿  Read 120 lines</span></pre></div>
+      </div>
+      <div class="pal-main">
+        <span><i class="sw" style="--s:#f7f7f8"></i>chrome</span>
+        <span><i class="sw" style="--s:#f2f2f4"></i>surface</span>
+        <span><i class="sw" style="--s:#5b63e6"></i>accent</span>
+        <span><i class="sw" style="--s:#ffffff"></i>term bg</span>
+        <span><i class="sw" style="--s:#1f2126"></i>term fg</span>
+        <span><i class="sw" style="--s:#2f9e44"></i>green</span>
+        <span><i class="sw" style="--s:#8b5cf6"></i>magenta</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="dir d-ledger" id="ledger">
+    <header class="dir-head">
+      <div class="dir-num">4</div>
+      <div><h2>Ledger</h2><p class="idea">Light first: warm off-white, ink text, one cobalt accent. Light can be high tech too.</p></div>
+    </header>
+    <style>
+      .d-ledger .mock {
+        --ui-font: 'Instrument Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+        --mono-font: 'IBM Plex Mono', 'SF Mono', Menlo, Consolas, monospace;
+        --c-chrome: #ebe7dd; --c-surface: #f1eee6; --c-panel: #f4f1ea; --c-line: #d8d3c6;
+        --c-text: #1d1c19; --c-text-2: #5e5a50; --c-text-3: #8f8a7d;
+        --c-accent: #1f4bff; --c-active: #fbfaf6; --c-active-row: #e4e0d4;
+        --t-bg: #fbfaf6; --t-fg: #1d1c19; --t-cursor: #1f4bff;
+        --a0: #1d1c19; --a1: #c0392b; --a2: #2e7d32; --a3: #9a6400; --a4: #1f4bff; --a5: #9b2fae; --a6: #0b7f8a; --a7: #e6e2d8;
+        --a8: #6b675e; --a9: #d94a3d; --a10: #3d9a42; --a11: #b57a00; --a12: #4f6bff; --a13: #b24cc4; --a14: #1596a2; --a15: #fbfaf6;
+        --cc-claude: rgb(215,119,87); --cc-success: rgb(44,122,57); --cc-error: rgb(171,43,63); --cc-inactive: rgb(102,102,102); --cc-border: rgb(153,153,153);
+        --tab-radius: 6px; --win-radius: 10px; --radius: 6px; --win-shadow: 0 20px 50px rgba(60,50,20,0.22), 0 0 0 1px rgba(60,50,20,0.06);
+        --ring-green: rgba(34,197,94,0.28); --ring-yellow: rgba(234,179,8,0.3);
+      }
+      .d-ledger .frame-scroll { padding: 26px; background: #d9d4c6; }
+      .d-ledger .win { border-color: #cfc9ba; }
+      .d-ledger .side h4 { color: var(--c-text-2); }
+      .d-ledger .row.active { box-shadow: inset 2px 0 0 var(--c-accent); }
+      .d-ledger .dot.needs { box-shadow: 0 0 0 2px var(--ring-green); }
+      .d-ledger .dot.flag { box-shadow: 0 0 0 2px var(--ring-yellow); }
+      .d-ledger .lights i { opacity: 0.95; }
+    </style>
+    <div class="cap">
+      <dl class="changes">
+        <div><dt>Chrome</dt><dd>Warm off-white chrome, like ledger paper; the active tab is the same paper as the terminal, so page and tab join without a seam. One cobalt accent: the active project's rule, the compose bar, the cursor. Dots lose their glow for a thin tinted ring, because halos go muddy on light.</dd></div>
+        <div><dt>Radii</dt><dd>Window 10 px, tabs 6 px, rows 6 px.</dd></div>
+        <div><dt>Spacing</dt><dd>As today: 38 px bar, 14 px tab padding, 5 × 8 px rows. Light surfaces need no extra air; the contrast carries the hierarchy.</dd></div>
+        <div><dt>Type</dt><dd>Instrument Sans 12 for chrome, IBM Plex Mono 12.5 in the terminal. Ink text #1d1c19, warm secondary greys, never a cold grey on cream.</dd></div>
+        <div><dt>Motion</dt><dd>A 200 ms underline slide between tabs; the dot pulse stays. Everything else is still.</dd></div>
+      </dl>
+      <div class="pal">
+        <div class="pal-main">
+          <span><i class="sw" style="--s:#ebe7dd"></i>chrome</span>
+          <span><i class="sw" style="--s:#f1eee6"></i>surface</span>
+          <span><i class="sw" style="--s:#1f4bff"></i>accent</span>
+          <span><i class="sw" style="--s:#fbfaf6"></i>term bg</span>
+          <span><i class="sw" style="--s:#1d1c19"></i>term fg</span>
+        </div>
+        <div class="ansi-label">16 ANSI</div>
+        <div class="ansi">
+          <i style="--s:#1d1c19"></i><i style="--s:#c0392b"></i><i style="--s:#2e7d32"></i><i style="--s:#9a6400"></i><i style="--s:#1f4bff"></i><i style="--s:#9b2fae"></i><i style="--s:#0b7f8a"></i><i style="--s:#e6e2d8"></i>
+          <i style="--s:#6b675e"></i><i style="--s:#d94a3d"></i><i style="--s:#3d9a42"></i><i style="--s:#b57a00"></i><i style="--s:#4f6bff"></i><i style="--s:#b24cc4"></i><i style="--s:#1596a2"></i><i style="--s:#fbfaf6"></i>
+        </div>
+      </div>
+      <p class="claude-note">Claude under it: this one needs <code>/theme light</code> (or light-daltonized) in Claude Code. Its dark theme's inactive grey (153,153,153) is 2.8:1 on cream and the prompt box all but vanishes; the light theme's values (inactive 102, success 44/122/57, error 171/43/63) are what is shown here. Claude's orange is the same in both themes and reads as a warm accent on paper.</p>
+    </div>
+    <div class="frame-scroll">
+      <div class="mock">
+        <div class="win">
+          <div class="tabbar">
+            <div class="lights"><i></i><i></i><i></i></div>
+            <div class="tabs">
+              <div class="tab active">finance<span class="x">×</span></div>
+              <div class="tab"><i class="dot needs"></i>patton<span class="x">×</span></div>
+              <div class="tab">rimworld<span class="x">×</span></div>
+              <div class="tab"><i class="dot flag"></i>wake<span class="x">×</span></div>
+              <div class="tab"><i class="ring"></i>voice<span class="x">×</span></div>
+              <div class="tab-new">+</div>
+            </div>
+            <div class="cog"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></div>
+          </div>
+          <div class="body">
+            <aside class="side">
+              <h4>Bookmarks</h4>
+              <div class="grp">Projects</div>
+              <div class="row active open"><i class="mark"></i>finance<span class="k">open</span></div>
+              <div class="row open"><i class="mark"></i>patton<span class="k">open</span></div>
+              <div class="row"><i class="mark"></i>rimworld</div>
+              <div class="row"><i class="mark"></i>voice</div>
+              <div class="grp">Artifacts</div>
+              <div class="row"><i class="mark art"></i>Net worth page</div>
+              <div class="row"><i class="mark art"></i>Deck v3</div>
+            </aside>
+            <div class="term"><pre><span class="p-cwd">~/Projects/finance</span> <span class="p-git">main</span> <span class="p-ok">❯</span> claude
+
+<span class="cc-in">&gt; why did ⌘W on the last tab quit without asking? read pane.ts before you answer</span>
+
+<span class="cc-dot">⏺</span> <b>Read</b>(src/renderer/components/pane.ts)
+  <span class="cc-sub">⎿  Read 120 lines</span>
+
+<span class="cc-dot">⏺</span> <b>Read</b>(src/main/main.ts)
+  <span class="cc-sub">⎿  Read 64 lines</span>
+
+<span class="cc-dot">⏺</span> The close guard only asks while the window's PTYs are alive. Closing the last
+  tab tore its PTY down before window.close() ran, so under Electron 44 the guard
+  saw an empty window and let it go. Handing the close to the main guard untouched
+  makes the prompt deterministic.
+
+  <b>## Open</b>
+
+  <b>Needs you</b> — decisions only you can make.
+  1. <b>Ship this as v1.10.1 now.</b> Options: now (one small release) / with the
+     OSC 8 work (one bigger one). Default: now.
+
+<span class="cc-claude"><span class="spin"></span> Pondering…</span> <span class="cc-sub">(esc to interrupt)</span>
+<span class="cc-box">╭──────────────────────────────────────────────────────────────────────╮
+│</span> &gt; <span class="cursor"> </span><span class="cc-box">                                                                 │
+╰──────────────────────────────────────────────────────────────────────╯</span>
+  <span class="cc-perm">⏵⏵ bypass permissions on</span> <span class="cc-sub">· 42% context</span></pre></div>
+            <div class="notes-toggle">‹</div>
+          </div>
+          <div class="compose">
+            <div class="typed">ship it as v1.10.1, push, and watch the release come back</div>
+            <div class="hint">Enter to send, Shift+Enter for newline, Esc to dismiss</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="alt">
+      <span class="alt-label">Dark mode</span>
+      <div class="mock" style="--c-chrome:#1c1b18; --c-surface:#201f1b; --c-panel:#1c1b18; --c-line:#343128; --c-text:#e8e3d6; --c-text-2:#a39e90; --c-text-3:#6f6a5e; --c-accent:#7d9bff; --c-active:#15140f; --c-active-row:#2a2822; --t-bg:#15140f; --t-fg:#e2ddd0; --t-cursor:#7d9bff; --a2:#7fc98a; --a4:#7d9bff; --a5:#c99cf0; --a8:#6f6a5e; --cc-inactive:rgb(153,153,153); --cc-success:rgb(78,186,101); --cc-error:rgb(255,107,128); --cc-border:rgb(136,136,136); --ring-green:rgba(34,197,94,0.35); --ring-yellow:rgba(234,179,8,0.35);">
+        <div class="tabbar">
+          <div class="lights"><i></i><i></i><i></i></div>
+          <div class="tabs">
+            <div class="tab active">finance</div>
+            <div class="tab"><i class="dot needs"></i>patton</div>
+            <div class="tab"><i class="ring"></i>voice</div>
+          </div>
+        </div>
+        <div class="term"><pre><span class="p-cwd">~/Projects/finance</span> <span class="p-git">main</span> <span class="p-ok">❯</span> claude
+<span class="cc-dot">⏺</span> <b>Read</b>(src/renderer/components/pane.ts)
+  <span class="cc-sub">⎿  Read 120 lines</span></pre></div>
+      </div>
+      <div class="pal-main">
+        <span><i class="sw" style="--s:#1c1b18"></i>chrome</span>
+        <span><i class="sw" style="--s:#201f1b"></i>surface</span>
+        <span><i class="sw" style="--s:#7d9bff"></i>accent</span>
+        <span><i class="sw" style="--s:#15140f"></i>term bg</span>
+        <span><i class="sw" style="--s:#e2ddd0"></i>term fg</span>
+        <span><i class="sw" style="--s:#7fc98a"></i>green</span>
+        <span><i class="sw" style="--s:#c99cf0"></i>magenta</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="dir d-phosphor" id="phosphor">
+    <header class="dir-head">
+      <div class="dir-num">5</div>
+      <div><h2>Phosphor</h2><p class="idea">Dense, zero radius, amber and green phosphor accents: a retro-future instrument.</p></div>
+    </header>
+    <style>
+      .d-phosphor .mock {
+        --ui-font: 'Share Tech Mono', 'IBM Plex Mono', Menlo, Consolas, monospace;
+        --mono-font: 'IBM Plex Mono', 'SF Mono', Menlo, Consolas, monospace;
+        --c-chrome: #0d0e0b; --c-surface: #101210; --c-panel: #0d0e0b; --c-line: #262a22;
+        --c-text: #d6d0bc; --c-text-2: #9b9680; --c-text-3: #6b6858;
+        --c-accent: #ffb000; --c-active: #131510; --c-active-row: rgba(255,176,0,0.08);
+        --t-bg: #080907; --t-fg: #d8d2c0; --t-cursor: #ffb000;
+        --a0: #1a1b17; --a1: #ff5c33; --a2: #3cff6e; --a3: #ffb000; --a4: #6aa6ff; --a5: #ff6ad5; --a6: #3fd6c8; --a7: #d8d2c0;
+        --a8: #5a5b50; --a9: #ff7f5c; --a10: #7dff9c; --a11: #ffcc4d; --a12: #8dbfff; --a13: #ff92e0; --a14: #6fe6da; --a15: #fff5dc;
+        --cc-claude: rgb(215,119,87); --cc-success: rgb(78,186,101); --cc-error: rgb(255,107,128); --cc-inactive: rgb(153,153,153); --cc-border: rgb(136,136,136);
+        --dot-green: #3cff6e; --scan: rgba(255,255,255,0.025);
+        --tab-radius: 0px; --win-radius: 0px; --radius: 0px; --win-shadow: 0 0 0 1px #000, 0 24px 60px rgba(0,0,0,0.6);
+        font-size: 11px;
+      }
+      .d-phosphor .tabbar { height: 30px; padding-left: 10px; }
+      .d-phosphor .lights { gap: 6px; margin-right: 12px; }
+      .d-phosphor .lights i { width: 10px; height: 10px; }
+      .d-phosphor .tab { height: 100%; padding: 0 12px; text-transform: uppercase; letter-spacing: 0.08em; font-size: 11px; border-right: 1px solid var(--c-line); }
+      .d-phosphor .tab.active { height: 100%; color: var(--c-accent); background: var(--c-active); box-shadow: inset 0 -2px 0 var(--c-accent); font-weight: 400; }
+      .d-phosphor .tab.active::after { display: none; }
+      .d-phosphor .tab:not(.active) + .tab:not(.active)::before { display: none; }
+      .d-phosphor .tab .x { font-size: 11px; }
+      .d-phosphor .tab-new, .d-phosphor .cog { padding: 0 10px; }
+      .d-phosphor .side { padding: 8px 0; gap: 0; }
+      .d-phosphor .side h4 { letter-spacing: 0.14em; padding: 4px 10px 6px; font-weight: 400; }
+      .d-phosphor .grp { padding: 8px 10px 2px; letter-spacing: 0.12em; }
+      .d-phosphor .row { padding: 3px 10px; border-radius: 0; text-transform: uppercase; letter-spacing: 0.06em; font-size: 11px; }
+      .d-phosphor .row.active { color: var(--c-accent); box-shadow: inset 2px 0 0 var(--c-accent); font-weight: 400; }
+      .d-phosphor .row .mark { border-radius: 0; width: 5px; height: 5px; }
+      .d-phosphor .term { font-size: 12px; line-height: 1.4; background-image: repeating-linear-gradient(0deg, var(--scan) 0 1px, transparent 1px 3px); }
+      .d-phosphor .cursor { animation: ph-blink 1s steps(1, end) infinite; }
+      @keyframes ph-blink { 50% { background: transparent; color: inherit; } }
+      .d-phosphor .notes-toggle { font-size: 10px; }
+      .d-phosphor .compose { padding: 6px 12px 6px 14px; }
+      .d-phosphor .compose::before { border-radius: 0; width: 2px; }
+      .d-phosphor .compose .hint { text-transform: uppercase; letter-spacing: 0.1em; font-size: 10px; }
+    </style>
+    <div class="cap">
+      <dl class="changes">
+        <div><dt>Chrome</dt><dd>A dense black panel. Tabs are 30 px cells divided by hairlines, the active one amber with a 2 px rule along its bottom, like a tuner. Sidebar labels uppercase and tracked. The terminal carries faint 3 px scanlines at 2.5%, enough to feel like glass, not enough to touch the text.</dd></div>
+        <div><dt>Radii</dt><dd>0 everywhere. Dots and the parked ring stay round, so they read as lamps against the straight edges.</dd></div>
+        <div><dt>Spacing</dt><dd>The densest of the five: 30 px bar, 3 × 10 px rows, 12 px terminal type at 1.4 line height. About a fifth more lines on screen than today.</dd></div>
+        <div><dt>Type</dt><dd>Share Tech Mono 11 for chrome, uppercase. IBM Plex Mono 12 in the terminal, because Share Tech has one weight and few glyphs, and Claude's ⏺ ⎿ ◐ need a full mono.</dd></div>
+        <div><dt>Motion</dt><dd>The cursor blinks in steps. Nothing eases; the needs-you dot pulses in phosphor green. That is all.</dd></div>
+      </dl>
+      <div class="pal">
+        <div class="pal-main">
+          <span><i class="sw" style="--s:#0d0e0b"></i>chrome</span>
+          <span><i class="sw" style="--s:#101210"></i>surface</span>
+          <span><i class="sw" style="--s:#ffb000"></i>accent</span>
+          <span><i class="sw" style="--s:#3cff6e"></i>needs you</span>
+          <span><i class="sw" style="--s:#080907"></i>term bg</span>
+          <span><i class="sw" style="--s:#d8d2c0"></i>term fg</span>
+        </div>
+        <div class="ansi-label">16 ANSI</div>
+        <div class="ansi">
+          <i style="--s:#1a1b17"></i><i style="--s:#ff5c33"></i><i style="--s:#3cff6e"></i><i style="--s:#ffb000"></i><i style="--s:#6aa6ff"></i><i style="--s:#ff6ad5"></i><i style="--s:#3fd6c8"></i><i style="--s:#d8d2c0"></i>
+          <i style="--s:#5a5b50"></i><i style="--s:#ff7f5c"></i><i style="--s:#7dff9c"></i><i style="--s:#ffcc4d"></i><i style="--s:#8dbfff"></i><i style="--s:#ff92e0"></i><i style="--s:#6fe6da"></i><i style="--s:#fff5dc"></i>
+        </div>
+      </div>
+      <p class="claude-note">Claude under it: Claude's orange and the amber accent are near neighbours, so the ◐ spinner reads as part of the panel. The flag yellow is a neighbour too, and only its dot shape separates it from the accent; that is the one cost of this direction. Permission blue stands out hard against the warm panel, which for a permission prompt is useful. Dark <code>/theme</code>.</p>
+    </div>
+    <div class="frame-scroll">
+      <div class="mock">
+        <div class="win">
+          <div class="tabbar">
+            <div class="lights"><i></i><i></i><i></i></div>
+            <div class="tabs">
+              <div class="tab active">finance<span class="x">×</span></div>
+              <div class="tab"><i class="dot needs"></i>patton<span class="x">×</span></div>
+              <div class="tab">rimworld<span class="x">×</span></div>
+              <div class="tab"><i class="dot flag"></i>wake<span class="x">×</span></div>
+              <div class="tab"><i class="ring"></i>voice<span class="x">×</span></div>
+              <div class="tab-new">+</div>
+            </div>
+            <div class="cog"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></div>
+          </div>
+          <div class="body">
+            <aside class="side">
+              <h4>Bookmarks</h4>
+              <div class="grp">Projects</div>
+              <div class="row active open"><i class="mark"></i>finance<span class="k">open</span></div>
+              <div class="row open"><i class="mark"></i>patton<span class="k">open</span></div>
+              <div class="row"><i class="mark"></i>rimworld</div>
+              <div class="row"><i class="mark"></i>voice</div>
+              <div class="grp">Artifacts</div>
+              <div class="row"><i class="mark art"></i>Net worth page</div>
+              <div class="row"><i class="mark art"></i>Deck v3</div>
+            </aside>
+            <div class="term"><pre><span class="p-cwd">~/Projects/finance</span> <span class="p-git">main</span> <span class="p-ok">❯</span> claude
+
+<span class="cc-in">&gt; why did ⌘W on the last tab quit without asking? read pane.ts before you answer</span>
+
+<span class="cc-dot">⏺</span> <b>Read</b>(src/renderer/components/pane.ts)
+  <span class="cc-sub">⎿  Read 120 lines</span>
+
+<span class="cc-dot">⏺</span> <b>Read</b>(src/main/main.ts)
+  <span class="cc-sub">⎿  Read 64 lines</span>
+
+<span class="cc-dot">⏺</span> The close guard only asks while the window's PTYs are alive. Closing the last
+  tab tore its PTY down before window.close() ran, so under Electron 44 the guard
+  saw an empty window and let it go. Handing the close to the main guard untouched
+  makes the prompt deterministic.
+
+  <b>## Open</b>
+
+  <b>Needs you</b> — decisions only you can make.
+  1. <b>Ship this as v1.10.1 now.</b> Options: now (one small release) / with the
+     OSC 8 work (one bigger one). Default: now.
+
+<span class="cc-claude"><span class="spin"></span> Pondering…</span> <span class="cc-sub">(esc to interrupt)</span>
+<span class="cc-box">╭──────────────────────────────────────────────────────────────────────╮
+│</span> &gt; <span class="cursor"> </span><span class="cc-box">                                                                 │
+╰──────────────────────────────────────────────────────────────────────╯</span>
+  <span class="cc-perm">⏵⏵ bypass permissions on</span> <span class="cc-sub">· 42% context</span></pre></div>
+            <div class="notes-toggle">‹</div>
+          </div>
+          <div class="compose">
+            <div class="typed">ship it as v1.10.1, push, and watch the release come back</div>
+            <div class="hint">Enter to send, Shift+Enter for newline, Esc to dismiss</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="alt">
+      <span class="alt-label">Light mode</span>
+      <div class="mock" style="--c-chrome:#e9e6da; --c-surface:#efece2; --c-panel:#e9e6da; --c-line:#cfcab8; --c-text:#2a2a22; --c-text-2:#6b6a58; --c-text-3:#938f7c; --c-accent:#b36b00; --c-active:#f6f4ea; --c-active-row:rgba(179,107,0,0.1); --t-bg:#f6f4ea; --t-fg:#26261f; --t-cursor:#b36b00; --a2:#1f7a3a; --a4:#2a5bd7; --a5:#a0369b; --a8:#938f7c; --dot-green:#16a34a; --scan:rgba(0,0,0,0.025); --cc-inactive:rgb(102,102,102); --cc-success:rgb(44,122,57); --cc-error:rgb(171,43,63); --cc-border:rgb(153,153,153);">
+        <div class="tabbar">
+          <div class="lights"><i></i><i></i><i></i></div>
+          <div class="tabs">
+            <div class="tab active">finance</div>
+            <div class="tab"><i class="dot needs"></i>patton</div>
+            <div class="tab"><i class="ring"></i>voice</div>
+          </div>
+        </div>
+        <div class="term"><pre><span class="p-cwd">~/Projects/finance</span> <span class="p-git">main</span> <span class="p-ok">❯</span> claude
+<span class="cc-dot">⏺</span> <b>Read</b>(src/renderer/components/pane.ts)
+  <span class="cc-sub">⎿  Read 120 lines</span></pre></div>
+      </div>
+      <div class="pal-main">
+        <span><i class="sw" style="--s:#e9e6da"></i>chrome</span>
+        <span><i class="sw" style="--s:#efece2"></i>surface</span>
+        <span><i class="sw" style="--s:#b36b00"></i>accent</span>
+        <span><i class="sw" style="--s:#f6f4ea"></i>term bg</span>
+        <span><i class="sw" style="--s:#26261f"></i>term fg</span>
+        <span><i class="sw" style="--s:#1f7a3a"></i>green</span>
+        <span><i class="sw" style="--s:#a0369b"></i>magenta</span>
+      </div>
+    </div>
+  </section>
+
+  <footer class="intro">
+    <h3>Reading the mocks</h3>
+    <p>Tab states are the real ones: a pulsing green dot means Claude stopped and needs you, a static yellow dot is a flag you set, a hollow ring is new and means the tab is parked, waiting on its own background agent. The ◐◑ spinner alternates about every second, as Claude Code's does. Fonts are from Google Fonts here; the shipped app would bundle them.</p>
+  </footer>
+</div>
