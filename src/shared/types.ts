@@ -96,6 +96,9 @@ export interface ProjectInfo {
   root: string;
   /** The automatic name: the last word of the folder name ("fantasy-football" → "football"). */
   defaultName: string;
+  /** Set when the folder is a linked git worktree: `root` is then its MAIN
+   *  repository, and this names the worktree (its folder's name) and its path. */
+  worktree?: { name: string; path: string };
 }
 
 // --- Bookmarks ---
