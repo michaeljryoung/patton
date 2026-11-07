@@ -4,7 +4,7 @@
 //
 // One-shot and short-lived on purpose: the record is consumed by the very next
 // close of that window, and one older than the TTL counts for nothing, so ⌘Q,
-// the red close button and Window → Close still meet the native prompt.
+// the red close button still meets the native prompt.
 // Keyed by window id, so one window's confirmation never skips another's.
 // No Electron import, so the check scripts can drive it directly.
 
@@ -18,7 +18,7 @@ export class ClosePreconfirmations {
 
   constructor(
     private readonly ttlMs: number = CLOSE_PRECONFIRM_TTL_MS,
-    private readonly now: () => number = () => Date.now(),
+    private readonly now: () => number = () => performance.now(), // monotonic: a clock step can't revive an old record
   ) {}
 
   /** The renderer of window `windowId` confirmed closing it in the app. */

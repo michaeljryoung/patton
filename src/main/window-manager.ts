@@ -196,7 +196,7 @@ export function createWindow(ptyManager?: PtyManager): BrowserWindow {
   const windowId = window.id;
   window.on('close', (e) => {
     // Guard against silently killing live PTYs by closing a window: the red
-    // button, Window → Close, or ⌘W on its last tab. On macOS,
+    // button or ⌘W on its last tab. On macOS,
     // `window-all-closed` triggers `app.quit()` here (Patton is a terminal
     // app, not something that stays dockside windowless), so closing the
     // final window IS a quit action; the before-quit handler can't catch that

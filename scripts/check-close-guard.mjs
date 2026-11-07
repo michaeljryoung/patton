@@ -12,7 +12,7 @@
 import { build } from 'esbuild';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -70,6 +70,7 @@ class FakeWindow {
   static fromWebContents(wc) { return wc?.owner ?? null; }
 }
 
+const tmpDirs = []; // the app.getPath stub's directories, removed at the end
 const electron = new Proxy({
   BrowserWindow: FakeWindow,
   dialog: { showMessageBoxSync: (_win, opts) => { dialogCalls.push(opts); return dialogAnswer; } },
@@ -79,7 +80,7 @@ const electron = new Proxy({
     handle: (ch, fn) => handlers.set(ch, fn),
     on: (ch, fn) => handlers.set(ch, fn),
   },
-  app: { isPackaged: false, getPath: () => mkdtempSync(join(tmpdir(), 'close-guard-')) },
+  app: { isPackaged: false, getPath: () => { const d = mkdtempSync(join(tmpdir(), 'close-guard-')); tmpDirs.push(d); return d; } },
 }, { get: (t, k) => (k in t ? t[k] : deep()) });
 
 const store = { getWindowState: () => ({ width: 800, height: 600 }), setWindowState() {}, setSession() {} };
@@ -136,9 +137,10 @@ const { createWindow, registerIpcHandlers, closePreconfirmations, CLOSE_PRECONFI
 const logs = [];
 const realInfo = console.info;
 console.info = (...a) => { logs.push(a.map((x) => (typeof x === 'string' ? x : JSON.stringify(x))).join(' ')); };
-const realNow = Date.now;
+// The pre-confirm TTL reads the monotonic clock (performance.now), not Date.now.
+const realNow = performance.now.bind(performance);
 let clock = realNow();
-Date.now = () => clock;
+performance.now = () => clock;
 
 registerIpcHandlers(ptyManager);
 const info = (win) => handlers.get(IPC.WINDOW_CLOSE_INFO)({ sender: win.webContents });
@@ -263,6 +265,7 @@ const reset = () => { dialogCalls.length = 0; logs.length = 0; ptyManager.destro
 }
 
 console.info = realInfo;
-Date.now = realNow;
+performance.now = realNow;
+for (const d of tmpDirs) rmSync(d, { recursive: true, force: true });
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
