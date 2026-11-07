@@ -89,6 +89,7 @@ export const IPC = {
   BOARD_PICK_FOLDER: 'board:pick-folder',
   BOARD_ADD_PROJECT: 'board:add-project',
   BOARD_CHANGED: 'board:changed',
+  BOARD_LIST_CHANGED: 'board:list-changed',
   // --- end project board ---
 } as const;
 
@@ -168,6 +169,13 @@ export const DEFAULTS = {
   BOARD_PATHS_MAX: 2000,
   BOARD_NOTE_MAX_CHARS: 80,
   BOARD_PROJECT_NAME_MAX_CHARS: 60,
+  /** The largest project list file + Project will write to (a list of a few
+   *  hundred rows is about 50 KB). */
+  BOARD_LIST_MAX_BYTES: 1024 * 1024,
+  /** A path stored in the layout (a theme's projects, a tile's options). */
+  BOARD_PATH_MAX_CHARS: 1024,
+  /** All the layout's paths together, in characters, so the file stays small. */
+  BOARD_LAYOUT_PATH_BUDGET: 512 * 1024,
   // --- end project board ---
   // Quick-terminal global hotkey. Configurable via the `globalHotkey` setting;
   // this is the fallback used by main.ts and shown in Settings when unset.

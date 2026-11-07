@@ -201,6 +201,10 @@ export interface BoardPayload {
   layout: BoardLayout;
   /** Set by board:add-project when it refused: the reason, in words. */
   error?: string;
+  /** How many projects + Project has added since the app started, when this
+   *  was read. A layout save sends it back, so main can keep the placement of
+   *  a project added after the saving board last read the list. */
+  generation?: number;
 }
 
 export interface BoardAddRequest {
@@ -280,12 +284,14 @@ export interface PattonAPI {
     get: () => Promise<BoardPayload>;
     /** Save the arrangement; main validates it and returns what it stored,
      *  or null when it refused (rate limit, not a layout). */
-    setLayout: (layout: BoardLayout) => Promise<BoardLayout | null>;
+    setLayout: (layout: BoardLayout, generation?: number) => Promise<BoardLayout | null>;
     pickFolder: () => Promise<string | null>;
     /** Add a row to the project list file; the fresh board, with `error` set if refused. */
     addProject: (request: BoardAddRequest) => Promise<BoardPayload>;
     /** Another board saved a new arrangement. */
     onChanged: (callback: (layout: BoardLayout) => void) => () => void;
+    /** A project was added (from any window): the fresh board. */
+    onListChanged: (callback: (payload: BoardPayload) => void) => () => void;
   };
   // --- end project board ---
   session: {

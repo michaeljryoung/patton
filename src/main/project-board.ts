@@ -1,6 +1,11 @@
-import { chmodSync, copyFileSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync, closeSync, constants as fsConstants, copyFileSync, fstatSync, openSync, readFileSync, realpathSync, renameSync,
+  statSync, unlinkSync, writeFileSync,
+} from 'node:fs';
+import { readFile, realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, dirname, extname, join, resolve } from 'node:path';
+import { keepPlacements } from '../shared/board-placements';
 import { DEFAULTS, isBoardTint } from '../shared/constants';
 import type { BoardAddRequest, BoardLayout, BoardPayload, BoardProject, BoardSubProject, BoardTheme, BoardTileOptions } from '../shared/types';
 import { cleanBookmarkLabel } from './bookmarks';
@@ -13,9 +18,10 @@ import { isAllowedCwdPath } from './pty-manager';
  * arrangement (themes, tile order, tile options) in userData/project-board.json.
  *
  * The renderer is untrusted: every layout it sends is validated here, and the
- * one write to the project list (adding a row) checks the folder and the name
- * and leaves every other byte of the file as it was, because `cc` and Claude
- * sessions read that file too.
+ * one write to the project list (adding a row) checks the folder and the name,
+ * writes only to a file that already is a project list (a regular UTF-8 text
+ * file holding a table with a row the launcher reads), and leaves every other
+ * byte of the file as it was, because `cc` and Claude sessions read it too.
  */
 
 export const LAYOUT_FILE_NAME = 'project-board.json';
@@ -104,14 +110,6 @@ function isDirectory(p: string): boolean {
   }
 }
 
-function isFile(p: string): boolean {
-  try {
-    return statSync(p).isFile();
-  } catch {
-    return false;
-  }
-}
-
 /** Claude Code's session folder name for a project: every character outside
  *  [A-Za-z0-9] becomes `-` ("/Users/me/my.app" → "-Users-me-my-app"). */
 export function claudeSlug(path: string): string {
@@ -151,6 +149,60 @@ interface ListedProject {
   path: string;
 }
 
+/** What the disk says about a listed folder, gathered off the main thread. */
+export interface RowFacts {
+  isDirectory: boolean;
+  /** The folder's real path (git records worktrees by it), or null. */
+  realPath: string | null;
+  /** For a linked git worktree, its repository's main folder (real path when
+   *  it resolves), else null. */
+  worktreeMain: string | null;
+  lastSessionAt?: number;
+}
+
+/** A listed folder that doesn't answer in this long counts as missing, so a
+ *  stalled network or cloud volume can't hold the board back. */
+const ROW_FACTS_TIMEOUT_MS = 2000;
+const NO_FACTS: RowFacts = { isDirectory: false, realPath: null, worktreeMain: null };
+
+async function rowFacts(path: string, home: string): Promise<RowFacts> {
+  const [info, real, session, git] = await Promise.all([
+    stat(path).catch((): null => null),
+    realpath(path).catch((): null => null),
+    stat(join(home, '.claude', 'projects', claudeSlug(path))).catch((): null => null),
+    stat(join(path, '.git')).catch((): null => null),
+  ]);
+  let worktreeMain: string | null = null;
+  // Only a linked worktree has a .git FILE; its pointer files are read (small,
+  // synchronous) only after the folder has just answered.
+  if (git?.isFile()) {
+    const main = linkedWorktreeMainRoot(path);
+    if (main) worktreeMain = (await realpath(main).catch((): null => null)) ?? main;
+  }
+  return {
+    isDirectory: Boolean(info?.isDirectory()),
+    realPath: real,
+    worktreeMain,
+    ...(session?.isDirectory() ? { lastSessionAt: session.mtimeMs } : {}),
+  };
+}
+
+/** Each listed folder's facts, all at once, none waiting past the timeout. */
+export async function gatherRowFacts(rows: readonly ListedProject[], home: string = homedir()): Promise<Map<string, RowFacts>> {
+  let slow = 0;
+  const entries = await Promise.all(rows.map(async (row): Promise<[string, RowFacts]> => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const late = new Promise<RowFacts>((done) => {
+      timer = setTimeout(() => { slow++; done(NO_FACTS); }, ROW_FACTS_TIMEOUT_MS);
+    });
+    const facts = await Promise.race([rowFacts(row.path, home).catch(() => NO_FACTS), late]);
+    clearTimeout(timer);
+    return [row.path, facts];
+  }));
+  if (slow > 0) console.warn('[BOARD] Folders slow to answer, shown as missing', { count: slow });
+  return new Map(entries);
+}
+
 /** The list's rows that may be shown: normalised, safe, allowed paths, the
  *  first row for each folder. Refusals are logged with the reason only. */
 function usableRows(rows: ListRow[]): ListedProject[] {
@@ -180,18 +232,19 @@ function usableRows(rows: ListRow[]): ListedProject[] {
  * the longest such match (kind 'folder'). A deeper descendant attaches to the
  * top of its chain. Order follows the list.
  */
-export function nestProjects(rows: ListedProject[], home: string = homedir()): BoardProject[] {
+export function nestProjects(rows: ListedProject[], facts: ReadonlyMap<string, RowFacts>): BoardProject[] {
+  const factsOf = (path: string): RowFacts => facts.get(path) ?? NO_FACTS;
   // git records a worktree's repository by its real path, so listed folders
   // are matched by theirs too (a list may name a folder through a symlink).
   const byRealPath = new Map<string, string>();
   for (const r of rows) {
-    const real = realPathOrNull(r.path);
+    const real = factsOf(r.path).realPath;
     if (real && !byRealPath.has(real)) byRealPath.set(real, r.path);
   }
   const direct = new Map<string, { parent: string; kind: 'worktree' | 'folder' }>();
   for (const row of rows) {
-    const mainRoot = linkedWorktreeMainRoot(row.path);
-    const mainListed = mainRoot ? byRealPath.get(realPathOrNull(mainRoot) ?? mainRoot) : undefined;
+    const mainRoot = factsOf(row.path).worktreeMain;
+    const mainListed = mainRoot ? byRealPath.get(mainRoot) : undefined;
     if (mainListed && mainListed !== row.path) {
       direct.set(row.path, { parent: mainListed, kind: 'worktree' });
       continue;
@@ -221,8 +274,8 @@ export function nestProjects(rows: ListedProject[], home: string = homedir()): B
     projects.set(row.path, {
       path: row.path,
       name: row.name,
-      ...(isDirectory(row.path) ? {} : { missing: true }),
-      ...optionalTime(lastSessionAt(row.path, home)),
+      ...(factsOf(row.path).isDirectory ? {} : { missing: true }),
+      ...optionalTime(factsOf(row.path).lastSessionAt),
       subProjects: [],
     });
   }
@@ -236,20 +289,12 @@ export function nestProjects(rows: ListedProject[], home: string = homedir()): B
       name: row.name,
       displayName: subProjectDisplayName(row.name, top.name),
       kind: link.kind,
-      ...(isDirectory(row.path) ? {} : { missing: true }),
-      ...optionalTime(lastSessionAt(row.path, home)),
+      ...(factsOf(row.path).isDirectory ? {} : { missing: true }),
+      ...optionalTime(factsOf(row.path).lastSessionAt),
     };
     top.subProjects.push(sub);
   }
   return [...projects.values()];
-}
-
-function realPathOrNull(p: string): string | null {
-  try {
-    return realpathSync(p);
-  } catch {
-    return null;
-  }
 }
 
 function optionalTime(ms: number | undefined): { lastSessionAt?: number } {
@@ -281,35 +326,56 @@ export function validateLayout(raw: unknown): BoardLayout | null {
   const obj = raw as Record<string, unknown>;
   if (obj.version !== 1 || !Array.isArray(obj.themes)) return null;
 
+  // Bounded work and bounded size whatever arrives: at most this many entries
+  // are looked at, paths longer than BOARD_PATH_MAX_CHARS are dropped, and all
+  // paths together stay within BOARD_LAYOUT_PATH_BUDGET characters. Drops are
+  // counted and logged once per call, never once per entry.
+  const scanMax = 2 * DEFAULTS.BOARD_PATHS_MAX;
+  const drops: Record<string, number> = {};
+  const drop = (reason: string) => { drops[reason] = (drops[reason] ?? 0) + 1; };
+  let budget = DEFAULTS.BOARD_LAYOUT_PATH_BUDGET;
+  const storablePath = (p: unknown): p is string =>
+    isSafeAbsolutePath(p) && p.length <= DEFAULTS.BOARD_PATH_MAX_CHARS;
+
   const themes: BoardTheme[] = [];
   const ids = new Set<string>();
   const placed = new Set<string>();
   let pathCount = 0;
-  for (const entry of obj.themes) {
+  if (obj.themes.length > 2 * DEFAULTS.BOARD_THEMES_MAX) drop('themes beyond those looked at');
+  for (const entry of obj.themes.slice(0, 2 * DEFAULTS.BOARD_THEMES_MAX)) {
     if (themes.length >= DEFAULTS.BOARD_THEMES_MAX) {
-      console.warn('[BOARD] Layout themes truncated', { max: DEFAULTS.BOARD_THEMES_MAX, received: obj.themes.length });
+      drop('themes over the maximum');
       break;
     }
-    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      drop('theme not an object');
+      continue;
+    }
     const t = entry as Record<string, unknown>;
     if (typeof t.id !== 'string' || !THEME_ID_PATTERN.test(t.id) || ids.has(t.id)) {
-      console.warn('[BOARD] Theme dropped', { reason: 'bad or duplicate id' });
+      drop('theme with a bad or duplicate id');
       continue;
     }
     if (typeof t.name !== 'string' || t.name.length > 1000) {
-      console.warn('[BOARD] Theme dropped', { reason: 'bad name' });
+      drop('theme with a bad name');
       continue;
     }
     const name = cleanThemeName(t.name);
     if (!name) {
-      console.warn('[BOARD] Theme dropped', { reason: 'empty name' });
+      drop('theme with an empty name');
       continue;
     }
     const tint = isBoardTint(t.tint) ? t.tint : 'none';
     const projects: string[] = [];
-    for (const p of Array.isArray(t.projects) ? t.projects : []) {
+    const rawProjects = Array.isArray(t.projects) ? t.projects.slice(0, scanMax) : [];
+    for (const p of rawProjects) {
       if (pathCount >= DEFAULTS.BOARD_PATHS_MAX) break;
-      if (!isSafeAbsolutePath(p) || placed.has(p)) continue;
+      if (!storablePath(p) || placed.has(p)) continue;
+      if (p.length > budget) {
+        drop('paths over the size budget');
+        continue;
+      }
+      budget -= p.length;
       placed.add(p);
       projects.push(p);
       pathCount++;
@@ -323,9 +389,12 @@ export function validateLayout(raw: unknown): BoardLayout | null {
     ? (obj.tiles as Record<string, unknown>)
     : {};
   let tileCount = 0;
-  for (const [path, value] of Object.entries(rawTiles)) {
-    if (tileCount >= DEFAULTS.BOARD_PATHS_MAX) break;
-    if (!isSafeAbsolutePath(path) || !value || typeof value !== 'object' || Array.isArray(value)) continue;
+  let scanned = 0;
+  for (const path in rawTiles) {
+    if (!Object.prototype.hasOwnProperty.call(rawTiles, path)) continue;
+    if (tileCount >= DEFAULTS.BOARD_PATHS_MAX || ++scanned > scanMax) break;
+    const value = rawTiles[path];
+    if (!storablePath(path) || !value || typeof value !== 'object' || Array.isArray(value)) continue;
     const v = value as Record<string, unknown>;
     const options: BoardTileOptions = {};
     if (v.wide === true) options.wide = true;
@@ -333,11 +402,16 @@ export function validateLayout(raw: unknown): BoardLayout | null {
       const note = cleanNote(v.note);
       if (note) options.note = note;
     }
-    if (options.wide || options.note) {
-      tiles[path] = options;
-      tileCount++;
+    if (!options.wide && !options.note) continue;
+    if (path.length > budget) {
+      drop('paths over the size budget');
+      continue;
     }
+    budget -= path.length;
+    tiles[path] = options;
+    tileCount++;
   }
+  if (Object.keys(drops).length > 0) console.warn('[BOARD] Layout entries dropped', drops);
   return { version: 1, themes, tiles };
 }
 
@@ -374,14 +448,14 @@ export function readLayout(userDataDir: string): BoardLayout {
 
 /** Write a file atomically: a temp file in the same folder, then a rename.
  *  Keeps the old file's permissions when there was one. */
-function writeAtomic(file: string, content: string): void {
+function writeAtomic(file: string, content: string | Buffer): void {
   const tmp = join(dirname(file), `.${basename(file)}.${process.pid}.${Date.now()}.tmp`);
   let mode: number | null = null;
   try {
     mode = statSync(file).mode & 0o777;
   } catch { /* new file */ }
   try {
-    writeFileSync(tmp, content, 'utf8');
+    writeFileSync(tmp, content);
     if (mode !== null) chmodSync(tmp, mode);
     renameSync(tmp, file);
   } catch (err) {
@@ -391,19 +465,54 @@ function writeAtomic(file: string, content: string): void {
 }
 
 /** Validate and store a layout. Returns what was stored, or null when the
- *  payload wasn't a layout. Throws if the file can't be written. */
-export function saveLayout(userDataDir: string, raw: unknown): BoardLayout | null {
+ *  payload wasn't a layout. Throws if the file can't be written.
+ *  `unseenAdds`: projects added after the saving board last read the list;
+ *  each keeps the theme the stored layout gives it when this layout places it
+ *  nowhere (that board could not have meant to unsort a tile it never had). */
+export function saveLayout(userDataDir: string, raw: unknown, unseenAdds: readonly string[] = []): BoardLayout | null {
   const layout = validateLayout(raw);
   if (!layout) {
     console.warn('[BOARD] Layout refused', { reason: 'not a layout' });
     return null;
   }
   // A corrupt file is set aside before this save replaces it.
-  readLayout(userDataDir);
+  const previous = readLayout(userDataDir);
+  if (unseenAdds.length > 0) {
+    const kept = keepPlacements(layout, previous, unseenAdds);
+    if (kept > 0) console.info('[BOARD] Kept placements of projects the saving board had not seen', { kept });
+  }
   writeAtomic(layoutPath(userDataDir), JSON.stringify(layout, null, 2) + '\n');
   const placed = layout.themes.reduce((n, t) => n + t.projects.length, 0);
   console.info('[BOARD] Layout saved', { themes: layout.themes.length, placed });
   return layout;
+}
+
+/**
+ * The projects + Project added while the app runs, numbered. A board's payload
+ * carries the number it was read at and its layout saves send it back, so a
+ * save from a board that hadn't seen an add can't drop the new tile's theme.
+ */
+export class AdditionLog {
+  private static readonly KEEP = 500;
+  private entries: { generation: number; path: string }[] = [];
+  private current = 0;
+
+  get generation(): number {
+    return this.current;
+  }
+
+  record(path: string): number {
+    this.current++;
+    this.entries.push({ generation: this.current, path });
+    if (this.entries.length > AdditionLog.KEEP) this.entries.shift();
+    return this.current;
+  }
+
+  /** Paths added after `seen` (anything not a whole number counts as 0). */
+  addedSince(seen: unknown): string[] {
+    const from = typeof seen === 'number' && Number.isInteger(seen) && seen >= 0 ? seen : 0;
+    return this.entries.filter((e) => e.generation > from).map((e) => e.path);
+  }
 }
 
 // ── The whole board ──
@@ -415,23 +524,36 @@ export interface BoardSources {
   home?: string;
 }
 
-export function loadBoard(sources: BoardSources): BoardPayload {
+export async function loadBoard(sources: BoardSources): Promise<BoardPayload> {
   const home = sources.home ?? homedir();
   const listFile = resolveListFile(sources.listSetting, home);
   const layout = readLayout(sources.userDataDir);
   const shownFile = listFile ? tildePath(listFile, home) : String(sources.listSetting ?? '');
-  if (!listFile || !isFile(listFile)) {
+  const notFound = (): BoardPayload => ({ listFile: shownFile, listFound: false, projects: [], layout });
+  if (!listFile) {
     console.info('[BOARD] Loaded', { listFound: false });
-    return { listFile: shownFile, listFound: false, projects: [], layout };
+    return notFound();
   }
-  let text = '';
+  let text: string;
   try {
-    text = readFileSync(listFile, 'utf8');
+    const info = await stat(listFile);
+    if (!info.isFile()) {
+      console.info('[BOARD] Loaded', { listFound: false });
+      return notFound();
+    }
+    if (info.size > DEFAULTS.BOARD_LIST_MAX_BYTES) {
+      console.warn('[BOARD] Project list too large to read', { bytes: info.size });
+      return notFound();
+    }
+    text = await readFile(listFile, 'utf8');
   } catch (err) {
-    console.warn('[BOARD] Project list unreadable', { err: String(err) });
-    return { listFile: shownFile, listFound: false, projects: [], layout };
+    const missing = (err as NodeJS.ErrnoException)?.code === 'ENOENT';
+    if (missing) console.info('[BOARD] Loaded', { listFound: false });
+    else console.warn('[BOARD] Project list unreadable', { err: String(err) });
+    return notFound();
   }
-  const projects = nestProjects(usableRows(parseProjectList(text, home)), home);
+  const rows = usableRows(parseProjectList(text, home));
+  const projects = nestProjects(rows, await gatherRowFacts(rows, home));
   const subs = projects.reduce((n, p) => n + p.subProjects.length, 0);
   console.info('[BOARD] Loaded', {
     listFound: true, projects: projects.length, subProjects: subs,
@@ -457,40 +579,91 @@ export function formatListRow(name: string, path: string, linkForm: boolean, hom
 }
 
 /**
- * Insert a row directly after the last row of the table that holds the
- * project rows (the file can carry notes below it), leaving every other byte
- * as it was. With no project rows yet: after a header table if there is one,
- * else at the end.
+ * Insert a row directly after the last row of the table that holds the first
+ * project row (the file can carry notes below it), leaving every other byte as
+ * it was. The row ends with the line ending of the table line it follows. A
+ * table line that ends the file with no newline (which the launcher never
+ * reads) stays last, so the file's ending is unchanged and the new row is read.
+ * Returns null when no table line holds a row the launcher reads: + Project
+ * adds to an existing project table, never anywhere else.
  */
-export function insertListRow(text: string, row: string, home: string = homedir()): string {
-  const eol = text.includes('\r\n') ? '\r\n' : '\n';
+export function insertListRow(text: string, row: string, home: string = homedir()): string | null {
   const lines = text.split('\n');
+  // lines[unterminated] is the text after the last newline ('' when the text ends with one).
+  const unterminated = lines.length - 1;
   const isTableLine = (line: string) => line.trimStart().startsWith('|');
   let anchor = -1;
-  for (let i = 0; i < lines.length; i++) {
-    if (parseProjectList(lines[i] + '\n', home).length > 0) {
+  for (let i = 0; i < unterminated; i++) {
+    if (isTableLine(lines[i]) && parseProjectList(lines[i] + '\n', home).length > 0) {
       anchor = i;
       break;
     }
   }
-  if (anchor === -1) {
-    anchor = lines.findIndex((line) => /Project.*Path/.test(line) && isTableLine(line));
-  }
-  if (anchor === -1) {
-    const needsBreak = text.length > 0 && !text.endsWith('\n');
-    return text + (needsBreak ? eol : '') + row + eol;
-  }
+  if (anchor === -1) return null;
   let last = anchor;
-  while (last + 1 < lines.length && isTableLine(lines[last + 1])) last++;
-  // Byte offset just past the table's last line (and its newline).
+  while (last + 1 < unterminated && isTableLine(lines[last + 1])) last++;
+  const eol = lines[last].endsWith('\r') ? '\r\n' : '\n';
+  // Offset just past the table's last terminated line and its newline.
   let offset = 0;
   for (let i = 0; i <= last; i++) offset += lines[i].length + 1;
-  if (offset > text.length) {
-    // The table's last line ends the file with no newline: give it one, so
-    // the launcher (which skips an unterminated last line) reads the new row.
-    return text + eol + row + eol;
-  }
   return text.slice(0, offset) + row + eol + text.slice(offset);
+}
+
+/** The extensions a project list file may have. */
+const LIST_EXTENSIONS = ['.md', '.markdown', '.txt'];
+
+type ListFileRead =
+  | { ok: true; target: string; bytes: Buffer; text: string }
+  | { ok: false; reason: string };
+
+/**
+ * Read the list file for writing, refusing anything that isn't plainly a
+ * project list: the setting's file (through a symlink, its real file) must be
+ * a regular .md/.markdown/.txt file of at most BOARD_LIST_MAX_BYTES holding
+ * valid UTF-8 text. The bytes are kept so the write can be checked against
+ * them. Opened without following a link and without blocking (a FIFO swapped
+ * in after the realpath can't hang main), then checked through the open file.
+ */
+export function readListForWrite(listFile: string): ListFileRead {
+  let target: string;
+  try {
+    target = realpathSync(listFile);
+  } catch {
+    return { ok: false, reason: 'the project list file was not found' };
+  }
+  if (!LIST_EXTENSIONS.includes(extname(target).toLowerCase())) {
+    return { ok: false, reason: 'the project list file is not a .md, .markdown or .txt file, so it is left alone' };
+  }
+  let fd: number;
+  try {
+    fd = openSync(target, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK);
+  } catch {
+    return { ok: false, reason: 'the project list file could not be read' };
+  }
+  let bytes: Buffer;
+  try {
+    const info = fstatSync(fd);
+    if (!info.isFile()) return { ok: false, reason: 'the project list file is not a regular file' };
+    const maxMb = DEFAULTS.BOARD_LIST_MAX_BYTES / (1024 * 1024);
+    if (info.size > DEFAULTS.BOARD_LIST_MAX_BYTES) return { ok: false, reason: `the project list file is larger than ${maxMb} MB` };
+    bytes = readFileSync(fd);
+    if (bytes.length > DEFAULTS.BOARD_LIST_MAX_BYTES) return { ok: false, reason: `the project list file is larger than ${maxMb} MB` };
+  } catch {
+    return { ok: false, reason: 'the project list file could not be read' };
+  } finally {
+    closeSync(fd);
+  }
+  let text: string;
+  try {
+    // ignoreBOM keeps a byte-order mark in the text, so it is written back.
+    text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
+  } catch {
+    return { ok: false, reason: 'the project list file is not UTF-8 text, so it is left alone' };
+  }
+  if (text.includes('\0') || !Buffer.from(text, 'utf8').equals(bytes)) {
+    return { ok: false, reason: 'the project list file is not UTF-8 text, so it is left alone' };
+  }
+  return { ok: true, target, bytes, text };
 }
 
 export type AddCheck = { ok: true; path: string; name: string; reason?: undefined } | { ok: false; reason: string };
@@ -519,38 +692,53 @@ export function checkAddRequest(raw: unknown, listedPaths: readonly string[]): A
   return { ok: true, path, name };
 }
 
+/** Why a row the board built would not be read back as written. */
+const ROW_UNREADABLE = 'the list reader would skip this row (it skips any row holding "Project" and later "Path", '
+  + 'in the name or the folder\'s path); choose another name or folder';
+
 /** Add a project to the list file and place it in a theme. Returns the fresh
- *  board, with `error` set when the request was refused. */
-export function addProject(sources: BoardSources, raw: unknown): BoardPayload {
+ *  board, with `error` set when the request was refused, and `added` (the
+ *  folder) when a row was written; the add is recorded in `additions`. */
+export async function addProject(
+  sources: BoardSources, raw: unknown, additions?: AdditionLog,
+): Promise<BoardPayload & { added?: string }> {
   const home = sources.home ?? homedir();
-  const refuse = (reason: string): BoardPayload => {
+  const refuse = async (reason: string): Promise<BoardPayload> => {
     console.warn('[BOARD] Add refused', { reason });
-    return { ...loadBoard(sources), error: reason };
+    return { ...(await loadBoard(sources)), error: reason };
   };
   const listFile = resolveListFile(sources.listSetting, home);
-  if (!listFile || !isFile(listFile)) return refuse('the project list file was not found');
-  let target: string;
-  let text: string;
-  try {
-    // Write through a symlink to the real file, never replacing the link.
-    target = realpathSync(listFile);
-    text = readFileSync(target, 'utf8');
-  } catch {
-    return refuse('the project list file could not be read');
+  if (!listFile) return refuse('the project list file setting is not a usable path');
+  const read = readListForWrite(listFile);
+  if (read.ok === false) return refuse(read.reason);
+  const { target, bytes, text } = read;
+  const rows = parseProjectList(text, home);
+  if (rows.length === 0) {
+    return refuse('the file has no project row the launcher reads, so it is not treated as a project list');
   }
-  const listed = parseProjectList(text, home)
-    .filter((r) => isSafeAbsolutePath(r.path))
-    .map((r) => resolve(r.path));
+  const listed = rows.filter((r) => isSafeAbsolutePath(r.path)).map((r) => resolve(r.path));
   const check = checkAddRequest(raw, listed);
   if (check.ok === false) return refuse(check.reason);
 
-  const row = formatListRow(check.name, check.path, text.includes('](file://'), home);
+  const linkForm = text.includes('](file://');
+  const row = formatListRow(check.name, check.path, linkForm, home);
+  // "Added" only for a row the launcher (and so the board) reads back as written.
+  const readBack = parseProjectList(row + '\n', home);
+  if (readBack.length !== 1 || readBack[0].name !== check.name || readBack[0].path !== check.path) {
+    return refuse(ROW_UNREADABLE);
+  }
+  const next = insertListRow(text, row, home);
+  if (next === null) return refuse('the file has no project table to add a row to');
+  const out = Buffer.from(next, 'utf8');
   try {
-    writeAtomic(target, insertListRow(text, row, home));
+    writeAtomic(target, out);
   } catch (err) {
     console.warn('[BOARD] Add failed', { err: String(err) });
     return refuse('the project list file could not be written');
   }
+  // Recorded before anything awaits, so no layout save can slip in between
+  // the write and the record and drop the new tile's theme.
+  additions?.record(check.path);
 
   const themeId = (raw as BoardAddRequest).themeId;
   if (typeof themeId === 'string' && themeId) {
@@ -566,6 +754,8 @@ export function addProject(sources: BoardSources, raw: unknown): BoardPayload {
       }
     }
   }
-  console.info('[BOARD] Project added', { themed: Boolean(themeId), form: text.includes('](file://') ? 'link' : 'plain' });
-  return loadBoard(sources);
+  console.info('[BOARD] Project added', {
+    themed: Boolean(themeId), form: linkForm ? 'link' : 'plain', bytesBefore: bytes.length, bytesAfter: out.length,
+  });
+  return { ...(await loadBoard(sources)), added: check.path };
 }

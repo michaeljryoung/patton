@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import { IPC } from '../shared/constants';
-import type { BoardLayout, Bookmark, PattonAPI, RenderSnapshot } from '../shared/types';
+import type { BoardLayout, BoardPayload, Bookmark, PattonAPI, RenderSnapshot } from '../shared/types';
 
 const api: PattonAPI = {
   pty: {
@@ -63,13 +63,18 @@ const api: PattonAPI = {
   // --- Project board ---
   board: {
     get: () => ipcRenderer.invoke(IPC.BOARD_GET),
-    setLayout: (layout) => ipcRenderer.invoke(IPC.BOARD_SET_LAYOUT, layout),
+    setLayout: (layout, generation) => ipcRenderer.invoke(IPC.BOARD_SET_LAYOUT, layout, generation),
     pickFolder: () => ipcRenderer.invoke(IPC.BOARD_PICK_FOLDER),
     addProject: (request) => ipcRenderer.invoke(IPC.BOARD_ADD_PROJECT, request),
     onChanged: (callback) => {
       const listener = (_event: Electron.IpcRendererEvent, layout: BoardLayout) => callback(layout);
       ipcRenderer.on(IPC.BOARD_CHANGED, listener);
       return () => ipcRenderer.removeListener(IPC.BOARD_CHANGED, listener);
+    },
+    onListChanged: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, payload: BoardPayload) => callback(payload);
+      ipcRenderer.on(IPC.BOARD_LIST_CHANGED, listener);
+      return () => ipcRenderer.removeListener(IPC.BOARD_LIST_CHANGED, listener);
     },
   },
   // --- end project board ---

@@ -4,16 +4,16 @@
 // HOME at a fresh temp folder, and drives it over fixture folders and list
 // files: parsing, nesting, names, last-session times, layout validation,
 // adding rows, and a round trip through the `cc` launcher's own parser when
-// the launcher is installed (~/Projects/claude-launcher/launcher.sh).
+// CC_LAUNCHER names the launcher script (its parser is `_cc_parse_projects`):
+//   CC_LAUNCHER=/path/to/launcher.sh node scripts/check-project-board.mjs
 import { build } from 'esbuild';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { homedir, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-const realHome = homedir();
-const launcher = join(realHome, 'Projects', 'claude-launcher', 'launcher.sh');
+const launcher = process.env.CC_LAUNCHER || '';
 
 const stubs = [
   [/^electron$/, 'module.exports = { app: { getPath: () => "/nonexistent" }, BrowserWindow: class {}, nativeTheme: {} };'],
@@ -127,13 +127,13 @@ async function main() {
   const listFile = join(home, '.claude', 'projects.md');
   mkdirSync(dirname(listFile), { recursive: true });
   writeFileSync(listFile, listText);
-  const haveLauncher = existsSync(launcher);
+  const haveLauncher = Boolean(launcher) && existsSync(launcher);
   if (haveLauncher) {
     const ours = rows.map((r) => `${r.name}|${r.path}`).sort();
     const theirs = launcherRows(listFile);
     check('parse: matches the launcher\'s _cc_parse_projects', same(ours, theirs), { ours, theirs });
   } else {
-    console.log('skip  launcher parser comparisons: no launcher at ~/Projects/claude-launcher/launcher.sh');
+    console.log('skip  launcher parser comparisons: set CC_LAUNCHER to the launcher script to run them');
   }
 
   // ── Nesting, names, sessions ──
@@ -148,7 +148,9 @@ async function main() {
   const userData = join(work, 'userData');
   mkdirSync(userData);
   const sources = { listSetting: '', userDataDir: userData };
-  const board = m.loadBoard(sources);
+  const loading = m.loadBoard(sources);
+  check('load: asynchronous, so folder checks never block main (m7)', loading instanceof Promise);
+  const board = await loading;
   const byName = Object.fromEntries(board.projects.map((p) => [p.name, p]));
   check('load: list found, shown with ~', board.listFound && board.listFile === '~/.claude/projects.md', board.listFile);
   check('load: unsafe and outside rows dropped', !byName.Outside && !byName.Up);
@@ -196,6 +198,24 @@ async function main() {
   check('layout: at most 60 themes', m.validateLayout(many).themes.length === 60);
   const manyPaths = { version: 1, themes: [{ id: 'a', name: 'A', tint: 'sand', projects: Array.from({ length: 2500 }, (_, i) => `/p/${i}`) }], tiles: {} };
   check('layout: at most 2000 paths', m.validateLayout(manyPaths).themes[0].projects.length === 2000);
+  {
+    const warnsBefore = quietLogs.length;
+    const junk = { version: 1, themes: Array.from({ length: 300000 }, () => 7), tiles: {} };
+    const vj = m.validateLayout(junk);
+    const lines = quietLogs.length - warnsBefore;
+    check('layout: 300,000 bad entries → one log line, nothing kept (m8)', vj.themes.length === 0 && lines === 1, lines);
+    const longPath = '/' + 'p'.repeat(2000);
+    const vl = m.validateLayout({ version: 1, themes: [{ id: 'a', name: 'A', tint: 'sand', projects: [longPath, '/ok'] }], tiles: { [longPath]: { wide: true } } });
+    check('layout: paths over 1024 characters dropped (m8)', same(vl.themes[0].projects, ['/ok']) && !vl.tiles[longPath]);
+    const big = (i) => '/' + String(i).padStart(1000, 'x');
+    const vb = m.validateLayout({
+      version: 1,
+      themes: [{ id: 'a', name: 'A', tint: 'sand', projects: Array.from({ length: 2000 }, (_, i) => big(i)) }],
+      tiles: Object.fromEntries(Array.from({ length: 2000 }, (_, i) => [big(i + 5000), { wide: true }])),
+    });
+    const bytes = JSON.stringify(vb).length;
+    check('layout: all paths together stay within the budget (m8)', bytes < 600 * 1024, bytes);
+  }
   check('layout: wrong version or shape refused', m.validateLayout({ version: 2, themes: [] }) === null
     && m.validateLayout([]) === null && m.validateLayout(null) === null);
 
@@ -205,7 +225,7 @@ async function main() {
   const onDisk = JSON.parse(readFileSync(join(userData, 'project-board.json'), 'utf8'));
   check('layout file: saved as plain JSON in the documented format', same(onDisk, stored) && onDisk.version === 1 && onDisk.themes[0].tint === 'sand');
   check('layout file: no temp files left', readdirSync(userData).every((f) => !f.endsWith('.tmp')), readdirSync(userData));
-  const boardThemed = m.loadBoard(sources);
+  const boardThemed = await m.loadBoard(sources);
   check('load: layout returned with the projects', same(boardThemed.layout.themes[0].projects, [gamma, alpha]));
   writeFileSync(join(userData, 'project-board.json'), '{ not json');
   check('layout file: corrupt reads as empty', same(m.readLayout(userData), m.emptyLayout()));
@@ -217,7 +237,7 @@ async function main() {
   const delta = dir('delta');
   const epsilon = dir('eps (two)');
   const before = readFileSync(listFile, 'utf8');
-  let res = m.addProject(sources, { path: delta, name: 'Delta', themeId: 'work' });
+  let res = await m.addProject(sources, { path: delta, name: 'Delta', themeId: 'work' });
   let after = readFileSync(listFile, 'utf8');
   const linkRow = `| Delta | [\`~/Projects/delta\`](file://${delta}) |`;
   check('add: no error', !res.error, res.error);
@@ -227,7 +247,7 @@ async function main() {
   check('add: every other byte preserved', after.replace(linkRow + '\n', '') === before);
   check('add: placed at the end of its theme', same(res.layout.themes[0].projects, [gamma, alpha, delta]), res.layout.themes[0].projects);
   check('add: shown in the returned board', res.projects.some((p) => p.path === delta && p.name === 'Delta'));
-  res = m.addProject(sources, { path: epsilon, name: 'Eps' });
+  res = await m.addProject(sources, { path: epsilon, name: 'Eps' });
   after = readFileSync(listFile, 'utf8');
   check('add: ( and ) percent-encoded in the link', after.includes('](file://' + epsilon.replace('(', '%28').replace(')', '%29').replace(' ', '%20') + ') |'),
     after.split('\n').find((l) => l.includes('Eps')));
@@ -254,37 +274,145 @@ async function main() {
   ];
   const beforeRefusals = readFileSync(listFile, 'utf8');
   for (const [label, req] of refusals) {
-    const r = m.addProject(sources, req);
+    const r = await m.addProject(sources, req);
     check(`add refused: ${label}`, typeof r.error === 'string' && r.error.length > 0, r.error);
   }
   check('add refused: list file untouched by refusals', readFileSync(listFile, 'utf8') === beforeRefusals);
 
-  // Plain form; a table that ends the file without a newline.
+  // Plain form.
   const plainFile = join(work, 'plain.md');
-  const plainText = '| Project | Path |\n|---|---|\n| Gamma | `' + gamma + '` |';
+  const plainText = '| Project | Path |\n|---|---|\n| Gamma | `' + gamma + '` |\n';
   writeFileSync(plainFile, plainText);
   const plainSources = { listSetting: plainFile, userDataDir: userData };
-  res = m.addProject(plainSources, { path: delta, name: 'Delta' });
+  res = await m.addProject(plainSources, { path: delta, name: 'Delta' });
   const plainAfter = readFileSync(plainFile, 'utf8');
-  check('add: plain form when no row has a link', plainAfter === plainText + '\n| Delta | `~/Projects/delta` |\n', plainAfter);
+  check('add: plain form when no row has a link', plainAfter === plainText + '| Delta | `~/Projects/delta` |\n', plainAfter);
   check('add: setting path to another list file', res.listFile === plainFile && res.projects.length === 2);
+
+  // ── The list file must already be a project list (M1) ──
+  const notList = async (label, name, content, extra) => {
+    const f = join(work, name);
+    if (content !== null) writeFileSync(f, content);
+    if (extra) extra(f);
+    const before = content === null ? null : readFileSync(f);
+    const r = await m.addProject({ listSetting: f, userDataDir: userData }, { path: delta, name: 'Delta' });
+    const unchanged = before === null ? true : readFileSync(f).equals(before);
+    check(`add refused, file untouched: ${label}`, typeof r.error === 'string' && unchanged && !r.added, { error: r.error, unchanged });
+    return r;
+  };
+  await notList('plain text with no table', 'notes.md', 'Some notes.\nNo table here.\n');
+  await notList('a table with no project row', 'header-only.md', '| Project | Path |\n|---|---|\n');
+  await notList('config file (not .md/.markdown/.txt)', 'config', 'Host x\n| A | `/tmp/a` |\n');
+  await notList('shell script with a | row', 'script.sh', 'echo a | `/tmp/a`\n');
+  await notList('rows only outside a table', 'loose.md', 'A | `' + gamma + '`\n');
+  await notList('the only row unterminated (the launcher reads none)', 'unterm.md', '| Project | Path |\n|---|---|\n| Gamma | `' + gamma + '` |');
+  await notList('a directory named like a list', 'dir.md', null, (f) => mkdirSync(f));
+  await notList('larger than the cap', 'big.md', '| Gamma | `' + gamma + '` |\n' + 'x'.repeat(1024 * 1024 + 10) + '\n');
+  const latin1 = Buffer.concat([Buffer.from('| Project | Path |\n|---|---|\n| Caf'), Buffer.from([0xe9]), Buffer.from(' | `' + gamma + '` |\n')]);
+  const latin1File = join(work, 'latin1.md');
+  writeFileSync(latin1File, latin1);
+  const rl = await m.addProject({ listSetting: latin1File, userDataDir: userData }, { path: delta, name: 'Delta' });
+  check('add refused, bytes kept: a non-UTF-8 byte (M2)', typeof rl.error === 'string' && readFileSync(latin1File).equals(latin1), rl.error);
+  const binFile = join(work, 'bin.md');
+  const bin = Buffer.concat([Buffer.from('| Gamma | `' + gamma + '` |\n'), Buffer.from([0, 0xff, 1])]);
+  writeFileSync(binFile, bin);
+  const rb = await m.addProject({ listSetting: binFile, userDataDir: userData }, { path: delta, name: 'Delta' });
+  check('add refused, bytes kept: binary content', typeof rb.error === 'string' && readFileSync(binFile).equals(bin), rb.error);
+  // A symlink to a non-list: judged by its real file, refused.
+  const linkToConf = join(work, 'link.md');
+  writeFileSync(join(work, 'real-config'), 'Host x\n| A | `/tmp/a` |\n');
+  symlinkSync(join(work, 'real-config'), linkToConf);
+  const rs = await m.addProject({ listSetting: linkToConf, userDataDir: userData }, { path: delta, name: 'Delta' });
+  check('add refused: a .md symlink to a non-list file', typeof rs.error === 'string'
+    && readFileSync(join(work, 'real-config'), 'utf8') === 'Host x\n| A | `/tmp/a` |\n', rs.error);
+  // A symlink to a real list: written through, the link kept.
+  const realList = join(work, 'real-list.md');
+  writeFileSync(realList, '| Project | Path |\n|---|---|\n| Gamma | `' + gamma + '` |\n');
+  const linkList = join(work, 'linked-list.md');
+  symlinkSync(realList, linkList);
+  const rk = await m.addProject({ listSetting: linkList, userDataDir: userData }, { path: delta, name: 'Delta' });
+  check('add through a symlink to a list: written to the real file, link kept',
+    !rk.error && readFileSync(realList, 'utf8').includes('| Delta |') && readdirSync(work).includes('linked-list.md'), rk.error);
+  // Permissions kept.
+  const modeList = join(work, 'mode.md');
+  writeFileSync(modeList, '| Gamma | `' + gamma + '` |\n');
+  chmodSync(modeList, 0o600);
+  await m.addProject({ listSetting: modeList, userDataDir: userData }, { path: delta, name: 'Delta' });
+  const { statSync } = await import('node:fs');
+  check('add: file mode kept', (statSync(modeList).mode & 0o777) === 0o600);
+
+  // ── Bytes kept exactly (M2) ──
+  const bytesFiles = [];
+  const bytesCase = async (label, original, expected) => {
+    const f = join(work, `bytes-${label.replace(/\W+/g, '-')}.md`);
+    bytesFiles.push(f);
+    writeFileSync(f, original);
+    const r = await m.addProject({ listSetting: f, userDataDir: userData }, { path: delta, name: 'Delta' });
+    const got = readFileSync(f);
+    check(`add bytes: ${label}`, !r.error && got.equals(Buffer.from(expected)), { error: r.error, got: got.toString('utf8') });
+  };
+  const row = '| Delta | `~/Projects/delta` |';
+  const g = '| Gamma | `' + gamma + '` |';
+  await bytesCase('CRLF kept, row in CRLF', `| Project | Path |\r\n|---|---|\r\n${g}\r\n\r\nNotes\r\n`,
+    `| Project | Path |\r\n|---|---|\r\n${g}\r\n${row}\r\n\r\nNotes\r\n`);
+  await bytesCase('no trailing newline after notes stays so', `${g}\n\nnotes with no newline`, `${g}\n${row}\n\nnotes with no newline`);
+  await bytesCase('unterminated last table line stays last, unterminated', `| Project | Path |\n${g}\n| Hidden | \`/tmp/h\` |`,
+    `| Project | Path |\n${g}\n${row}\n| Hidden | \`/tmp/h\` |`);
+  await bytesCase('BOM and non-ASCII text kept', `\ufeff# Café ✓\n${g}\n`, `\ufeff# Café ✓\n${g}\n${row}\n`);
+  check('insertListRow: null with no table row', m.insertListRow('no table\n', row, home) === null
+    && m.insertListRow('| Project | Path |\n|---|---|\n', row, home) === null);
+
+  // ── "Added" only for a row both readers show (m1) ──
+  const pathTools = dir('PathTools');
+  const before1 = readFileSync(plainFile);
+  const r1 = await m.addProject(plainSources, { path: pathTools, name: 'Tools' });
+  check('add refused: folder path with Project…Path (header rule)', typeof r1.error === 'string' && readFileSync(plainFile).equals(before1), r1.error);
+  const r2 = await m.addProject(plainSources, { path: dir('pathways'), name: 'Project Pathways' });
+  check('add refused: name with Project…Path', typeof r2.error === 'string' && readFileSync(plainFile).equals(before1), r2.error);
+  const r3 = await m.addProject(plainSources, { path: dir('pathways'), name: 'project pathways' });
+  check('add allowed: lowercase project/path (the launcher reads it)', !r3.error && r3.projects.some((p) => p.name === 'project pathways'), r3.error);
+
+  // ── Adds are logged, so a stale board's save keeps the new tile's theme (m2) ──
+  const log = new m.AdditionLog();
+  const genBefore = log.generation;
+  const addList = join(work, 'gen.md');
+  writeFileSync(addList, '| Gamma | `' + gamma + '` |\n');
+  const genData = join(work, 'gen-data');
+  mkdirSync(genData);
+  m.saveLayout(genData, { version: 1, themes: [{ id: 'work', name: 'Work', tint: 'sand', projects: [gamma] }], tiles: {} });
+  const rg = await m.addProject({ listSetting: addList, userDataDir: genData }, { path: delta, name: 'Delta', themeId: 'work' }, log);
+  check('add: recorded in the addition log', rg.added === delta && log.generation === genBefore + 1 && same(log.addedSince(genBefore), [delta]));
+  const staleLayout = { version: 1, themes: [{ id: 'work', name: 'Work', tint: 'teal', projects: [gamma] }], tiles: {} };
+  const kept = m.saveLayout(genData, staleLayout, log.addedSince(genBefore));
+  check('stale save: keeps the added project\'s theme, takes the rest', same(kept.themes[0].projects, [gamma, delta]) && kept.themes[0].tint === 'teal', kept.themes[0]);
+  const fresh = m.saveLayout(genData, staleLayout, log.addedSince(log.generation));
+  check('fresh save: may unsort it (the board saw it)', same(fresh.themes[0].projects, [gamma]), fresh.themes[0].projects);
+  check('addition log: bad generation counts as 0', same(log.addedSince('x'), [delta]) && same(log.addedSince(-1), [delta]));
   check('add: refused when the list file is absent',
-    typeof m.addProject({ listSetting: join(work, 'none.md'), userDataDir: userData }, { path: delta, name: 'D' }).error === 'string');
-  check('load: absent list file → listFound false', m.loadBoard({ listSetting: join(work, 'none.md'), userDataDir: userData }).listFound === false);
-  check('load: unsafe list setting → listFound false', m.loadBoard({ listSetting: 'relative.md', userDataDir: userData }).listFound === false);
+    typeof (await m.addProject({ listSetting: join(work, 'none.md'), userDataDir: userData }, { path: delta, name: 'D' })).error === 'string');
+  check('load: absent list file → listFound false', (await m.loadBoard({ listSetting: join(work, 'none.md'), userDataDir: userData })).listFound === false);
+  check('load: unsafe list setting → listFound false', (await m.loadBoard({ listSetting: 'relative.md', userDataDir: userData })).listFound === false);
 
   // Round trip through the launcher's parser: new rows come back, old rows unchanged.
   if (haveLauncher) {
     writeFileSync(listFile, listText);
     const beforeRows = launcherRows(listFile);
-    m.addProject(sources, { path: delta, name: 'Delta' });
-    m.addProject(sources, { path: epsilon, name: 'Eps (two)' });
+    await m.addProject(sources, { path: delta, name: 'Delta' });
+    await m.addProject(sources, { path: epsilon, name: 'Eps (two)' });
     const afterRows = launcherRows(listFile);
     check('round trip: launcher reads the new rows',
       afterRows.includes(`Delta|${delta}`) && afterRows.includes(`Eps (two)|${epsilon}`), afterRows);
     check('round trip: every old row unchanged', beforeRows.every((r) => afterRows.includes(r)) && afterRows.length === beforeRows.length + 2);
     const plainRows = launcherRows(plainFile);
-    check('round trip: plain-form file', same(plainRows, [`Delta|${delta}`, `Gamma|${gamma}`].sort()), plainRows);
+    check('round trip: plain-form file', same(plainRows, [`Delta|${delta}`, `Gamma|${gamma}`, `project pathways|${join(P, 'pathways')}`].sort()), plainRows);
+    for (const f of bytesFiles) {
+      const got = launcherRows(f);
+      check(`round trip: launcher reads the added row (${f.split('/').pop()})`, got.includes(`Delta|${delta}`), got);
+    }
+    // The rows + Project refuses are ones the launcher would skip.
+    const skipped = join(work, 'skipped.md');
+    writeFileSync(skipped, m.formatListRow('Tools', pathTools, false, home) + '\n' + m.formatListRow('Project Pathways', join(P, 'pathways'), true, home) + '\n');
+    check('round trip: the launcher skips the refused Project…Path rows', launcherRows(skipped).length === 0, launcherRows(skipped));
   }
 
   console.log(`\n${passed} passed, ${failed} failed`);

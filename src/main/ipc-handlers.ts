@@ -13,8 +13,8 @@ import { registerClipboardImageHandlers } from './clipboard-image';
 import { RateLimiter } from './rate-limiter';
 import { decideFileOpen, extensionOf, parseLinkPath, type OpenDecision } from './link-open-policy';
 import { annotateBookmarks, validateBookmarks } from './bookmarks'; // bookmarks sidebar
-import { addProject, loadBoard, saveLayout, type BoardSources } from './project-board';
-import type { PtyCreateOptions, RenderSnapshot, SessionState } from '../shared/types';
+import { AdditionLog, addProject, loadBoard, saveLayout, type BoardSources } from './project-board';
+import type { BoardPayload, PtyCreateOptions, RenderSnapshot, SessionState } from '../shared/types';
 
 /** Open an http(s) URL in the default browser. Anything else — other schemes
  *  can launch local apps — is refused and returns false. */
@@ -413,24 +413,31 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
     listSetting: store.getSettings().projectListFile,
     userDataDir: app.getPath('userData'),
   });
+  // Projects added while the app runs: every payload carries the count, and a
+  // layout save from a board that hadn't seen an add keeps that tile's theme.
+  const boardAdditions = new AdditionLog();
+  const boardPayload = async (): Promise<BoardPayload> => ({
+    ...(await loadBoard(boardSources())),
+    generation: boardAdditions.generation,
+  });
   const boardGetLimiter = new RateLimiter(10);
   ipcMain.handle(IPC.BOARD_GET, () => {
     if (!boardGetLimiter.allow()) {
       console.warn('[SECURITY] Rate limit exceeded', { channel: IPC.BOARD_GET });
       throw new Error('Rate limit exceeded');
     }
-    return loadBoard(boardSources());
+    return boardPayload();
   });
 
   const boardLayoutLimiter = new RateLimiter(10);
-  ipcMain.handle(IPC.BOARD_SET_LAYOUT, (event, layout: unknown) => {
+  ipcMain.handle(IPC.BOARD_SET_LAYOUT, (event, layout: unknown, generation: unknown) => {
     if (!boardLayoutLimiter.allow()) {
       console.warn('[SECURITY] Rate limit exceeded', { channel: IPC.BOARD_SET_LAYOUT });
       return null;
     }
     let stored;
     try {
-      stored = saveLayout(app.getPath('userData'), layout);
+      stored = saveLayout(app.getPath('userData'), layout, boardAdditions.addedSince(generation));
     } catch (err) {
       console.warn('[BOARD] Layout save failed', { err: String(err) });
       return null;
@@ -461,12 +468,24 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
   });
 
   const boardAddLimiter = new RateLimiter(2);
-  ipcMain.handle(IPC.BOARD_ADD_PROJECT, (_event, request: unknown) => {
+  ipcMain.handle(IPC.BOARD_ADD_PROJECT, async (_event, request: unknown): Promise<BoardPayload> => {
     if (!boardAddLimiter.allow()) {
       console.warn('[SECURITY] Rate limit exceeded', { channel: IPC.BOARD_ADD_PROJECT });
-      return { ...loadBoard(boardSources()), error: 'too many requests; try again' };
+      return { ...(await boardPayload()), error: 'too many requests; try again' };
     }
-    return addProject(boardSources(), request);
+    const { added, ...result } = await addProject(boardSources(), request, boardAdditions);
+    const payload: BoardPayload = { ...result, generation: boardAdditions.generation };
+    if (!added) return payload;
+    // Every board in every window gets the new list (and the new tile's theme).
+    let windows = 0;
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) {
+        win.webContents.send(IPC.BOARD_LIST_CHANGED, payload);
+        windows++;
+      }
+    }
+    console.info('[BOARD] New list sent to every window', { windows, generation: payload.generation });
+    return payload;
   });
   // --- end project board ---
 
