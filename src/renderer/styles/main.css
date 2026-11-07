@@ -3,7 +3,7 @@
  * tabs=c glyphs=a rows=c scale=b compose=a tone=light lines=ink): Helvetica
  * Neue, ink on white, one grey surface, 1 px ink hairlines, square corners,
  * colour only for meaning. The dark block below is the mock's dark tone; its
- * hairlines stay "ink", which on dark is the light ink. The terminal keeps its
+ * hairlines are a softer mix of the light ink (see there). The terminal keeps its
  * own theme and font: nothing here reaches xterm. */
 :root {
   /* Palette */
@@ -13,7 +13,7 @@
   --surface-hover: #eceef2;
   --muted: #596170;
   --grey: #e3e6ec;
-  --thumb: #c9cfd8;
+  --thumb: #848b97;
   --hairline: var(--ink);
   --focus: #2f6bff;
   --error-text: #c41d33;
@@ -63,11 +63,15 @@
     --surface-hover: #1f2228;
     --muted: #8b95a5;
     --grey: #2a2f37;
-    --thumb: #3a404a;
+    --thumb: #636c7a;
     --focus: #7aa2ff;
     --error-text: #ff7a87;
     --scrim: rgba(0, 0, 0, 0.55);
     --dot-edge: transparent;
+    /* Rules and control borders need 3:1, not the 14:1 of full ink: 45% of ink
+       mixed into the ground is 3.76 on --bg, 3.53 on --surface, 3.35 on the
+       default terminal. State cues that must stay bright read --ink directly. */
+    --hairline: color-mix(in srgb, var(--ink) 45%, var(--bg));
     color-scheme: dark;
   }
 }
@@ -450,7 +454,14 @@ html, body {
 /* The project's folder is gone: shown but not openable (Remove still works). */
 .bookmark-row.is-missing {
   cursor: default;
-  opacity: 0.6;
+}
+
+.bookmark-row.is-missing .bookmark-label {
+  text-decoration: line-through;
+}
+
+.bookmark-row.is-missing .bookmark-subtitle {
+  color: var(--error-text);
 }
 
 /* Open marker: the project has a tab open in this window. */
@@ -495,7 +506,7 @@ html, body {
 }
 
 .bookmark-subtitle {
-  font-size: calc(var(--ui) - 2px);
+  font-size: calc(var(--ui) - 1px);
   color: var(--muted);
 }
 
@@ -536,7 +547,7 @@ html, body {
 .bookmark-row.drag-ghost:hover {
   background: var(--bg);
   color: var(--ink);
-  box-shadow: inset 0 0 0 1px var(--hairline);
+  box-shadow: inset 0 0 0 1px var(--ink);
 }
 
 /* The grip only tells you the row drags; the whole row is the handle. */
@@ -689,7 +700,7 @@ select:focus-visible {
 .split-divider {
   flex-shrink: 0;
   background-color: transparent;
-  background-image: linear-gradient(var(--hairline), var(--hairline));
+  background-image: linear-gradient(var(--ink), var(--ink));
   background-repeat: no-repeat;
   background-position: center;
   transition: background-color 0.15s;
