@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join, resolve, sep } from 'node:path';
 import { DEFAULTS } from '../shared/constants';
@@ -47,7 +47,9 @@ export function resolveProject(cwd: string): ProjectInfo | null {
  * and that private git dir holds `commondir`, the path of the shared `.git`.
  * A submodule's `.git` file points under `.git/modules/`, which has no
  * `commondir`, so it is left alone; so is a worktree of a bare repository,
- * which has no main folder to name.
+ * which has no main folder to name. The registration must also point back
+ * (`<id>/gitdir` names this folder's `.git` file), so a hand-made `.git` file
+ * can't claim membership in a repository that never registered the folder.
  */
 function linkedWorktreeProject(dir: string, marker: string): ProjectInfo | null {
   const gitdirLine = readSmallFile(marker)?.match(/^gitdir:\s*(.+?)\s*$/m)?.[1];
@@ -57,9 +59,22 @@ function linkedWorktreeProject(dir: string, marker: string): ProjectInfo | null 
   if (!common) return null;
   const commonDir = resolve(gitdir, common);
   if (basename(commonDir) !== '.git' || dirname(gitdir) !== join(commonDir, 'worktrees')) return null;
+  if (!registeredFor(gitdir, marker)) return null;
   const mainRoot = dirname(commonDir);
   if (mainRoot === dir || mainRoot === homedir() || !isSafeAbsolutePath(mainRoot) || !isDirectory(mainRoot)) return null;
   return { ...projectAt(mainRoot), worktree: { name: basename(dir), path: dir } };
+}
+
+/** Whether the worktree registration at `gitdir` names `marker` (this folder's
+ *  `.git` file) as its own: `<gitdir>/gitdir` holds that path. */
+function registeredFor(gitdir: string, marker: string): boolean {
+  const backlink = readSmallFile(join(gitdir, 'gitdir'))?.trim();
+  if (!backlink) return false;
+  try {
+    return realpathSync(resolve(gitdir, backlink)) === realpathSync(marker);
+  } catch {
+    return false;
+  }
 }
 
 /** A git pointer file's text: a regular file of at most 4 KB, else undefined. */
