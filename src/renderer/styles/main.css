@@ -36,6 +36,10 @@
   --flag-green: var(--green);
   --flag-yellow: var(--amber);
   --flag-red: var(--red);
+  /* Light mode only: a 1 px edge on the status dots. On the light strip the
+   * fills alone fall under 3:1 (amber 1.87, green 2.34, red 2.97 on --surface);
+   * the edge is 4.22:1. Dark mode passes without it (Michael, S43: "ok do it"). */
+  --dot-edge: #747579;
 
   /* Type and density (the mock's compact scale) */
   --font-mono: 'SF Mono', 'Menlo', 'Monaco', 'Courier New', monospace;
@@ -61,6 +65,7 @@
     --focus: #7aa2ff;
     --error-text: #ff7a87;
     --scrim: rgba(0, 0, 0, 0.55);
+    --dot-edge: transparent;
     color-scheme: dark;
   }
 }

@@ -166,7 +166,7 @@
   height: 9px;
   border-radius: 50%;
   background: var(--prompt-ready);
-  box-shadow: 0 0 6px var(--prompt-ready);
+  box-shadow: 0 0 0 1px var(--dot-edge), 0 0 6px var(--prompt-ready);
   flex-shrink: 0;
   align-self: center;
   animation: tab-indicator-pulse 1.8s ease-in-out infinite;
@@ -186,7 +186,7 @@
 .tab-bar-tab-indicator.flag-yellow,
 .tab-bar-tab-indicator.flag-red {
   animation: none;
-  box-shadow: none;
+  box-shadow: 0 0 0 1px var(--dot-edge);
 }
 
 .tab-bar-tab-indicator.flag-green {
