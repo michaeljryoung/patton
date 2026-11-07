@@ -1,4 +1,5 @@
 import { Tab } from '../components/tab';
+import { checkpointView, DEFAULT_CHECKPOINT_NUDGE_PCT } from './checkpoint-clock';
 import { Pane } from '../components/pane';
 import { TabBar } from '../components/tab-bar';
 import { ConfirmDialog } from '../components/confirm-dialog';
@@ -40,6 +41,7 @@ export class TabManager {
   private currentTerminalTheme: ITheme | null = null;
   private currentRenderer: RendererMode = 'webgl';
   private onTabsChanged: (() => void) | null = null; // bookmarks sidebar
+  private checkpointNudgePct: number = DEFAULT_CHECKPOINT_NUDGE_PCT;
 
   constructor(
     tabBarContainer: HTMLElement,
@@ -67,6 +69,7 @@ export class TabManager {
       onRename: (id, name) => this.renameTab(id, name),
       onRenameProject: (id, name) => this.renameProject(id, name),
       onSetFlag: (id, flag) => this.setTabFlag(id, flag),
+      onCheckpoint: () => { this.runCheckpoint(); },
       // --- Bookmarks ---
       onBookmarkProject: (id) => {
         const tab = this.tabs.find(t => t.id === id);
@@ -192,6 +195,7 @@ export class TabManager {
       (pane) => this.unregisterPane(pane),
       () => this.updateTabBar(),
       () => this.onCommandDone?.(tab.id, tab.title),
+      () => { if (tab === this.activeTab) this.updateCheckpoint(); },
     );
     this.tabs.push(tab);
     this.contentContainer.appendChild(tab.element);
@@ -552,6 +556,7 @@ export class TabManager {
             (pane) => this.unregisterPane(pane),
             () => this.updateTabBar(),
             () => this.onCommandDone?.(tab.id, tab.title),
+            () => { if (tab === this.activeTab) this.updateCheckpoint(); },
           );
           this.tabs.push(tab);
           this.contentContainer.appendChild(tab.element);
@@ -686,6 +691,31 @@ export class TabManager {
     );
     // Every tab change funnels through here, so the bookmarks sidebar hears it too.
     this.onTabsChanged?.();
+    this.updateCheckpoint();
+  }
+
+  // ---- Checkpoint clock (services/checkpoint-clock.ts) ----
+
+  /** Settings → "Checkpoint reminder after N% of the context window". */
+  setCheckpointNudgePct(pct: number): void {
+    this.checkpointNudgePct = pct;
+    this.updateCheckpoint();
+  }
+
+  /** Show the active tab's focused pane on the strip's checkpoint clock. */
+  private updateCheckpoint(): void {
+    const pane = this.activeTab?.focusedPane;
+    this.tabBar.setCheckpoint(checkpointView(pane ? pane.checkpointSource : null, this.checkpointNudgePct));
+  }
+
+  /** The clock's click and the palette's "Checkpoint this session". */
+  runCheckpoint(): void {
+    const pane = this.activeTab?.focusedPane;
+    if (!pane) return;
+    const why = pane.runCheckpoint();
+    if (why) announce(why, 'assertive');
+    // The click left focus on the strip's button; the keyboard belongs to Claude.
+    pane.focus();
   }
 
   dispose(): void {

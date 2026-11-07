@@ -47,6 +47,7 @@
 
 .tab-bar-settings:focus-visible,
 .tab-bar-new:focus-visible,
+.tab-bar-checkpoint:focus-visible,
 .tab-bar-tab:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: -2px;
@@ -299,4 +300,55 @@
 .tab-bar-new:hover {
   color: var(--ink);
   background: var(--surface-hover);
+}
+
+/* Checkpoint clock: context used since the focused Claude session's last
+ * /checkpoint ("✓ +12%"), pinned right of the scrolling tabs. Grey (--muted,
+ * 5.71:1 light / 5.82:1 dark on --surface); once due, amber text that passes
+ * 4.5:1 (--amber-text, ratios in main.css) and bold, so the state isn't
+ * carried by colour alone. */
+.tab-bar-checkpoint {
+  background: none;
+  border: none;
+  border-left: 1px solid var(--hairline);
+  border-radius: 0;
+  font-family: var(--font-ui);
+  font-size: var(--ui);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0 10px;
+  height: 100%;
+  flex-shrink: 0;
+  transition: color 0.12s, background 0.12s;
+  -webkit-app-region: no-drag;
+}
+
+.tab-bar-checkpoint[hidden] {
+  display: none;
+}
+
+.tab-bar-checkpoint:hover {
+  color: var(--ink);
+  background: var(--surface-hover);
+}
+
+.tab-bar-checkpoint.due {
+  color: var(--amber-text);
+  font-weight: 700;
+}
+
+/* Claude is working: the click waits for its stop. */
+.tab-bar-checkpoint.blocked {
+  cursor: default;
+}
+
+.tab-bar-checkpoint.blocked:hover {
+  background: none;
+  color: var(--muted);
+}
+
+.tab-bar-checkpoint.due.blocked:hover {
+  color: var(--amber-text);
 }

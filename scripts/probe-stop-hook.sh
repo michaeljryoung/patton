@@ -42,6 +42,74 @@ for PARSER in jq osascript; do
   check "malformed JSON: prints nothing" "" "{not json"
 done
 
+# Context reading: synthetic transcripts (jq parser; the osascript fallback
+# leaves the ctx fields out by design, checked once).
+TD=$(mktemp -d "${TMPDIR:-/tmp}/patton-probe-ctx.XXXXXX")
+u() { # assistant line with usage: input, cache read, cache write
+  printf '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":%s,"cache_read_input_tokens":%s,"cache_creation_input_tokens":%s,"output_tokens":9}},"timestamp":"2026-10-11T05:00:00.000Z"}\n' "$1" "$2" "$3"
+}
+human() { printf '{"type":"user","message":{"role":"user","content":"%s"},"timestamp":"2026-10-11T04:00:00.000Z","origin":{"kind":"human"}}\n' "$1"; }
+CKPT='{"type":"user","message":{"role":"user","content":"<command-message>checkpoint</command-message>\n<command-name>/checkpoint</command-name>"},"timestamp":"2026-10-11T04:48:38.277Z","origin":{"kind":"human"}}'
+SKILL='{"type":"user","isMeta":true,"message":{"role":"user","content":[{"type":"text","text":"Base directory for this skill: x"}]},"timestamp":"2026-10-11T04:48:38.300Z"}'
+QUOTED='{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t","content":"grep found <command-name>/checkpoint</command-name> in a file"}]},"timestamp":"2026-10-11T06:00:00.000Z"}'
+TASKN='{"type":"user","message":{"role":"user","content":"<task-notification>done</task-notification>"},"origin":{"kind":"task-notification"}}'
+COMPACT='{"type":"system","subtype":"compact_boundary","content":"Conversation compacted","timestamp":"2026-10-11T07:00:00.000Z"}'
+{ human hi; u 10 1000 200; u 5 2000 300; } > "$TD/none.jsonl"                      # ctx 2305
+{ human hi; u 10 100000 0; echo "$CKPT"; echo "$SKILL"; u 1 200000 0; u 1 250000 9;
+  human next; echo "$QUOTED"; u 1 300000 0; u 0 0 0; } > "$TD/after.jsonl"         # ctx 300001, base 250010
+{ cat "$TD/after.jsonl"; echo "$COMPACT"; u 1 50000 0; } > "$TD/compact.jsonl"      # ctx 50001
+{ echo "$CKPT"; u 0 400000 0; echo "$TASKN"; u 0 500000 0; } > "$TD/taskn.jsonl"   # turn ends at the notification
+{ echo "$CKPT"; u 0 400000 0; human next; echo "$COMPACT"; u 0 90000 0; human x; } > "$TD/below.jsonl"  # compact wins
+{ echo "$CKPT"; u 0 400000 0; human next; u 0 100000 0; } > "$TD/drop.jsonl"     # ctx < baseline, no compact line
+{ echo "$CKPT"; u 0 400000 0; } > "$TD/current.jsonl"                              # the checkpoint is the last turn
+: > "$TD/empty.jsonl"
+CPT=1791694118
+ctxjson() { printf '{"session_id":"s","transcript_path":"%s","cwd":"/x","hook_event_name":"Stop"%s}' "$1" "$2"; }
+BOTH=',"background_tasks":[],"session_crons":[]'
+stopwant() { printf '{"terminalSequence":"\\u001b]777;patton;stop;tasks=0;crons=0%s\\u0007"}' "$1"; }
+ctxwant() { printf '{"terminalSequence":"\\u001b]777;patton;ctx%s\\u0007"}' "$1"; }
+PARSER=jq
+check "ctx: no checkpoint (since = ctx)" "$(stopwant ';ctx=2305;since=2305')" "$(ctxjson "$TD/none.jsonl" "$BOTH")"
+check "ctx: checkpoint turn, then work (quoted tag, skill line ignored)" \
+  "$(stopwant ";ctx=300001;since=49991;cpt=$CPT")" "$(ctxjson "$TD/after.jsonl" "$BOTH")"
+check "ctx: compact boundary after the checkpoint (since = ctx)" \
+  "$(stopwant ";ctx=50001;since=50001;cpt=$CPT")" "$(ctxjson "$TD/compact.jsonl" "$BOTH")"
+check "ctx: task notification ends the checkpoint turn" \
+  "$(stopwant ";ctx=500000;since=100000;cpt=$CPT")" "$(ctxjson "$TD/taskn.jsonl" "$BOTH")"
+check "ctx: compact after the turn, ctx below the old baseline" \
+  "$(stopwant ";ctx=90000;since=90000;cpt=$CPT")" "$(ctxjson "$TD/below.jsonl" "$BOTH")"
+check "ctx: ctx below the baseline with no compact line (since = ctx)" \
+  "$(stopwant ";ctx=100000;since=100000;cpt=$CPT")" "$(ctxjson "$TD/drop.jsonl" "$BOTH")"
+check "ctx: stop of the checkpoint turn itself (since 0)" \
+  "$(stopwant ";ctx=400000;since=0;cpt=$CPT")" "$(ctxjson "$TD/current.jsonl" "$BOTH")"
+check "ctx: missing transcript (as before)" "$(stopwant '')" "$(ctxjson "$TD/nope.jsonl" "$BOTH")"
+check "ctx: empty transcript (as before)" "$(stopwant '')" "$(ctxjson "$TD/empty.jsonl" "$BOTH")"
+check "ctx: no task fields (ctx message only)" \
+  "$(ctxwant ";ctx=300001;since=49991;cpt=$CPT")" "$(ctxjson "$TD/after.jsonl" '')"
+check "ctx: no task fields, missing transcript (nothing)" "" "$(ctxjson "$TD/nope.jsonl" '')"
+PARSER=osascript
+check "ctx: osascript fallback leaves the ctx fields out" "$(stopwant '')" "$(ctxjson "$TD/after.jsonl" "$BOTH")"
+
+PARSER=jq
+# Skill-tool checkpoint, attachment/peer lines, tool-result flood, perl magic open.
+SKILLCALL='{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t","name":"Skill","input":{"skill":"checkpoint"}}],"usage":{"input_tokens":1,"cache_read_input_tokens":200000,"cache_creation_input_tokens":0,"output_tokens":9}},"timestamp":"2026-10-11T04:48:38.277Z"}'
+ATTACH='{"type":"attachment","attachment":{"type":"queued_command","origin":{"kind":"human"},"prompt":"x"},"timestamp":"2026-10-11T05:30:00.000Z"}'
+PEER='{"type":"user","message":{"role":"user","content":"hello from a peer"},"origin":{"kind":"peer"}}'
+{ human hi; u 10 100000 0; echo "$SKILLCALL"; u 1 250000 0; human next; u 1 300000 0; } > "$TD/skill.jsonl"
+check "ctx: model-invoked checkpoint (Skill tool_use) is a start, turn ends at the next human prompt" \
+  "$(stopwant ";ctx=300001;since=50000;cpt=$CPT")" "$(ctxjson "$TD/skill.jsonl" "$BOTH")"
+{ echo "$CKPT"; u 0 400000 0; echo "$ATTACH"; u 0 500000 0; echo "$PEER"; u 0 600000 0; } > "$TD/attach.jsonl"
+check "ctx: attachment with an origin and a peer message don't end the turn" \
+  "$(stopwant ";ctx=600000;since=0;cpt=$CPT")" "$(ctxjson "$TD/attach.jsonl" "$BOTH")"
+{ echo "$CKPT"; u 0 400000 0; human next; u 0 450000 0; for i in $(seq 1 30); do echo "$QUOTED"; done; u 0 480000 0; } > "$TD/flood.jsonl"
+check "ctx: 30 tool results quoting the tag don't push the checkpoint out of the window" \
+  "$(stopwant ";ctx=480000;since=80000;cpt=$CPT")" "$(ctxjson "$TD/flood.jsonl" "$BOTH")"
+EVIL="$TD/x;touch pwned|"
+cp "$TD/after.jsonl" "$EVIL"
+( cd "$TD" && printf '%s' "$(ctxjson "$EVIL" "$BOTH")" | bash "$HOOK" >/dev/null 2>&1 )
+if [ -e "$TD/pwned" ]; then echo "FAIL transcript path ending in | was executed"; fail=1; else echo "ok   transcript path ending in | is not executed"; fi
+rm -f "$TD"/*.jsonl "$EVIL" "$TD/pwned" && rmdir "$TD"
+
 # Quoted path: the installer's command (hookCommand in src/main/claude-hook.ts),
 # run the way Claude Code runs hook commands (through `sh -c`), for a script
 # whose folder has a space, a quote, `$` and a backtick. Needs Node 22.18+
@@ -65,6 +133,34 @@ if command -v node >/dev/null 2>&1; then
   rm -f "$ODD/hook.sh" && rmdir "$ODD" "$TMPD/App Support" "$TMPD"
 else
   echo "skip quoted path (no node)"
+fi
+
+# The renderer's parse of the OSC 777 message: unknown or malformed trailing
+# fields must not cost the stop verdict. Needs Node 22.18+; skipped without it.
+if command -v node >/dev/null 2>&1; then
+  out=$(node --no-warnings -e '
+    import(process.argv[1]).then((m) => {
+      const t = (s) => JSON.stringify(m.parsePattonOsc(s));
+      const cases = [
+        ["patton;stop;tasks=1;crons=2", "{\"kind\":\"stop\",\"tasks\":1,\"crons\":2,\"context\":null}"],
+        ["patton;stop;tasks=0;crons=0;ctx=5;since=3;cpt=9", "{\"kind\":\"stop\",\"tasks\":0,\"crons\":0,\"context\":{\"ctxTokens\":5,\"sinceTokens\":3,\"checkpointAt\":9}}"],
+        ["patton;stop;tasks=0;crons=0;ctx=5;since=3;future=abc;x", "{\"kind\":\"stop\",\"tasks\":0,\"crons\":0,\"context\":{\"ctxTokens\":5,\"sinceTokens\":3,\"checkpointAt\":null}}"],
+        ["patton;stop;tasks=0;crons=0;ctx=5;since=3;cpt=oops", "{\"kind\":\"stop\",\"tasks\":0,\"crons\":0,\"context\":{\"ctxTokens\":5,\"sinceTokens\":3,\"checkpointAt\":null}}"],
+        ["patton;stop;tasks=0;crons=0;ctx=bad;since=3", "{\"kind\":\"stop\",\"tasks\":0,\"crons\":0,\"context\":null}"],
+        ["patton;stop;tasks=0;crons=0;zzz", "{\"kind\":\"stop\",\"tasks\":0,\"crons\":0,\"context\":null}"],
+        ["patton;ctx;ctx=5;since=3;new=1", "{\"kind\":\"ctx\",\"context\":{\"ctxTokens\":5,\"sinceTokens\":3,\"checkpointAt\":null}}"],
+        ["patton;ctx;ctx=5", "null"],
+        ["patton;stop;tasks=x;crons=0", "null"],
+      ];
+      let bad = 0;
+      for (const [i, want] of cases) { const got = t(i); if (got !== want) { bad++; console.log("FAIL parse <" + i + "> got " + got); } }
+      console.log(bad ? "parse FAILED" : "ok   OSC 777 parse (" + cases.length + " cases)");
+      process.exit(bad ? 1 : 0);
+    });
+  ' "$ROOT/src/renderer/services/patton-osc.ts" 2>&1) || fail=1
+  echo "$out"
+else
+  echo "skip OSC parse (no node)"
 fi
 
 if [ $fail -ne 0 ]; then echo "probe FAILED"; exit 1; fi

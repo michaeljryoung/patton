@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { IPC } from '../shared/constants';
 import { PtyManager } from './pty-manager';
 import { isSafeAbsolutePath, resolveProject } from './projects';
-import { getHookStatus, installHook, removeHook, type ClaudeHookPaths } from './claude-hook';
+import { getHookStatus, installHook, refreshInstalledScript, removeHook, type ClaudeHookPaths } from './claude-hook';
 import { getResourcesPath } from './resources-path';
 import * as store from './store';
 import { registerClipboardImageHandlers } from './clipboard-image';
@@ -563,6 +563,11 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
     installedScript: join(app.getPath('userData'), 'hooks', 'claude-code-stop-hook.sh'),
     settingsFile: join(homedir(), '.claude', 'settings.json'),
   });
+  // An installed hook gets this build's script at startup, not only when
+  // Settings is next opened (a changed protocol must reach Claude Code at once).
+  // Packaged builds only: a dev run shares the userData folder with the
+  // installed app and would overwrite its hook with the working tree's.
+  if (app.isPackaged) refreshInstalledScript(claudeHookPaths());
   ipcMain.handle(IPC.CLAUDE_HOOK_STATUS, () => getHookStatus(claudeHookPaths()));
   ipcMain.handle(IPC.CLAUDE_HOOK_INSTALL, () => {
     try {

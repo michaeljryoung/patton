@@ -5,6 +5,7 @@ import { SearchAddon } from '@xterm/addon-search';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { DEFAULTS } from '../../shared/constants';
 import { rlog } from '../services/renderer-logger';
+import { parsePattonOsc, type PattonState } from '../services/patton-osc';
 import type { ITheme } from '@xterm/xterm';
 
 const LIGHT_THEME = {
@@ -91,14 +92,7 @@ function tryGetGpuInfo(): string {
 
 export type PromptState = 'prompt' | 'command' | 'idle';
 
-/** A Claude Code Stop hook verdict (OSC 777 `patton;stop;…`): how many
- *  background tasks are still in flight and how many timers are scheduled
- *  when its turn ended. Both zero means it really stopped. */
-export interface PattonState {
-  kind: 'stop';
-  tasks: number;
-  crons: number;
-}
+export type { ContextReading, PattonState } from '../services/patton-osc';
 
 export class TerminalView {
   readonly terminal: Terminal;
@@ -295,14 +289,17 @@ export class TerminalView {
     //    "needs you".
     //  - `notify;title;body` (rxvt/urxvt convention) is a notification, the
     //    same as a free-text OSC 9.
+    //  - `patton;ctx;ctx=C;since=S[;cpt=T]` is the same hook's context reading
+    //    for the checkpoint clock, sent alone when the hook has no verdict
+    //    (the stop message carries the same fields when it does).
     // Anything else is ignored but consumed.
     // Trust: any program writing to this pane can send these, as it can a
     // bell. Accepted on the same terms: the worst a spoof does is raise or
-    // hide this pane's own dot. Counts are capped at four digits.
+    // hide this pane's own dot or misstate its checkpoint clock. Counts are
+    // capped at four digits.
     this.terminal.parser.registerOscHandler(777, (data) => {
-      const stop = /^patton;stop;tasks=(\d{1,4});crons=(\d{1,4})$/.exec(data);
-      if (stop) {
-        const state: PattonState = { kind: 'stop', tasks: Number(stop[1]), crons: Number(stop[2]) };
+      const state = parsePattonOsc(data);
+      if (state) {
         for (const cb of this.pattonStateListeners) cb(state);
       } else if (data.startsWith('notify;')) {
         for (const cb of this.osc9Listeners) cb();
@@ -671,7 +668,7 @@ export class TerminalView {
     return () => disposable.dispose();
   }
 
-  /** Patton's own OSC 777 messages (currently only the Claude Code Stop hook's verdict). */
+  /** Patton's own OSC 777 messages (the Claude Code Stop hook's verdict and context reading). */
   onPattonState(callback: (state: PattonState) => void): () => void {
     this.pattonStateListeners.push(callback);
     return () => {

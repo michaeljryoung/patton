@@ -45,6 +45,8 @@ export class Tab {
   private onPaneUnregistered: ((pane: Pane) => void) | null = null;
   private onTitleChanged: (() => void) | null = null;
   private onCommandDone: (() => void) | null = null;
+  // The focused pane's checkpoint clock changed, or another pane took focus.
+  private onCheckpointChanged: (() => void) | null = null;
   title = 'Terminal';
   private _customTitle = false;
   // The project the focused pane's folder belongs to, if any. Its name outranks
@@ -145,6 +147,9 @@ export class Tab {
         this.onCommandDone?.();
       },
       onWorkStarted: () => this.clearAwaitingInput(pane),
+      onCheckpointChange: (p) => {
+        if (p === this._focusedPane) this.onCheckpointChanged?.();
+      },
       onParked: (p, info) => this.setPaneParked(p, info),
       onAutoFlag: (p, flag) => this.setPaneAutoFlag(p, flag),
       onBroadcastWrite: (data) => {
@@ -277,7 +282,9 @@ export class Tab {
     onUnregister: (pane: Pane) => void,
     onTitleChange?: () => void,
     onCommandDone?: () => void,
+    onCheckpointChange?: () => void,
   ): void {
+    this.onCheckpointChanged = onCheckpointChange || null;
     this.onPaneRegistered = onRegister;
     this.onPaneUnregistered = onUnregister;
     this.onTitleChanged = onTitleChange || null;
@@ -299,6 +306,7 @@ export class Tab {
     // The newly focused pane may be in a different folder, so a different project.
     this.lookUpProject();
     this.refreshTitle();
+    this.onCheckpointChanged?.();
   }
 
   /** Find out which project a pane's folder belongs to (the focused pane's

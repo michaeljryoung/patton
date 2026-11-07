@@ -90,6 +90,9 @@ export class App {
       if (settings.confirmMultilinePaste !== undefined) {
         setConfirmMultilinePaste(settings.confirmMultilinePaste);
       }
+      if (settings.checkpointNudgePct !== undefined) {
+        this.tabManager.setCheckpointNudgePct(settings.checkpointNudgePct);
+      }
       if (settings.theme !== undefined) {
         this.applyTheme(settings.theme);
       }
@@ -179,6 +182,7 @@ export class App {
     this.tabManager.setCopyOnSelect(settings.copyOnSelect === true);
     this.tabManager.setComposeFirst(settings.composeFirst !== false);
     setConfirmMultilinePaste(settings.confirmMultilinePaste === true);
+    this.tabManager.setCheckpointNudgePct(settings.checkpointNudgePct ?? DEFAULTS.CHECKPOINT_NUDGE_PCT);
     this.settingsPanel.loadSettings(settings);
     if (settings.theme && settings.theme !== 'system') {
       this.applyTheme(settings.theme);
@@ -472,6 +476,9 @@ export class App {
         break;
       case 'toggle-compose-first':
         tab?.toggleComposeFirst();
+        break;
+      case 'checkpoint-session':
+        this.tabManager.runCheckpoint();
         break;
       case 'history-search':
         tab?.showHistorySearch();
