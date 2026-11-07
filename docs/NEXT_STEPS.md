@@ -3,10 +3,10 @@
 <!-- MAP:BEGIN -->
 ## 🗺 THE MAP — S40: signals, image paste, bookmarks, look
 
-**Goal:** (S45) The terminal font setting works and the default reads as modern (SF Mono, loaded from the Mac's own Terminal.app copy); a "Claude" button at the board's top right starts a plain `claude` session; Forge 8 and a dependency security pass land without risking Michael's live sessions ("make sure our existing patton sessions dont crash so wait if a risk").
-**Done when:** the font fix and the Claude button are released (cask sha matches the DMG) after lint, `tsc`, `check-fonts.cjs`, the board suites, a no-install package and a fresh review with no open major; Forge 8 + the dependency pass are merged only after their build has launched once; nothing is installed into /Applications while Patton runs without Michael's word.
-_Previous goals: S44 → v1.15 (project board), S43 → v1.14 (find, checkpoint, Claude's own state) and S40 (signals, image paste, bookmarks, look) reached except their live checks, which stay below._
-**Last verified:** 2026-11-07 19:47 (Session 45, S45 nodes from this session's checks)
+**Goal:** (S46) An "Interface Text Size" setting sizes Patton's own text (tabs, board, menus, panels) apart from the terminal's Font Size (Michael: "option to increase font size of patton platform text, not just the claude platform"); v1.17.0 installed and checked live; a local install can no longer leave stale files that break the signature; nothing pushed or installed while his sessions run ("dont push live or anything tho as have live sessions").
+**Done when:** the setting passes a hidden-window layout check at 150% (every interface text scales, nothing clips, the terminal unchanged), lint, `tsc`, a no-install package and a fresh review with no open major, and sits on local main; push, release and install wait for Michael's word.
+_Previous goals: S45 → v1.16/v1.17 (real font, Claude button, ⌘W twice, Forge 8), S44 → v1.15 (project board), S43 → v1.14 (find, checkpoint, Claude's own state) and S40 (signals, image paste, bookmarks, look) reached except their live checks, which stay below._
+**Last verified:** 2026-11-07 22:25 (Session 46, S45/S46 nodes from this session's checks)
 
 **Retired:** 33 finished nodes, in `docs/map-archive.md`
 
@@ -42,7 +42,14 @@ flowchart TD
   subgraph P8["Phase 8 — S45: font, Claude button, Forge 8, dependencies"]
     s45_release[merge, review, release]:::done
     forge8_launch[launch the Forge 8 build once]:::done
-    s45_install[install on Michael's word]:::todo
+    s45_install[install on Michael's word]:::done
+    s45_verify[live checks v1.16/v1.17]:::live
+  end
+  subgraph P9["Phase 9 — S46: interface text size, install hygiene"]
+    install_prune[install step prunes stale files, checks signature]:::live
+    lint_fix[lint green again after Forge 8]:::done
+    ui_text_size[Interface Text Size setting]:::todo
+    s46_ship[push, release, install on Michael's word]:::todo
   end
   subgraph P5["Phase 5 — Typing and release"]
     merge_release[merge, review, release v1.11.0]:::done
@@ -69,6 +76,11 @@ flowchart TD
   s45_release --> forge8_launch
   s45_release --> s45_install
   forge8_launch --> s45_install
+  s45_install --> s45_verify
+  s45_install --> install_prune
+  lint_fix --> ui_text_size
+  install_prune --> s46_ship
+  ui_text_size --> s46_ship
   classDef done fill:#1a7f37,color:#fff
   classDef live fill:#0969da,color:#fff
   classDef todo fill:#8c959f,color:#fff
@@ -99,7 +111,12 @@ flowchart TD
 | `v115_verify` | Live: ⌘T shows the board with his themes; a tile dragged to another theme stays there after a relaunch; a tile click starts Claude in its project; Plain terminal leaves a plain shell | live | `v115_release`, `board_seed` | main.log 2026-11-07: ⌘T board shown 17:01:43 ("that looks great"), `tile moved` via drag + `Layout saved` 17:01:47; after a relaunch `Loaded` that layout and `shown at launch` 17:42:17, `Esc pressed` → `removed` (terminal) 17:42:20; **S44 audit:** tile click seen twice: `[BOARD] opened` (new tab, CK3 Rome Mod) 17:42:51 and 18:06:37, each followed by `PATTON_PROJECT_DIR exported`, `Startup command sent` and `[7501] state working app claude-code` on the new pane; Esc / Terminal path `removed reason:terminal` three times, with no 7501 line on those panes; `project-board.json` mtime 17:01 (after the drag). Not provable from the log: that the dragged tile sits in its new theme after the relaunch (no positions logged). **S45 (log 18:15–18:19):** Wake button seen: `wake clicked {awake:false}` → `wake started` in a new tab (tab-6, board tab kept) → `Startup command sent` 18:15:37; a third tile click (Patton) 18:19:20. Still unseen: "Awake" jumping to the wake tab (no log line for it) |
 | `s45_release` | All three branches merged to main with no-install builds, pushed, CI release; cask sha matches the DMG | done | `font_fix`, `claude_button`, `close_confirm` | **v1.16.0** (tag → `6bcd319`, run 42407928968 success; cask 1.16.0 sha `e8f721f2…` matches the DMG). Combined tip `aa6e487`: lint, tsc, board 132, UI 161, wire 155, close 29, fonts 52, link policy 116, link target 43; no-install asar 19:46, /Applications still 17:59 |
 | `forge8_launch` | The Forge 8 + dependency build starts and runs a tab before it merges: launched once, isolated from Michael's settings and sessions (Patton has no single-instance lock, so a second copy would share userData), or installed at a relaunch he chooses with the last release kept to roll back to | done | `devdeps`, `s45_release` | 2026-11-07 19:55, with Michael's OK ("1 ok"): the `devdeps` tree built with productName "Patton Test" (own userData, so his sessions and layout untouched) and run from `out/`: `Patton main process started (v1.16.0+4, electron 44.9.3, node 24.22.0)`, `[FONT] SF Mono found` → renderer `registered added:4` (so `preload.cjs` and the IPC work), `[BOARD] shown at launch` with 40 projects; no error lines; killed after 4 s, test userData moved to the Trash. Not exercised: a typed command in a tab |
-| `s45_install` | /Applications gets the new build only on Michael's word, while he is ready to quit and relaunch | todo | `s45_release`, `forge8_launch` | Michael 2026-11-07: "make sure our existing patton sessions dont crash so wait if a risk", then "get everything ready then checkpoint when done and ill open this in terminal to finish": v1.17.0 is released and checksum-verified; the install runs from a Terminal session with Patton quit, from tag `v1.17.0` |
+| `s45_install` | /Applications gets the new build only on Michael's word, while he is ready to quit and relaunch | done | `s45_release`, `forge8_launch` | S46, 2026-11-07, his word ("yep do the install etc"), from iTerm with Patton quit: built from tag `v1.17.0` in a worktree, asar 22:16, reports 1.17.0; the in-place `ditto` left Electron 44.7.0's `libEGL.dylib` and `libGLESv2.dylib` (44.9.3 ships neither), which failed `codesign --verify --deep --strict`; moved to the Trash, then codesign ok and the file list identical to `out/`. Launched 22:17:14: `v1.17.0, electron 44.9.3`, `[FONT] SF Mono found` → `registered added:4`, `[BOARD] shown at launch` (40 projects) |
+| `s45_verify` | Live (v1.16/v1.17): Font Family changes the terminal text; the board's Claude button starts `claude` in its tab; ⌘W twice closes a tab with Close focused; ⌘W twice on the last tab asks "Quit Patton?" and quits | live | `s45_install` | main.log 2026-11-07, Michael "font is fine", "1-3 all working": five `[FONT] family set` 22:20:31–40, all `available:true`; `[BOARD] claude clicked` → `Plain claude sent` → `claude started` (tab-3) 22:18:07, then `[7501] state … app claude-code` on pane-3; `[CLOSE] confirm shown {kind:tab, defaultFocus:confirm}` → `answered ok by cmd-w` 22:21:16–18. Last-tab quit left for the next time he closes Patton anyway ("dont crash my live patton") |
+| `install_prune` | After the install `ditto`, remove what the new build lacks when no Patton runs from /Applications (warn and keep when one does), then `codesign --verify --deep --strict` and warn on failure | live | `s45_install` | `b07e219` (`scripts/install-prune.cjs`, `scripts/check-install-bundle.mjs` 33 checks, six deliberate breaks caught); no-install build asar 22:20:21; fresh review pending; not yet run by a real install |
+| `lint_fix` | `npm run lint` green: Forge 8 and Vite 8 packages expose only `exports`, which eslint-plugin-import's node resolver can't read (11 errors on main since `3881ba3`) | done | — | `ece29a6`: `import/no-unresolved` off for `forge.config.ts` and `vite.*.config.ts` only; `npx eslint .` exit 0, tsc clean |
+| `ui_text_size` | Settings → "Interface Text Size" (90–150%): one `--ui-scale` on `:root` scales every interface font size and the fixed heights holding text; xterm and the compose text keep the terminal Font Size | todo | `lint_fix` | builder on `feat/ui-text-size` (worktree `.worktrees/ui-text-size`), with a hidden-window layout check at 1 and 1.5 |
+| `s46_ship` | Merge to local main; push, CI release and install only when Michael says (live sessions running) | todo | `install_prune`, `ui_text_size` | Michael 2026-11-07 22:22: "dont push live or anything tho as have live sessions" |
 <!-- MAP:END -->
 
 Last updated: 2026-11-07 (Session 45, v1.17.0)
