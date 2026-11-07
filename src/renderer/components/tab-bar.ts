@@ -30,6 +30,19 @@ interface TabHeaderInfo {
   parked?: { tasks: number; crons: number } | null;
 }
 
+function parkedText({ tasks, crons }: { tasks: number; crons: number }): string {
+  return `Waiting on its own background work (${tasks} ${tasks === 1 ? 'task' : 'tasks'}, ${crons} ${crons === 1 ? 'timer' : 'timers'})`;
+}
+
+/** The tab's title plus whatever its dot says, e.g. "patton, waiting for you". */
+function tabLabel(tab: TabHeaderInfo, needsYou: boolean, shownFlag: TabFlag | null): string {
+  const states: string[] = [];
+  if (needsYou) states.push('waiting for you');
+  if (shownFlag) states.push(`flagged ${shownFlag}`);
+  if (tab.parked && !needsYou && !shownFlag) states.push(parkedText(tab.parked).toLowerCase());
+  return states.length > 0 ? `${tab.title}, ${states.join(', ')}` : tab.title;
+}
+
 interface RenameOptions {
   value: string;
   /** Shown when the box is emptied: what committing an empty box goes back to. */
@@ -58,6 +71,8 @@ export class TabBar {
   // open, the latest update is held here and applied when the box closes.
   private renameOpen = false;
   private heldUpdate: TabHeaderInfo[] | null = null;
+  private lastActiveId: string | null = null;
+  private lastTabCount = 0;
 
   constructor(container: HTMLElement, callbacks: TabBarCallbacks) {
     this.container = container;
@@ -153,6 +168,12 @@ export class TabBar {
       return;
     }
     this.heldUpdate = null;
+    // The strip scrolls sideways (hidden scrollbar) and is rebuilt on every
+    // update, which empties it and resets scrollLeft: keep the position, and
+    // bring the active tab into view when it is a different tab or the count
+    // changed (not on every title tick, which would drag the strip back while
+    // the user looks along it).
+    const savedScroll = this.tabsContainer.scrollLeft;
     this.tabsContainer.innerHTML = '';
     for (const tab of tabs) {
       const el = document.createElement('div');
@@ -163,7 +184,6 @@ export class TabBar {
       el.setAttribute('role', 'tab');
       el.setAttribute('aria-selected', tab.active ? 'true' : 'false');
       el.setAttribute('tabindex', tab.active ? '0' : '-1');
-      el.setAttribute('aria-label', tab.title);
 
       // --- Drag grip for tab reordering (only this small handle initiates drag) ---
       if (tabs.length > 1) {
@@ -237,13 +257,19 @@ export class TabBar {
       } else if (tab.parked) {
         const ring = document.createElement('span');
         ring.className = 'tab-bar-tab-indicator parked';
-        const { tasks, crons } = tab.parked;
-        const text = `Waiting on its own background work (${tasks} ${tasks === 1 ? 'task' : 'tasks'}, ${crons} ${crons === 1 ? 'timer' : 'timers'})`;
+        const text = parkedText(tab.parked);
         ring.setAttribute('aria-label', text);
         ring.title = text;
         ring.setAttribute('role', 'img');
         el.appendChild(ring);
       }
+
+      // One label for screen readers and the hover tooltip: a tab's children
+      // are presentational in ARIA, so the dots' own labels never reach the
+      // tab's accessible name, and the dots themselves have no tooltip.
+      const label = tabLabel(tab, needsYou, shownFlag);
+      el.setAttribute('aria-label', label);
+      el.title = label;
 
       const titleSpan = document.createElement('span');
       titleSpan.className = 'tab-bar-tab-title';
@@ -378,6 +404,16 @@ export class TabBar {
 
       this.tabsContainer.appendChild(el);
     }
+
+    this.tabsContainer.scrollLeft = savedScroll;
+    const active = tabs.find((t) => t.active);
+    if (active && (active.id !== this.lastActiveId || tabs.length !== this.lastTabCount)) {
+      this.tabsContainer
+        .querySelector<HTMLElement>(`.tab-bar-tab[data-tab-id="${CSS.escape(active.id)}"]`)
+        ?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+    }
+    this.lastActiveId = active?.id ?? null;
+    this.lastTabCount = tabs.length;
   }
 
   /** Swap a tab's title for an inline text box. Enter or clicking away commits,
