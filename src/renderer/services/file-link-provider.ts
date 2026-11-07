@@ -1,4 +1,5 @@
 import type { IBufferRange, ILinkProvider, ILink, Terminal } from '@xterm/xterm';
+import { resolveLocalPath, urlSpans } from './link-target';
 
 /**
  * Markdown inline link: [title](target). Target can be a URL or a local path.
@@ -63,7 +64,10 @@ export class FileLinkProvider implements ILinkProvider {
     const links: ILink[] = [];
     // Track spans already claimed by markdown links so the bare-path pass
     // doesn't double-register the path inside `[text](path)`.
-    const occupied: Array<[number, number]> = [];
+    // Addresses with a scheme ("https://host/…") are not paths either: the web
+    // links addon owns http(s), and a file read out of the part after "//"
+    // opened "/www.clearscore.com".
+    const occupied: Array<[number, number]> = urlSpans(text);
 
     // Pass 1: markdown [text](path) — whole span is clickable.
     MD_LINK_RE.lastIndex = 0;
@@ -132,17 +136,10 @@ export class FileLinkProvider implements ILinkProvider {
         // can drag-select text that happens to contain a path.
         if (event.detail !== 2) return;
 
-        // Security: reject directory traversal at input.
-        if (/(?:^|\/)\.\.(?:\/|$)/.test(filePath)) return;
-
-        const cwd = this.getCwd();
-        let target = filePath;
-        // `~/…` stays as is: main expands it (the renderer doesn't know $HOME).
-        if (!target.startsWith('/') && !target.startsWith('~/') && cwd) {
-          target = `${cwd}/${target}`;
-        }
-        // Security: reject traversal that survives resolution.
-        if (/(?:^|\/)\.\.(?:\/|$)/.test(target)) return;
+        // Security rules (traversal, cwd resolution) are shared with OSC 8
+        // links: see link-target.ts.
+        const target = resolveLocalPath(filePath, this.getCwd());
+        if (target === null) return;
 
         let gotoPath = target;
         if (lineNum) {
