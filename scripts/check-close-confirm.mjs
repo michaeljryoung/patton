@@ -168,6 +168,9 @@ const events = [];
 let closeInfo = { isLastWindow: true, liveShells: 2 };
 let infoDelayMs = 0;
 let preconfirmReply = true;
+let preconfirmDelayMs = 0;
+let preconfirmSettled = true; // false while the pre-confirm invoke is unanswered
+let closedBeforeReply = false; // window.close() ran while it was still unanswered
 {
   const base = w.patton;
   const closeGuard = {
@@ -177,10 +180,16 @@ let preconfirmReply = true;
       if (closeInfo instanceof Error) throw closeInfo;
       return closeInfo;
     },
-    preconfirm: async () => { events.push('preconfirm'); return preconfirmReply; },
+    preconfirm: async () => {
+      events.push('preconfirm');
+      preconfirmSettled = false;
+      if (preconfirmDelayMs) await new Promise((r) => setTimeout(r, preconfirmDelayMs));
+      preconfirmSettled = true;
+      return preconfirmReply;
+    },
   };
   w.patton = new Proxy({}, { get: (_t, k) => (k === 'closeGuard' ? closeGuard : base[k]) });
-  w.close = () => { events.push('window.close'); };
+  w.close = () => { events.push('window.close'); if (!preconfirmSettled) closedBeforeReply = true; };
 }
 function lastTab() {
   events.length = 0;
@@ -312,6 +321,102 @@ const torn = () => events.some((e) => e === 'dispose' || e.startsWith('closeById
   tm.confirmDialog.confirmByShortcut();
   await p;
   infoDelayMs = 0;
+}
+
+// 5j. window.close() waits for main's pre-confirm reply (a close request and an
+// invoke travel on different pipes: closing first lets main's native box ask a
+// second time).
+{
+  closeInfo = { isLastWindow: true, liveShells: 1 };
+  preconfirmDelayMs = 40;
+  closedBeforeReply = false;
+  const tm = lastTab();
+  const p = tm.closeActivePane();
+  await tick();
+  tm.confirmDialog.confirmByShortcut();
+  await new Promise((r) => setTimeout(r, 15));
+  check('pre-confirm unanswered: window.close() not called yet', events.join() === 'info,preconfirm', events);
+  await p;
+  check('pre-confirm answered: then window.close()', events.join() === 'info,preconfirm,window.close' && !closedBeforeReply, { events, closedBeforeReply });
+  preconfirmDelayMs = 0;
+}
+
+// 5k. The tabs changed while the dialog was open: the confirm acts on nothing
+{
+  closeInfo = { isLastWindow: true, liveShells: 1 };
+  // the dialog's tab is gone and another tab is the only one left
+  let tm = lastTab();
+  let p = tm.closeActivePane();
+  await tick();
+  const other = fakeTab('other');
+  tm.tabs = [other];
+  tm.confirmDialog.confirmByShortcut();
+  await p;
+  check('dialog tab gone, another tab left: nothing sent, window kept', events.join() === 'info' && !torn(), events);
+  check('dialog tab gone: ignore logged', lastLogs().some((x) => x.includes('confirm ignored')), lastLogs());
+  // a second tab was opened while the dialog was up
+  tm = lastTab();
+  p = tm.closeActivePane();
+  await tick();
+  tm.tabs = [tm.tabs[0], fakeTab('opened')];
+  tm.confirmDialog.confirmByShortcut();
+  await p;
+  check('second tab opened during the dialog: nothing sent, window kept', events.join() === 'info' && !torn(), events);
+}
+
+// 5l. "Close this tab?" confirmed after the other tabs went: it is the last tab,
+// so it takes the last-tab path (asks again, never disposes first)
+for (const via of ['⌘W', '✕']) {
+  closeInfo = { isLastWindow: true, liveShells: 1 };
+  const tm = lastTab();
+  const second = fakeTab('tab1');
+  tm.tabs = [tm.tabs[0], second];
+  const t0 = tm.tabs[0];
+  tm.activeTab = t0;
+  const p = via === '⌘W' ? tm.closeActivePane() : tm.confirmAndCloseTab('tab0');
+  await tick();
+  check(`${via} with two tabs: "Close this tab?" first`, dialogText('.confirm-dialog-title') === 'Close this tab?', dialogText('.confirm-dialog-title'));
+  tm.tabs = [t0]; // the other tab's shell exited meanwhile
+  key(w.document.activeElement, 'Enter');
+  await tick();
+  await tick();
+  check(`${via}: now the last tab, so Quit Patton? is asked`, dialogText('.confirm-dialog-title') === 'Quit Patton?', dialogText('.confirm-dialog-title'));
+  check(`${via}: the tab is not torn down before the second answer`, !torn(), events);
+  tm.confirmDialog.confirmByShortcut();
+  await p;
+  check(`${via}: last-tab path: pre-confirm, then window.close(), no teardown`, events.join() === 'info,preconfirm,window.close', events);
+}
+
+// 5m. A stalled main (no reply): bounded wait, then window.close() so the native guard asks
+{
+  closeInfo = { isLastWindow: true, liveShells: 1 };
+  infoDelayMs = 300;
+  let tm = lastTab();
+  tm.closeIpcTimeoutMs = 30;
+  await tm.closeActivePane();
+  check('close info stalled: no dialog, window.close() after the timeout', !visible() && events.join() === 'info,window.close', events);
+  check('close info stalled: timeout logged', lastLogs().some((x) => x.includes('timed out') && x.includes('"what":"info"')), lastLogs());
+  // the query flag was released: the next ⌘W is not dropped
+  infoDelayMs = 0;
+  events.length = 0;
+  const p = tm.closeActivePane();
+  await tick();
+  check('after a timeout the next ⌘W opens the dialog', visible(), events);
+  tm.confirmDialog.confirmByShortcut();
+  await p;
+
+  preconfirmDelayMs = 300;
+  tm = lastTab();
+  tm.closeIpcTimeoutMs = 30;
+  const q = tm.closeActivePane();
+  await tick();
+  tm.confirmDialog.confirmByShortcut();
+  await q;
+  check('pre-confirm stalled: window.close() after the timeout', events.join() === 'info,preconfirm,window.close', events);
+  check('pre-confirm stalled: logged not pre-confirmed, timed out',
+    lastLogs().some((x) => x.includes('"preconfirmed":false') && x.includes('"timedOut":true')), lastLogs());
+  preconfirmDelayMs = 0;
+  await new Promise((r) => setTimeout(r, 320)); // let the stalled replies settle
 }
 
 // ── 6. Bookmarks / board style: default options, Cancel focused, Enter cancels ──

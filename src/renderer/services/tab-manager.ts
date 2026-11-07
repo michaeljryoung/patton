@@ -30,6 +30,10 @@ export class TabManager {
   /** True while a last-tab close is asking main what closing means (the
    *  dialog isn't open yet, so a fast second ⌘W must not start another). */
   private lastTabCloseQuerying = false;
+  /** How long Cmd-W on the last tab waits for main's close-guard IPC before it
+   *  falls back to plain window.close() (main's native guard then asks). A
+   *  field, not a constant, so the headless check can shorten it. */
+  closeIpcTimeoutMs = 1500;
   private contentContainer: HTMLElement;
   private disposables: (() => void)[] = [];
   private currentFontSize: number | undefined;
@@ -451,6 +455,12 @@ export class TabManager {
       if (!ok) return;
       // The PTY may have exited (auto-closing the tab) while the dialog was up.
       if (!this.tabs.includes(tab)) return;
+      // The other tabs may have gone too: this is now the window's last tab,
+      // and closeById would dispose it before window.close() (S37 hazard).
+      if (this.tabs.length <= 1) {
+        await this.closeLastTab(tab);
+        return;
+      }
       await this.closeById(tab.id);
     } else {
       // Closing one pane of a split is low-stakes — the tab and sibling panes
@@ -476,6 +486,10 @@ export class TabManager {
     const ok = await this.confirmClose('tab', tab.title);
     if (!ok) return;
     if (!this.tabs.includes(tab)) return; // disposed while dialog was open
+    if (this.tabs.length <= 1) { // the others went while it was open: now the last tab
+      await this.closeLastTab(tab);
+      return;
+    }
     await this.closeById(id);
   }
 
@@ -494,29 +508,65 @@ export class TabManager {
     if (this.lastTabCloseQuerying) return;
     this.lastTabCloseQuerying = true;
     let info: WindowCloseInfo | null = null;
+    let timedOut = false;
     try {
-      info = (await window.patton.closeGuard.info()) ?? null;
+      const r = await this.askMain('info', () => window.patton.closeGuard.info());
+      info = r.value ?? null;
+      timedOut = r.timedOut;
     } catch {
       info = null;
     } finally {
       this.lastTabCloseQuerying = false;
     }
     if (!info || info.liveShells <= 0) {
-      rlog('info', '[CLOSE] last tab closed without the app dialog', { reason: info ? 'no-live-shells' : 'no-close-info' });
+      rlog('info', '[CLOSE] last tab closed without the app dialog', {
+        reason: info ? 'no-live-shells' : (timedOut ? 'close-info-timeout' : 'no-close-info'),
+      });
       window.close();
       return;
     }
     const ok = await this.confirmClose('last-tab', tab.title, info.isLastWindow);
     if (!ok) return;
+    // The dialog was open for a while: act only if it still describes the
+    // window (its tab still here and still the only one). Otherwise do
+    // nothing: the user confirmed a different situation.
+    if (!this.tabs.includes(tab) || this.tabs.length !== 1) {
+      rlog('info', '[CLOSE] last-tab confirm ignored: the tabs changed while the dialog was open', {
+        tabStillOpen: this.tabs.includes(tab), tabs: this.tabs.length,
+      });
+      return;
+    }
     let preconfirmed = false;
+    let preconfirmTimedOut = false;
     try {
-      preconfirmed = (await window.patton.closeGuard.preconfirm()) === true;
+      const r = await this.askMain('preconfirm', () => window.patton.closeGuard.preconfirm());
+      preconfirmed = r.value === true;
+      preconfirmTimedOut = r.timedOut;
     } catch {
       preconfirmed = false;
     }
-    // Not recorded (refused or failed): main's native box asks instead.
-    rlog('info', '[CLOSE] window close handed to main', { preconfirmed });
+    // Not recorded (refused, failed or too slow): main's native box asks instead.
+    rlog('info', '[CLOSE] window close handed to main', { preconfirmed, timedOut: preconfirmTimedOut });
     window.close();
+  }
+
+  /** Await one close-guard IPC for at most `closeIpcTimeoutMs`: a stalled main
+   *  (it blocks inside any native message box) must not leave Cmd-W dead. */
+  private async askMain<T>(what: string, call: () => Promise<T>): Promise<{ value: T | undefined; timedOut: boolean }> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<'timeout'>((resolve) => {
+      timer = setTimeout(() => resolve('timeout'), this.closeIpcTimeoutMs);
+    });
+    try {
+      const r = await Promise.race([call(), timeout]);
+      if (r === 'timeout') {
+        rlog('warn', '[CLOSE] close-guard call timed out; falling back to window.close()', { what, ms: this.closeIpcTimeoutMs });
+        return { value: undefined, timedOut: true };
+      }
+      return { value: r as T, timedOut: false };
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   /** Shared "are you sure you want to close this?" prompt for user-initiated
