@@ -504,9 +504,14 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
     // needs a code-signed app — Patton's signature is self-signed. Log any
     // refusal so a missing notification is diagnosable from main.log.
     notif.on('failed', (_e, error) => {
-      if (!notificationsRefused) {
-        notificationsRefused = true;
-        console.warn('[NOTIFY] Notification not shown; skipping further attempts this run', { error });
+      // Latch only on macOS's refusal; any other failure may be momentary.
+      if (/not allowed/i.test(String(error))) {
+        if (!notificationsRefused) {
+          notificationsRefused = true;
+          console.warn('[NOTIFY] Notification not allowed; skipping further attempts this run', { error });
+        }
+      } else {
+        console.warn('[NOTIFY] Notification not shown', { error });
       }
       activeNotifications.delete(notif);
     });
