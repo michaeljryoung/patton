@@ -3,10 +3,10 @@
 <!-- MAP:BEGIN -->
 ## 🗺 THE MAP — S40: signals, image paste, bookmarks, look
 
-**Goal:** (S43 → v1.14) Patton reads Claude Code's own state and makes many parallel sessions easy to find and checkpoint: a checkpoint clock, worktree-aware names and bookmarks, bookmark rows with live state, "Go to session" in the palette, OSC 8 links, Claude Code's OSC 7501 status, and a tab hover card (Michael picked these from the S43 review page; skipped: jump-to-next-waiting, session resume).
-**Done when:** v1.14.x is installed from its tag; each wave passes lint, `tsc`, `scripts/probe-stop-hook.sh` and its feature's jsdom check, and a fresh review of it leaves no open major finding; then live: the clock reads +% and resets after a checkpoint, a worktree tab reads "patton ⎇ <branch>", a bookmark row shows its waiting count, the palette jumps to a session, a Claude file link opens on double-click, a tab's dot follows Claude's own state, and its hover card shows what it waits on.
-_Previous goal (S40: signals, image paste, bookmarks, look) reached except its live checks, which stay below._
-**Last verified:** 2026-11-07 14:48 (Session 43: P6 shipped as v1.14.0 and installed from its tag; live checks open)
+**Goal:** (S44 → v1.15) A tile board of every project in Michael's project list, shown in each new empty tab: themes he names as tinted areas, tiles that snap to a grid and drag between themes, worktrees inside their project's tile, + Project and + Theme, and a click that opens the project with Claude started. Michael chose it from three sketches made in the Claude Launcher session (spec `~/Projects/claude-launcher/docs/project-board-spec.md`, outside this repo).
+**Done when:** v1.15.x is released (cask sha matches the DMG) and installed from its tag, after lint, `tsc`, the package build, a node suite on the main-process module (parse, nesting, validation, and a project-list append that `cc`'s own parser reads back) and a jsdom suite on the real board (tiles from a fixture list, drag between themes and theme reorder saved, a new tab shows it while restored and bookmark tabs don't) all pass and a fresh review leaves no open major finding; then live: ⌘T shows the board with his themes and a tile click starts Claude in its project.
+_Previous goals: S43 → v1.14 (find, checkpoint, Claude's own state) and S40 (signals, image paste, bookmarks, look) reached except their live checks, which stay below._
+**Last verified:** 2026-11-07 15:05 (Session 44, run from the Claude Launcher session: v1.14.0 tag and /Applications install confirmed; P7 added)
 
 **Retired:** 12 finished nodes, in `docs/map-archive.md`
 
@@ -40,6 +40,16 @@ flowchart TD
     hover_card[tab hover card]:::done
     v114_release[review, release, install v1.14]:::done
     v114_verify[live checks v1.14]:::todo
+  end
+  subgraph P7["Phase 7 — S44 → v1.15: project board"]
+    board_main[main: list, nesting, layout, IPC]:::todo
+    board_ui[board component]:::todo
+    board_newtab[new-tab wiring + settings]:::todo
+    board_checks[node + jsdom suites]:::todo
+    board_review[fresh review + fixes]:::todo
+    board_seed[seed Michael's themes]:::todo
+    v115_release[release + install v1.15]:::todo
+    v115_verify[live checks v1.15]:::todo
   end
   subgraph P4["Phase 4 — Look"]
     look_pick[Michael picks a combination]:::done
@@ -75,6 +85,16 @@ flowchart TD
   osc8_links --> v114_release
   hover_card --> v114_release
   v114_release --> v114_verify
+  board_main --> board_ui
+  board_ui --> board_newtab
+  board_main --> board_checks
+  board_ui --> board_checks
+  board_newtab --> board_checks
+  board_checks --> board_review
+  board_main --> board_seed
+  board_review --> v115_release
+  v115_release --> v115_verify
+  board_seed --> v115_verify
   classDef done fill:#1a7f37,color:#fff
   classDef live fill:#0969da,color:#fff
   classDef todo fill:#8c959f,color:#fff
@@ -96,7 +116,7 @@ flowchart TD
 | `look_pick` | Michael picks a combination from the mixer | done | `look_mixer` | Michael 2026-11-06 11:13: `tabs=c&glyphs=a&rows=c&scale=b&compose=a&tone=light&lines=ink` (ledger-strip tabs, coloured glyphs, dense rows, compact scale, boxed compose + Send, light, ink hairlines) |
 | `release_v1_12` | Push the afternoon's commits, CI release v1.12.0 on macos-15, cask green, checksum verified | done | `compose_default`, `look_implement`, `merge_release` | tag `v1.12.0` (run 42209891435; cask 1.12.0, sha `5495ad3f…` matches the DMG) |
 | `s41_install` | The S41 build, plus S42's three fixes (multi-line paste confirmation off by default, `8266f90`; Stop-hook verdicts kept 40 s, `c6d1af8`; a bookmark for a closed project launches Claude there instead of the `cc` picker, `5be6a3b` with claude-launcher `238974c`), reaches /Applications/Patton.app. Michael asked that nothing touch the running app during the session ("don't activate anything while we're in here") and chose to install in a later session run from a plain terminal ("we'll update in a later session in terminal so this doesnt all break"): from Terminal.app, `npm run install-app` in the repo, then quit and relaunch Patton | done | `bookmark_reorder`, `bookmark_hide` | `PATTON_NO_INSTALL=1` build verified 13:11 and 13:25 with /Applications untouched (asar mtime 11:40:58 throughout); released as `v1.13.0` (run 42225415151; cask 1.13.0, sha `2d0fe426…` matches the DMG); **S43 (7 Nov):** installed from iTerm with Patton closed, then pushed and released as `v1.13.1` (run 42371043455; cask 1.13.1, sha `39e75b04…` matches the DMG); /Applications rebuilt at the tag reports `1.13.1`, asar 12:10, `PATTON_PROJECT_DIR`, "Confirm multi-line pastes" and `afterMs` literals present |
-| `s41_verify` | Live: click the bookmark of a project with no open tab: Claude Code starts there with "let's work on <name> project", no picker, and `main.log` has `[PTY] PATTON_PROJECT_DIR exported`. Dictate or paste 3+ lines into a Claude tab: no dialog, `[PASTE] multi-line text` with `confirm:false` in `main.log`; `[DOT] Hook verdict applied` lines carry `afterMs`, and no `Needs-you` with source `claude` follows a verdict that reported tasks. Drag a project row to a new place (blue line, order persists across relaunch), drag onto the other group (refused); chevron hides to the strip, the strip's "+" brings it back, ⌃⌘B the same | todo | `s41_install` | — |
+| `s41_verify` | Live: click the bookmark of a project with no open tab: Claude Code starts there with "let's work on <name> project", no picker, and `main.log` has `[PTY] PATTON_PROJECT_DIR exported`. Dictate or paste 3+ lines into a Claude tab: no dialog, `[PASTE] multi-line text` with `confirm:false` in `main.log`; `[DOT] Hook verdict applied` lines carry `afterMs`, and no `Needs-you` with source `claude` follows a verdict that reported tasks. Drag a project row to a new place (blue line, order persists across relaunch), drag onto the other group (refused); chevron hides to the strip, the strip's "+" brings it back, ⌃⌘B the same | todo | `s41_install` | bookmark launch seen 2026-11-07: `main.log` 13:12:48.993 export for a project with no tab, its Claude session began 0.8 s later with the launch prompt; the rest open |
 | `s43_fixes` | Eight bugs a post-restyle review found (two agents; claims checked against code and `main.log`) plus four from a fresh code review, released as v1.13.2: autosave saved `''` for panes past the tenth (cwd IPC capped 10/s), now spaced refresh + per-pane cache; notifications latch off only on macOS's "not allowed"; terminal frame takes the theme background (`--term-bg`); closed overlays `visibility: hidden` and focus returns on close; tab tooltip/aria carries status; larger hit areas, tab min-width 76 px, active tab kept in view; Color Theme no longer writes 18 old-look properties; opacity/font-size saves no longer refused | done | `s41_install` | `a68f871`…`a025b79`; lint + tsc + jsdom checks (13 stale panes all save real folders, ≤9 calls/s) + no-install build; tag `v1.13.2` (run 42374027568; cask 1.13.2, sha `049e5339…` matches the DMG) |
 | `s43_verify` | Live, after install: a split tab where one pane runs `cc` reopens both panes in their own folders after a relaunch; with 11+ panes open `grep -c 'pty:get-cwd' main.log` stops growing; a dark terminal theme on a light Mac has no white frame; Tab never lands in a closed dialog and closing search/settings returns focus to the terminal; hovering a tab shows its state; tab close and grip are easy to hit; with many tabs the active one stays visible | todo | `s43_fixes` | — |
 | `ckpt_clock` | Right end of the tab strip, active tab's Claude pane: "✓ +NN%" = share of the 1M window used since this session's last `/checkpoint` (Stop hook reads the transcript: ctx, since, cpt on OSC 777), amber + bold from 20% (setting); click or palette types `/checkpoint` + Enter when Claude is stopped | done | `parked_state` | in v1.14.0: hook ctx/since/cpt (probe 40 ok; oracle 0 mismatches over 56–834 transcripts; 75 MB transcript 109–118 ms); review + fix pass |
@@ -109,6 +129,14 @@ flowchart TD
 | `v114_release` | Each wave reviewed fresh (no open major), merged, pushed; CI release; cask checksum verified; installed from the tag | done | `ckpt_clock`, `bookmark_state`, `palette_sessions`, `osc8_links`, `hover_card` | tag `v1.14.0` (run 42383125028; cask 1.14.0, sha `b7cfa349…` matches the DMG); installed from the tag 14:48, reports 1.14.0 |
 | `v114_verify` | The live checks listed under Done when | todo | `v114_release` | — |
 | `merge_release` | Merge `feat/image-paste` and `feat/bookmarks` into main, code review, `npm run lint && npm run package`, release v1.11.0, Homebrew step green | done | `parked_state`, `wake_yellow`, `hook_install`, `paste_thumbnail`, `bookmark_open` | tag `v1.11.0` (release run 42203278111, macos-15; cask 1.11.0 pushed by CI) |
+| `board_main` | Main process: read the project list (a markdown table; path between the first backtick pair, as `cc` reads it), nest sub-projects (a folder inside a listed project, or a linked worktree whose main repo is listed), last-session time from `~/.claude/projects/<slug>`, layout file in userData, validated and rate-limited IPC, + Project appends a row inside the table (atomic write) | todo | — | — |
+| `board_ui` | Renderer: board component (areas grid, two-column tiles, wide tiles with sub-project chips, a tint per theme, search, + Theme / + Project / Plain terminal, area and tile menus, drag with the blue line, keyboard route, live state from the v1.14 activity) | todo | `board_main` | — |
+| `board_newtab` | Shown in each new empty tab (⌘T, palette, tab bar) while the setting is on and the list file exists; never in restored, bookmark, split or launch tabs; a tile opens or activates its project through one shared `openProject` (the bookmarks panel reuses it) and the board's tab goes; Settings: board on/off, list file | todo | `board_ui` | — |
+| `board_checks` | Node suite on `board_main` (parse, nesting, validation, append read back by `cc`'s parser) and jsdom suite on the real board and new-tab wiring, generic fixtures only (public repo); lint, `tsc`, `PATTON_NO_INSTALL=1` package | todo | `board_main`, `board_ui`, `board_newtab` | — |
+| `board_review` | Fresh code review of the whole feature, a fix pass, `board_checks` re-run | todo | `board_checks` | — |
+| `board_seed` | Michael's layout file seeded from the sketch's grouping (seven themes with tints), checked by a fresh-eyes agent; lives in userData, never in the repo | todo | `board_main` | — |
+| `v115_release` | ff-merge, push, CI release v1.15.x, cask sha matches the DMG, installed from the tag | todo | `board_review` | — |
+| `v115_verify` | Live: ⌘T shows the board with his themes; a tile dragged to another theme stays there after a relaunch; a tile click starts Claude in its project; Plain terminal leaves a plain shell | todo | `v115_release`, `board_seed` | — |
 <!-- MAP:END -->
 
 Last updated: 2026-11-07 (Session 43, v1.14.0)
