@@ -671,8 +671,9 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
   // Settings is next opened (a changed protocol must reach Claude Code at once).
   // Packaged builds only: a dev run shares the userData folder with the
   // installed app and would overwrite its hook with the working tree's.
+  // The same goes for the refresh each Settings open makes through the status call.
   if (app.isPackaged) refreshInstalledScript(claudeHookPaths());
-  ipcMain.handle(IPC.CLAUDE_HOOK_STATUS, () => getHookStatus(claudeHookPaths()));
+  ipcMain.handle(IPC.CLAUDE_HOOK_STATUS, () => getHookStatus(claudeHookPaths(), app.isPackaged));
   ipcMain.handle(IPC.CLAUDE_HOOK_INSTALL, () => {
     try {
       return installHook(claudeHookPaths());

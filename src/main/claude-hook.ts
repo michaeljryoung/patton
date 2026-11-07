@@ -160,7 +160,10 @@ export function refreshInstalledScript(paths: ClaudeHookPaths): void {
   }
 }
 
-export function getHookStatus(paths: ClaudeHookPaths): ClaudeHookStatus {
+/** `refresh`: bring an installed script up to this build's copy. Only a
+ *  packaged build may (`app.isPackaged`): a dev run shares the userData folder
+ *  with the installed app and would overwrite its hook with the working tree's. */
+export function getHookStatus(paths: ClaudeHookPaths, refresh: boolean): ClaudeHookStatus {
   const scriptPresent = existsSync(paths.installedScript);
   let entryPresent = false;
   let error: string | undefined;
@@ -169,7 +172,7 @@ export function getHookStatus(paths: ClaudeHookPaths): ClaudeHookStatus {
   } catch (err) {
     error = (err as Error).message;
   }
-  if (scriptPresent) refreshInstalledScript(paths);
+  if (scriptPresent && refresh) refreshInstalledScript(paths);
   return {
     installed: scriptPresent && entryPresent,
     scriptPresent,
@@ -211,7 +214,7 @@ export function installHook(paths: ClaudeHookPaths): ClaudeHookStatus {
     writeSettings(paths.settingsFile, settings);
     console.info('[HOOK] Added Stop entry', { command: hookCommand(paths) });
   }
-  return getHookStatus(paths);
+  return getHookStatus(paths, false);
 }
 
 /** Remove only Patton's own command. A matcher group left with no hooks is
@@ -223,7 +226,7 @@ export function removeHook(paths: ClaudeHookPaths): ClaudeHookStatus {
   const groups = stopGroups(settings);
   if (!groups || !hasOurEntry(settings, paths)) {
     console.info('[HOOK] No Patton Stop entry; settings left unchanged');
-    return getHookStatus(paths);
+    return getHookStatus(paths, false);
   }
   const kept: MatcherGroup[] = [];
   for (const group of groups) {
@@ -238,5 +241,5 @@ export function removeHook(paths: ClaudeHookPaths): ClaudeHookStatus {
   (settings.hooks as Record<string, unknown>).Stop = kept;
   writeSettings(paths.settingsFile, settings);
   console.info('[HOOK] Removed Stop entry');
-  return getHookStatus(paths);
+  return getHookStatus(paths, false);
 }
