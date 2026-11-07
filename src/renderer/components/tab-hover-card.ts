@@ -77,6 +77,11 @@ export class TabHoverCard {
     this.listen(window, 'resize', () => this.hide('resize'));
     this.listen(document, 'keydown', (e) => this.onKeyDown(e as KeyboardEvent), true);
     this.listen(document, 'mousedown', () => { this.pointerInput = true; }, true);
+    // A rebuild removes the hovered tab's node, and Chromium sends no mouseout
+    // for a removed node: a pointer that left within a frame of a rebuild
+    // would leave the card up. Any pointer move over something that isn't a
+    // tab ends a pointer-raised card (or its pending show) instead.
+    this.listen(document, 'mouseover', (e) => this.onDocumentPointerOver(e as MouseEvent), true);
   }
 
   get visibleTabId(): string | null {
@@ -174,6 +179,12 @@ export class TabHoverCard {
     if (this.shownId !== null && this.trigger === 'pointer') this.scheduleHide();
   }
 
+  private onDocumentPointerOver(e: MouseEvent): void {
+    if (this.trigger !== 'pointer' || this.tabFrom(e.target)) return;
+    if (this.pendingId !== null) this.cancelShow();
+    if (this.shownId !== null) this.scheduleHide();
+  }
+
   private onPointerDown(e: MouseEvent): void {
     this.pointerInput = true;
     const tab = this.tabFrom(e.target);
@@ -203,8 +214,8 @@ export class TabHoverCard {
   private onFocusOut(e: FocusEvent): void {
     if (this.trigger !== 'focus') return;
     if (this.tabFrom(e.relatedTarget)) return; // focusin on the next tab handles it
-    // A rebuild removes the focused tab; the strip refocuses the new one a
-    // frame later, inside the grace.
+    // A rebuild removes the focused tab; TabBar.update() refocuses the same
+    // tab's new element at once (and arrow keys a frame later), inside the grace.
     if (this.pendingId !== null) this.cancelShow();
     if (this.shownId !== null) this.scheduleHide();
     else this.setAnchor(null); // described but never shown
@@ -343,6 +354,9 @@ export class TabHoverCard {
   private place(): void {
     if (!this.anchor) return;
     const tab = this.anchor.getBoundingClientRect();
+    // Measured at the left edge: the previous card's `left` would squeeze the
+    // width (a card after a far-right one wrapped at ~200 px).
+    this.element.style.left = '0px';
     const card = this.element.getBoundingClientRect();
     const viewport = document.documentElement.clientWidth || window.innerWidth;
     const margin = TabHoverCard.MARGIN_PX;

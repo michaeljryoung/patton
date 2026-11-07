@@ -241,6 +241,11 @@ export class TabBar {
     // changed (not on every title tick, which would drag the strip back while
     // the user looks along it).
     const savedScroll = this.tabsContainer.scrollLeft;
+    // A tab holding keyboard focus gets it back on its new element below, so
+    // a rebuild (a title tick) doesn't drop the keyboard user, or their card.
+    const focused = document.activeElement;
+    const focusedTabId = focused instanceof HTMLElement && focused.classList.contains('tab-bar-tab')
+      && this.tabsContainer.contains(focused) ? focused.dataset.tabId ?? null : null;
     this.tabsContainer.innerHTML = '';
     for (const tab of tabs) {
       const el = document.createElement('div');
@@ -501,6 +506,11 @@ export class TabBar {
     }
     this.lastActiveId = active?.id ?? null;
     this.lastTabCount = tabs.length;
+    if (focusedTabId !== null) {
+      this.tabsContainer
+        .querySelector<HTMLElement>(`.tab-bar-tab[data-tab-id="${CSS.escape(focusedTabId)}"]`)
+        ?.focus({ preventScroll: true });
+    }
     this.hoverCard?.afterUpdate();
   }
 
