@@ -170,7 +170,10 @@ export class ProjectBoard {
   setPayload(payload: BoardPayload): void {
     if (this.disposed) return;
     if (this.isBusy()) {
+      // Main sends in order and reads a payload's layout last, so its layout
+      // is newer than any layout held back before it.
       this.heldPayload = payload;
+      this.heldLayout = null;
       return;
     }
     this.adoptPayload(payload);
@@ -251,7 +254,8 @@ export class ProjectBoard {
     return true;
   }
 
-  /** Apply what was held back while busy, then redraw. */
+  /** Apply what was held back while busy, then redraw. A held layout came
+   *  after the held payload (setPayload drops an earlier one), so it goes last. */
   private release(): void {
     if (this.isBusy()) return;
     if (this.heldPayload) this.adoptPayload(this.heldPayload);

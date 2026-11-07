@@ -671,6 +671,33 @@ const submit = (t) => t.q('.pboard-add').dispatchEvent(new t.win.Event('submit',
   for (const r of replies) r();
 }
 
+// A layout echo held back before a list change doesn't undo the list change's layout.
+{
+  const t = setup(fixture(), { pick: P('new-two') });
+  plusProject(t);
+  await sleep(10);
+  check('held: the add form is open (board busy)', !t.q('.pboard-form').hidden);
+  const older = fixture().layout;
+  older.themes.find((th) => th.id === 'home').tint = 'rose';
+  t.board.setLayout(older); // another window's save echo
+  t.board.setPayload(withNewOne('home', 2)); // then a list change: main read its layout later
+  t.key(t.q('.pboard-add-name'), 'Escape');
+  await sleep(10);
+  check('held: the newer payload\'s layout wins over an older held echo', t.tilesIn('home').includes('new-one')
+    && t.q('.pb-area[data-area-id="home"]').dataset.tint === 'teal', { home: t.tilesIn('home'), tint: t.q('.pb-area[data-area-id="home"]').dataset.tint });
+  t.board.setPayload(withNewOne('home', 3));
+  plusProject(t);
+  await sleep(10);
+  t.board.setPayload(withNewOne('home', 4));
+  const later = withNewOne('home').layout;
+  later.themes.find((th) => th.id === 'home').tint = 'rose';
+  t.board.setLayout(later); // an echo after the payload is newer still
+  t.key(t.q('.pboard-add-name'), 'Escape');
+  await sleep(10);
+  check('held: a layout echo that came after the payload still applies', t.q('.pb-area[data-area-id="home"]').dataset.tint === 'rose'
+    && t.tilesIn('home').includes('new-one'), t.q('.pb-area[data-area-id="home"]').dataset.tint);
+}
+
 // m6: a tint chosen after the layout was replaced lands on the current theme.
 {
   const t = setup();
