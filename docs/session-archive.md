@@ -570,3 +570,21 @@ Gotchas:
 - _Gotchas "`clearTextureAtlas()` is on Terminal, not WebglAddon" and "WebGL glyph atlas is keyed by color" (WebGL-only; DOM is the default) archived 2026-10-11 S37 trim → `docs/session-archive.md`._
 _Older Gotchas (16 entries: createWriteStream lazy-create, window.reload PTY leak, beforeunload race, wrapper .zshenv readonly, safeStorage timing, electron-store decrypt probe, onContextLoss runtime fire, dead IPC accumulation, shell validation drift, stty -echo timing, idle-detection duration guard, kitty Shift+Enter intercept, COLORFGBG + OSC 10/11 query response, tabBar.update() DOM rebuild race, ANSI light-theme contrast, dot-test inactive-tab gate, Claude Code "·" title prefix, Enter-in-/mcp app-side discriminator) archived 2026-05-07 S27 trim → `docs/session-archive.md`._
 _Older entries archived → `docs/session-archive.md` (latest move 2026-11-07, S43)._
+
+## Decisions (S45 trim 2026-11-07)
+
+- **2026-11-07 (S44) — + Project writes only into a Project/Path table, bytes kept.** That header is the `cc` launcher's own convention. A README with a table, or a non-UTF-8 file, is refused rather than appended to or re-encoded (review M1, M2).
+
+- **2026-11-07 (S44) — The board's layout is plain JSON in userData, apart from the list file.** The list stays the one registry (`cc` and the AI Brain read it); the arrangement is Patton's, and a Claude session can rearrange it on request. Paths missing from the list keep their place.
+
+- **2026-11-07 (S43) — HTML, SVG and PDF links keep opening; anything that could launch a program is revealed.** He opens Claude-made HTML pages by double-click, so those open in Chrome/Acrobat (page or PDF script can run, no program can); apps, scripts, installers and unknown types go to Finder.
+
+- **2026-11-07 (S43) — A turn ending with only a scheduled wake-up parks (ring).** S40 counted crons as the session's own background work; the 7501 path keeps that, using the hook's recent `crons>0`.
+
+## Gotchas (S45 trim 2026-11-07)
+
+- **One builder agent can't hold a ~5,000-line feature** (S44). The first board builder stopped at its context limit after the main module. What worked: split by file ownership, write the shared interface and who owns which files into both briefs, use parallel worktrees, then merge. The two halves met without a fix.
+
+- **A Stop-hook verdict can land while the title still shows ◐** (S40). Claude Code emits each hook's `terminalSequence` as that hook finishes, and Michael's `closing-block-gate.py` can `block` the stop so the turn continues. `pane.ts` therefore stores the verdict and applies it only after ✳ has held 1.5 s; a verdict expires after 40 s (S42: ✳ appears only after every Stop hook ends, and `source-critic.py` makes that 4.5–31 s, so the original 10 s let stops fall through to the title path and go green while background work ran; longer would widen the window where a blocked stop's stale verdict parks a pane that then stops at a question or dialog); a parked pane never fires from the title path. `grep '\[DOT\]' main.log` shows stored/applied (with `afterMs`)/expired.
+
+- **Claude Code's `terminalSequence` allowlist is OSC 0/1/2/9/99/777 + BEL** (S40). Anything else makes the field silently ignored. Patton's channel is `OSC 777;patton;…`; `OSC 777;notify;title;body` counts as attention like OSC 9.
