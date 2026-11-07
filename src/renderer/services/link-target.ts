@@ -106,13 +106,16 @@ export function resolveHyperlink(uri: string, cwd: string, localHosts: readonly 
  * Spans of `scheme://…` addresses in a line of text, as [start, end) offsets.
  * The bare-path pattern would otherwise read the part after the slashes as a
  * path: "https://www.clearscore.com" contains "/www.clearscore.com", which
- * opened as a missing file (main.log, 5 Nov).
+ * opened as a missing file (main.log, 5 Nov). `file://` addresses are left
+ * out: the path inside them IS the target, so the bare-path pass links it and
+ * it goes through the same file rules as any other path.
  */
 export function urlSpans(text: string): Array<[number, number]> {
   const spans: Array<[number, number]> = [];
   const re = /[a-z][a-z0-9+.-]*:\/\/[^\s<>"'`)\]]*/gi;
   let match: RegExpExecArray | null;
   while ((match = re.exec(text)) !== null) {
+    if (/^file:/i.test(match[0])) continue;
     spans.push([match.index, match.index + match[0].length]);
   }
   return spans;

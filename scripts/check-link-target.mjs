@@ -49,6 +49,7 @@ check('resolveLocalPath traversal', m.resolveLocalPath('../x', '/p') === null);
 // The 5 Nov main.log failure: "https://www.clearscore.com" read as the path "/www.clearscore.com".
 const spans = m.urlSpans('see https://www.clearscore.com/a/b.html and /Users/me/x.ts');
 check('urlSpans covers the address', spans.length === 1 && spans[0][0] === 4 && spans[0][1] === 'see https://www.clearscore.com/a/b.html'.length);
+check('urlSpans skips file: addresses', m.urlSpans('open file:///Users/me/site/index.html now').length === 0);
 check('urlSpans leaves plain paths', m.urlSpans('/Users/me/x.ts:3 and src/a.ts').length === 0);
 
   // The same addresses through the real provider: no file link may appear inside them.
@@ -67,6 +68,7 @@ check('urlSpans leaves plain paths', m.urlSpans('/Users/me/x.ts:3 and src/a.ts')
   check('no file link inside https://www.clearscore.com', linksIn('open https://www.clearscore.com now').length === 0);
   check('no file link inside https://kibot.com/subscribe.html', linksIn('https://kibot.com/subscribe.html').length === 0);
   check('bare paths still linked', linksIn('see src/a.ts:4 and ~/n/todo.md').join('|') === 'src/a.ts:4|~/n/todo.md');
+  check('plain-text file:/// URL linked as its path', linksIn('open file:///Users/me/site/index.html now').join('|') === '/Users/me/site/index.html');
 
   // Hover text: what will be opened, cut in the middle, ends kept.
   const d = m.describeLinkTarget;
