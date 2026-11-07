@@ -10,6 +10,9 @@ import { FuseV1Options, FuseVersion } from '@electron/fuses';
 import path from 'node:path';
 import fs from 'node:fs';
 import { execSync } from 'node:child_process';
+import installPrune from './scripts/install-prune.cjs';
+
+const { pruneStale, verifySignature } = installPrune;
 
 // Use self-signed "Patton Dev Signing" cert for stable code identity across rebuilds.
 // Without this, ad-hoc signing (`--sign -`) generates a new identity hash every build,
@@ -96,8 +99,11 @@ const config: ForgeConfig = {
         // macOS keeps a running process's open inodes alive across an
         // overwrite, which is the same no-force-quit path S31 validated for
         // installing a released DMG over the running app.
-        // Trade-off: files that disappear in a newer build can linger here, so
-        // remove /Applications/Patton.app by hand if you need a clean install.
+        // Trade-off: files that disappear in a newer build linger after the
+        // ditto and break the signature (S46: Electron 44.9.3 dropped two
+        // dylibs 44.7.0 shipped). scripts/install-prune.cjs removes them when
+        // Patton isn't running from dest, else lists them and says to rerun
+        // `npm run install-app` with Patton quit, then verifies the signature.
         //
         // PATTON_NO_INSTALL=1 (exactly "1") stops here: built and signed in out/, the
         // installed app untouched — for verifying a change while Patton is in
@@ -109,6 +115,9 @@ const config: ForgeConfig = {
         }
         execSync(`ditto "${appPath}" "${dest}"`, { stdio: 'inherit' });
         console.log(`\n✅ Installed to ${dest}`);
+        // Neither step fails the build: the post-commit hook runs this on every commit.
+        pruneStale(appPath, dest);
+        verifySignature(dest);
       }
     },
     packageAfterPrune: async (_forgeConfig, buildPath) => {
