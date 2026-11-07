@@ -1,5 +1,5 @@
 import type { AppSettings, ClaudeHookStatus } from '../../shared/types';
-import { DEFAULTS, isNotificationSoundType } from '../../shared/constants';
+import { DEFAULTS, isNotificationSoundType, uiTextScaleOf } from '../../shared/constants';
 import { settingsShortcuts, displayKeys, acceleratorToDisplay } from '../../shared/shortcuts';
 import { trapFocus } from '../services/focus-trap';
 import { rlog } from '../services/renderer-logger';
@@ -43,6 +43,13 @@ export class SettingsPanel {
           <div class="settings-group">
             <label class="settings-label" for="setting-font-size">Font Size</label>
             <input class="settings-input" id="setting-font-size" type="number" min="${DEFAULTS.FONT_SIZE_MIN}" max="${DEFAULTS.FONT_SIZE_MAX}" />
+          </div>
+          <div class="settings-group">
+            <label class="settings-label" for="setting-ui-text-scale">Interface Text Size</label>
+            <select class="settings-input" id="setting-ui-text-scale" aria-describedby="setting-ui-text-scale-hint">
+              ${DEFAULTS.UI_TEXT_SCALES.map((s) => `<option value="${s}">${Math.round(s * 100)}%${s === DEFAULTS.UI_TEXT_SCALE ? ' (default)' : ''}</option>`).join('')}
+            </select>
+            <span class="settings-hint" id="setting-ui-text-scale-hint">Sizes the tabs, the project board, menus and panels. The terminal keeps its own Font Size.</span>
           </div>
           <div class="settings-group">
             <label class="settings-label" for="setting-font-family">Font Family</label>
@@ -242,6 +249,11 @@ export class SettingsPanel {
       const chosen = fontFamilyInput.selectedOptions[0];
       rlog('info', '[FONT] family set', { family: fontFamilyInput.value, available: chosen?.dataset.available === 'true' });
       this.saveAndNotify({ fontFamily: fontFamilyInput.value });
+    });
+
+    const uiTextScaleInput = this.overlay.querySelector('#setting-ui-text-scale') as HTMLSelectElement;
+    listen(uiTextScaleInput, 'change', () => {
+      this.saveAndNotify({ uiTextScale: uiTextScaleOf(Number(uiTextScaleInput.value)) });
     });
 
     const themeInput = this.overlay.querySelector('#setting-theme') as HTMLSelectElement;
@@ -463,6 +475,7 @@ export class SettingsPanel {
     this.renderShortcuts(settings.globalHotkey || DEFAULTS.GLOBAL_HOTKEY);
 
     (this.overlay.querySelector('#setting-font-size') as HTMLInputElement).value = String(settings.fontSize);
+    (this.overlay.querySelector('#setting-ui-text-scale') as HTMLSelectElement).value = String(uiTextScaleOf(settings.uiTextScale));
     (this.overlay.querySelector('#setting-scrollback') as HTMLInputElement).value = String(settings.scrollback);
     (this.overlay.querySelector('#setting-renderer') as HTMLSelectElement).value = settings.renderer || 'dom';
     (this.overlay.querySelector('#setting-shell') as HTMLInputElement).value = settings.shell;

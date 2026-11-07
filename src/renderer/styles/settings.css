@@ -46,7 +46,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 36px;
+  height: calc(36px * var(--ui-scale));
   padding: 0 8px 0 16px;
   border-bottom: 1px solid var(--hairline);
   background: var(--surface);
@@ -64,15 +64,15 @@
 }
 
 .settings-close {
-  width: 22px;
-  height: 22px;
+  width: calc(22px * var(--ui-scale));
+  height: calc(22px * var(--ui-scale));
   display: grid;
   place-items: center;
   background: none;
   border: 1px solid var(--hairline);
   border-radius: 0;
   font-family: var(--font-ui);
-  font-size: 15px;
+  font-size: calc(15px * var(--ui-scale));
   color: var(--muted);
   cursor: pointer;
   padding: 0;
@@ -141,7 +141,7 @@
 
 .shortcuts-grid kbd {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-scale));
   color: var(--ink);
   background: var(--surface);
   border: 1px solid var(--hairline);
@@ -218,7 +218,7 @@
 
 .settings-hint {
   width: 100%;
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-scale));
   line-height: 1.4;
   color: var(--muted);
 }
@@ -519,7 +519,7 @@ select.settings-input {
 }
 
 .onboarding-title {
-  font-size: 22px;
+  font-size: calc(22px * var(--ui-scale));
   font-weight: 500;
   letter-spacing: -0.015em;
   line-height: 1.1;
@@ -528,7 +528,7 @@ select.settings-input {
 }
 
 .onboarding-subtitle {
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-scale));
   color: var(--muted);
   margin: 0 0 20px;
 }
@@ -551,7 +551,7 @@ select.settings-input {
 }
 
 .onboarding-icon {
-  font-size: 18px;
+  font-size: calc(18px * var(--ui-scale));
   line-height: 1;
   flex-shrink: 0;
   width: 24px;
@@ -576,7 +576,7 @@ select.settings-input {
 
 .onboarding-feature kbd {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-scale));
   color: var(--ink);
   background: var(--surface);
   border: 1px solid var(--hairline);

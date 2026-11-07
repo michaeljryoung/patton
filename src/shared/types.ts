@@ -44,6 +44,10 @@ export type RendererMode = 'webgl' | 'dom';
 export interface AppSettings {
   fontSize: number;
   fontFamily: string;
+  /** Interface Text Size: a factor on the chrome's text, one of
+   *  DEFAULTS.UI_TEXT_SCALES. Absent in settings saved before it existed, so
+   *  read it through `uiTextScaleOf`. */
+  uiTextScale?: number;
   scrollback: number;
   shell: string;
   notificationSound: boolean;
@@ -268,6 +272,8 @@ export interface PattonAPI {
   settings: {
     get: () => Promise<AppSettings>;
     set: (settings: Partial<AppSettings>) => Promise<void>;
+    /** Fires in every window when Interface Text Size is saved. */
+    onUiTextScale: (cb: (scale: number) => void) => () => void;
   };
   notes: {
     get: () => Promise<string>;

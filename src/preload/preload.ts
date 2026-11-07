@@ -35,6 +35,11 @@ const api: PattonAPI = {
   settings: {
     get: () => ipcRenderer.invoke(IPC.SETTINGS_GET),
     set: (settings) => ipcRenderer.invoke(IPC.SETTINGS_SET, settings),
+    onUiTextScale: (cb) => {
+      const listener = (_event: unknown, scale: number) => cb(scale);
+      ipcRenderer.on(IPC.SETTINGS_UI_TEXT_SCALE, listener);
+      return () => ipcRenderer.removeListener(IPC.SETTINGS_UI_TEXT_SCALE, listener);
+    },
   },
   notes: {
     get: () => ipcRenderer.invoke(IPC.NOTES_GET),

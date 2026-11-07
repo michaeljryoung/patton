@@ -189,7 +189,7 @@
 }
 
 .history-search-icon {
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-scale));
   color: var(--muted);
 }
 
@@ -198,7 +198,7 @@
   border: none;
   outline: none;
   background: transparent;
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-scale));
   font-family: var(--font-mono);
   color: var(--ink);
 }
@@ -290,7 +290,7 @@
 
 .paste-chip-label {
   font-family: var(--font-ui);
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-scale));
   color: var(--muted);
 }
 
@@ -298,7 +298,7 @@
   background: transparent;
   color: var(--muted);
   font-family: var(--font-ui);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-scale));
   line-height: 1;
   padding: 0 3px;
   /* Hit area ~26 x 25 px (was ~14 x 13), drawn size unchanged: transparent

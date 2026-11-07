@@ -52,7 +52,7 @@
 
 .pboard-title {
   margin: 0;
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-scale));
   font-weight: 700;
 }
 
@@ -64,7 +64,7 @@
 .pboard-search {
   margin-left: auto;
   width: 190px;
-  height: 24px;
+  height: calc(24px * var(--ui-scale));
   padding: 0 8px;
   border: 1px solid var(--hairline);
   border-radius: 0;
@@ -78,7 +78,7 @@
 }
 
 .pboard-btn {
-  height: 24px;
+  height: calc(24px * var(--ui-scale));
   padding: 0 10px;
   border: 1px solid var(--hairline);
   border-radius: 0;
@@ -168,7 +168,7 @@
 }
 
 .pboard-add select {
-  height: 24px;
+  height: calc(24px * var(--ui-scale));
   border: 1px solid var(--hairline);
   border-radius: 0;
   background: var(--bg);
@@ -298,7 +298,7 @@
 }
 
 .pb-area-menu {
-  height: 16px;
+  height: calc(16px * var(--ui-scale));
   padding: 0 4px;
   border: 0;
   background: none;

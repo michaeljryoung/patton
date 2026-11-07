@@ -31,6 +31,7 @@ export const IPC = {
   APP_TOGGLE_BOOKMARKS: 'app:toggle-bookmarks',
   // --- end bookmarks ---
 
+  SETTINGS_UI_TEXT_SCALE: 'settings:ui-text-scale',
   APP_SETTINGS: 'app:settings',
   APP_TOGGLE_NOTES: 'app:toggle-notes',
   APP_NEW_TAB: 'app:new-tab',
@@ -137,6 +138,10 @@ export const DEFAULTS = {
   HISTORY_MAX: 10000,
   WRITE_COALESCE_MS: 4,
   FONT_SIZE_MIN: 8,
+  // Interface Text Size: scales the chrome's text (tabs, board, panels, menus),
+  // never the terminal (that is Font Size). Only these values are accepted.
+  UI_TEXT_SCALE: 1,
+  UI_TEXT_SCALES: [0.9, 1, 1.1, 1.25, 1.5] as readonly number[],
   FONT_SIZE_MAX: 72,
   NOTIFICATION_SOUND: true,
   NOTIFICATION_SOUND_TYPE: 'chime' as const,
@@ -215,3 +220,9 @@ export const PATTON_QUOTES = [
   'Always do more than is required of you.',
 ];
 
+
+/** The saved Interface Text Size, or 1 when absent (settings saved before it
+ *  existed) or not one of DEFAULTS.UI_TEXT_SCALES. */
+export function uiTextScaleOf(value: unknown): number {
+  return typeof value === 'number' && DEFAULTS.UI_TEXT_SCALES.includes(value) ? value : DEFAULTS.UI_TEXT_SCALE;
+}

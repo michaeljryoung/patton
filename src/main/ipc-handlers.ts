@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process';
 import { accessSync, constants as fsConstants, existsSync, mkdirSync, readdirSync, realpathSync, statSync, unlinkSync } from 'node:fs';
 import { homedir, hostname } from 'node:os';
 import { basename, join } from 'node:path';
-import { IPC } from '../shared/constants';
+import { IPC, uiTextScaleOf } from '../shared/constants';
 import { PtyManager } from './pty-manager';
 import { isSafeAbsolutePath, resolveProject } from './projects';
 import { getHookStatus, installHook, refreshInstalledScript, removeHook, type ClaudeHookPaths } from './claude-hook';
@@ -13,7 +13,7 @@ import { registerClipboardImageHandlers } from './clipboard-image';
 import { getSystemFonts } from './system-fonts';
 import { RateLimiter } from './rate-limiter';
 import { closePreconfirmations } from './close-preconfirm';
-import { isOnlyWindow } from './window-manager';
+import { broadcastUiTextScale, isOnlyWindow } from './window-manager';
 import { decideFileOpen, extensionOf, parseLinkPath, type OpenDecision } from './link-open-policy';
 import { annotateBookmarks, validateBookmarks } from './bookmarks'; // bookmarks sidebar
 import { AdditionLog, addProject, loadBoard, saveLayout, type BoardSources } from './project-board';
@@ -317,9 +317,7 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
           void _dropped;
           if (Object.keys(rest).length > 0) {
             store.setSettings(rest);
-            if ('shellIntegration' in rest) {
-              ptyManager.shellIntegrationEnabled = !!rest.shellIntegration;
-            }
+            afterSettingsSaved(rest);
           }
           return;
         }
@@ -327,11 +325,21 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
     }
 
     store.setSettings(settings);
-    // Propagate shell integration toggle to pty manager (affects new PTYs only)
-    if ('shellIntegration' in settings) {
-      ptyManager.shellIntegrationEnabled = !!settings.shellIntegration;
-    }
+    afterSettingsSaved(settings);
   });
+
+  /** What a saved settings change must reach beyond the store. */
+  function afterSettingsSaved(saved: Record<string, unknown>): void {
+    // Propagate shell integration toggle to pty manager (affects new PTYs only)
+    if ('shellIntegration' in saved) {
+      ptyManager.shellIntegrationEnabled = !!saved.shellIntegration;
+    }
+    // Interface Text Size: every window re-scales its chrome now. Read back
+    // from the store, so a refused value broadcasts the value actually kept.
+    if ('uiTextScale' in saved) {
+      broadcastUiTextScale(uiTextScaleOf(store.getSettings().uiTextScale));
+    }
+  }
 
   // --- Notes scratchpad ---
   ipcMain.handle(IPC.NOTES_GET, () => {

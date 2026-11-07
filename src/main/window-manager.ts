@@ -1,7 +1,7 @@
 import { BrowserWindow, dialog, nativeTheme, screen } from 'electron';
 import path from 'node:path';
 import * as store from './store';
-import { WINDOW_BG } from '../shared/constants';
+import { IPC, WINDOW_BG, uiTextScaleOf } from '../shared/constants';
 import type { PtyManager } from './pty-manager';
 import { closePreconfirmations } from './close-preconfirm';
 
@@ -13,6 +13,21 @@ declare const MAIN_WINDOW_VITE_NAME: string;
  *  renderer's last-tab dialog (`WINDOW_CLOSE_INFO`), so both say the same. */
 export function isOnlyWindow(): boolean {
   return BrowserWindow.getAllWindows().length === 1;
+}
+
+/** Y of the traffic lights that centres their 12 px in the tab strip, which is
+ *  28 px at Interface Text Size 1 (tabs.css --tabh) and grows with it. */
+function trafficLightY(scale: number): number {
+  return Math.round(14 * scale - 6);
+}
+
+/** Tell every window the new Interface Text Size and re-centre its traffic lights. */
+export function broadcastUiTextScale(scale: number): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (win.isDestroyed()) continue;
+    win.webContents.send(IPC.SETTINGS_UI_TEXT_SCALE, scale);
+    win.setWindowButtonPosition({ x: 12, y: trafficLightY(scale) });
+  }
 }
 
 export function createWindow(ptyManager?: PtyManager): BrowserWindow {
@@ -27,8 +42,8 @@ export function createWindow(ptyManager?: PtyManager): BrowserWindow {
     minWidth: 400,
     minHeight: 300,
     titleBarStyle: 'hiddenInset',
-    // Centres the 12 px lights in the renderer's 28 px tab strip (tabs.css --tabh).
-    trafficLightPosition: { x: 12, y: 8 },
+    // Centres the 12 px lights in the renderer's tab strip (tabs.css --tabh).
+    trafficLightPosition: { x: 12, y: trafficLightY(uiTextScaleOf(store.getSettings().uiTextScale)) },
     // The chrome's own ground (main.css --bg) so the first paint doesn't flash.
     backgroundColor: nativeTheme.shouldUseDarkColors ? WINDOW_BG.dark : WINDOW_BG.light,
     webPreferences: {

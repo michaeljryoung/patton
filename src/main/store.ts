@@ -77,6 +77,7 @@ const defaults: StoreSchema = {
   settings: {
     fontSize: DEFAULTS.FONT_SIZE,
     fontFamily: DEFAULTS.FONT_FAMILY,
+    uiTextScale: DEFAULTS.UI_TEXT_SCALE,
     scrollback: DEFAULTS.SCROLLBACK,
     shell: DEFAULTS.SHELL,
     notificationSound: DEFAULTS.NOTIFICATION_SOUND,
@@ -206,6 +207,13 @@ export function setSettings(partial: Partial<AppSettings>): void {
     const n = Number(partial.fontSize);
     if (!isNaN(n) && n >= 8 && n <= 72) {
       validated.fontSize = n;
+    }
+  }
+
+  if (partial.uiTextScale !== undefined) {
+    // Exactly one of the allowed numbers; a string, NaN or anything else is refused.
+    if (typeof partial.uiTextScale === 'number' && DEFAULTS.UI_TEXT_SCALES.includes(partial.uiTextScale)) {
+      validated.uiTextScale = partial.uiTextScale;
     }
   }
 

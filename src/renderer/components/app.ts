@@ -16,6 +16,7 @@ import { paletteShortcuts, displayKeys } from '../../shared/shortcuts';
 import { parseSessionAction, sessionPaletteActions } from '../services/session-palette';
 import { rlog } from '../services/renderer-logger';
 import { loadSystemFonts } from '../services/system-fonts';
+import { applyUiTextScale } from '../services/ui-text-scale';
 import type { OpenProjectHost } from '../services/open-project';
 import { ProjectBoards } from '../services/project-boards';
 
@@ -71,6 +72,9 @@ export class App {
       }
       if (settings.fontFamily !== undefined) {
         this.applyFontFamily(settings.fontFamily);
+      }
+      if (settings.uiTextScale !== undefined) {
+        applyUiTextScale(settings.uiTextScale, 'change');
       }
       if (settings.scrollback !== undefined) {
         this.tabManager.setScrollback(settings.scrollback);
@@ -188,6 +192,9 @@ export class App {
       this.tabManager.loadHistory(),
       loadSystemFonts(),
     ]);
+    // Before any tab, board or panel exists, so the first paint is already at size.
+    applyUiTextScale(settings.uiTextScale, 'startup');
+    window.patton.settings.onUiTextScale((scale) => applyUiTextScale(scale, 'change'));
     this.fontSize = settings.fontSize;
     this.tabManager.setFontSize(this.fontSize);
     this.applyFontFamily(settings.fontFamily || DEFAULTS.FONT_FAMILY);
