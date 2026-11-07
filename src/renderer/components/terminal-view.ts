@@ -5,6 +5,7 @@ import { SearchAddon } from '@xterm/addon-search';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { DEFAULTS } from '../../shared/constants';
 import { rlog } from '../services/renderer-logger';
+import { parsePattonOsc, type PattonState } from '../services/patton-osc';
 import type { ITheme } from '@xterm/xterm';
 
 const LIGHT_THEME = {
@@ -91,36 +92,7 @@ function tryGetGpuInfo(): string {
 
 export type PromptState = 'prompt' | 'command' | 'idle';
 
-/** The Stop hook's context reading (`ctx=…;since=…[;cpt=…]`): tokens of the
- *  session's latest request, tokens added since the end of its last
- *  /checkpoint turn, and when that checkpoint was asked for (Unix seconds,
- *  null without one). */
-export interface ContextReading {
-  ctxTokens: number;
-  sinceTokens: number;
-  checkpointAt: number | null;
-}
-
-/** Patton's own OSC 777 messages from its Claude Code Stop hook:
- *  - `stop`: the verdict, i.e. how many background tasks are still in flight
- *    and how many timers are scheduled when the turn ended (both zero means it
- *    really stopped), plus the context reading when the hook could take one;
- *  - `ctx`: the context reading alone, sent when Claude Code gave the hook no
- *    task fields, so it never counts as a verdict. */
-export type PattonState =
-  | { kind: 'stop'; tasks: number; crons: number; context: ContextReading | null }
-  | { kind: 'ctx'; context: ContextReading };
-
-// `;ctx=C;since=S[;cpt=T]`, the tail both messages share. Token counts are
-// capped at nine digits, the timestamp at twelve.
-const CTX_FIELDS = ';ctx=(\\d{1,9});since=(\\d{1,9})(?:;cpt=(\\d{1,12}))?';
-const STOP_RE = new RegExp(`^patton;stop;tasks=(\\d{1,4});crons=(\\d{1,4})(?:${CTX_FIELDS})?$`);
-const CTX_RE = new RegExp(`^patton;ctx${CTX_FIELDS}$`);
-
-function contextFrom(ctx: string | undefined, since: string | undefined, cpt: string | undefined): ContextReading | null {
-  if (ctx === undefined || since === undefined) return null;
-  return { ctxTokens: Number(ctx), sinceTokens: Number(since), checkpointAt: cpt === undefined ? null : Number(cpt) };
-}
+export type { ContextReading, PattonState } from '../services/patton-osc';
 
 export class TerminalView {
   readonly terminal: Terminal;
@@ -326,17 +298,9 @@ export class TerminalView {
     // hide this pane's own dot or misstate its checkpoint clock. Counts are
     // capped at four digits.
     this.terminal.parser.registerOscHandler(777, (data) => {
-      const stop = STOP_RE.exec(data);
-      const ctx = stop ? null : CTX_RE.exec(data);
-      if (stop) {
-        const state: PattonState = {
-          kind: 'stop', tasks: Number(stop[1]), crons: Number(stop[2]),
-          context: contextFrom(stop[3], stop[4], stop[5]),
-        };
+      const state = parsePattonOsc(data);
+      if (state) {
         for (const cb of this.pattonStateListeners) cb(state);
-      } else if (ctx) {
-        const context = contextFrom(ctx[1], ctx[2], ctx[3]);
-        if (context) for (const cb of this.pattonStateListeners) cb({ kind: 'ctx', context });
       } else if (data.startsWith('notify;')) {
         for (const cb of this.osc9Listeners) cb();
       }
