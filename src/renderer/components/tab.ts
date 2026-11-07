@@ -509,6 +509,12 @@ export class Tab {
   private splitting = false;
   private async split(direction: SplitDirection, cwd?: string): Promise<void> {
     if (this.splitting) return; // Prevent concurrent splits
+    // A covered tab (the project board) shows no panes: splitting would start
+    // a shell nobody sees and rebuild the DOM under the cover. Do nothing.
+    if (this._cover) {
+      rlog('info', '[BOARD] split ignored on a covered tab', { tabId: this.id });
+      return;
+    }
     if (this._panes.length >= DEFAULTS.MAX_PANES_PER_TAB) {
       this.showToast(`Maximum ${DEFAULTS.MAX_PANES_PER_TAB} panes per tab`);
       return;
@@ -618,9 +624,10 @@ export class Tab {
     }
     this.splitContainers = [];
 
-    // Clear the tab element
-    while (this.element.firstChild) {
-      this.element.removeChild(this.element.firstChild);
+    // Clear the tab element, all but the cover: detaching it would blur
+    // (and so commit) whatever is being edited in it.
+    for (const child of Array.from(this.element.childNodes)) {
+      if (child !== this._coverHost) this.element.removeChild(child);
     }
 
     // Detach all pane elements (they survive re-rendering)
@@ -632,9 +639,13 @@ export class Tab {
 
     // Build DOM from tree
     const rootEl = this.buildDomNode(this.rootNode);
-    this.element.appendChild(rootEl);
-    // The cover stays on top of a re-rendered tree.
-    if (this._coverHost) this.element.appendChild(this._coverHost);
+    // The cover stays on top of a re-rendered tree, without moving.
+    if (this._coverHost && this._coverHost.parentNode === this.element) {
+      this.element.insertBefore(rootEl, this._coverHost);
+    } else {
+      this.element.appendChild(rootEl);
+      if (this._coverHost) this.element.appendChild(this._coverHost);
+    }
   }
 
   private buildDomNode(node: SplitTreeNode): HTMLElement {
