@@ -7,6 +7,7 @@ import { DEFAULTS } from '../../shared/constants';
 import { rlog } from '../services/renderer-logger';
 import { parsePattonOsc, type PattonState } from '../services/patton-osc';
 import { parseProgramStatus, PROGRAM_STATUS_REPLY, type ParsedSequence } from '../services/program-status';
+import { programStatusEnabled } from '../services/program-status-switch';
 import type { ITheme } from '@xterm/xterm';
 
 const LIGHT_THEME = {
@@ -335,6 +336,12 @@ export class TerminalView {
         const now = Date.now();
         if (this.ptyId === null || now - lastOsc7501ReplyMs < OSC_QUERY_DEBOUNCE_MS) return true;
         lastOsc7501ReplyMs = now;
+        // Settings → "Use Claude Code's own status reports" off: stay silent,
+        // so Claude keeps its title glyphs and the glyph + Stop-hook path runs.
+        if (!programStatusEnabled()) {
+          rlog('info', '[7501] probe not answered: setting off');
+          return true;
+        }
         window.patton.pty.write(this.ptyId, PROGRAM_STATUS_REPLY);
         this.emitProgramStatus({ type: 'probe' });
         return true;

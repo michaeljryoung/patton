@@ -12,6 +12,7 @@ import { runStartupCommand } from '../services/startup-command';
 import { Onboarding } from './onboarding';
 import { DEFAULTS } from '../../shared/constants';
 import { setConfirmMultilinePaste } from '../services/paste-confirm';
+import { setProgramStatusEnabled } from '../services/program-status-switch';
 import { paletteShortcuts, displayKeys } from '../../shared/shortcuts';
 import { parseSessionAction, sessionPaletteActions } from '../services/session-palette';
 import { rlog } from '../services/renderer-logger';
@@ -89,6 +90,10 @@ export class App {
       }
       if (settings.confirmMultilinePaste !== undefined) {
         setConfirmMultilinePaste(settings.confirmMultilinePaste);
+      }
+      if (settings.programStatus !== undefined) {
+        setProgramStatusEnabled(settings.programStatus);
+        rlog('info', '[SETTINGS] programStatus changed', { enabled: settings.programStatus });
       }
       if (settings.checkpointNudgePct !== undefined) {
         this.tabManager.setCheckpointNudgePct(settings.checkpointNudgePct);
@@ -182,6 +187,8 @@ export class App {
     this.tabManager.setCopyOnSelect(settings.copyOnSelect === true);
     this.tabManager.setComposeFirst(settings.composeFirst !== false);
     setConfirmMultilinePaste(settings.confirmMultilinePaste === true);
+    setProgramStatusEnabled(settings.programStatus !== false);
+    rlog('info', '[SETTINGS] programStatus at startup', { enabled: settings.programStatus !== false });
     this.tabManager.setCheckpointNudgePct(settings.checkpointNudgePct ?? DEFAULTS.CHECKPOINT_NUDGE_PCT);
     this.settingsPanel.loadSettings(settings);
     if (settings.theme && settings.theme !== 'system') {

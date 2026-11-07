@@ -121,6 +121,9 @@ export const DEFAULTS = {
   // Multi-line paste confirmation: off since Michael's dictation (pasted text)
   // tripped it on every message (2026-11-06).
   CONFIRM_MULTILINE_PASTE: false,
+  // Answer Claude Code's OSC 7501 probe (v1.14); off falls back to the title
+  // glyph + Stop-hook path of v1.13.
+  PROGRAM_STATUS: true,
   // Checkpoint clock (tab strip): amber at this % of the context window used
   // since the session's last /checkpoint, and the setting's allowed range.
   CHECKPOINT_NUDGE_PCT: 20,

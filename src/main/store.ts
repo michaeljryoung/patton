@@ -91,6 +91,7 @@ const defaults: StoreSchema = {
     renderer: DEFAULTS.RENDERER,
     composeFirst: DEFAULTS.COMPOSE_FIRST,
     confirmMultilinePaste: DEFAULTS.CONFIRM_MULTILINE_PASTE,
+    programStatus: DEFAULTS.PROGRAM_STATUS,
     checkpointNudgePct: DEFAULTS.CHECKPOINT_NUDGE_PCT,
   },
   windowState: {
@@ -246,6 +247,10 @@ export function setSettings(partial: Partial<AppSettings>): void {
 
   if (partial.confirmMultilinePaste !== undefined) {
     validated.confirmMultilinePaste = !!partial.confirmMultilinePaste;
+  }
+
+  if (partial.programStatus !== undefined) {
+    validated.programStatus = !!partial.programStatus;
   }
 
   if (partial.checkpointNudgePct !== undefined) {

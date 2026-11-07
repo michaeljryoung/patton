@@ -63,6 +63,10 @@ export interface AppSettings {
   /** Ask before pasting 3+ lines into the terminal. Absent in settings saved
    *  before it existed, so read it as `=== true` (off by default). */
   confirmMultilinePaste: boolean;
+  /** Answer Claude Code's OSC 7501 probe so it reports its own status.
+   *  Absent in settings saved before it existed, so read it as `!== false`
+   *  (on by default). */
+  programStatus: boolean;
   /** The checkpoint clock turns amber at this % of the context window used
    *  since the last /checkpoint. Absent in settings saved before it existed,
    *  so read it as `?? DEFAULTS.CHECKPOINT_NUDGE_PCT`. */

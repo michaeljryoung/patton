@@ -166,6 +166,14 @@ export class SettingsPanel {
               <span class="settings-hint claude-hook-error" id="claude-hook-error" role="alert" hidden></span>
             </div>
             <div class="settings-group settings-group-toggle">
+              <label class="settings-label" for="setting-program-status">Use Claude Code's own status reports</label>
+              <label class="settings-toggle">
+                <input type="checkbox" id="setting-program-status" />
+                <span class="settings-toggle-slider"></span>
+              </label>
+              <span class="settings-hint">Off: Patton reads Claude's title instead, as before v1.14. Applies to Claude sessions started after the change.</span>
+            </div>
+            <div class="settings-group settings-group-toggle">
               <label class="settings-label" for="setting-checkpoint-nudge">Checkpoint reminder after <input class="settings-input settings-input-inline" id="setting-checkpoint-nudge" type="number" min="${DEFAULTS.CHECKPOINT_NUDGE_PCT_MIN}" max="${DEFAULTS.CHECKPOINT_NUDGE_PCT_MAX}" step="1" />% of the context window</label>
               <span class="settings-hint">The clock at the right of the tab bar shows the context a Claude session has used since its last /checkpoint (needs the hook above), and turns amber and bold at this share. Click it to run /checkpoint.</span>
             </div>
@@ -259,6 +267,11 @@ export class SettingsPanel {
       if (Number.isInteger(val) && val >= DEFAULTS.CHECKPOINT_NUDGE_PCT_MIN && val <= DEFAULTS.CHECKPOINT_NUDGE_PCT_MAX) {
         this.saveAndNotify({ checkpointNudgePct: val });
       }
+    });
+
+    const programStatusInput = this.overlay.querySelector('#setting-program-status') as HTMLInputElement;
+    listen(programStatusInput, 'change', () => {
+      this.saveAndNotify({ programStatus: programStatusInput.checked });
     });
 
     const confirmPasteInput = this.overlay.querySelector('#setting-confirm-multiline-paste') as HTMLInputElement;
@@ -382,6 +395,7 @@ export class SettingsPanel {
     (this.overlay.querySelector('#setting-copy-on-select') as HTMLInputElement).checked = settings.copyOnSelect === true;
     (this.overlay.querySelector('#setting-compose-first') as HTMLInputElement).checked = settings.composeFirst !== false;
     (this.overlay.querySelector('#setting-confirm-multiline-paste') as HTMLInputElement).checked = settings.confirmMultilinePaste === true;
+    (this.overlay.querySelector('#setting-program-status') as HTMLInputElement).checked = settings.programStatus !== false;
     (this.overlay.querySelector('#setting-checkpoint-nudge') as HTMLInputElement).value =
       String(settings.checkpointNudgePct ?? DEFAULTS.CHECKPOINT_NUDGE_PCT);
     (this.overlay.querySelector('#setting-startup-command') as HTMLInputElement).value = settings.startupCommand || '';
