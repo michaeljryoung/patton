@@ -83,6 +83,13 @@ export const IPC = {
   // --- image paste ---
   CLIPBOARD_READ_IMAGE: 'clipboard:readImage',
   // --- end image paste ---
+  // --- Project board (new empty tabs) ---
+  BOARD_GET: 'board:get',
+  BOARD_SET_LAYOUT: 'board:set-layout',
+  BOARD_PICK_FOLDER: 'board:pick-folder',
+  BOARD_ADD_PROJECT: 'board:add-project',
+  BOARD_CHANGED: 'board:changed',
+  // --- end project board ---
 } as const;
 
 /** The notification sounds Patton ships; settings outside this list are ignored. */
@@ -96,6 +103,15 @@ export function isNotificationSoundType(value: unknown): value is NotificationSo
 /** The window's ground before the renderer paints. Must equal --bg in main.css
  *  (light :root, dark prefers-color-scheme block). */
 export const WINDOW_BG = { light: '#ffffff', dark: '#111214' } as const;
+
+/** Faint area tints a project-board theme may take; 'none' is the plain surface.
+ *  Each has a light and a dark value in styles/board.css. */
+export const BOARD_TINTS = ['sand', 'slate', 'teal', 'lilac', 'peach', 'olive', 'rose', 'stone', 'none'] as const;
+export type BoardTint = (typeof BOARD_TINTS)[number];
+
+export function isBoardTint(value: unknown): value is BoardTint {
+  return typeof value === 'string' && (BOARD_TINTS as readonly string[]).includes(value);
+}
 
 export const DEFAULTS = {
   SHELL: '/bin/zsh',
@@ -144,6 +160,15 @@ export const DEFAULTS = {
   BOOKMARKS_PANEL_WIDTH: 196,
   BOOKMARKS_PANEL_MIN_WIDTH: 160,
   // --- end bookmarks ---
+  // --- Project board: the default project list (cc's), layout limits ---
+  PROJECT_BOARD: true,
+  PROJECT_LIST_FILE: '' as const,
+  BOARD_THEME_NAME_MAX_CHARS: 40,
+  BOARD_THEMES_MAX: 60,
+  BOARD_PATHS_MAX: 2000,
+  BOARD_NOTE_MAX_CHARS: 80,
+  BOARD_PROJECT_NAME_MAX_CHARS: 60,
+  // --- end project board ---
   // Quick-terminal global hotkey. Configurable via the `globalHotkey` setting;
   // this is the fallback used by main.ts and shown in Settings when unset.
   GLOBAL_HOTKEY: 'Control+`',

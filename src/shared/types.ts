@@ -1,4 +1,4 @@
-import type { NotificationSoundType } from './constants';
+import type { BoardTint, NotificationSoundType } from './constants';
 
 export interface PtyCreateOptions {
   shell?: string;
@@ -71,6 +71,13 @@ export interface AppSettings {
    *  since the last /checkpoint. Absent in settings saved before it existed,
    *  so read it as `?? DEFAULTS.CHECKPOINT_NUDGE_PCT`. */
   checkpointNudgePct: number;
+  /** Show the project board in new tabs the user opens (when the project list
+   *  file exists). Absent in settings saved before it existed, so read it as
+   *  `!== false` (on by default). */
+  projectBoard: boolean;
+  /** The Markdown project list the board reads (the `cc` launcher's format).
+   *  Empty means ~/.claude/projects.md. Absent in older settings: read `|| ''`. */
+  projectListFile: string;
 }
 
 export interface SessionPaneState {
@@ -139,6 +146,70 @@ export interface Bookmark {
 }
 // --- end bookmarks ---
 
+// --- Project board ---
+/** A theme on the project board: a named area with a faint tint. `projects`
+ *  holds absolute folder paths in display order; paths not in the current list
+ *  stay stored but aren't shown. Validated in main/project-board.ts. */
+export interface BoardTheme {
+  id: string;
+  name: string;
+  tint: BoardTint;
+  projects: string[];
+}
+
+/** Per-tile options, keyed by the project's absolute path. */
+export interface BoardTileOptions {
+  wide?: boolean;
+  note?: string;
+}
+
+/** The board's saved arrangement (userData/project-board.json, plain JSON). */
+export interface BoardLayout {
+  version: 1;
+  themes: BoardTheme[];
+  tiles: Record<string, BoardTileOptions>;
+}
+
+/** A worktree of, or a folder inside, a listed project, shown in its tile. */
+export interface BoardSubProject {
+  path: string;
+  /** The row's name in the list. */
+  name: string;
+  /** The name without the parent's name or a trailing " worktree". */
+  displayName: string;
+  kind: 'worktree' | 'folder';
+  missing?: boolean;
+  /** When a Claude session last ran there (ms), if one ever did. */
+  lastSessionAt?: number;
+}
+
+/** A top-level project from the list file. */
+export interface BoardProject {
+  path: string;
+  name: string;
+  /** The folder is not a directory (moved or deleted). */
+  missing?: boolean;
+  lastSessionAt?: number;
+  subProjects: BoardSubProject[];
+}
+
+export interface BoardPayload {
+  /** The list file in use, with the home folder shown as ~. */
+  listFile: string;
+  listFound: boolean;
+  projects: BoardProject[];
+  layout: BoardLayout;
+  /** Set by board:add-project when it refused: the reason, in words. */
+  error?: string;
+}
+
+export interface BoardAddRequest {
+  path: string;
+  name: string;
+  themeId?: string;
+}
+// --- end project board ---
+
 export interface RenderSnapshot {
   reason: string;
   timestamp: string;
@@ -204,6 +275,19 @@ export interface PattonAPI {
     onChanged: (callback: (bookmarks: Bookmark[]) => void) => () => void;
   };
   // --- end bookmarks ---
+  // --- Project board ---
+  board: {
+    get: () => Promise<BoardPayload>;
+    /** Save the arrangement; main validates it and returns what it stored,
+     *  or null when it refused (rate limit, not a layout). */
+    setLayout: (layout: BoardLayout) => Promise<BoardLayout | null>;
+    pickFolder: () => Promise<string | null>;
+    /** Add a row to the project list file; the fresh board, with `error` set if refused. */
+    addProject: (request: BoardAddRequest) => Promise<BoardPayload>;
+    /** Another board saved a new arrangement. */
+    onChanged: (callback: (layout: BoardLayout) => void) => () => void;
+  };
+  // --- end project board ---
   session: {
     get: () => Promise<SessionState | null>;
     set: (session: SessionState | null) => Promise<void>;

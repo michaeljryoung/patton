@@ -93,6 +93,8 @@ const defaults: StoreSchema = {
     confirmMultilinePaste: DEFAULTS.CONFIRM_MULTILINE_PASTE,
     programStatus: DEFAULTS.PROGRAM_STATUS,
     checkpointNudgePct: DEFAULTS.CHECKPOINT_NUDGE_PCT,
+    projectBoard: DEFAULTS.PROJECT_BOARD,
+    projectListFile: DEFAULTS.PROJECT_LIST_FILE,
   },
   windowState: {
     width: 900,
@@ -258,6 +260,19 @@ export function setSettings(partial: Partial<AppSettings>): void {
     const n = partial.checkpointNudgePct;
     if (typeof n === 'number' && Number.isInteger(n) && n >= DEFAULTS.CHECKPOINT_NUDGE_PCT_MIN && n <= DEFAULTS.CHECKPOINT_NUDGE_PCT_MAX) {
       validated.checkpointNudgePct = n;
+    }
+  }
+
+  if (partial.projectBoard !== undefined) {
+    validated.projectBoard = !!partial.projectBoard;
+  }
+
+  if (partial.projectListFile !== undefined) {
+    // One line of printable text; main/project-board.ts decides whether it is
+    // a usable path (absolute or ~/…, no traversal) each time it reads it.
+    const f = String(partial.projectListFile);
+    if (f.length <= 1024 && !/\p{Cc}/u.test(f)) {
+      validated.projectListFile = f.trim();
     }
   }
 

@@ -65,6 +65,13 @@ function linkedWorktreeProject(dir: string, marker: string): ProjectInfo | null 
   return { ...projectAt(mainRoot), worktree: { name: basename(dir), path: dir } };
 }
 
+/** The main repository folder of `dir` when `dir` is a registered linked git
+ *  worktree (the same checks resolveProject makes), else null. The project
+ *  board uses it to put a worktree inside its repository's tile. */
+export function linkedWorktreeMainRoot(dir: string): string | null {
+  return linkedWorktreeProject(dir, join(dir, '.git'))?.root ?? null;
+}
+
 /** Whether the worktree registration at `gitdir` names `marker` (this folder's
  *  `.git` file) as its own: `<gitdir>/gitdir` holds that path. */
 function registeredFor(gitdir: string, marker: string): boolean {

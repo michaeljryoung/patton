@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import { IPC } from '../shared/constants';
-import type { Bookmark, PattonAPI, RenderSnapshot } from '../shared/types';
+import type { BoardLayout, Bookmark, PattonAPI, RenderSnapshot } from '../shared/types';
 
 const api: PattonAPI = {
   pty: {
@@ -60,6 +60,19 @@ const api: PattonAPI = {
     },
   },
   // --- end bookmarks ---
+  // --- Project board ---
+  board: {
+    get: () => ipcRenderer.invoke(IPC.BOARD_GET),
+    setLayout: (layout) => ipcRenderer.invoke(IPC.BOARD_SET_LAYOUT, layout),
+    pickFolder: () => ipcRenderer.invoke(IPC.BOARD_PICK_FOLDER),
+    addProject: (request) => ipcRenderer.invoke(IPC.BOARD_ADD_PROJECT, request),
+    onChanged: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, layout: BoardLayout) => callback(layout);
+      ipcRenderer.on(IPC.BOARD_CHANGED, listener);
+      return () => ipcRenderer.removeListener(IPC.BOARD_CHANGED, listener);
+    },
+  },
+  // --- end project board ---
   session: {
     get: () => ipcRenderer.invoke(IPC.SESSION_GET),
     set: (session) => ipcRenderer.invoke(IPC.SESSION_SET, session),

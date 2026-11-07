@@ -13,6 +13,7 @@ import { registerClipboardImageHandlers } from './clipboard-image';
 import { RateLimiter } from './rate-limiter';
 import { decideFileOpen, extensionOf, parseLinkPath, type OpenDecision } from './link-open-policy';
 import { annotateBookmarks, validateBookmarks } from './bookmarks'; // bookmarks sidebar
+import { addProject, loadBoard, saveLayout, type BoardSources } from './project-board';
 import type { PtyCreateOptions, RenderSnapshot, SessionState } from '../shared/types';
 
 /** Open an http(s) URL in the default browser. Anything else — other schemes
@@ -403,6 +404,71 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
     return shown;
   });
   // --- end bookmarks ---
+
+  // --- Project board ---
+  // The board in new tabs reads the project list (cc's Markdown table) and its
+  // own arrangement; main validates every save. The renderer debounces layout
+  // saves, and a refused save answers null so it can try again.
+  const boardSources = (): BoardSources => ({
+    listSetting: store.getSettings().projectListFile,
+    userDataDir: app.getPath('userData'),
+  });
+  const boardGetLimiter = new RateLimiter(10);
+  ipcMain.handle(IPC.BOARD_GET, () => {
+    if (!boardGetLimiter.allow()) {
+      console.warn('[SECURITY] Rate limit exceeded', { channel: IPC.BOARD_GET });
+      throw new Error('Rate limit exceeded');
+    }
+    return loadBoard(boardSources());
+  });
+
+  const boardLayoutLimiter = new RateLimiter(10);
+  ipcMain.handle(IPC.BOARD_SET_LAYOUT, (event, layout: unknown) => {
+    if (!boardLayoutLimiter.allow()) {
+      console.warn('[SECURITY] Rate limit exceeded', { channel: IPC.BOARD_SET_LAYOUT });
+      return null;
+    }
+    let stored;
+    try {
+      stored = saveLayout(app.getPath('userData'), layout);
+    } catch (err) {
+      console.warn('[BOARD] Layout save failed', { err: String(err) });
+      return null;
+    }
+    if (!stored) return null;
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) win.webContents.send(IPC.BOARD_CHANGED, stored);
+    }
+    return stored;
+  });
+
+  const boardPickLimiter = new RateLimiter(2);
+  ipcMain.handle(IPC.BOARD_PICK_FOLDER, async (event) => {
+    if (!boardPickLimiter.allow()) {
+      console.warn('[SECURITY] Rate limit exceeded', { channel: IPC.BOARD_PICK_FOLDER });
+      return null;
+    }
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win) return null;
+    const result = await dialog.showOpenDialog(win, {
+      title: 'Add a project',
+      buttonLabel: 'Choose',
+      defaultPath: homedir(),
+      properties: ['openDirectory', 'createDirectory'],
+    });
+    if (result.canceled || !result.filePaths[0]) return null;
+    return result.filePaths[0];
+  });
+
+  const boardAddLimiter = new RateLimiter(2);
+  ipcMain.handle(IPC.BOARD_ADD_PROJECT, (_event, request: unknown) => {
+    if (!boardAddLimiter.allow()) {
+      console.warn('[SECURITY] Rate limit exceeded', { channel: IPC.BOARD_ADD_PROJECT });
+      return { ...loadBoard(boardSources()), error: 'too many requests; try again' };
+    }
+    return addProject(boardSources(), request);
+  });
+  // --- end project board ---
 
   // --- Session restore ---
   ipcMain.handle(IPC.SESSION_GET, () => {
