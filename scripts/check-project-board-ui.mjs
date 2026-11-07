@@ -8,6 +8,7 @@
 // jsdom does no layout (every rect is 0), so "before/after" in a drag is chosen
 // with clientX/clientY of -1 or 1.
 import { build } from 'esbuild';
+import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -95,7 +96,9 @@ function setup(payload = fixture(), opts = {}) {
   const win = dom.window;
   if (!win.CSS) win.CSS = {};
   if (!win.CSS.escape) win.CSS.escape = (s) => String(s).replace(/["\\]/g, '\\$&');
-  const calls = { open: [], dismiss: 0, setLayout: [], generations: [], pick: 0, add: [] };
+  const calls = { open: [], dismiss: 0, setLayout: [], generations: [], pick: 0, add: [], wake: 0 };
+  // The Wake button's state as the host reports it; a check changes it and refreshes.
+  const wake = { command: opts.wakeCommand ?? 'wake', awake: false };
   const live = new Map(Object.entries({
     [P('alpha')]: { ...CLOSED, isOpen: true, open: 1, working: 1 },
     [P('beta')]: { ...CLOSED, isOpen: true, open: 1, waiting: 1 },
@@ -131,6 +134,8 @@ function setup(payload = fixture(), opts = {}) {
     },
     dismiss: () => calls.dismiss++,
     liveState: (path) => live.get(path) ?? CLOSED,
+    wakeState: () => ({ ...wake }),
+    wake: () => calls.wake++,
   };
   const board = new win.PB.ProjectBoard(host, payload);
   win.document.body.appendChild(board.element);
@@ -172,7 +177,7 @@ function setup(payload = fixture(), opts = {}) {
   const lastSaved = () => calls.setLayout[calls.setLayout.length - 1];
   const themeOf = (layout, id) => layout.themes.find((t) => t.id === id);
   const announced = () => Array.from(win.document.querySelectorAll('[aria-live]')).map((r) => r.textContent).join(' | ');
-  return { win, board, el, q, qa, tile, areaIds, tilesIn, metaOf, key, click, dragEvent, drag, menuLabels, menuClick, contextMenu, calls, live, logs, lastSaved, themeOf, announced };
+  return { win, board, el, q, qa, tile, areaIds, tilesIn, metaOf, key, click, dragEvent, drag, menuLabels, menuClick, contextMenu, calls, live, logs, lastSaved, themeOf, announced, wake };
 }
 
 // ── 1. Rendering from the fixture ──
@@ -726,6 +731,50 @@ const submit = (t) => t.q('.pboard-add').dispatchEvent(new t.win.Event('submit',
   await sleep(SAVE_WAIT);
   check('m6: tint applied to the current layout and saved', t.q('.pb-area[data-area-id="home"]').dataset.tint === 'rose'
     && t.themeOf(t.lastSaved(), 'home').tint === 'rose', t.lastSaved()?.themes);
+}
+
+// ── The Wake button ──
+{
+  const t = setup();
+  const btn = t.q('.pboard-wake');
+  const terminal = t.q('.pboard-terminal');
+  check('wake: shown by default, reading Wake', btn && !btn.hidden && btn.textContent === 'Wake', btn?.textContent);
+  check('wake: just left of Terminal', btn && btn.nextElementSibling === terminal);
+  check('wake: a header button like the others', btn.tagName === 'BUTTON' && btn.type === 'button' && btn.classList.contains('pboard-btn') && btn.tabIndex === 0);
+  check('wake: label and tooltip name the command', btn.getAttribute('aria-label') === 'Wake: run wake in a new tab' && btn.title.includes('runs wake in a new tab'), [btn.getAttribute('aria-label'), btn.title]);
+  check('wake: no dot while asleep', !btn.querySelector('.pboard-wake-dot') && !btn.classList.contains('is-awake'));
+  t.click(btn);
+  check('wake: click asks the host', t.calls.wake === 1 && t.calls.dismiss === 0 && t.calls.open.length === 0, t.calls);
+  btn.focus();
+  t.key(btn, 'Escape');
+  check('wake: Esc on it leaves the board like the rest', t.calls.dismiss === 1);
+
+  t.wake.awake = true;
+  t.board.refreshLiveState();
+  check('awake: reads Awake after a refresh', btn.textContent === 'Awake' && btn.classList.contains('is-awake'), btn.textContent);
+  const dot = btn.querySelector('.pboard-wake-dot');
+  check('awake: the amber dot, hidden from screen readers', dot && dot.getAttribute('aria-hidden') === 'true' && btn.firstChild === dot);
+  check('awake: the tooltip says Ctrl+C in that tab stops it', btn.title.includes('Ctrl+C in that tab stops it') && btn.getAttribute('aria-label').includes('Ctrl+C in that tab stops it'), btn.title);
+  t.click(btn);
+  check('awake: a click asks the host (it goes to the tab)', t.calls.wake === 2);
+  t.wake.awake = false;
+  t.board.refreshLiveState();
+  check('awake → asleep: back to Wake, no dot', btn.textContent === 'Wake' && !btn.querySelector('.pboard-wake-dot') && !btn.classList.contains('is-awake'));
+
+  t.wake.command = '';
+  t.board.refreshLiveState();
+  check('wake: hidden when the command is cleared', btn.hidden);
+  t.wake.command = 'keepup';
+  t.board.refreshLiveState();
+  check('wake: shown again with a command, which the label names', !btn.hidden && btn.getAttribute('aria-label') === 'Wake: run keepup in a new tab');
+
+  const off = setup(fixture(), { wakeCommand: '' });
+  check('wake: hidden from the start for an empty command', off.q('.pboard-wake').hidden && off.q('.pboard-terminal'));
+
+  const css = readFileSync(join(repo, 'src/renderer/styles/board.css'), 'utf8');
+  const dotRule = css.match(/\.pboard-wake-dot \{([^}]*)\}/)?.[1] ?? '';
+  check('wake css: the dot is --amber with the light-mode edge', dotRule.includes('background: var(--amber)') && dotRule.includes('box-shadow: 0 0 0 1px var(--dot-edge)'), dotRule);
+  check('wake css: hidden means gone', /\.pboard-wake\[hidden\] \{\s*display: none;/.test(css));
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

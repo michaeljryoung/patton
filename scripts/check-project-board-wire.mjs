@@ -63,7 +63,7 @@ export class ProjectBoard {
   focus() { this.button.focus(); }
   setPayload(p) { this.payload = p; }
   setLayout(l) { this.layouts.push(l); }
-  refreshLiveState() { this.refreshes++; }
+  refreshLiveState() { this.refreshes++; this.wakeSeen = this.host.wakeState(); }
   dispose() { this.disposed = true; this.element.remove(); }
 }
 `;
@@ -71,6 +71,7 @@ export class ProjectBoard {
 const ENTRY = `
 export { TabManager } from './services/tab-manager';
 export { ProjectBoards, decideBoard } from './services/project-boards';
+export { wakeCommandOf } from './services/board-wake';
 export { COVERED_TAB_TITLE } from './components/tab';
 `;
 
@@ -108,12 +109,13 @@ function makePatton(state) {
   const exitListeners = [];
   const api = {
     pty: {
-      create: async () => nextPty++,
+      create: async (opts) => { const id = nextPty++; state.creates.push({ id, opts }); return id; },
       write: (id, data) => { state.writes.push({ id, data }); },
       resize: () => {},
       destroy: () => {},
       getCwd: async () => '',
-      onData: () => () => {},
+      // Output for a PTY reaches its pane's terminal (see emit in main()).
+      onData: (cb) => { state.dataListeners.push(cb); return () => {}; },
       onExit: (cb) => { exitListeners.push(cb); return () => {}; },
     },
     settings: {
@@ -187,8 +189,12 @@ async function main() {
     listListeners: [],
     session: null,
     writes: [],
+    creates: [],
+    dataListeners: [],
     boardDelayMs: 0,
   };
+  /** Shell output for one PTY: an OSC title or prompt mark, parsed by its real xterm. */
+  const emit = (ptyId, data) => { for (const cb of state.dataListeners) cb(ptyId, data); };
   w.patton = makePatton(state);
 
   const logs = [];
@@ -198,7 +204,7 @@ async function main() {
     else info(...args);
   };
 
-  const { TabManager, ProjectBoards, decideBoard, COVERED_TAB_TITLE } = (await import(out)).default ?? (await import(out));
+  const { TabManager, ProjectBoards, decideBoard, COVERED_TAB_TITLE, wakeCommandOf } = (await import(out)).default ?? (await import(out));
 
   // --- decideBoard, the rule on its own ---
   check('rule: shows when the setting is absent (on by default)', decideBoard({}, payload(true)).show === true);
@@ -489,6 +495,88 @@ async function main() {
   const failing = await (async () => { state.failSettings = true; try { return await launchCase({}); } finally { state.failSettings = false; } })();
   check('launch, board load fails: startup command, no board', failing.sent === 1 && !failing.covered,
     { sent: failing.sent, covered: failing.covered });
+
+  // --- the Wake button (host side; the button itself: check-project-board-ui.mjs) ---
+  check('wake rule: missing setting means "wake"', wakeCommandOf({}) === 'wake' && wakeCommandOf(null) === 'wake');
+  check('wake rule: empty setting hides the button', wakeCommandOf({ boardWakeCommand: '' }) === '' && wakeCommandOf({ boardWakeCommand: '  ' }) === '');
+  check('wake rule: a set command is used', wakeCommandOf({ boardWakeCommand: 'keepup' }) === 'keepup');
+  check('app.ts: the settings callback passes the wake command on', /settings\.boardWakeCommand !== undefined\) \{\s*this\.projectBoards\?\.setWakeCommand\(settings\.boardWakeCommand\)/.test(appSrc));
+  check('settings: wake command saved debounced', /saveAndNotify\(\{ boardWakeCommand: [^}]+\}, true\)/.test(settingsSrc));
+  check('settings: wake command field labelled, placeholder wake', settingsSrc.includes('>Wake button command</label>')
+    && /id="setting-board-wake-command"[^>]*placeholder="wake"/.test(settingsSrc));
+  check('settings: wake command filled through wakeCommandOf (absent → wake)', /#setting-board-wake-command'\) as HTMLInputElement\)\.value = wakeCommandOf\(settings\)/.test(settingsSrc));
+
+  state.settings = { startupCommand: '' }; // no boardWakeCommand: an older settings file
+  const wt = await tm.userNewTab();
+  const boardW = globalThis.__boards.at(-1);
+  check('wake: shown by default (setting absent)', JSON.stringify(boardW.host.wakeState()) === JSON.stringify({ command: 'wake', awake: false }), boardW.host.wakeState());
+  const nW = tm.getTabs().length;
+  const madeW = made();
+  const createsW = state.creates.length;
+  const writesW = state.writes.length;
+  const logW = logs.length;
+  boardW.host.wake();
+  // Done once it logs: the tab is open, its shell started, the board back in front.
+  const started = await until(() => logs.slice(logW).some((l) => l[0] === '[BOARD] wake started'), 1000);
+  check('wake click: a new tab opens', started && tm.getTabs().length === nW + 1, tm.getTabs().length);
+  const wakeTab = tm.getTabs().at(-1);
+  check('wake click: the new tab is last in the strip', wakeTab !== wt && tm.getTabs().indexOf(wakeTab) === tm.getTabs().length - 1);
+  check('wake click: the new tab has no board', !wakeTab.hasCover && made() === madeW);
+  const wakeCreate = state.creates.slice(createsW).find((c) => c.id === wakeTab.ptyId);
+  check('wake click: the new tab is at home, not a project tab', wakeCreate && !wakeCreate.opts?.cwd && !wakeCreate.opts?.projectDir, wakeCreate?.opts);
+  check('wake click: the board\'s tab stays active and covered', tm.getActiveTab() === wt && wt.hasCover && !boardW.disposed);
+  check('wake click: the board keeps focus', await until(() => boardW.element.contains(doc.activeElement), 300), doc.activeElement?.className);
+  check('wake click: logged with the new tab', logs.slice(logW).some((l) => l[0] === '[BOARD] wake started' && l[1]?.wakeTabId === wakeTab.id));
+  const wakeSent = () => state.writes.slice(writesW).filter((wr) => wr.id === wakeTab.ptyId && wr.data === 'wake\r').length;
+  await tick(50);
+  check('wake: nothing typed before the prompt', wakeSent() === 0, wakeSent());
+  emit(wakeTab.ptyId, '\x1b]133;A\x07');
+  check('wake: "wake" + Enter typed once the prompt shows', await until(() => wakeSent() === 1, 1000), wakeSent());
+  check('wake: typed into no other tab', state.writes.slice(writesW).every((wr) => wr.id === wakeTab.ptyId));
+
+  // The command titles its pane WAKE: the button turns to "Awake".
+  emit(wakeTab.ptyId, '\x1b]2;WAKE\x07');
+  check('wake: a WAKE title reaches the board (Awake)', await until(() => boardW.wakeSeen?.awake === true, 1000), boardW.wakeSeen);
+  check('wake: the WAKE tab carries the yellow flag', wakeTab.autoFlag === 'yellow');
+  const nJ = tm.getTabs().length;
+  const logJ = logs.length;
+  boardW.host.wake();
+  await tick(30);
+  check('awake click: no new tab', tm.getTabs().length === nJ && state.writes.slice(writesW).filter((wr) => wr.data === 'wake\r').length === 1);
+  check('awake click: the WAKE tab is active', tm.getActiveTab() === wakeTab);
+  check('awake click: logged as a jump', logs.slice(logJ).some((l) => l[0] === '[BOARD] wake jumped' && l[1]?.toTabId === wakeTab.id));
+  tm.switchToId(wt.id);
+  emit(wakeTab.ptyId, '\x1b]2;~\x07');
+  check('wake: the title changing back turns the board to Wake', await until(() => boardW.wakeSeen?.awake === false, 1000), boardW.wakeSeen);
+  // A pane that isn't its tab's focused one (a split) reaches the board too:
+  // only the tab's automatic flag reports its title.
+  tm.switchToId(wakeTab.id);
+  tm.splitVertical();
+  await until(() => wakeTab.panes.length === 2 && wakeTab.focusedPane !== wakeTab.panes[0], 500);
+  tm.switchToId(wt.id);
+  await tick(150); // let the tab switch's own refresh pass first
+  const firstPane = wakeTab.panes[0];
+  check('split: the first pane is not the focused one', wakeTab.panes.length === 2 && wakeTab.focusedPane !== firstPane);
+  emit(firstPane.ptyId, '\x1b]2;WAKE\x07');
+  check('wake: WAKE in an unfocused split pane reaches the board', await until(() => boardW.wakeSeen?.awake === true, 1000), boardW.wakeSeen);
+  emit(firstPane.ptyId, '\x1b]2;~\x07');
+  check('wake: and its title changing back too', await until(() => boardW.wakeSeen?.awake === false, 1000), boardW.wakeSeen);
+
+  // '' hides the button: live from Settings, and from the saved setting.
+  boards.setWakeCommand('');
+  check('setting "": every board repaints without the command', boardW.wakeSeen?.command === '', boardW.wakeSeen);
+  const nE = tm.getTabs().length;
+  boardW.host.wake();
+  await tick(30);
+  check('setting "": a click starts nothing', tm.getTabs().length === nE);
+  boards.setWakeCommand('wake');
+  state.settings = { startupCommand: '', boardWakeCommand: '' };
+  const wt2 = await tm.userNewTab();
+  check('setting "" saved: a new board has no command', globalThis.__boards.at(-1).host.wakeState().command === '');
+  state.settings = { startupCommand: '' };
+  await tm.closeById(wt2.id);
+  await tm.closeById(wakeTab.id);
+  await tm.closeById(wt.id);
 
   boards.dispose();
   console.info = info;

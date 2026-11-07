@@ -99,6 +99,22 @@
   font-weight: 600;
 }
 
+/* Wake: "Awake" carries the yellow tab flag's dot while a pane is titled WAKE. */
+.pboard-wake[hidden] {
+  display: none;
+}
+
+.pboard-wake-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 6px;
+  border-radius: 50%;
+  vertical-align: 1px;
+  background: var(--amber);
+  box-shadow: 0 0 0 1px var(--dot-edge);
+}
+
 .pboard-btn:disabled {
   color: var(--muted);
   cursor: default;

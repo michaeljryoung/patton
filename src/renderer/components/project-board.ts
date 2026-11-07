@@ -25,6 +25,19 @@ export interface ProjectBoardHost {
   dismiss(): void;
   /** Live state of a project folder (the host computes it with project-live-state.ts). */
   liveState(path: string): ProjectLiveState;
+  /** The Wake button's state: read when the board is made and on every live refresh. */
+  wakeState(): BoardWakeState;
+  /** Wake button click: the host starts the command in a new tab, or goes to
+   *  the tab already running it, and keeps this board in front for a start. */
+  wake(): void;
+}
+
+/** What the header's Wake button shows. */
+export interface BoardWakeState {
+  /** The command it types into a new tab; '' hides the button. */
+  command: string;
+  /** A pane in the window is titled WAKE: the command is running. */
+  awake: boolean;
 }
 
 // Private drag types: a tile or area dropped on the terminal or another app
@@ -93,6 +106,7 @@ export class ProjectBoard {
   private readonly countEl: HTMLElement;
   private readonly formEl: HTMLElement;
   private readonly areasEl: HTMLElement;
+  private readonly wakeBtn: HTMLButtonElement;
   private readonly contextMenu = new ContextMenu();
   private readonly confirmDialog = new ConfirmDialog(document.body);
 
@@ -143,11 +157,14 @@ export class ProjectBoard {
     const addProject = this.button('+ Project', 'pboard-btn pboard-add-project', () => {
       this.pickProject().catch((err) => rlog('error', '[BOARD] pick failed', String(err)));
     });
+    // Wake: starts the configured command in a new tab behind the board, or,
+    // while it runs, goes to that tab. Painted by paintWake().
+    this.wakeBtn = this.button('Wake', 'pboard-btn pboard-wake', () => this.onWakeClick());
     // The way out, at the right end where a reader looks for it.
     const terminal = this.button('Terminal', 'pboard-btn pboard-terminal', () => this.host.dismiss());
     terminal.title = 'Close the board and use this tab as a terminal (Esc)';
     terminal.setAttribute('aria-keyshortcuts', 'Escape');
-    head.append(title, this.countEl, this.searchInput, addTheme, addProject, terminal);
+    head.append(title, this.countEl, this.searchInput, addTheme, addProject, this.wakeBtn, terminal);
 
     this.formEl = document.createElement('div');
     this.formEl.className = 'pboard-form';
@@ -163,6 +180,7 @@ export class ProjectBoard {
     this.element.addEventListener('keydown', (e) => this.onBoardKey(e));
     this.setupDrag();
     this.render();
+    this.paintWake();
   }
 
   // ── Public API (the host's contract) ──
@@ -195,6 +213,7 @@ export class ProjectBoard {
 
   refreshLiveState(): void {
     if (this.disposed) return;
+    this.paintWake();
     const tiles = this.areasEl.querySelectorAll<HTMLElement>('.pb-tile');
     for (const tile of tiles) {
       const project = this.projectByPath(tile.dataset.path ?? '');
@@ -619,6 +638,35 @@ export class ProjectBoard {
     const note = this.layout.tiles[project.path]?.note;
     if (note) parts.push(note);
     main.setAttribute('aria-label', parts.filter(Boolean).join(', '));
+  }
+
+  /** The Wake button: hidden without a command, "Awake" with the flag's amber
+   *  dot while a pane is titled WAKE, else "Wake". */
+  private paintWake(): void {
+    const { command, awake } = this.host.wakeState();
+    const btn = this.wakeBtn;
+    btn.hidden = command === '';
+    btn.classList.toggle('is-awake', awake);
+    btn.replaceChildren();
+    if (awake) {
+      const dot = document.createElement('i');
+      dot.className = 'pboard-wake-dot';
+      dot.setAttribute('aria-hidden', 'true');
+      btn.appendChild(dot);
+    }
+    btn.appendChild(document.createTextNode(awake ? 'Awake' : 'Wake'));
+    if (awake) {
+      btn.title = 'Keeping the Mac awake. Click to go to its tab; Ctrl+C in that tab stops it';
+      btn.setAttribute('aria-label', 'Awake: go to the tab keeping the Mac awake. Ctrl+C in that tab stops it');
+    } else {
+      btn.title = `Keep the Mac awake: runs ${command} in a new tab at the end of the tab strip`;
+      btn.setAttribute('aria-label', `Wake: run ${command} in a new tab`);
+    }
+  }
+
+  private onWakeClick(): void {
+    rlog('info', '[BOARD] wake clicked', { awake: this.wakeBtn.classList.contains('is-awake') });
+    this.host.wake();
   }
 
   private tileButton(path: string): HTMLElement | null {

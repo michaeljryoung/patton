@@ -164,6 +164,9 @@ export const DEFAULTS = {
   // --- Project board: the default project list (cc's), layout limits ---
   PROJECT_BOARD: true,
   PROJECT_LIST_FILE: '' as const,
+  // The board's Wake button types this into a new tab ('' hides the button).
+  BOARD_WAKE_COMMAND: 'wake',
+  BOARD_WAKE_COMMAND_MAX_CHARS: 200,
   BOARD_THEME_NAME_MAX_CHARS: 40,
   BOARD_THEMES_MAX: 60,
   BOARD_PATHS_MAX: 2000,

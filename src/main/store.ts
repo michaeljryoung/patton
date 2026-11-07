@@ -95,6 +95,7 @@ const defaults: StoreSchema = {
     checkpointNudgePct: DEFAULTS.CHECKPOINT_NUDGE_PCT,
     projectBoard: DEFAULTS.PROJECT_BOARD,
     projectListFile: DEFAULTS.PROJECT_LIST_FILE,
+    boardWakeCommand: DEFAULTS.BOARD_WAKE_COMMAND,
   },
   windowState: {
     width: 900,
@@ -273,6 +274,14 @@ export function setSettings(partial: Partial<AppSettings>): void {
     const f = String(partial.projectListFile);
     if (f.length <= 1024 && !/\p{Cc}/u.test(f)) {
       validated.projectListFile = f.trim();
+    }
+  }
+
+  if (partial.boardWakeCommand !== undefined) {
+    // Typed into a shell like the startup command: one line of printable ASCII.
+    const c = String(partial.boardWakeCommand).trim();
+    if (c.length <= DEFAULTS.BOARD_WAKE_COMMAND_MAX_CHARS && /^[\x20-\x7E]*$/.test(c)) {
+      validated.boardWakeCommand = c;
     }
   }
 

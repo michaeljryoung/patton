@@ -1,6 +1,7 @@
 import { ProjectBoard, type ProjectBoardHost } from '../components/project-board';
 import type { Tab } from '../components/tab';
 import type { AppSettings, BoardPayload } from '../../shared/types';
+import { findWakePane, wakeCommandOf } from './board-wake';
 import { openProject, type OpenProjectHost } from './open-project';
 import { projectLiveState, type LiveStateSnapshot, type ProjectLiveState } from './project-live-state';
 import { rlog } from './renderer-logger';
@@ -40,7 +41,8 @@ interface MountedBoard {
  * (startLaunchTab), and nowhere else: reopened, bookmark and split tabs never
  * come through TabManager.userNewTab(). A tile opens its
  * project the way a bookmark click does (open-project.ts), then the board's tab
- * goes; "Terminal" (or Esc) just lifts the board off its tab.
+ * goes; "Terminal" (or Esc) just lifts the board off its tab; "Wake" starts the
+ * configured command in a new tab behind the board (see wake()).
  */
 export class ProjectBoards {
   private boards = new Map<Tab, MountedBoard>();
@@ -48,6 +50,11 @@ export class ProjectBoards {
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
   // One live-state snapshot per refresh, shared by every tile asking for one.
   private snapshot: LiveStateSnapshot | null = null;
+  // The Wake button's command (Settings; '' hides it), read with the settings
+  // each board load and updated live from the Settings panel.
+  private wakeCommand = wakeCommandOf(null);
+  // A Wake click is opening its tab: a second click waits for it.
+  private wakeStarting = false;
 
   constructor(
     private readonly tabs: TabManager,
@@ -129,8 +136,18 @@ export class ProjectBoards {
     return this.boards.has(tab);
   }
 
-  /** Tabs changed (opened, closed, activated, a session's state): refresh the
-   *  tiles' live state, coalesced. */
+  /** Settings → "Wake button command" changed: repaint every board's button. */
+  setWakeCommand(command: string): void {
+    const next = wakeCommandOf({ boardWakeCommand: command });
+    if (next === this.wakeCommand) return;
+    this.wakeCommand = next;
+    rlog('info', '[BOARD] wake command changed', { shown: next !== '' });
+    for (const mounted of this.boards.values()) mounted.board.refreshLiveState();
+  }
+
+  /** Tabs changed (opened, closed, activated, a session's state, a pane's
+   *  title turning WAKE or back, via the tab's automatic flag): refresh the
+   *  tiles' live state and the Wake button, coalesced. */
   scheduleRefresh(): void {
     if (this.boards.size === 0 || this.refreshTimer) return;
     this.refreshTimer = setTimeout(() => {
@@ -151,6 +168,7 @@ export class ProjectBoards {
   private async loadDecision(): Promise<BoardDecision> {
     try {
       const settings = await window.patton.settings.get();
+      this.wakeCommand = wakeCommandOf(settings);
       if (settings.projectBoard === false) return decideBoard(settings, null);
       const payload = await window.patton.board.get();
       return decideBoard(settings, payload);
@@ -171,6 +189,10 @@ export class ProjectBoards {
         if (this.forget(tab, 'terminal')) tab.setCover(null);
       },
       liveState: (path) => this.liveState(path),
+      wakeState: () => ({ command: this.wakeCommand, awake: findWakePane(this.tabs.getTabs()) !== null }),
+      wake: () => {
+        this.wake(tab).catch((err: unknown) => rlog('error', '[BOARD] wake failed', { tabId: tab.id, error: String(err) }));
+      },
     };
     const board = new ProjectBoard(host, payload);
     this.boards.set(tab, { board, payload });
@@ -215,6 +237,35 @@ export class ProjectBoards {
     const discarded = this.tabs.discardTab(boardTab.id, placeTabId);
     rlog('info', '[BOARD] discard', { tabId: boardTab.id, discarded, placedTabId: placeTabId ?? null });
     if (!discarded) boardTab.setCover(null);
+  }
+
+  /**
+   * The Wake button. While a pane is titled WAKE, go to it (Ctrl+C there stops
+   * it). Otherwise open a new tab at home (never a board, no project), type the
+   * command once its prompt shows, and hand the window straight back to the
+   * board's tab, so picking a project carries on. createTab adds the tab at the
+   * end of the strip.
+   */
+  private async wake(boardTab: Tab): Promise<void> {
+    const running = findWakePane(this.tabs.getTabs());
+    if (running) {
+      this.tabs.goToSession(running.tab.id, running.pane.id);
+      rlog('info', '[BOARD] wake jumped', { tabId: boardTab.id, toTabId: running.tab.id });
+      return;
+    }
+    const command = this.wakeCommand;
+    if (!command || this.wakeStarting) return;
+    this.wakeStarting = true;
+    try {
+      const wakeTab = await this.tabs.createTab(undefined, { startupCommand: true });
+      runStartupCommand(wakeTab, command);
+      // createTab made the new tab active; the board's tab stays in front
+      // (switched back before the next paint, and it focuses its board).
+      if (this.tabs.getTabs().includes(boardTab)) this.tabs.switchToId(boardTab.id);
+      rlog('info', '[BOARD] wake started', { tabId: boardTab.id, wakeTabId: wakeTab.id, index: this.tabs.getTabs().indexOf(wakeTab) });
+    } finally {
+      this.wakeStarting = false;
+    }
   }
 
   private liveState(path: string): ProjectLiveState {

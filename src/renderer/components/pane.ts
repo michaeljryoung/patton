@@ -9,6 +9,7 @@ import { HistoryManager } from '../services/history-manager';
 import { FileLinkProvider } from '../services/file-link-provider';
 import { createOsc8LinkHandler } from '../services/osc8-links';
 import { rlog } from '../services/renderer-logger';
+import { WAKE_TITLE } from '../services/board-wake';
 import { announce } from '../services/announcer';
 import { stripPasteControls } from '../services/paste-sanitize';
 import { shouldConfirmMultilinePaste } from '../services/paste-confirm';
@@ -723,7 +724,7 @@ export class Pane {
 
   /** `WAKE` as the whole title → yellow tab flag; any other title drops it. */
   private trackAutoFlag(title: string): void {
-    if (title === 'WAKE') {
+    if (title === WAKE_TITLE) {
       if (this.autoFlagged) return;
       this.autoFlagged = true;
       this.callbacks.onAutoFlag?.(this, 'yellow');

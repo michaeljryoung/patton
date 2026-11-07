@@ -78,6 +78,10 @@ export interface AppSettings {
   /** The Markdown project list the board reads (the `cc` launcher's format).
    *  Empty means ~/.claude/projects.md. Absent in older settings: read `|| ''`. */
   projectListFile: string;
+  /** The command the project board's Wake button types into a new tab.
+   *  Empty hides the button. Absent in older settings: read it as
+   *  `typeof x === 'string' ? x : DEFAULTS.BOARD_WAKE_COMMAND` (wakeCommandOf). */
+  boardWakeCommand: string;
 }
 
 export interface SessionPaneState {

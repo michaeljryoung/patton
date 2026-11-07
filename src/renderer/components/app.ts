@@ -103,6 +103,9 @@ export class App {
       if (settings.checkpointNudgePct !== undefined) {
         this.tabManager.setCheckpointNudgePct(settings.checkpointNudgePct);
       }
+      if (settings.boardWakeCommand !== undefined) {
+        this.projectBoards?.setWakeCommand(settings.boardWakeCommand);
+      }
       if (settings.theme !== undefined) {
         this.applyTheme(settings.theme);
       }

@@ -3,6 +3,7 @@ import { DEFAULTS, isNotificationSoundType } from '../../shared/constants';
 import { settingsShortcuts, displayKeys, acceleratorToDisplay } from '../../shared/shortcuts';
 import { trapFocus } from '../services/focus-trap';
 import { rlog } from '../services/renderer-logger';
+import { wakeCommandOf } from '../services/board-wake';
 
 export class SettingsPanel {
   private overlay: HTMLElement;
@@ -166,6 +167,11 @@ export class SettingsPanel {
             <label class="settings-label" for="setting-project-list-file">Project list file</label>
             <input class="settings-input" id="setting-project-list-file" type="text" placeholder="~/.claude/projects.md" spellcheck="false" />
             <span class="settings-hint">The Markdown table of projects the board reads (the cc launcher's format: a header row | Project | Path |, its separator row, then one row per project). Empty means ~/.claude/projects.md.</span>
+          </div>
+          <div class="settings-group">
+            <label class="settings-label" for="setting-board-wake-command">Wake button command</label>
+            <input class="settings-input" id="setting-board-wake-command" type="text" placeholder="wake" spellcheck="false" />
+            <span class="settings-hint">The board's Wake button types this into a new tab at the end of the tab strip, and reads Awake while a pane is titled WAKE. Empty hides the button.</span>
           </div>
           <div class="settings-group settings-group-toggle">
             <label class="settings-label" for="setting-shell-integration">Shell Integration</label>
@@ -345,6 +351,12 @@ export class SettingsPanel {
       this.saveAndNotify({ projectListFile: projectListFileInput.value.trim() }, true);
     });
 
+    // Debounced the same way; empty hides the board's Wake button.
+    const boardWakeCommandInput = this.overlay.querySelector('#setting-board-wake-command') as HTMLInputElement;
+    listen(boardWakeCommandInput, 'input', () => {
+      this.saveAndNotify({ boardWakeCommand: boardWakeCommandInput.value.trim() }, true);
+    });
+
     const shellIntegrationInput = this.overlay.querySelector('#setting-shell-integration') as HTMLInputElement;
     listen(shellIntegrationInput, 'change', () => {
       this.saveAndNotify({ shellIntegration: shellIntegrationInput.checked });
@@ -452,6 +464,8 @@ export class SettingsPanel {
     (this.overlay.querySelector('#setting-shell-integration') as HTMLInputElement).checked = settings.shellIntegration !== false;
     (this.overlay.querySelector('#setting-project-board') as HTMLInputElement).checked = settings.projectBoard !== false;
     (this.overlay.querySelector('#setting-project-list-file') as HTMLInputElement).value = settings.projectListFile || '';
+    // Absent in older settings: the default, shown as itself (empty would mean hidden).
+    (this.overlay.querySelector('#setting-board-wake-command') as HTMLInputElement).value = wakeCommandOf(settings);
 
     (this.overlay.querySelector('#setting-theme') as HTMLSelectElement).value = settings.theme || 'system';
 
