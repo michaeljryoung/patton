@@ -413,6 +413,7 @@ async function main() {
   mkdirSync(genData);
   m.saveLayout(genData, { version: 1, themes: [{ id: 'work', name: 'Work', tint: 'sand', projects: [gamma] }], tiles: {} });
   const rg = await m.addProject({ listSetting: addList, userDataDir: genData }, { path: delta, name: 'Delta', themeId: 'work' }, log);
+  check('add: the result carries the add count, its own add included', rg.generation === log.generation, rg.generation);
   check('add: recorded in the addition log', rg.added === delta && log.generation === genBefore + 1 && same(log.addedSince(genBefore), [delta]));
   const staleLayout = { version: 1, themes: [{ id: 'work', name: 'Work', tint: 'teal', projects: [gamma] }], tiles: {} };
   const kept = m.saveLayout(genData, staleLayout, log.addedSince(genBefore));
@@ -420,6 +421,18 @@ async function main() {
   const fresh = m.saveLayout(genData, staleLayout, log.addedSince(log.generation));
   check('fresh save: may unsort it (the board saw it)', same(fresh.themes[0].projects, [gamma]), fresh.themes[0].projects);
   check('addition log: bad generation counts as 0', same(log.addedSince('x'), [delta]) && same(log.addedSince(-1), [delta]));
+  // A load never hands back a layout older than a save that landed while it
+  // loaded, nor an add count newer than the list it read (B).
+  const genLayoutBefore = m.readLayout(genData);
+  const genAtStart = log.generation;
+  const loadingRace = m.loadBoard({ listSetting: addList, userDataDir: genData }, log);
+  const newer = { version: 1, themes: [{ id: 'work', name: 'Newer', tint: 'rose', projects: [delta, gamma] }], tiles: {} };
+  m.saveLayout(genData, newer);
+  log.record(join(P, 'added-meanwhile'));
+  const raced = await loadingRace;
+  check('load race: layout is the save that landed during the load', raced.layout.themes[0].name === 'Newer'
+    && same(raced.layout.themes[0].projects, [delta, gamma]) && genLayoutBefore.themes[0].name !== 'Newer', raced.layout.themes[0]);
+  check('load race: add count taken before the list was read', raced.generation === genAtStart, { got: raced.generation, genAtStart });
   check('add: refused when the list file is absent',
     typeof (await m.addProject({ listSetting: join(work, 'none.md'), userDataDir: userData }, { path: delta, name: 'D' })).error === 'string');
   check('load: absent list file → listFound false', (await m.loadBoard({ listSetting: join(work, 'none.md'), userDataDir: userData })).listFound === false);

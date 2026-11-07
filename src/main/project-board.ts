@@ -526,12 +526,18 @@ export interface BoardSources {
   home?: string;
 }
 
-export async function loadBoard(sources: BoardSources): Promise<BoardPayload> {
+export async function loadBoard(sources: BoardSources, additions?: AdditionLog): Promise<BoardPayload> {
   const home = sources.home ?? homedir();
   const listFile = resolveListFile(sources.listSetting, home);
-  const layout = readLayout(sources.userDataDir);
+  // The add count is taken before the list is read and the layout after the
+  // last await, so a payload never claims an add its list may lack, nor holds
+  // a layout older than a save that landed while it loaded.
+  const generation = additions?.generation;
+  const withGeneration = generation === undefined ? {} : { generation };
   const shownFile = listFile ? tildePath(listFile, home) : String(sources.listSetting ?? '');
-  const notFound = (): BoardPayload => ({ listFile: shownFile, listFound: false, listTable: false, projects: [], layout });
+  const notFound = (): BoardPayload => ({
+    listFile: shownFile, listFound: false, listTable: false, projects: [], layout: readLayout(sources.userDataDir), ...withGeneration,
+  });
   if (!listFile) {
     console.info('[BOARD] Loaded', { listFound: false });
     return notFound();
@@ -556,13 +562,14 @@ export async function loadBoard(sources: BoardSources): Promise<BoardPayload> {
   }
   const rows = usableRows(parseProjectList(text, home));
   const projects = nestProjects(rows, await gatherRowFacts(rows, home));
+  const layout = readLayout(sources.userDataDir);
   const listTable = hasListTable(text);
   const subs = projects.reduce((n, p) => n + p.subProjects.length, 0);
   console.info('[BOARD] Loaded', {
     listFound: true, listTable, projects: projects.length, subProjects: subs,
     missing: projects.filter((p) => p.missing).length, themes: layout.themes.length,
   });
-  return { listFile: shownFile, listFound: true, listTable, projects, layout };
+  return { listFile: shownFile, listFound: true, listTable, projects, layout, ...withGeneration };
 }
 
 // ── Adding a project row ──
@@ -735,7 +742,7 @@ export async function addProject(
   const home = sources.home ?? homedir();
   const refuse = async (reason: string): Promise<BoardPayload> => {
     console.warn('[BOARD] Add refused', { reason });
-    return { ...(await loadBoard(sources)), error: reason };
+    return { ...(await loadBoard(sources, additions)), error: reason };
   };
   const listFile = resolveListFile(sources.listSetting, home);
   if (!listFile) return refuse('the project list file setting is not a usable path');
@@ -785,5 +792,5 @@ export async function addProject(
   console.info('[BOARD] Project added', {
     themed: Boolean(themeId), form: linkForm ? 'link' : 'plain', bytesBefore: bytes.length, bytesAfter: out.length,
   });
-  return { ...(await loadBoard(sources)), added: check.path };
+  return { ...(await loadBoard(sources, additions)), added: check.path };
 }

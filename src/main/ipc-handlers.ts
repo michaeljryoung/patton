@@ -416,10 +416,9 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
   // Projects added while the app runs: every payload carries the count, and a
   // layout save from a board that hadn't seen an add keeps that tile's theme.
   const boardAdditions = new AdditionLog();
-  const boardPayload = async (): Promise<BoardPayload> => ({
-    ...(await loadBoard(boardSources())),
-    generation: boardAdditions.generation,
-  });
+  // loadBoard takes the add count before it reads the list, so it never
+  // claims an add the list it read may lack.
+  const boardPayload = (): Promise<BoardPayload> => loadBoard(boardSources(), boardAdditions);
   const boardGetLimiter = new RateLimiter(10);
   ipcMain.handle(IPC.BOARD_GET, () => {
     if (!boardGetLimiter.allow()) {
@@ -473,8 +472,7 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
       console.warn('[SECURITY] Rate limit exceeded', { channel: IPC.BOARD_ADD_PROJECT });
       return { ...(await boardPayload()), error: 'too many requests; try again' };
     }
-    const { added, ...result } = await addProject(boardSources(), request, boardAdditions);
-    const payload: BoardPayload = { ...result, generation: boardAdditions.generation };
+    const { added, ...payload } = await addProject(boardSources(), request, boardAdditions);
     if (!added) return payload;
     // Every board in every window gets the new list (and the new tile's theme).
     let windows = 0;
