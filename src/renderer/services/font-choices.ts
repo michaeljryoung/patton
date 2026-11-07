@@ -50,10 +50,12 @@ function defaultMeasurer(): TextMeasurer {
   return sharedCtx;
 }
 
-function widthOf(ctx: TextMeasurer, stack: string): number {
-  // An invalid declaration is ignored and keeps the previous font: start from a known one.
+/** Width of the sample in `stack`, or null when the browser ignored the font declaration. */
+function widthOf(ctx: TextMeasurer, stack: string): number | null {
+  // An invalid declaration is ignored and keeps the previous font: start from a known one and read back.
   ctx.font = '10px sans-serif';
   ctx.font = `40px ${stack}`;
+  if (!ctx.font.startsWith('40px')) return null;
   return ctx.measureText(SAMPLE).width;
 }
 
@@ -63,7 +65,10 @@ export function fontDraws(family: string, ctx: TextMeasurer = defaultMeasurer())
   if (GENERIC_FAMILIES.includes(family.trim().toLowerCase())) return true;
   const quoted = `'${family.replace(/['"\\]/g, '')}'`;
   for (const generic of ['sans-serif', 'serif']) {
-    if (widthOf(ctx, `${quoted}, ${generic}`) !== widthOf(ctx, generic)) return true;
+    const withFamily = widthOf(ctx, `${quoted}, ${generic}`);
+    const without = widthOf(ctx, generic);
+    if (withFamily === null || without === null) return false;
+    if (withFamily !== without) return true;
   }
   return false;
 }
