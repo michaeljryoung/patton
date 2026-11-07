@@ -12,7 +12,7 @@
   overflow: hidden;
   font-family: var(--font-ui);
   font-size: var(--ui);
-  transition: max-height 0.2s ease, opacity 0.2s ease, min-height 0.2s ease, padding 0.2s ease, visibility 0s linear 0s;
+  transition: max-height 0.2s ease, opacity 0.2s ease, min-height 0.2s ease, padding 0.2s ease;
 }
 
 /* Collapsed state: fully hidden */
@@ -170,7 +170,7 @@
   transform: translateY(0);
   pointer-events: auto;
   visibility: visible;
-  transition-delay: 0s;
+  transition: opacity 0.15s ease, transform 0.15s ease;
 }
 
 .history-search-header {

@@ -349,7 +349,8 @@ export class SettingsPanel {
     void this.refreshClaudeHook();
     this.visible = true;
     this.overlay.classList.add('visible');
-    (this.overlay.querySelector('#setting-font-size') as HTMLInputElement).focus();
+    // trapFocus remembers the element focused now (to restore it on close) and
+    // then focuses the first control itself, so nothing may take focus before it.
     this.releaseFocusTrap = trapFocus(this.overlay);
   }
 

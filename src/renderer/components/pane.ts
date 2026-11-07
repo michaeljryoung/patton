@@ -435,6 +435,7 @@ export class Pane {
     this.searchOverlay = new SearchOverlay(
       this.terminalContainer,
       this.terminalView.searchAddon,
+      () => this.terminalView.focus(),
     );
 
     // Create history search (Ctrl+R)

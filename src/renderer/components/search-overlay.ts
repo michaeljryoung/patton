@@ -11,7 +11,8 @@ export class SearchOverlay {
   private resultDisposable?: { dispose(): void };
   private disposables: (() => void)[] = [];
 
-  constructor(parent: HTMLElement, searchAddon: SearchAddon) {
+  /** onClose runs when the overlay closes while focus is inside it, so focus goes back to the terminal, not <body>. */
+  constructor(parent: HTMLElement, searchAddon: SearchAddon, private onClose?: () => void) {
     this.searchAddon = searchAddon;
 
     this.container = document.createElement('div');
@@ -111,8 +112,10 @@ export class SearchOverlay {
   }
 
   hide(): void {
+    const hadFocus = this.container.contains(document.activeElement);
     this.visible = false;
     this.container.classList.remove('visible');
+    if (hadFocus) this.onClose?.();
     this.searchAddon.clearDecorations();
     this.input.value = '';
     this.matchIndex = 0;

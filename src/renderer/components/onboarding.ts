@@ -59,7 +59,8 @@ export class Onboarding {
 
   show(): void {
     this.overlay.classList.add('visible');
-    (this.overlay.querySelector('.onboarding-dismiss') as HTMLElement).focus();
+    // trapFocus captures the current focus (restored on close) before moving it
+    // to the first control, the dismiss button; pre-focusing would lose it.
     this.releaseFocusTrap = trapFocus(this.overlay);
   }
 
