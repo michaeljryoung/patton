@@ -43,6 +43,13 @@ export class TabManager {
   private currentRenderer: RendererMode = 'webgl';
   private onTabsChanged: (() => void) | null = null; // bookmarks sidebar
   private checkpointNudgePct: number = DEFAULT_CHECKPOINT_NUDGE_PCT;
+  // --- Project board ---
+  // Opens a new tab the user asked for (⌘T, the palette, the tab bar's +), so
+  // the project board can cover it. Unset: a plain createTab().
+  private userNewTabHandler: (() => Promise<Tab>) | null = null;
+  // Told about every tab that leaves the window, however it went.
+  private tabClosedListeners: ((tab: Tab) => void)[] = [];
+  // --- end project board ---
 
   constructor(
     tabBarContainer: HTMLElement,
@@ -64,7 +71,7 @@ export class TabManager {
     this.tabBar = new TabBar(tabBarContainer, {
       onSelect: (id) => this.switchToId(id),
       onClose: (id) => { this.confirmAndCloseTab(id).catch(console.error); },
-      onNew: () => { this.createTab().catch(console.error); },
+      onNew: () => { this.userNewTab().catch(console.error); },
       onReorder: (fromId, toId) => this.reorder(fromId, toId),
       onSettings: () => options?.onSettings?.(),
       onRename: (id, name) => this.renameTab(id, name),
@@ -335,8 +342,7 @@ export class TabManager {
       this.saveClosedPane(pane);
     }
 
-    tab.dispose();
-    this.tabs.splice(idx, 1);
+    this.removeTab(tab);
     announce(`Closed tab: ${closedTitle}`);
 
     if (this.tabs.length === 0) {
@@ -351,6 +357,70 @@ export class TabManager {
       this.updateTabBar();
     }
   }
+
+  /** Dispose a tab and take it out of the list (the caller picks what's next). */
+  private removeTab(tab: Tab): void {
+    const idx = this.tabs.indexOf(tab);
+    if (idx === -1) return;
+    tab.dispose();
+    this.tabs.splice(idx, 1);
+    for (const listener of this.tabClosedListeners) {
+      try {
+        listener(tab);
+      } catch (err) {
+        console.error('tab-closed listener failed:', err);
+      }
+    }
+  }
+
+  // --- Project board ---
+  /** Open a new tab because the user asked for one (⌘T, the palette's New Tab,
+   *  the tab bar's +). Restored, reopened, bookmark and split tabs don't come
+   *  through here, so only these can show the project board. */
+  userNewTab(): Promise<Tab> {
+    return this.userNewTabHandler ? this.userNewTabHandler() : this.createTab();
+  }
+
+  setUserNewTabHandler(handler: (() => Promise<Tab>) | null): void {
+    this.userNewTabHandler = handler;
+  }
+
+  /** Hear about every tab that leaves the window. Returns an unsubscribe. */
+  onTabClosed(listener: (tab: Tab) => void): () => void {
+    this.tabClosedListeners.push(listener);
+    return () => {
+      this.tabClosedListeners = this.tabClosedListeners.filter((l) => l !== listener);
+    };
+  }
+
+  /**
+   * Close a tab that was only ever a project board: no confirmation (its shell
+   * never ran anything) and not saved for Reopen Closed. Never the last tab, so
+   * this never closes the window and never has to get past its close guard.
+   * `placeTabId`: a tab just opened from the board, moved to the board's place.
+   * Returns whether the tab was closed.
+   */
+  discardTab(id: string, placeTabId?: string): boolean {
+    const tab = this.tabs.find(t => t.id === id);
+    if (!tab || this.tabs.length <= 1) return false;
+    const idx = this.tabs.indexOf(tab);
+    const wasActive = this.activeTab === tab;
+    this.removeTab(tab);
+
+    const placed = placeTabId ? this.tabs.find(t => t.id === placeTabId) : undefined;
+    if (placed) {
+      this.tabs.splice(this.tabs.indexOf(placed), 1);
+      this.tabs.splice(Math.min(idx, this.tabs.length), 0, placed);
+    }
+    if (wasActive) {
+      const next = placed ?? this.tabs[Math.min(idx, this.tabs.length - 1)];
+      this.switchToId(next.id);
+    } else {
+      this.updateTabBar();
+    }
+    return true;
+  }
+  // --- end project board ---
 
   async closeActiveTab(): Promise<void> {
     if (this.activeTab) {

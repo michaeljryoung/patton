@@ -20,6 +20,16 @@ import { DEFAULTS } from '../../shared/constants';
 
 let tabIdCounter = 0;
 
+/** Something shown over a tab's panes (the project board). While a tab has
+ *  one, the tab is called "Projects" and keyboard focus stays inside it. */
+export interface TabCover {
+  element: HTMLElement;
+  focus(): void;
+}
+
+/** The tab's name while a cover shows. */
+export const COVERED_TAB_TITLE = 'Projects';
+
 /** Wait before retrying a project lookup main refused (its 100/s cap at restore). */
 const PROJECT_RETRY_MS = 1500;
 
@@ -102,6 +112,10 @@ export class Tab {
   // Panes whose Claude Code session ended its turn but is waiting on its own
   // background tasks or timers (Stop hook). Runtime only, never persisted.
   private _parkedPanes = new Map<Pane, ParkedInfo>();
+  // The cover over the panes (the project board), and the element holding it.
+  // The shell beneath keeps running; only focus and the title change.
+  private _cover: TabCover | null = null;
+  private _coverHost: HTMLElement | null = null;
 
   /** `forProject`: the first pane's shell is told its project (PATTON_PROJECT_DIR).
    *  Only that pane: splits and restored panes never get it. */
@@ -119,6 +133,42 @@ export class Tab {
     this._focusedPane = pane;
     this.rootNode = pane;
     this.element.appendChild(pane.element);
+
+    // While a cover shows, nothing beneath it may take focus (a click-through,
+    // focusTerminal(), a split's deferred focus): send it back to the cover.
+    this.element.addEventListener('focusin', (e) => {
+      if (!this._cover || !this._coverHost) return;
+      if (e.target instanceof Node && this._coverHost.contains(e.target)) return;
+      this._cover.focus();
+    });
+  }
+
+  /** Show something over the panes (or remove it with null). Removing it gives
+   *  the tab its usual title back and focuses the terminal. */
+  setCover(cover: TabCover | null): void {
+    if (cover === this._cover) return;
+    this._coverHost?.remove();
+    this._coverHost = null;
+    this._cover = cover;
+    if (cover) {
+      const host = document.createElement('div');
+      host.className = 'tab-cover';
+      host.appendChild(cover.element);
+      this.element.appendChild(host);
+      this._coverHost = host;
+    }
+    if (this._isActive) requestAnimationFrame(() => this.focusFront());
+    this.refreshTitle();
+  }
+
+  get hasCover(): boolean {
+    return this._cover !== null;
+  }
+
+  /** Focus what the user sees in this tab: its cover, else the focused pane. */
+  private focusFront(): void {
+    if (this._cover) this._cover.focus();
+    else this._focusedPane.focus();
   }
 
   setShell(shell: string): void {
@@ -379,6 +429,7 @@ export class Tab {
   /** What the tab is called when the user hasn't named it: its project's name,
    *  else the title the program in the focused pane set. */
   get autoTitle(): string {
+    if (this._cover) return COVERED_TAB_TITLE;
     return this._project ? projectTitle(this._project) : this._focusedPane.title;
   }
 
@@ -582,6 +633,8 @@ export class Tab {
     // Build DOM from tree
     const rootEl = this.buildDomNode(this.rootNode);
     this.element.appendChild(rootEl);
+    // The cover stays on top of a re-rendered tree.
+    if (this._coverHost) this.element.appendChild(this._coverHost);
   }
 
   private buildDomNode(node: SplitTreeNode): HTMLElement {
@@ -673,7 +726,7 @@ export class Tab {
       pane.show();
     }
     // Deferred to ensure focus wins over xterm.js internal focus grabs from fit()
-    requestAnimationFrame(() => this._focusedPane.focus());
+    requestAnimationFrame(() => this.focusFront());
     if (wasAwaiting) this.onTitleChanged?.();
   }
 

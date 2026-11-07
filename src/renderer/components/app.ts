@@ -16,6 +16,8 @@ import { setProgramStatusEnabled } from '../services/program-status-switch';
 import { paletteShortcuts, displayKeys } from '../../shared/shortcuts';
 import { parseSessionAction, sessionPaletteActions } from '../services/session-palette';
 import { rlog } from '../services/renderer-logger';
+import type { OpenProjectHost } from '../services/open-project';
+import { ProjectBoards } from '../services/project-boards';
 
 export class App {
   private tabManager: TabManager;
@@ -25,6 +27,7 @@ export class App {
   private quickTerminal: QuickTerminal;
   private notesPanel: NotesPanel;
   private bookmarksPanel: BookmarksPanel;
+  private projectBoards: ProjectBoards;
   private notificationSound: NotificationSound;
   private fontSize: number = DEFAULTS.FONT_SIZE;
   private fontSizeSaveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -53,7 +56,10 @@ export class App {
         }
       },
       // The bookmarks sidebar is created below; these only fire after startup.
-      onTabsChanged: () => this.bookmarksPanel?.scheduleRefresh(),
+      onTabsChanged: () => {
+        this.bookmarksPanel?.scheduleRefresh();
+        this.projectBoards?.scheduleRefresh();
+      },
       onBookmarkProject: (tab) => { this.bookmarksPanel.addProjectFromTab(tab).catch(console.error); },
     });
     this.keybindingManager = new KeybindingManager(this.tabManager);
@@ -116,8 +122,9 @@ export class App {
       onClose: () => this.tabManager.getActiveTab()?.focusedPane.focus(),
     });
 
-    // Bookmarks sidebar (Ctrl+Cmd+B): projects and artifact links, docked left.
-    this.bookmarksPanel = new BookmarksPanel(mainEl, {
+    // How a project is opened, shared by the bookmarks sidebar and the
+    // project board so both go to the same tab or session.
+    const projectHost: OpenProjectHost = {
       getTabs: () => this.tabManager.getTabs(),
       getActiveTab: () => this.tabManager.getActiveTab(),
       switchToTab: (id) => this.tabManager.switchToId(id),
@@ -125,7 +132,13 @@ export class App {
       listSessions: () => this.tabManager.listSessions(),
       goToSession: (tabId, paneId) => this.tabManager.goToSession(tabId, paneId),
       focusTerminal: () => this.tabManager.getActiveTab()?.focusedPane.focus(),
-    });
+    };
+
+    // Bookmarks sidebar (Ctrl+Cmd+B): projects and artifact links, docked left.
+    this.bookmarksPanel = new BookmarksPanel(mainEl, projectHost);
+
+    // Project board over new tabs the user opens (TabManager.userNewTab).
+    this.projectBoards = new ProjectBoards(this.tabManager, projectHost);
 
     this.registerAppListeners();
     this.registerSettingsShortcut();
@@ -274,7 +287,7 @@ export class App {
 
     this.disposables.push(
       window.patton.app.onNewTab(() => {
-        this.tabManager.createTab().catch(console.error);
+        this.tabManager.userNewTab().catch(console.error);
       }),
     );
 
@@ -441,7 +454,7 @@ export class App {
     const tab = this.tabManager.getActiveTab();
     switch (actionId) {
       case 'new-tab':
-        this.tabManager.createTab().catch(console.error);
+        this.tabManager.userNewTab().catch(console.error);
         break;
       case 'close-pane':
         this.tabManager.closeActivePane().catch(console.error);
@@ -595,6 +608,7 @@ export class App {
     this.quickTerminal.dispose();
     this.notesPanel.dispose();
     this.bookmarksPanel.dispose();
+    this.projectBoards.dispose();
     this.notificationSound.dispose();
     this.tabManager.dispose();
   }
