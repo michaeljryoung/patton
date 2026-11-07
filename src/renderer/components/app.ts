@@ -1,7 +1,7 @@
 import { TabManager } from '../services/tab-manager';
 import { KeybindingManager } from '../services/keybinding-manager';
 import { NotificationSound } from '../services/notification-sound';
-import { getThemeById, applyThemeToCSS, clearThemeCSS } from '../services/themes';
+import { getThemeById } from '../services/themes';
 import { announce } from '../services/announcer';
 import { SettingsPanel } from './settings-panel';
 import { CommandPalette } from './command-palette';
@@ -521,15 +521,15 @@ export class App {
   }
 
   private applyTheme(themeId: string): void {
+    // A theme colours the terminal only. The chrome keeps its own tokens
+    // (main.css) and follows the OS light/dark mode; the theme's `ui` block is
+    // no longer written to :root (nothing read it, and its --accent overrode
+    // the chrome's, at under 3:1 on white for 13 of 19 themes).
     if (themeId === 'system') {
-      clearThemeCSS();
       this.tabManager.setTerminalTheme(null);
     } else {
       const theme = getThemeById(themeId);
-      if (theme) {
-        applyThemeToCSS(theme);
-        this.tabManager.setTerminalTheme(theme.terminal);
-      }
+      if (theme) this.tabManager.setTerminalTheme(theme.terminal);
     }
   }
 
