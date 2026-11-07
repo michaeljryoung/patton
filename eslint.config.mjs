@@ -32,6 +32,15 @@ export default [
   importPlugin.flatConfigs.electron,
   importPlugin.flatConfigs.typescript,
   {
+    // Forge 8 and Vite 8 ship ESM-only packages whose entry is only in package.json
+    // "exports", which eslint-plugin-import's node resolver can't read, so every import
+    // of them reported as unresolved (S46; lint had failed since the Forge 8 upgrade).
+    // Forge itself loads these files on every build, so a truly broken import still
+    // fails the verifier there. The rule stays on everywhere else.
+    files: ['forge.config.ts', 'vite.*.config.ts'],
+    rules: { 'import/no-unresolved': 'off' },
+  },
+  {
     files: ['scripts/**/*.mjs'],
     languageOptions: { ecmaVersion: 'latest', sourceType: 'module', globals: { ...globals.node } },
   },
