@@ -232,7 +232,7 @@ export class App {
     // minute of reality, which is what crash recovery needs to be useful.
     const AUTOSAVE_INTERVAL_MS = 30_000;
     const autosaveTimer = setInterval(() => {
-      this.tabManager.saveSession().catch(() => {});
+      this.tabManager.autosaveSession().catch(() => {});
     }, AUTOSAVE_INTERVAL_MS);
     this.disposables.push(() => clearInterval(autosaveTimer));
   }

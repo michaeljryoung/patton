@@ -16,6 +16,9 @@ interface ClosedPaneState {
 }
 
 export class TabManager {
+  /** Gap between autosave's getCwd calls: main allows 10/s, so >100 ms. */
+  private static readonly CWD_REFRESH_SPACING_MS = 120;
+  private autosaveRunning = false;
   private tabs: Tab[] = [];
   private activeTab: Tab | null = null;
   private tabBar: TabBar;
@@ -431,6 +434,36 @@ export class TabManager {
 
   isActiveTab(tabId: string): boolean {
     return this.activeTab?.id === tabId;
+  }
+
+  /**
+   * Refresh every pane's cached folder, one call at a time and spaced so the
+   * burst stays under main's 10/s getCwd limit. A refused or failed answer
+   * keeps the pane's cached folder. Used by the periodic autosave only; the
+   * save on quit serialises from the caches without this wait.
+   */
+  async refreshPaneCwds(spacingMs = TabManager.CWD_REFRESH_SPACING_MS): Promise<void> {
+    let first = true;
+    for (const tab of [...this.tabs]) {
+      for (const pane of [...tab.panes]) {
+        if (pane.ptyId === null) continue;
+        if (!first) await new Promise<void>((resolve) => setTimeout(resolve, spacingMs));
+        first = false;
+        await pane.refreshCwdNow();
+      }
+    }
+  }
+
+  /** Periodic autosave: fresh folders first, then the normal save. Never overlaps itself. */
+  async autosaveSession(): Promise<void> {
+    if (this.autosaveRunning) return;
+    this.autosaveRunning = true;
+    try {
+      await this.refreshPaneCwds();
+      await this.saveSession();
+    } finally {
+      this.autosaveRunning = false;
+    }
   }
 
   async saveSession(): Promise<void> {

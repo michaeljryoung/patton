@@ -697,11 +697,13 @@ export class Tab {
     const serialize = async (node: SplitTreeNode): Promise<SessionTreeNode> => {
       if (isPane(node)) {
         const pane = node as Pane;
-        // The pane's own cache is kept fresh at every prompt (and by the focused
-        // pane's poll), so autosave never needs one lsof call per pane: main
-        // rate-limits getCwd to 10/s and answers '' past that, which used to be
-        // saved over a known folder when 11+ panes were open. Ask main only when
-        // the cache is empty, and never save '' over a folder we know.
+        // Serialise from the pane's cache: main rate-limits getCwd to 10/s and
+        // answers '' past that, which used to be saved over a known folder when
+        // 11+ panes were open. The periodic autosave refreshes the caches first
+        // (TabManager.refreshPaneCwds, spaced calls), because a cache only
+        // updates at a shell prompt or by the focused pane's poll, and `cc`
+        // runs for hours without a prompt. Ask main here only when the cache
+        // is empty, and never save '' over a folder we know.
         let cwd = pane.getCwd();
         if (!cwd && pane.ptyId !== null) {
           try { cwd = await window.patton.pty.getCwd(pane.ptyId); } catch { /* ignore */ }

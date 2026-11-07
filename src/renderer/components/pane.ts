@@ -311,9 +311,18 @@ export class Pane {
 
   /** Ask main for the shell's current folder (lsof) and report a change. */
   private refreshCwd(): void {
-    if (this.ptyId === null || this.ptyExited) return;
+    void this.refreshCwdNow();
+  }
+
+  /**
+   * Ask main for the shell's folder and update the cache. An empty answer
+   * (refused by main's 10/s limit, or lsof failed) keeps the cached folder.
+   * Resolves once the answer is applied, so autosave can space its calls.
+   */
+  refreshCwdNow(): Promise<void> {
+    if (this.ptyId === null || this.ptyExited) return Promise.resolve();
     this.lastCwdCheckMs = Date.now();
-    window.patton.pty.getCwd(this.ptyId)
+    return window.patton.pty.getCwd(this.ptyId)
       .then((cwd) => {
         if (cwd && cwd !== this.currentCwd) {
           this.currentCwd = cwd;
