@@ -1096,7 +1096,7 @@ export class ProjectBoard {
     const themeLabel = document.createElement('label');
     themeLabel.textContent = 'Theme ';
     const select = document.createElement('select');
-    select.className = 'pboard-add-theme';
+    select.className = 'pboard-add-select';
     for (const theme of this.layout.themes) select.add(new Option(theme.name, theme.id));
     select.add(new Option('Unsorted', ''));
     select.value = this.layout.themes[0]?.id ?? '';
