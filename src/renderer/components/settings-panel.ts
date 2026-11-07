@@ -155,6 +155,19 @@ export class SettingsPanel {
             <span class="settings-hint">Reopen tabs from your last session on launch</span>
           </div>
           <div class="settings-group settings-group-toggle">
+            <label class="settings-label" for="setting-project-board">Show the project board in new tabs</label>
+            <label class="settings-toggle">
+              <input type="checkbox" id="setting-project-board" />
+              <span class="settings-toggle-slider"></span>
+            </label>
+            <span class="settings-hint">A new tab (Cmd+T, +) opens on your projects; pick one, or Plain terminal for a shell. Needs the project list file below.</span>
+          </div>
+          <div class="settings-group">
+            <label class="settings-label" for="setting-project-list-file">Project list file</label>
+            <input class="settings-input" id="setting-project-list-file" type="text" placeholder="~/.claude/projects.md" spellcheck="false" />
+            <span class="settings-hint">The Markdown table of projects the board reads (the cc launcher's format). Empty means ~/.claude/projects.md.</span>
+          </div>
+          <div class="settings-group settings-group-toggle">
             <label class="settings-label" for="setting-shell-integration">Shell Integration</label>
             <label class="settings-toggle">
               <input type="checkbox" id="setting-shell-integration" />
@@ -320,6 +333,18 @@ export class SettingsPanel {
       this.saveAndNotify({ restoreSession: restoreSessionInput.checked });
     });
 
+    const projectBoardInput = this.overlay.querySelector('#setting-project-board') as HTMLInputElement;
+    listen(projectBoardInput, 'change', () => {
+      this.saveAndNotify({ projectBoard: projectBoardInput.checked });
+    });
+
+    // Debounced like the number inputs: settings:set allows 10/s, and the
+    // pending save is flushed when the panel closes.
+    const projectListFileInput = this.overlay.querySelector('#setting-project-list-file') as HTMLInputElement;
+    listen(projectListFileInput, 'input', () => {
+      this.saveAndNotify({ projectListFile: projectListFileInput.value.trim() }, true);
+    });
+
     const shellIntegrationInput = this.overlay.querySelector('#setting-shell-integration') as HTMLInputElement;
     listen(shellIntegrationInput, 'change', () => {
       this.saveAndNotify({ shellIntegration: shellIntegrationInput.checked });
@@ -425,6 +450,8 @@ export class SettingsPanel {
     (this.overlay.querySelector('#setting-startup-command') as HTMLInputElement).value = settings.startupCommand || '';
     (this.overlay.querySelector('#setting-restore-session') as HTMLInputElement).checked = settings.restoreSession !== false;
     (this.overlay.querySelector('#setting-shell-integration') as HTMLInputElement).checked = settings.shellIntegration !== false;
+    (this.overlay.querySelector('#setting-project-board') as HTMLInputElement).checked = settings.projectBoard !== false;
+    (this.overlay.querySelector('#setting-project-list-file') as HTMLInputElement).value = settings.projectListFile || '';
 
     (this.overlay.querySelector('#setting-theme') as HTMLSelectElement).value = settings.theme || 'system';
 
