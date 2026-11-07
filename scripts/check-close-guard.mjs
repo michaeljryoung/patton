@@ -139,7 +139,9 @@ const realInfo = console.info;
 console.info = (...a) => { logs.push(a.map((x) => (typeof x === 'string' ? x : JSON.stringify(x))).join(' ')); };
 // The pre-confirm TTL reads the monotonic clock (performance.now), not Date.now.
 const realNow = performance.now.bind(performance);
-let clock = realNow();
+// Whole milliseconds: a fractional start makes (start + TTL) - start round to a
+// hair over TTL about one run in six, failing the exact-boundary check.
+let clock = Math.floor(realNow());
 performance.now = () => clock;
 
 registerIpcHandlers(ptyManager);
