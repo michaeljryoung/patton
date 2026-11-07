@@ -1,8 +1,8 @@
 import { ipcMain, BrowserWindow, dialog, Notification, shell, app } from 'electron';
 import { execFile } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, unlinkSync } from 'node:fs';
+import { accessSync, constants as fsConstants, existsSync, mkdirSync, readdirSync, realpathSync, statSync, unlinkSync } from 'node:fs';
 import { homedir, hostname } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { IPC } from '../shared/constants';
 import { PtyManager } from './pty-manager';
 import { isSafeAbsolutePath, resolveProject } from './projects';
@@ -11,6 +11,7 @@ import { getResourcesPath } from './resources-path';
 import * as store from './store';
 import { registerClipboardImageHandlers } from './clipboard-image';
 import { RateLimiter } from './rate-limiter';
+import { decideFileOpen, extensionOf, parseLinkPath, type OpenDecision } from './link-open-policy';
 import { annotateBookmarks, validateBookmarks } from './bookmarks'; // bookmarks sidebar
 import type { PtyCreateOptions, RenderSnapshot, SessionState } from '../shared/types';
 
@@ -18,14 +19,113 @@ import type { PtyCreateOptions, RenderSnapshot, SessionState } from '../shared/t
  *  can launch local apps — is refused and returns false. */
 function openWebUrl(url: unknown): boolean {
   if (typeof url !== 'string' || url.length > 2048) return false;
+  let parsed: URL;
   try {
-    const parsed = new URL(url);
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+    parsed = new URL(url);
   } catch {
     return false; // not a URL
   }
-  shell.openExternal(url).catch(() => {});
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+  // The normalised form (punycode host, `\` read as `/`) is what the hover
+  // shows and what we open; the raw string could be read differently.
+  shell.openExternal(parsed.href).catch(() => {});
   return true;
+}
+
+// --- File links: validate, resolve, decide (decision rules: link-open-policy.ts) ---
+
+const VSCODE_APP_CODE = '/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code';
+
+/** The code editor CLI, looked up per click (cheap): VS Code's app-bundle CLI
+ *  (works without "Install 'code' command in PATH"), else a `code` shim on
+ *  $PATH (Cursor, Codium…). Null when neither exists. */
+function findEditor(): string | null {
+  if (existsSync(VSCODE_APP_CODE)) return VSCODE_APP_CODE;
+  for (const dir of (process.env.PATH || '').split(':')) {
+    if (!dir.startsWith('/')) continue; // never a cwd-relative PATH entry
+    const candidate = join(dir, 'code');
+    try {
+      accessSync(candidate, fsConstants.X_OK);
+      return candidate;
+    } catch { /* not here */ }
+  }
+  return null;
+}
+
+/** A path as it may appear in the log: `~/…` inside home, else only its name. */
+function pathForLog(path: string): string {
+  const home = homedir();
+  if (path === home || path.startsWith(`${home}/`)) return `~${path.slice(home.length)}`;
+  return basename(path);
+}
+
+type FileLinkPlan =
+  | { kind: 'refused'; reason: string }
+  | { kind: 'missing'; path: string }
+  | { kind: 'file'; real: string; suffix: string; ext: string; decision: OpenDecision; editor: string | null };
+
+/** Validate a file-link path from the renderer and decide what to do with it.
+ *  `~/…` is expanded here (only main knows home). Symlinks are resolved first,
+ *  so a link named `notes.txt` that points at an `.app` is judged as the app. */
+function planFileLink(rawPath: unknown): FileLinkPlan {
+  if (typeof rawPath !== 'string') return { kind: 'refused', reason: 'not a string' };
+  const expanded = rawPath.startsWith('~/') ? homedir() + rawPath.slice(1) : rawPath;
+  const parsed = parseLinkPath(expanded);
+  if (!parsed) return { kind: 'refused', reason: 'path failed validation' };
+  let real: string;
+  let isFile: boolean;
+  let mode: number;
+  try {
+    real = realpathSync(parsed.path);
+    const st = statSync(real);
+    isFile = st.isFile();
+    mode = st.mode;
+  } catch {
+    return { kind: 'missing', path: parsed.path };
+  }
+  const editor = findEditor();
+  const ext = extensionOf(real);
+  const decision = decideFileOpen({ ext, isFile, mode, editorAvailable: editor !== null });
+  return { kind: 'file', real, suffix: parsed.suffix, ext, decision, editor };
+}
+
+function reveal(real: string, ext: string, reason: string): void {
+  console.info('[LINK] revealed instead of opened', { ext: ext || '(none)', reason, path: pathForLog(real) });
+  shell.showItemInFolder(real);
+}
+
+function openWithDefaultApp(real: string): void {
+  shell.openPath(real).then((errorMsg) => {
+    if (errorMsg) console.warn('[LINK] openPath failed', { error: errorMsg, path: pathForLog(real) });
+  }, () => {});
+}
+
+function carryOut(plan: Extract<FileLinkPlan, { kind: 'file' }>): void {
+  const { real, suffix, ext, decision, editor } = plan;
+  if (decision.action === 'reveal') {
+    reveal(real, ext, decision.reason);
+    return;
+  }
+  if (decision.action === 'open' || editor === null) {
+    openWithDefaultApp(real);
+    return;
+  }
+  // execFile passes the path as one argv entry; no shell sees it. The path
+  // starts with "/", so it can't be read as an option.
+  execFile(editor, ['--goto', real + suffix], { timeout: 5000 }, (err) => {
+    if (!err) return;
+    // The editor failed: decide again as if there were none (code files are
+    // then revealed, never handed to their default app).
+    const fallback = decideFileOpen({ ext, isFile: true, mode: statModeOrExec(real), editorAvailable: false });
+    console.warn('[LINK] editor failed', { error: err.message, fallback: fallback.action });
+    if (fallback.action === 'open') openWithDefaultApp(real);
+    else reveal(real, ext, fallback.action === 'reveal' ? fallback.reason : 'editor failed');
+  });
+}
+
+/** Current mode bits, or "executable" if the file can't be read (fail safe). */
+function statModeOrExec(path: string): number {
+  try { return statSync(path).mode; } catch { return 0o755; }
 }
 
 // --- Security: Helper to validate PTY ownership ---
@@ -316,44 +416,40 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
     store.setSession(session);
   });
 
-  // --- Open file in editor ---
-  // Priority cascade:
-  //   1. VS Code's app-bundle CLI — works even if the user never ran
-  //      "Shell Command: Install 'code' command in PATH" inside VS Code.
-  //   2. `code` on $PATH — catches Cursor/Codium/forks that expose a `code` shim.
-  //   3. shell.openPath() — macOS default app for the file type. Loses line/col
-  //      but at least opens something instead of silently failing.
-  // Resolved once at handler-install time; cheap to re-check per-click if needed.
-  const VSCODE_APP_CODE = '/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code';
-  const editorBin = existsSync(VSCODE_APP_CODE) ? VSCODE_APP_CODE : 'code';
-  ipcMain.handle(IPC.APP_OPEN_IN_EDITOR, (_event, rawPath: string, webFallback?: unknown) => {
-    if (typeof rawPath !== 'string' || rawPath.length > 1000) return;
-    // `~/…` comes through unexpanded: only main knows the home directory.
-    const filePath = rawPath.startsWith('~/') ? homedir() + rawPath.slice(1) : rawPath;
-    // Security: validate strict path:line:col format (no shell metacharacters, no traversal)
-    // A space is allowed: OSC 8 file:// links carry decoded names like "My Doc.md",
-    // and execFile passes the path as one argument, so no shell sees it.
-    if (!/^[/a-zA-Z0-9._\-@ ]+(?::[0-9]+(?::[0-9]+)?)?$/.test(filePath)) return;
-    // Security: reject directory traversal
-    if (/(?:^|\/)\.\.(?:\/|$)/.test(filePath)) return;
-    // Security: must start with / (absolute path required from renderer)
-    if (!filePath.startsWith('/')) return;
-    // shell.openPath doesn't understand `:line:col`, so strip it for file checks.
-    const pathOnly = filePath.replace(/:\d+(?::\d+)?$/, '');
-    // A web address printed without its scheme ("civitai.com") arrives as a
-    // cwd-relative path that doesn't exist. The renderer offers the address
-    // it looks like; use it only when there really is no such file.
-    if (typeof webFallback === 'string' && !existsSync(pathOnly) && openWebUrl(webFallback)) {
-      console.info('[LINK] No such file, opened as a web address', { url: webFallback });
+  // --- Open a file link (bare path, markdown link or OSC 8 file://) ---
+  // Every file link the renderer finds comes here. A link's target is
+  // untrusted (anything printed to the terminal), so what a double-click may
+  // do is decided here, on the resolved file: see link-open-policy.ts.
+  //   editor → the code editor CLI (argv, no shell) at :line:col
+  //   open   → shell.openPath, only for view-only types (text, images, PDF, HTML)
+  //   reveal → shell.showItemInFolder: bundles, executables, installers,
+  //            .webloc and friends, unknown types, code files with no editor
+  ipcMain.handle(IPC.APP_OPEN_IN_EDITOR, (_event, rawPath: unknown, webFallback?: unknown) => {
+    const plan = planFileLink(rawPath);
+    if (plan.kind === 'refused') {
+      console.warn('[LINK] file link refused', { reason: plan.reason });
       return;
     }
-    execFile(editorBin, ['--goto', filePath], { timeout: 5000 }, (err) => {
-      if (!err) return;
-      // Editor CLI missing or errored — fall back to the system default opener.
-      shell.openPath(pathOnly).then((errorMsg) => {
-        if (errorMsg) console.warn('shell.openPath fallback failed:', errorMsg, { pathOnly });
-      }, () => {});
-    });
+    if (plan.kind === 'missing') {
+      // A web address printed without its scheme ("civitai.com") arrives as a
+      // cwd-relative path that doesn't exist. The renderer offers the address
+      // it looks like; use it only when there really is no such file.
+      if (typeof webFallback === 'string' && openWebUrl(webFallback)) {
+        console.info('[LINK] No such file, opened as a web address', { url: webFallback });
+      } else {
+        console.info('[LINK] No such file', { path: pathForLog(plan.path) });
+      }
+      return;
+    }
+    carryOut(plan);
+  });
+
+  // What a double-click on this file link would do, for the hover tooltip.
+  const linkActionLimiter = new RateLimiter(30);
+  ipcMain.handle(IPC.APP_LINK_ACTION, (_event, rawPath: unknown) => {
+    if (!linkActionLimiter.allow()) return 'unknown';
+    const plan = planFileLink(rawPath);
+    return plan.kind === 'file' ? plan.decision.action : plan.kind;
   });
 
   // --- Save terminal output to file ---

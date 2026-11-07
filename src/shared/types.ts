@@ -12,6 +12,11 @@ export interface PtyCreateOptions {
   projectDir?: boolean;
 }
 
+/** Outcome of a file link: open with its default app, open in the code
+ *  editor, reveal in Finder, no such file, refused by validation, or unknown
+ *  (rate-limited). */
+export type FileLinkAction = 'open' | 'editor' | 'reveal' | 'missing' | 'refused' | 'unknown';
+
 export interface HistoryEntry {
   command: string;
   timestamp: number;
@@ -190,6 +195,9 @@ export interface PattonAPI {
     /** Open a file (path, optionally `:line:col`; may start with `~/`). If no
      *  such file exists and `webFallback` is an http(s) URL, open that instead. */
     openFile: (filePath: string, webFallback?: string) => Promise<void>;
+    /** What a double-click on this file link would do (main decides; see
+     *  main/link-open-policy.ts). For the hover tooltip only. */
+    linkAction: (filePath: string) => Promise<FileLinkAction>;
   };
   terminal: {
     saveOutput: (content: string, defaultName: string) => Promise<string | null>;

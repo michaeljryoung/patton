@@ -53,6 +53,7 @@ export const IPC = {
   PTY_GET_CWD: 'pty:get-cwd',
 
   APP_OPEN_IN_EDITOR: 'app:open-in-editor',
+  APP_LINK_ACTION: 'app:link-action',
   APP_SAVE_TERMINAL: 'app:save-terminal',
   APP_BROADCAST_INPUT: 'app:broadcast-input',
   APP_NOTIFY: 'app:notify',
