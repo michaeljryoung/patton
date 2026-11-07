@@ -1,4 +1,5 @@
-import { TerminalView, type ContextReading } from './terminal-view';
+import { TerminalView } from './terminal-view';
+import type { ContextReading } from '../services/patton-osc';
 import { EditorInput, DEFAULT_COMPOSE_PLACEHOLDER } from './editor-input';
 import { SearchOverlay } from './search-overlay';
 import { HistorySearch } from './history-search';
@@ -109,6 +110,10 @@ export class Pane {
   private sinceTokens: number | null = null;
   private checkpointAt: number | null = null;
   private lastCheckpointKey = '';
+  // A Stop-hook message (OSC 777) arrived since the last ◐ onset: the turn
+  // ended on its own, so Claude's prompt is open. A question or permission
+  // dialog also shows ✳ but fires no Stop hook, so ✳ alone is not enough.
+  private stopSeenSinceWork = false;
   private disposed = false;
 
   // --- Compose-first (Claude Code tabs) ---
@@ -228,6 +233,8 @@ export class Pane {
       this.cancelClaudeStop(); // the ✳ was only a flash between turns
       if (this.claudeWorking) return;
       this.claudeWorking = true;
+      this.stopSeenSinceWork = false;
+      this.notifyCheckpoint();
       // A new stretch of work: the next stop is a new event, never a
       // duplicate of the last one, so it mustn't be debounced away.
       this.lastCommandDoneMs = 0;
@@ -319,7 +326,7 @@ export class Pane {
       this.sinceTokens = null;
       this.checkpointAt = null;
     }
-    const key = [this.claudeActive, this.claudeWorking, this.ctxTokens, this.sinceTokens, this.checkpointAt].join('|');
+    const key = [this.claudeActive, this.claudeWorking, this.checkpointReady, this.ctxTokens, this.sinceTokens, this.checkpointAt].join('|');
     if (key === this.lastCheckpointKey) return;
     this.lastCheckpointKey = key;
     this.callbacks.onCheckpointChange?.(this);
@@ -330,25 +337,38 @@ export class Pane {
     return {
       claudeActive: this.claudeActive,
       claudeWorking: this.claudeWorking,
+      ready: this.checkpointReady,
       ctxTokens: this.ctxTokens,
       sinceTokens: this.sinceTokens,
       checkpointAt: this.checkpointAt,
     };
   }
 
+  /** Whether `/checkpoint` may be typed into this pane now. The one gate for
+   *  the clock's click and the palette entry.
+   *  Limitation: if the user has a half-typed draft in Claude's prompt, Patton
+   *  cannot see it and the command is appended to it; erasing it (Ctrl+U)
+   *  would destroy his text, so nothing is sent to clear it. */
+  private get checkpointReady(): boolean {
+    return this.claudeActive && !this.claudeWorking && this.stopSeenSinceWork && this.ptyId !== null;
+  }
+
   /** Type `/checkpoint` and Enter into this pane's Claude session, through the
    *  compose box's submit path (control characters stripped, no paste dialog,
-   *  never broadcast). Only while Claude runs here and has stopped. */
-  runCheckpoint(): boolean {
-    if (!this.claudeActive || this.claudeWorking || this.ptyId === null) {
+   *  never broadcast). Only while Claude runs here, has stopped, and its Stop
+   *  hook has reported since the last ◐ (a dialog shows ✳ but sends none).
+   *  Returns null when sent, else why not. */
+  runCheckpoint(): string | null {
+    if (!this.checkpointReady) {
       rlog('info', '[CKPT] run skipped', {
-        pane: this.id, claude: this.claudeActive, working: this.claudeWorking,
+        pane: this.id, claude: this.claudeActive, working: this.claudeWorking, stopSeen: this.stopSeenSinceWork,
       });
-      return false;
+      if (!this.claudeActive) return 'Checkpoint: Claude Code is not running in this pane';
+      return 'Checkpoint: wait until Claude has finished replying';
     }
     rlog('info', '[CKPT] run', { pane: this.id });
     this.queueSubmit('/checkpoint', false);
-    return true;
+    return null;
   }
 
   /** Remove and return the stored verdict, stopping its expiry timer. */
@@ -636,8 +656,10 @@ export class Pane {
     // Claude Code Stop hook verdicts (OSC 777, see handleHookStop).
     this.disposables.push(
       this.terminalView.onPattonState((state) => {
+        this.stopSeenSinceWork = true;
         if (state.kind === 'stop') this.handleHookStop(state.tasks, state.crons);
         if (state.context) this.handleContextReading(state.context);
+        else this.notifyCheckpoint();
       }),
     );
     this.disposables.push(() => {
@@ -775,6 +797,7 @@ export class Pane {
         if (state === 'prompt') {
           this.claudeWorking = false;
           this.claudeActive = false;
+          this.stopSeenSinceWork = false;
           this.notifyCheckpoint();
           this.syncComposeFirst('shell-prompt');
           this.cancelClaudeStop();

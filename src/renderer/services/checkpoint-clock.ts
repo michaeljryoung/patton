@@ -21,6 +21,9 @@ export interface CheckpointSource {
   claudeActive: boolean;
   /** Claude is mid-turn (◐/◑ title): /checkpoint can't be typed now. */
   claudeWorking: boolean;
+  /** /checkpoint may be typed: Claude has stopped and its Stop hook has
+   *  reported since (a dialog shows ✳ too but sends no Stop hook). */
+  ready: boolean;
   /** Null until the hook's first reading for this Claude session. */
   ctxTokens: number | null;
   sinceTokens: number | null;
@@ -33,7 +36,7 @@ export interface CheckpointView {
   text: string;
   /** At or past the reminder threshold: amber and bold. */
   due: boolean;
-  /** Claude is working, so a click does nothing. */
+  /** Claude is working or waiting on a dialog, so a click does nothing. */
   blocked: boolean;
   label: string;
 }
@@ -82,6 +85,7 @@ export function checkpointView(
     }
   }
   parts.push('Click to run /checkpoint');
-  if (src.claudeWorking) parts.push('available when Claude stops');
-  return { text, due, blocked: src.claudeWorking, label: parts.join(' · ') };
+  if (!src.ready) parts.push(src.claudeWorking ? 'available when Claude stops' : "available after Claude's next reply");
+  // The visible text first, so a screen reader's label starts with what is on screen.
+  return { text, due, blocked: !src.ready, label: `${text} · ${parts.join(' · ')}` };
 }

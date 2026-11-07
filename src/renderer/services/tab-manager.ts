@@ -662,7 +662,12 @@ export class TabManager {
 
   /** The clock's click and the palette's "Checkpoint this session". */
   runCheckpoint(): void {
-    this.activeTab?.focusedPane.runCheckpoint();
+    const pane = this.activeTab?.focusedPane;
+    if (!pane) return;
+    const why = pane.runCheckpoint();
+    if (why) announce(why, 'assertive');
+    // The click left focus on the strip's button; the keyboard belongs to Claude.
+    pane.focus();
   }
 
   dispose(): void {
