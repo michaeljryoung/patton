@@ -60,11 +60,7 @@ function getSafeEnv(shellIntegration = true, isDark?: boolean): Record<string, s
   safe.TERM = 'xterm-256color';
   safe.COLORTERM = 'truecolor';
   safe.TERM_PROGRAM = 'Patton';
-  // Tells CLI tools (Claude Code, and anything using the `supports-hyperlinks`
-  // convention) that this terminal renders OSC 8 hyperlinks. Other tools will
-  // start emitting them too; every target is judged by the same rules in
-  // renderer/services/link-target.ts, and main re-validates what it is sent.
-  safe.FORCE_HYPERLINK = '1';
+  // FORCE_HYPERLINK is NOT set here: see `hyperlinks` in create().
 
   // Tell CLI apps about the terminal's color scheme so they choose
   // readable text colors. Prefer the renderer's knowledge (accounts for
@@ -178,6 +174,18 @@ export class PtyManager {
     if (exportProjectDir) {
       safeEnv.PATTON_PROJECT_DIR = cwd;
       console.info('[PTY] PATTON_PROJECT_DIR exported', { cwd });
+    }
+    // FORCE_HYPERLINK=1 tells Claude Code (which ignores TERM_PROGRAM) that
+    // this terminal renders OSC 8 links. Only the pane that runs the startup
+    // command asks for it: tools using `supports-hyperlinks` honour the flag
+    // before checking isTTY, so in every shell it would put OSC 8 bytes into
+    // piped output (logs, JSON). It still reaches everything that shell and
+    // Claude start (Claude's Bash-tool commands included), and stays after
+    // Claude exits. Link targets are judged by link-target.ts in the
+    // renderer and re-validated in main (ipc-handlers.ts, link-open-policy.ts).
+    if (opts?.hyperlinks === true) {
+      safeEnv.FORCE_HYPERLINK = '1';
+      console.info('[PTY] FORCE_HYPERLINK exported (startup-command pane)', { id });
     }
     let shellArgs: string[] = ['--login'];
 

@@ -23,6 +23,7 @@ Patton implements defense-in-depth for a desktop Electron application:
 - PTY ownership validation on all IPC calls (write, resize, destroy, getProcess)
 - Shell paths validated against an allowlist of known shells
 - Environment variables filtered to an allowlist (HOME, PATH, LANG, USER, etc.)
+- `FORCE_HYPERLINK=1` (tells Claude Code to print OSC 8 links) is exported only into the pane that runs the startup command, not every shell: tools using `supports-hyperlinks` honour it even when their output is piped, so it puts OSC 8 escape bytes into logs and JSON. It is still inherited by everything that shell and Claude start (Claude's Bash-tool commands included) and stays set after Claude exits.
 - Rate limiting: sliding-window (5000/s for PTY writes, 10/s for settings changes)
 - Maximum 50 PTYs per window
 

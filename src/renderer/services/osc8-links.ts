@@ -6,8 +6,9 @@ import { describeLinkTarget, localHostNames, resolveHyperlink, type FileLinkOutc
  * OSC 8 hyperlinks: `ESC ] 8 ; params ; URI ST text ESC ] 8 ; ; ST`.
  *
  * A program (Claude Code, ls --hyperlink, gcc, ripgrep…) says "this text links
- * to that URI". Patton advertises support with FORCE_HYPERLINK=1 (pty-manager.ts),
- * so more tools will start emitting these, and the URI is untrusted input from
+ * to that URI". Patton advertises support with FORCE_HYPERLINK=1 (pty-manager.ts) in
+ * the pane that runs the startup command, so Claude Code and the tools it
+ * runs emit these, and the URI is untrusted input from
  * whatever is printing to the terminal: every target goes through
  * `resolveHyperlink` (link-target.ts), the same rules as Patton's other links,
  * and main re-validates what it is sent.

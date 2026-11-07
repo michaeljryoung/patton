@@ -10,6 +10,12 @@ export interface PtyCreateOptions {
    *  exports PATTON_PROJECT_DIR=<validated cwd> into the shell, unless the cwd
    *  was rejected. Only a literal `true` counts; no path is ever sent. */
   projectDir?: boolean;
+  /** True only for the pane that runs the startup command (the Claude tab).
+   *  Main then exports FORCE_HYPERLINK=1, which Claude Code needs to print
+   *  OSC 8 links (it ignores TERM_PROGRAM). Other shells don't get it: tools
+   *  using `supports-hyperlinks` honour it even when piped, putting escape
+   *  bytes into logs and JSON. Only a literal `true` counts. */
+  hyperlinks?: boolean;
 }
 
 /** Outcome of a file link: open with its default app, open in the code
