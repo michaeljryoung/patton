@@ -33,6 +33,9 @@ export interface HoverPaneInput {
 }
 
 export interface HoverBlock {
+  /** "Pane 2 · focused", "Pane 1": the pane's real position in the tab;
+   *  null when the tab has one pane. */
+  label: string | null;
   title: string;
   place: string;
   /** "Working · 2 min", "Blocked: question · 1 min", "Shell", … */
@@ -138,6 +141,7 @@ export function hoverBlock(input: HoverPaneInput, now: number): HoverBlock {
   const place = project && folder ? `${project} · ${folder}` : project || folder;
   const { state, detail } = stateLine(input, now);
   return {
+    label: null,
     title,
     place,
     state,
@@ -148,8 +152,14 @@ export function hoverBlock(input: HoverPaneInput, now: number): HoverBlock {
   };
 }
 
-/** One block per pane, the focused pane first, the rest in tab order. */
+/** One block per pane, the focused pane first, the rest in tab order; each
+ *  labelled by its position in the tab (`panes` comes in tab order). */
 export function hoverBlocks(panes: { focused: boolean; input: HoverPaneInput }[], now: number): HoverBlock[] {
-  const ordered = [...panes.filter((p) => p.focused), ...panes.filter((p) => !p.focused)];
-  return ordered.map((p) => hoverBlock(p.input, now));
+  const numbered = panes.map((p, i) => ({ ...p, n: i + 1 }));
+  const ordered = [...numbered.filter((p) => p.focused), ...numbered.filter((p) => !p.focused)];
+  const split = panes.length > 1;
+  return ordered.map((p) => ({
+    ...hoverBlock(p.input, now),
+    label: split ? (p.focused ? `Pane ${p.n} · focused` : `Pane ${p.n}`) : null,
+  }));
 }

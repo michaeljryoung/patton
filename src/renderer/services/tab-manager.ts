@@ -198,6 +198,7 @@ export class TabManager {
       () => this.updateTabBar(),
       () => this.onCommandDone?.(tab.id, tab.title),
       () => { if (tab === this.activeTab) this.updateCheckpoint(); this.tabBar.refreshHoverCard(); },
+      () => this.tabBar.refreshHoverCard(),
     );
     this.tabs.push(tab);
     this.contentContainer.appendChild(tab.element);
@@ -559,6 +560,7 @@ export class TabManager {
             () => this.updateTabBar(),
             () => this.onCommandDone?.(tab.id, tab.title),
             () => { if (tab === this.activeTab) this.updateCheckpoint(); this.tabBar.refreshHoverCard(); },
+            () => this.tabBar.refreshHoverCard(),
           );
           this.tabs.push(tab);
           this.contentContainer.appendChild(tab.element);
@@ -722,7 +724,9 @@ export class TabManager {
       const focused = pane === tab.focusedPane;
       const c = pane.claudeState;
       const input: HoverPaneInput = {
-        title: pane.title,
+        // Without the ◐/◑/✳ glyph: the card shows the name, and a spinner
+        // flip then leaves its text (and so its DOM) unchanged.
+        title: stripClaudeGlyph(pane.title),
         cwd: pane.getCwd(),
         project: focused ? project : null,
         claude: {

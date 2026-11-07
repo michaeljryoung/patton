@@ -47,6 +47,7 @@ export class Tab {
   private onCommandDone: (() => void) | null = null;
   // The focused pane's checkpoint clock changed, or another pane took focus.
   private onCheckpointChanged: (() => void) | null = null;
+  private onStatusChanged: (() => void) | null = null;
   title = 'Terminal';
   private _customTitle = false;
   // The project the focused pane's folder belongs to, if any. Its name outranks
@@ -149,6 +150,11 @@ export class Tab {
       onWorkStarted: () => this.clearAwaitingInput(pane),
       onCheckpointChange: (p) => {
         if (p === this._focusedPane) this.onCheckpointChanged?.();
+      },
+      onStatusChange: (p) => {
+        // A waiting pane's reason is in the tab's tooltip and aria-label.
+        if (this._panesNeedingYou.has(p)) this.onTitleChanged?.();
+        this.onStatusChanged?.();
       },
       onParked: (p, info) => this.setPaneParked(p, info),
       onAutoFlag: (p, flag) => this.setPaneAutoFlag(p, flag),
@@ -295,8 +301,10 @@ export class Tab {
     onTitleChange?: () => void,
     onCommandDone?: () => void,
     onCheckpointChange?: () => void,
+    onStatusChange?: () => void,
   ): void {
     this.onCheckpointChanged = onCheckpointChange || null;
+    this.onStatusChanged = onStatusChange || null;
     this.onPaneRegistered = onRegister;
     this.onPaneUnregistered = onUnregister;
     this.onTitleChanged = onTitleChange || null;

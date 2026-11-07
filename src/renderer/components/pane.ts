@@ -14,7 +14,10 @@ import { shouldConfirmMultilinePaste } from '../services/paste-confirm';
 import { PATTON_QUOTES } from '../../shared/constants';
 import { shortcutKeys } from '../../shared/shortcuts';
 import type { CheckpointSource } from '../services/checkpoint-clock';
-import { ProgramStatusRecords, programSignal, type BlockedKind, type ProgramSignal, type ProgramState } from '../services/program-status';
+import {
+  ProgramStatusRecords, isClaudeProgram, programSignal, rankProgram,
+  type BlockedKind, type ProgramSignal, type ProgramState,
+} from '../services/program-status';
 import { paneActivity, type PaneActivity } from '../services/pane-activity';
 
 import type { ITheme } from '@xterm/xterm';
@@ -37,7 +40,8 @@ export type ClaudeStateSource = '7501' | 'title';
 /** One pane's Claude Code state, whichever source it came from. */
 export interface ClaudeState {
   source: ClaudeStateSource;
-  /** Claude Code runs in this pane. */
+  /** Claude Code runs in this pane (on the 7501 path: it reports
+   *  `app=claude-code`; another program's reports leave this false). */
   active: boolean;
   /** Mid-turn (7501 `working`, or a ◐/◑ title). */
   working: boolean;
@@ -77,6 +81,9 @@ export interface PaneCallbacks {
   /** What the checkpoint clock shows for this pane changed (Claude started or
    *  stopped running or working, or the Stop hook sent a context reading). */
   onCheckpointChange?: (pane: Pane) => void;
+  /** What the pane's status shows changed (activity, root state, kind, msg,
+   *  blocked task, parked, needs-you reason): the hover card re-reads it. */
+  onStatusChange?: (pane: Pane) => void;
   /** An automatic tab flag from the pane's title (`WAKE` → yellow), or null to drop it. */
   onAutoFlag?: (pane: Pane, flag: TabFlag | null) => void;
   onBroadcastWrite?: (data: string) => void;
@@ -156,6 +163,15 @@ export class Pane {
   private lastProgramLogKey = '';
   private lastIgnoredLogMs = 0;
   private needsYouText: string | null = null;
+  // A Stop-hook verdict's timers while 7501 reports (its tasks count is
+  // superseded by child records, its crons are not: 7501 has no timers), and
+  // when the root last turned done. A done root with no child tasks is a
+  // cron-only turn end, parked as in S40, when the two are within the
+  // verdict TTL of each other (either order). Cleared when work starts.
+  private hookCrons: { crons: number; atMs: number } | null = null;
+  private rootDoneAtMs: number | null = null;
+  private lastRootState: ProgramState | null = null;
+  private lastStatusKey = '';
   // What the pane is doing and since when (see noteActivity): the hover
   // card's "Working · 2 min". Starts as a shell at creation.
   private lastActivity: PaneActivity = 'shell';
@@ -281,6 +297,11 @@ export class Pane {
   private trackClaudeState(title: string): void {
     // Claude Code reports its state itself here (OSC 7501) and has dropped
     // the glyph from its title: the title says nothing about it.
+    // Known gap: while reporting, the safety net below (a title with no glyph
+    // means Claude is gone) is off. A Claude that is killed without sending
+    // `state=clear`, in a pane without OSC 133 shell integration (fish, or
+    // integration off), keeps its last 7501 state until the next prompt,
+    // RIS or report.
     if (this.statusReporting) return;
     // A title with neither glyph means Claude is gone (fish, or shell
     // integration off, never sends the OSC 133 prompt that would clear this).
@@ -313,6 +334,7 @@ export class Pane {
     if (this.claudeWorking) return;
     this.claudeWorking = true;
     this.stopSeenSinceWork = false;
+    this.hookCrons = null;
     this.notifyCheckpoint();
     // A new stretch of work: the next stop is a new event, never a
     // duplicate of the last one, so it mustn't be debounced away.
@@ -374,20 +396,35 @@ export class Pane {
 
   /** Turn this pane's 7501 records into the pane state (see programSignal). */
   private applyProgramStatus(): void {
-    const signal = programSignal(this.programStatus);
     const root = this.programStatus.root;
+    const rootState = root?.state ?? null;
+    if (rootState === 'done' && this.lastRootState !== 'done') this.rootDoneAtMs = Date.now();
+    else if (rootState !== 'done') this.rootDoneAtMs = null;
+    this.lastRootState = rootState;
+    let signal = programSignal(this.programStatus);
+    // Cron-only turn end (S40): done, no child tasks, and the Stop hook said
+    // timers are pending. The ring, not the dot.
+    const crons = this.cronsForThisTurn();
+    if (signal.kind === 'needs-you' && signal.key === 'root:done' && crons > 0) {
+      signal = { kind: 'parked', tasks: 0, crons, titles: [] };
+    }
     const children = this.programStatus.children().length;
-    const logKey = [root?.state, root?.kind, children, signal.kind].join('|');
+    const isClaude = isClaudeProgram(this.programStatus);
+    const logKey = [rootState, root?.kind, children, signal.kind, crons, isClaude].join('|');
     if (logKey !== this.lastProgramLogKey) {
       this.lastProgramLogKey = logKey;
       rlog('info', '[7501] state', {
-        pane: this.id, root: root?.state ?? null, kind: root?.kind ?? null, children, signal: signal.kind,
+        pane: this.id, root: rootState, kind: root?.kind ?? null, children, signal: signal.kind,
+        crons, app: isClaude ? 'claude-code' : 'other',
       });
     }
     const previous = this.lastProgramSignal;
     this.lastProgramSignal = signal;
-    this.claudeActive = true;
-    this.claudeBlocked = root?.state === 'blocked';
+    // Only Claude Code's reports make this a Claude pane (image paste as
+    // Ctrl+V, compose-first, /checkpoint); another program's still drive the
+    // dot and ring below.
+    this.claudeActive = isClaude;
+    this.claudeBlocked = rootState === 'blocked';
     try {
       if (signal.kind === 'working') {
         this.startWork();
@@ -396,16 +433,24 @@ export class Pane {
       this.claudeWorking = false;
       if (signal.kind === 'parked') {
         this.cancelClaudeStop();
-        const info: ParkedInfo = { tasks: signal.tasks, crons: 0, titles: signal.titles };
-        if (previous.kind !== 'parked' || previous.tasks !== signal.tasks) {
-          rlog('info', '[DOT] Parked', { pane: this.id, tasks: signal.tasks, crons: 0, source: '7501' });
+        const info: ParkedInfo = { tasks: signal.tasks, crons: signal.crons ?? 0, titles: signal.titles };
+        if (previous.kind !== 'parked' || previous.tasks !== signal.tasks || previous.crons !== signal.crons) {
+          rlog('info', '[DOT] Parked', { pane: this.id, tasks: signal.tasks, crons: info.crons, source: '7501' });
         }
         this.setParked(info);
       } else if (signal.kind === 'needs-you') {
         this.setParked(null);
-        // The same wait again (a child record changed under a blocked root):
-        // already settling or already raised.
-        if (previous.kind === 'needs-you' && previous.reason === signal.reason) return;
+        // The same wait again (a child record changed under a blocked root, a
+        // late `msg` on done, a prompt whose text changed): never a second
+        // alert. If it was already raised, only its reason is refreshed; if
+        // it is still settling, the settle reads the latest signal.
+        if (previous.kind === 'needs-you' && previous.key === signal.key) {
+          if (this.needsYouText !== null && this.needsYouText !== signal.reason) {
+            this.needsYouText = signal.reason;
+            this.noteActivity();
+          }
+          return;
+        }
         const wait = previous.kind === 'parked' ? Pane.PARKED_DRAIN_SETTLE_MS : Pane.CLAUDE_STOP_SETTLE_MS;
         this.armClaudeStop(wait, () => this.settleProgramStop());
       } else {
@@ -418,11 +463,20 @@ export class Pane {
     }
   }
 
+  /** Timers the Stop hook reported for the turn that just ended, if its
+   *  verdict and the root's `done` came within the verdict TTL of each other. */
+  private cronsForThisTurn(): number {
+    if (!this.hookCrons || this.rootDoneAtMs === null) return 0;
+    if (Math.abs(this.hookCrons.atMs - this.rootDoneAtMs) > Pane.HOOK_VERDICT_TTL_MS) return 0;
+    return this.hookCrons.crons;
+  }
+
   /** A 7501 "needs you" has held for the settle: raise it, reason as text. */
   private settleProgramStop(): void {
     const signal = this.lastProgramSignal;
     if (signal.kind !== 'needs-you') return;
     this.needsYouText = signal.reason;
+    this.noteActivity();
     this.fireCommandDone('7501');
   }
 
@@ -435,6 +489,9 @@ export class Pane {
     this.lastProgramLogKey = '';
     this.claudeBlocked = false;
     this.needsYouText = null;
+    this.hookCrons = null;
+    this.rootDoneAtMs = null;
+    this.lastRootState = null;
     if (!wasReporting) return;
     rlog('info', '[7501] state', { pane: this.id, root: 'clear', kind: null, children: 0, reason });
     this.claudeWorking = false;
@@ -461,38 +518,50 @@ export class Pane {
       blockedKind: root?.kind ?? null,
       msg: root?.msg ?? null,
       blockedTask,
-      activity: this.currentActivity(blockedTask),
+      activity: this.currentActivity(),
       since: this.stateSince,
     };
   }
 
-  /** The first background task (7501 child) blocked on input, by title (else id). */
+  /** The background task (7501 child) blocked on input, by title (else id),
+   *  when it is what the pane stands on: a root dialog outranks it, as for
+   *  the dot (rankProgram). */
   private blockedTaskTitle(): string | null {
     if (!this.statusReporting) return null;
-    const child = this.programStatus.children().find((c) => c.record.state === 'blocked');
-    return child ? (child.record.title ?? child.id) : null;
+    const standing = rankProgram(this.programStatus);
+    return standing.kind === 'task-blocked' ? (standing.record.title ?? standing.id) : null;
   }
 
-  private currentActivity(blockedTask = this.blockedTaskTitle()): PaneActivity {
+  private currentActivity(): PaneActivity {
     return paneActivity({
-      active: this.claudeActive,
+      active: this.claudeActive || this.statusReporting,
       working: this.claudeWorking,
-      blocked: this.claudeBlocked,
-      root: this.programStatus.root?.state ?? null,
-      reporting: this.statusReporting,
+      standing: this.statusReporting ? rankProgram(this.programStatus).kind : null,
       parked: this.parked !== null,
-      taskBlocked: blockedTask !== null,
     });
   }
 
-  /** Restart the "for how long" clock when the pane's activity changes. The
-   *  one place `stateSince` is written: called from notifyCheckpoint, which
-   *  every working/blocked/active/7501 transition reaches, and setParked. */
+  /** Restart the "for how long" clock when the pane's activity changes, and
+   *  tell the tab when anything the hover card shows about it changed, for
+   *  every pane, focused or not. The one place `stateSince` is written:
+   *  called from notifyCheckpoint, which every working/blocked/active/7501
+   *  transition reaches, setParked and the needs-you reason. */
   private noteActivity(): void {
     const activity = this.currentActivity();
-    if (activity === this.lastActivity) return;
-    this.lastActivity = activity;
-    this.stateSince = Date.now();
+    if (activity !== this.lastActivity) {
+      this.lastActivity = activity;
+      this.stateSince = Date.now();
+    }
+    const root = this.programStatus.root;
+    const parked = this.parked;
+    const key = JSON.stringify([
+      activity, root?.state ?? null, root?.kind ?? null, root?.msg ?? null, root?.title ?? null,
+      this.blockedTaskTitle(), parked ? [parked.tasks, parked.crons, parked.titles ?? []] : null,
+      this.needsYouText,
+    ]);
+    if (key === this.lastStatusKey) return;
+    this.lastStatusKey = key;
+    this.callbacks.onStatusChange?.(this);
   }
 
   /** ✳ has held for the settle: apply the stored verdict, else the title path. */
@@ -521,9 +590,13 @@ export class Pane {
   private handleHookStop(tasks: number, crons: number): void {
     this.hookActive = true;
     // Claude Code reports its own state here: the verdict is only the
-    // fallback for panes that never report.
+    // fallback for panes that never report. Its tasks are superseded by the
+    // child records; its timers are not (7501 has none), so they are kept
+    // for a cron-only turn end (applyProgramStatus).
     if (this.statusReporting) {
       rlog('info', '[DOT] Hook verdict ignored: 7501 reports', { pane: this.id, tasks, crons });
+      this.hookCrons = { crons, atMs: Date.now() };
+      if (crons > 0) this.applyProgramStatus();
       return;
     }
     if (this.pendingVerdictTimer) clearTimeout(this.pendingVerdictTimer);

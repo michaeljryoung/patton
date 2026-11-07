@@ -7,11 +7,18 @@ import type { HoverBlock } from '../services/tab-hover';
  * tab's native `title` tooltip, which would otherwise sit on top of it.
  *
  * Shows after SHOW_DELAY_MS; moving to another tab while it is up switches at
- * once. Hides on leaving the strip (after HIDE_GRACE_MS, so the pointer can
- * cross onto the card), a click or drag on the strip, the strip scrolling,
- * the window losing focus, and Esc. Durations refresh once a minute while it
- * is open. Every string is set with `textContent`; the blocks arrive already
- * cleaned and capped (services/tab-hover.ts).
+ * once. The card takes no pointer events (`pointer-events: none`), so it never
+ * covers the terminal for the mouse. Hides on leaving the tab (after
+ * HIDE_GRACE_MS, so moving between tabs doesn't flicker), a click or drag on
+ * the strip, the strip scrolling, the window resizing or losing focus, and
+ * Esc. Esc is consumed only when keyboard focus on a tab brought the card up;
+ * under a mouse hover it passes on (it interrupts Claude). At most MAX_BLOCKS
+ * panes are listed, then "+N more panes". Durations refresh once a minute
+ * while it is open, and any pane's status change refreshes it. Every string
+ * is set with `textContent`; the blocks arrive already cleaned and capped
+ * (services/tab-hover.ts). With focus on a tab, `aria-describedby` points at
+ * the card at once (its text filled while it is still hidden), so a screen
+ * reader hears it without the delay.
  *
  * The strip is rebuilt on every TabBar.update(), so events are delegated to
  * the strip and the anchor is looked up by tab id (`afterUpdate`).
@@ -20,6 +27,7 @@ export class TabHoverCard {
   static readonly SHOW_DELAY_MS = 400;
   static readonly HIDE_GRACE_MS = 150;
   static readonly REFRESH_MS = 60_000;
+  static readonly MAX_BLOCKS = 4;
   private static readonly GAP_PX = 4;
   private static readonly MARGIN_PX = 8;
   static readonly ELEMENT_ID = 'tab-hover-card';
@@ -65,18 +73,9 @@ export class TabHoverCard {
     this.listen(strip, 'wheel', () => this.hide('scroll'), { passive: true });
     this.listen(strip, 'focusin', (e) => this.onFocusIn(e as FocusEvent));
     this.listen(strip, 'focusout', (e) => this.onFocusOut(e as FocusEvent));
-    this.listen(this.element, 'mouseenter', () => this.cancelHide());
-    this.listen(this.element, 'mouseleave', (e) => {
-      const to = (e as MouseEvent).relatedTarget as Node | null;
-      if (to && this.anchor?.contains(to)) return;
-      if (this.trigger === 'pointer') this.scheduleHide();
-    });
     this.listen(window, 'blur', () => this.hide('blur'));
-    this.listen(document, 'keydown', (e) => {
-      this.pointerInput = false;
-      // Not consumed: Esc still reaches the terminal (it interrupts Claude).
-      if ((e as KeyboardEvent).key === 'Escape') this.hide('esc');
-    }, true);
+    this.listen(window, 'resize', () => this.hide('resize'));
+    this.listen(document, 'keydown', (e) => this.onKeyDown(e as KeyboardEvent), true);
     this.listen(document, 'mousedown', () => { this.pointerInput = true; }, true);
   }
 
@@ -121,7 +120,11 @@ export class TabHoverCard {
       clearInterval(this.refreshTimer);
       this.refreshTimer = null;
     }
-    if (this.shownId === null) return;
+    if (this.shownId === null) {
+      // A focus-described tab whose card never showed.
+      this.setAnchor(null);
+      return;
+    }
     this.lastHideReason = reason;
     this.shownId = null;
     this.setAnchor(null);
@@ -137,6 +140,21 @@ export class TabHoverCard {
 
   // --- Triggers ---
 
+  private onKeyDown(e: KeyboardEvent): void {
+    this.pointerInput = false;
+    if (e.key !== 'Escape') return;
+    if (this.shownId !== null && this.trigger === 'focus') {
+      // The keyboard user dismisses the card they are reading; the tab keeps focus.
+      e.preventDefault();
+      e.stopPropagation();
+      this.hide('esc');
+      return;
+    }
+    // A mouse hover's card: hidden, and Esc goes on to the terminal (it
+    // interrupts Claude).
+    this.hide('esc');
+  }
+
   private onPointerOver(e: MouseEvent): void {
     const tab = this.tabFrom(e.target);
     if (!tab) return;
@@ -151,7 +169,6 @@ export class TabHoverCard {
     const from = this.tabFrom(e.target);
     const to = e.relatedTarget as Node | null;
     if (from && to && from.contains(to)) return; // moving within the tab
-    if (to && this.element.contains(to)) return; // onto the card
     if (!this.tabFrom(to)) this.suppressedId = null; // left the tabs altogether
     if (this.pendingId !== null && this.trigger === 'pointer') this.cancelShow();
     if (this.shownId !== null && this.trigger === 'pointer') this.scheduleHide();
@@ -170,7 +187,17 @@ export class TabHoverCard {
     // Only the tab itself: a rename box inside it is for typing.
     if (e.target !== tab) return;
     this.trigger = 'focus';
-    this.request(tab.dataset.tabId!);
+    const id = tab.dataset.tabId!;
+    // Described at once for a screen reader; shown after the delay.
+    if (this.shownId === null) {
+      const blocks = this.describe(id);
+      if (blocks && blocks.length > 0) {
+        this.renderedKey = '';
+        this.render(blocks);
+        this.setAnchor(tab);
+      }
+    }
+    this.request(id);
   }
 
   private onFocusOut(e: FocusEvent): void {
@@ -180,6 +207,7 @@ export class TabHoverCard {
     // frame later, inside the grace.
     if (this.pendingId !== null) this.cancelShow();
     if (this.shownId !== null) this.scheduleHide();
+    else this.setAnchor(null); // described but never shown
   }
 
   /** Show `id`'s card: at once if a card is already up, else after the delay. */
@@ -274,13 +302,11 @@ export class TabHoverCard {
     if (key === this.renderedKey) return;
     this.renderedKey = key;
     this.element.replaceChildren();
-    const split = blocks.length > 1;
-    blocks.forEach((block, i) => {
+    const shown = blocks.slice(0, TabHoverCard.MAX_BLOCKS);
+    shown.forEach((block) => {
       const section = document.createElement('section');
       section.className = 'tab-hover-block';
-      if (split) {
-        section.appendChild(this.line('tab-hover-head', i === 0 ? 'Focused pane' : `Pane ${i + 1}`));
-      }
+      if (block.label) section.appendChild(this.line('tab-hover-head', block.label));
       section.appendChild(this.line('tab-hover-title', block.title));
       if (block.place) section.appendChild(this.line('tab-hover-place', block.place));
       const state = this.line('tab-hover-state', block.state);
@@ -300,6 +326,10 @@ export class TabHoverCard {
       if (block.checkpoint) section.appendChild(this.line('tab-hover-checkpoint', block.checkpoint));
       this.element.appendChild(section);
     });
+    const more = blocks.length - shown.length;
+    if (more > 0) {
+      this.element.appendChild(this.line('tab-hover-more', `+${more} more ${more === 1 ? 'pane' : 'panes'}`));
+    }
   }
 
   private line(className: string, text: string): HTMLElement {
@@ -319,7 +349,12 @@ export class TabHoverCard {
     let left = tab.left;
     if (left + card.width > viewport - margin) left = viewport - margin - card.width;
     left = Math.max(margin, left);
+    const top = Math.round(tab.bottom + TabHoverCard.GAP_PX);
     this.element.style.left = `${Math.round(left)}px`;
-    this.element.style.top = `${Math.round(tab.bottom + TabHoverCard.GAP_PX)}px`;
+    this.element.style.top = `${top}px`;
+    // Never past the window's bottom: whatever doesn't fit is cut (the card
+    // takes no pointer events, so it can't scroll; MAX_BLOCKS keeps it short).
+    const height = window.innerHeight || document.documentElement.clientHeight;
+    if (height > 0) this.element.style.maxHeight = `${Math.max(0, height - top - margin)}px`;
   }
 }

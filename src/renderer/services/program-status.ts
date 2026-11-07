@@ -20,6 +20,9 @@
  * character, stripped of direction overrides and invisible formatting, and
  * only ever shown as text.
  */
+import { INVISIBLE_RE, shortText, shownText } from './shown-text';
+
+export { shortText, shownText };
 
 export type ProgramState = 'idle' | 'working' | 'blocked' | 'done' | 'error';
 export type BlockedKind = 'permission' | 'question' | 'auth';
@@ -68,8 +71,6 @@ const BASE64_RE = /^[A-Za-z0-9+/]*={0,2}$/;
 // Every control character (C0, DEL, C1): refused whole, per the spec.
 // eslint-disable-next-line no-control-regex
 const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f]/;
-// Direction overrides and invisible formatting: removed before anything shows them.
-const INVISIBLE_RE = /[\u061c\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g;
 
 class ReportError extends Error {}
 
@@ -210,45 +211,72 @@ export class ProgramStatusRecords {
 
 /** What the pane's records mean for its tab, in the S40 vocabulary: busy,
  *  needs you (dot, with the reason as text), parked (hollow ring, with the
- *  running tasks' titles) or nothing. */
+ *  running tasks' titles) or nothing. A needs-you `key` names the wait
+ *  without its text (root state and kind, or the blocked task's id): the
+ *  pane raises the dot once per key, and a changed `msg` under the same key
+ *  only refreshes the reason. */
 export type ProgramSignal =
   | { kind: 'none' }
   | { kind: 'working' }
-  | { kind: 'needs-you'; reason: string }
-  | { kind: 'parked'; tasks: number; titles: string[] };
+  | { kind: 'needs-you'; key: string; reason: string }
+  | { kind: 'parked'; tasks: number; crons?: number; titles: string[] };
 
-const SHOWN_TEXT_MAX = 120;
+/** Where a pane's records stand, by the one precedence both the dot
+ *  (programSignal) and the hover card (pane-activity) read: root working;
+ *  root blocked (its own dialog wins over a blocked task); root error; a
+ *  blocked child task; children working (parked); root done; else idle. */
+export type ProgramStanding =
+  | { kind: 'working' }
+  | { kind: 'blocked'; record: ProgramRecord }
+  | { kind: 'error'; record: ProgramRecord | null }
+  | { kind: 'task-blocked'; id: string; record: ProgramRecord }
+  | { kind: 'parked'; tasks: { id: string; record: ProgramRecord }[] }
+  | { kind: 'done'; record: ProgramRecord | null }
+  | { kind: 'idle' };
 
-/** Shorten untrusted text for a tooltip (it is already control- and override-free). */
-export function shortText(text: string, max = SHOWN_TEXT_MAX): string {
-  const t = text.trim();
-  return t.length > max ? `${t.slice(0, max - 1)}…` : t;
+export function rankProgram(records: ProgramStatusRecords): ProgramStanding {
+  const root = records.root;
+  const rootState: ProgramState = root?.state ?? 'idle';
+  if (rootState === 'working') return { kind: 'working' };
+  if (rootState === 'blocked' && root) return { kind: 'blocked', record: root };
+  if (rootState === 'error') return { kind: 'error', record: root };
+  const children = records.children();
+  const blockedChild = children.find((c) => c.record.state === 'blocked');
+  if (blockedChild) return { kind: 'task-blocked', id: blockedChild.id, record: blockedChild.record };
+  const working = children.filter((c) => c.record.state === 'working');
+  if (working.length > 0) return { kind: 'parked', tasks: working };
+  if (rootState === 'done') return { kind: 'done', record: root };
+  return { kind: 'idle' };
 }
 
-// Every control character, for text from anywhere (a pane title set over
-// OSC 0/2 included), replaced rather than refused: what is left is shown.
-// eslint-disable-next-line no-control-regex
-const CONTROL_ALL_RE = /[\u0000-\u001f\u007f-\u009f]/g;
+/** Claude Code reports with `app=claude-code`; anything else is another
+ *  program, which may drive a generic dot or ring but never Claude routing
+ *  (image paste as Ctrl+V, compose-first, /checkpoint). The root decides;
+ *  with no root yet, any child that names Claude Code. */
+export function isClaudeProgram(records: ProgramStatusRecords): boolean {
+  const root = records.root;
+  if (root) return root.app === 'claude-code';
+  return records.children().some((c) => c.record.app === 'claude-code');
+}
 
-/** Untrusted text from any program, made safe to show as text: control
- *  characters become spaces, direction overrides and invisible formatting go,
- *  runs of white space collapse, and it is cut to `max` characters. Still to
- *  be set with `textContent` only. */
-export function shownText(text: string, max = SHOWN_TEXT_MAX): string {
-  const clean = text.replace(CONTROL_ALL_RE, ' ').replace(INVISIBLE_RE, '').replace(/\s+/g, ' ');
-  return shortText(clean, max);
+/** Who the reasons name: "Claude", another program by its app name, or "The program". */
+function programName(records: ProgramStatusRecords): string {
+  if (isClaudeProgram(records)) return 'Claude';
+  const app = records.root?.app ?? records.children().find((c) => c.record.app)?.record.app ?? null;
+  return app ? shownText(app, 32) : 'The program';
 }
 
 function withMsg(lead: string, msg: string | null): string {
-  return msg ? `${lead}: ${shortText(msg)}` : lead;
+  const text = msg ? shownText(msg) : '';
+  return text ? `${lead}: ${text}` : lead;
 }
 
-function blockedReason(record: ProgramRecord): string {
+function blockedReason(who: string, record: ProgramRecord): string {
   switch (record.kind) {
-    case 'permission': return withMsg('Claude needs permission', record.msg);
-    case 'question': return withMsg('Claude asks', record.msg);
-    case 'auth': return withMsg('Claude needs a login', record.msg);
-    default: return withMsg('Claude has a dialog open', record.msg);
+    case 'permission': return withMsg(`${who} needs permission`, record.msg);
+    case 'question': return withMsg(`${who} asks`, record.msg);
+    case 'auth': return withMsg(`${who} needs a login`, record.msg);
+    default: return withMsg(`${who} has a dialog open`, record.msg);
   }
 }
 
@@ -257,25 +285,23 @@ function blockedReason(record: ProgramRecord): string {
  * (a task waiting on input) → needs you. Root done or idle with children
  * working → parked; done with none → needs you; idle with none → nothing.
  * Where two readings compete, the one that alerts wins (S40: a missed alert
- * is the worse failure).
+ * is the worse failure). The order is rankProgram's.
  */
 export function programSignal(records: ProgramStatusRecords): ProgramSignal {
-  const root = records.root;
-  const rootState: ProgramState = root?.state ?? 'idle';
-  if (rootState === 'working') return { kind: 'working' };
-  if (rootState === 'blocked' && root) return { kind: 'needs-you', reason: blockedReason(root) };
-  if (rootState === 'error') return { kind: 'needs-you', reason: withMsg('Claude stopped on an error', root?.msg ?? null) };
-
-  const children = records.children();
-  const blockedChild = children.find((c) => c.record.state === 'blocked');
-  if (blockedChild) {
-    return { kind: 'needs-you', reason: withMsg('A background task needs you', blockedChild.record.title) };
+  const standing = rankProgram(records);
+  const who = programName(records);
+  switch (standing.kind) {
+    case 'working': return { kind: 'working' };
+    case 'blocked':
+      return { kind: 'needs-you', key: `root:blocked:${standing.record.kind ?? 'dialog'}`, reason: blockedReason(who, standing.record) };
+    case 'error':
+      return { kind: 'needs-you', key: 'root:error', reason: withMsg(`${who} stopped on an error`, standing.record?.msg ?? null) };
+    case 'task-blocked':
+      return { kind: 'needs-you', key: `task:${standing.id}`, reason: withMsg('A background task needs you', standing.record.title) };
+    case 'parked':
+      return { kind: 'parked', tasks: standing.tasks.length, titles: standing.tasks.map((c) => shownText(c.record.title ?? c.id, 60)) };
+    case 'done':
+      return { kind: 'needs-you', key: 'root:done', reason: withMsg(`${who} finished`, standing.record?.msg ?? null) };
+    case 'idle': return { kind: 'none' };
   }
-  const working = children.filter((c) => c.record.state === 'working');
-  if (working.length > 0) {
-    const titles = working.map((c) => shortText(c.record.title ?? c.id, 60));
-    return { kind: 'parked', tasks: working.length, titles };
-  }
-  if (rootState === 'done') return { kind: 'needs-you', reason: withMsg('Claude finished', root?.msg ?? null) };
-  return { kind: 'none' };
 }

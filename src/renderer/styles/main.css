@@ -842,7 +842,11 @@ select:focus-visible {
  * colour only where the state means something (waiting, blocked, error). */
 .tab-hover-card {
   position: fixed;
-  z-index: 1500;
+  /* Under settings (1000), dialogs (1100) and onboarding (1200). */
+  z-index: 900;
+  /* Never covers the terminal for the mouse: it can't be hovered or clicked. */
+  pointer-events: none;
+  overflow: hidden;
   max-width: 320px;
   min-width: 200px;
   background: var(--bg);
@@ -918,6 +922,12 @@ select:focus-visible {
 
 .tab-hover-checkpoint {
   margin-top: 3px;
+}
+
+.tab-hover-more {
+  padding: 4px 10px 6px;
+  border-top: 1px solid var(--hairline);
+  color: var(--muted);
 }
 
 @media (prefers-reduced-motion: reduce) {
