@@ -3,8 +3,9 @@
 <!-- MAP:BEGIN -->
 ## 🗺 THE MAP — S40: signals, image paste, bookmarks, look
 
-**Goal:** Patton reads Claude Code sessions truthfully (parked ≠ needs you), takes a pasted image with a thumbnail, keeps project and artifact bookmarks in a left sidebar, and gets a look Michael picks from five mocks.
-**Done when:** v1.11.0 is released and, live in it: a Claude tab whose turn ends with a background agent or timer shows "parked" and goes green only at a true stop (synthetic Stop-hook probe + one live run); ⌘V of a clipboard image in a Claude tab reaches Claude and shows a thumbnail; the sidebar activates an open project's tab rather than opening a second and opens an artifact in the browser; five look mocks are published; the compose-default reason is reported.
+**Goal (S43 → v1.14):** Patton reads Claude Code's own state and makes many parallel sessions easy to find and checkpoint: a checkpoint clock, worktree-aware names and bookmarks, bookmark rows with live state, "Go to session" in the palette, OSC 8 links, Claude Code's OSC 7501 status, and a tab hover card (Michael picked these from the S43 review page; skipped: jump-to-next-waiting, session resume).
+**Done when:** v1.14.x is installed from its tag; each wave passes lint, `tsc`, `scripts/probe-stop-hook.sh` and its feature's jsdom check, and a fresh review of it leaves no open major finding; then live: the clock reads +% and resets after a checkpoint, a worktree tab reads "patton ⎇ <branch>", a bookmark row shows its waiting count, the palette jumps to a session, a Claude file link opens on double-click, a tab's dot follows Claude's own state, and its hover card shows what it waits on.
+_Previous goal (S40: signals, image paste, bookmarks, look) reached except its live checks, which stay below._
 **Last verified:** 2026-11-07 12:50 (Session 43: `s41_install` closed by v1.13.1 and the local install at its tag; `s43_fixes` released as v1.13.2)
 
 **Retired:** 10 finished nodes, in `docs/map-archive.md`
@@ -30,6 +31,17 @@ flowchart TD
     s41_verify[S41: live drag + hide check]:::todo
     s43_fixes[S43: review fixes, v1.13.2]:::done
     s43_verify[S43: fixes seen live]:::todo
+  end
+  subgraph P6["Phase 6 — S43 → v1.14: find, checkpoint, Claude's own state"]
+    ckpt_clock[checkpoint clock]:::live
+    worktree_names[worktree-aware names + bookmarks]:::todo
+    bookmark_state[bookmark rows show live state]:::todo
+    palette_sessions[Go to session in palette]:::todo
+    osc8_links[OSC 8 links]:::todo
+    osc7501[Claude Code OSC 7501 status]:::todo
+    hover_card[tab hover card]:::todo
+    v114_release[review, release, install v1.14]:::todo
+    v114_verify[live checks v1.14]:::todo
   end
   subgraph P4["Phase 4 — Look"]
     look_pick[Michael picks a combination]:::done
@@ -57,6 +69,16 @@ flowchart TD
   merge_release --> paste_verify
   merge_release --> bookmarks_verify
   merge_release --> release_v1_12
+  worktree_names --> bookmark_state
+  ckpt_clock --> osc7501
+  osc7501 --> hover_card
+  ckpt_clock --> hover_card
+  ckpt_clock --> v114_release
+  bookmark_state --> v114_release
+  palette_sessions --> v114_release
+  osc8_links --> v114_release
+  hover_card --> v114_release
+  v114_release --> v114_verify
   classDef done fill:#1a7f37,color:#fff
   classDef live fill:#0969da,color:#fff
   classDef todo fill:#8c959f,color:#fff
@@ -83,6 +105,15 @@ flowchart TD
 | `s41_verify` | Live: click the bookmark of a project with no open tab: Claude Code starts there with "let's work on <name> project", no picker, and `main.log` has `[PTY] PATTON_PROJECT_DIR exported`. Dictate or paste 3+ lines into a Claude tab: no dialog, `[PASTE] multi-line text` with `confirm:false` in `main.log`; `[DOT] Hook verdict applied` lines carry `afterMs`, and no `Needs-you` with source `claude` follows a verdict that reported tasks. Drag a project row to a new place (blue line, order persists across relaunch), drag onto the other group (refused); chevron hides to the strip, the strip's "+" brings it back, ⌃⌘B the same | todo | `s41_install` | — |
 | `s43_fixes` | Eight bugs a post-restyle review found (two agents; claims checked against code and `main.log`) plus four from a fresh code review, released as v1.13.2: autosave saved `''` for panes past the tenth (cwd IPC capped 10/s), now spaced refresh + per-pane cache; notifications latch off only on macOS's "not allowed"; terminal frame takes the theme background (`--term-bg`); closed overlays `visibility: hidden` and focus returns on close; tab tooltip/aria carries status; larger hit areas, tab min-width 76 px, active tab kept in view; Color Theme no longer writes 18 old-look properties; opacity/font-size saves no longer refused | done | `s41_install` | `a68f871`…`a025b79`; lint + tsc + jsdom checks (13 stale panes all save real folders, ≤9 calls/s) + no-install build; tag `v1.13.2` (run 42374027568; cask 1.13.2, sha `049e5339…` matches the DMG) |
 | `s43_verify` | Live, after install: a split tab where one pane runs `cc` reopens both panes in their own folders after a relaunch; with 11+ panes open `grep -c 'pty:get-cwd' main.log` stops growing; a dark terminal theme on a light Mac has no white frame; Tab never lands in a closed dialog and closing search/settings returns focus to the terminal; hovering a tab shows its state; tab close and grip are easy to hit; with many tabs the active one stays visible | todo | `s43_fixes` | — |
+| `ckpt_clock` | Right end of the tab strip, active tab's Claude pane: "✓ +NN%" = share of the 1M window used since this session's last `/checkpoint` (Stop hook reads the transcript: ctx, since, cpt on OSC 777), amber + bold from 20% (setting); click or palette types `/checkpoint` + Enter when Claude is stopped | live | `parked_state` | Michael S43: placement A; "based off % of context" → "Context since checkpoint"; builder running in `.worktrees/ckpt-clock` |
+| `worktree_names` | A linked worktree (`.git` file with `gitdir:` into another repo's `.git/worktrees/`) belongs to its main repo: tab reads "<project> ⎇ <worktree>", the main project's bookmark matches it; submodules (`gitdir` under `/modules/`) untouched | todo | — | — |
+| `bookmark_state` | Each project bookmark row shows its open tabs' state (dot / ring) and a count ("2 open · 1 waiting"); a click goes to the waiting tab first; renders still held mid-drag | todo | `worktree_names` | — |
+| `palette_sessions` | Typing in the command palette also matches open tabs and panes by project, Claude title and state, waiting first, splits included; Enter activates that tab and pane | todo | — | — |
+| `osc8_links` | xterm `linkHandler` accepts OSC 8 hyperlinks through `file-link-provider.ts`'s safety rules (https, file paths in allowed roots); Patton advertises support so Claude Code emits them | todo | — | — |
+| `osc7501` | Patton answers Claude Code's `OSC 7501;?` probe and applies its reports (working / blocked + kind + msg / done / idle / error, child task records) as the pane's state: dot on root done/blocked, ring while children work; title glyph + Stop hook stay the fallback for terminals' sessions that never report; compose-first, image-paste routing, chip clearing and the checkpoint clock read the new state | todo | `ckpt_clock` | — |
+| `hover_card` | Hovering a tab shows Claude's own title, its state and for how long, the blocked question or parked task names, and the checkpoint reading | todo | `osc7501`, `ckpt_clock` | — |
+| `v114_release` | Each wave reviewed fresh (no open major), merged, pushed; CI release; cask checksum verified; installed from the tag | todo | all P6 nodes | — |
+| `v114_verify` | The live checks listed under Done when | todo | `v114_release` | — |
 | `merge_release` | Merge `feat/image-paste` and `feat/bookmarks` into main, code review, `npm run lint && npm run package`, release v1.11.0, Homebrew step green | done | `parked_state`, `wake_yellow`, `hook_install`, `paste_thumbnail`, `bookmark_open` | tag `v1.11.0` (release run 42203278111, macos-15; cask 1.11.0 pushed by CI) |
 <!-- MAP:END -->
 
