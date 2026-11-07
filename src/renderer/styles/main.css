@@ -250,7 +250,7 @@ html, body {
   flex-direction: column;
   align-items: center;
   width: 22px;
-  padding: 6px 0 0; /* centres the 16 px mark in the 28 px header row */
+  padding: calc((var(--row) - 16px) / 2) 0 0; /* centres the 16 px mark in the header row, at any text size */
   border: none;
   border-right: 1px solid var(--hairline);
   border-radius: 0;

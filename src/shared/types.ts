@@ -270,6 +270,10 @@ export interface PattonAPI {
     clear: () => Promise<void>;
   };
   settings: {
+    /** Interface Text Size at the moment this window was created, known
+     *  synchronously (main passes it to the preload as a command-line switch)
+     *  so the renderer can size its chrome before building any of it. */
+    uiTextScaleAtLaunch: number;
     get: () => Promise<AppSettings>;
     set: (settings: Partial<AppSettings>) => Promise<void>;
     /** Fires in every window when Interface Text Size is saved. */

@@ -79,9 +79,10 @@
      title has shrunk to nothing (the title is overflow:hidden, so it gives way
      first): padding 12+12, grip ~6, dot 9, close ~14, and three 7 px gaps
      (grip-dot, dot-title, title-close) = 24 + 6 + 9 + 14 + 21 = 74; 76 adds
-     2 px of slack. Not clipped with overflow, which would cut the needs-you
+     2 px of slack. The grip and the close are font-sized, so their 20 px
+     scale with Interface Text Size; the rest is fixed. Not clipped with overflow, which would cut the needs-you
      dot's 6 px glow. The hover tooltip names the tab at this width. */
-  min-width: 76px;
+  min-width: calc(56px + 20px * var(--ui-scale));
   max-width: 220px;
   background: transparent;
   cursor: pointer;

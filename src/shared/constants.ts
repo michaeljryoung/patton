@@ -226,3 +226,14 @@ export const PATTON_QUOTES = [
 export function uiTextScaleOf(value: unknown): number {
   return typeof value === 'number' && DEFAULTS.UI_TEXT_SCALES.includes(value) ? value : DEFAULTS.UI_TEXT_SCALE;
 }
+
+/** The command-line switch main hands each window's preload (webPreferences.
+ *  additionalArguments) so the renderer knows its Interface Text Size
+ *  synchronously, before it builds any chrome. */
+export const UI_TEXT_SCALE_ARG = '--patton-ui-scale=';
+
+/** The scale carried by that switch in a process argv; 1 when absent or invalid. */
+export function uiTextScaleFromArgv(argv: readonly string[]): number {
+  const arg = argv.find((a) => a.startsWith(UI_TEXT_SCALE_ARG));
+  return uiTextScaleOf(arg === undefined ? undefined : Number(arg.slice(UI_TEXT_SCALE_ARG.length)));
+}

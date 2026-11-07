@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import { IPC } from '../shared/constants';
+import { IPC, uiTextScaleFromArgv } from '../shared/constants';
 import type { BoardLayout, BoardPayload, Bookmark, PattonAPI, RenderSnapshot } from '../shared/types';
 
 const api: PattonAPI = {
@@ -33,6 +33,7 @@ const api: PattonAPI = {
     clear: () => ipcRenderer.invoke(IPC.HISTORY_CLEAR),
   },
   settings: {
+    uiTextScaleAtLaunch: uiTextScaleFromArgv(process.argv),
     get: () => ipcRenderer.invoke(IPC.SETTINGS_GET),
     set: (settings) => ipcRenderer.invoke(IPC.SETTINGS_SET, settings),
     onUiTextScale: (cb) => {

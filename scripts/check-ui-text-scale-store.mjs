@@ -40,7 +40,7 @@ try {
     entryPoints: [join(repo, 'src/shared/constants.ts')],
     bundle: true, platform: 'node', format: 'cjs', outfile: readerOut, logLevel: 'silent',
   });
-  const { uiTextScaleOf } = createRequire(import.meta.url)(readerOut);
+  const { uiTextScaleOf, uiTextScaleFromArgv, UI_TEXT_SCALE_ARG } = createRequire(import.meta.url)(readerOut);
 
   let passed = 0;
   let failed = 0;
@@ -72,6 +72,12 @@ try {
     check(`uiTextScaleOf(${typeof v === 'object' ? JSON.stringify(v) : String(v)}) is 1`, uiTextScaleOf(v) === 1, uiTextScaleOf(v));
   }
   for (const v of [0.9, 1, 1.1, 1.25, 1.5]) check(`uiTextScaleOf(${v}) is ${v}`, uiTextScaleOf(v) === v);
+  // The switch main hands the preload (finding: first paint at size).
+  const argv = (v) => ['/x/Patton', '--foo', ...(v === undefined ? [] : [UI_TEXT_SCALE_ARG + v])];
+  for (const v of [0.9, 1, 1.1, 1.25, 1.5]) check(`argv carrying ${v} reads ${v}`, uiTextScaleFromArgv(argv(v)) === v, uiTextScaleFromArgv(argv(v)));
+  for (const v of [undefined, '', 'abc', '2', '1.2', '-1', 'NaN']) {
+    check(`argv with ${v === undefined ? 'no switch' : `"${v}"`} reads 1`, uiTextScaleFromArgv(argv(v)) === 1, uiTextScaleFromArgv(argv(v)));
+  }
   console.log(`\n${passed} passed, ${failed} failed`);
   process.exitCode = failed ? 1 : 0;
 } finally {

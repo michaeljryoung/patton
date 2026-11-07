@@ -1,5 +1,6 @@
 import { ContextMenu } from './context-menu';
 import { announce } from '../services/announcer';
+import { onUiTextScaleApplied } from '../services/ui-text-scale';
 import { DEFAULTS } from '../../shared/constants';
 import type { TabFlag } from '../../shared/types';
 import type { CheckpointView } from '../services/checkpoint-clock';
@@ -105,6 +106,7 @@ export class TabBar {
   private heldUpdate: TabHeaderInfo[] | null = null;
   private lastActiveId: string | null = null;
   private lastTabCount = 0;
+  private stopScaleWatch: (() => void) | null = null;
   private hoverCard: TabHoverCard | null = null;
 
   constructor(container: HTMLElement, callbacks: TabBarCallbacks) {
@@ -128,6 +130,9 @@ export class TabBar {
     this.tabsContainer.className = 'tab-bar-tabs';
     this.tabsContainer.setAttribute('role', 'tablist');
     this.container.appendChild(this.tabsContainer);
+    // A new Interface Text Size changes every tab's width (and the strip's
+    // scroll extent), which can leave the active tab off-screen: bring it back.
+    this.stopScaleWatch = onUiTextScaleApplied(() => this.revealActive());
     if (callbacks.describeTab) {
       this.hoverCard = new TabHoverCard(this.tabsContainer, callbacks.describeTab);
     }
@@ -500,9 +505,7 @@ export class TabBar {
     this.tabsContainer.scrollLeft = savedScroll;
     const active = tabs.find((t) => t.active);
     if (active && (active.id !== this.lastActiveId || tabs.length !== this.lastTabCount)) {
-      this.tabsContainer
-        .querySelector<HTMLElement>(`.tab-bar-tab[data-tab-id="${CSS.escape(active.id)}"]`)
-        ?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+      this.revealTab(active.id);
     }
     this.lastActiveId = active?.id ?? null;
     this.lastTabCount = tabs.length;
@@ -512,6 +515,17 @@ export class TabBar {
         ?.focus({ preventScroll: true });
     }
     this.hoverCard?.afterUpdate();
+  }
+
+  private revealTab(id: string): void {
+    this.tabsContainer
+      .querySelector<HTMLElement>(`.tab-bar-tab[data-tab-id="${CSS.escape(id)}"]`)
+      ?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+  }
+
+  /** Scroll the active tab (as of the last update) into view. */
+  private revealActive(): void {
+    if (this.lastActiveId !== null) this.revealTab(this.lastActiveId);
   }
 
   /** A pane's state changed: re-read the open hover card, if any. */
@@ -616,6 +630,8 @@ export class TabBar {
   }
 
   dispose(): void {
+    this.stopScaleWatch?.();
+    this.stopScaleWatch = null;
     if (this.checkpointReasonTimer) clearTimeout(this.checkpointReasonTimer);
     this.hoverCard?.dispose();
     this.contextMenu.dispose();

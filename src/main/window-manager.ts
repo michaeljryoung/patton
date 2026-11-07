@@ -1,7 +1,7 @@
 import { BrowserWindow, dialog, nativeTheme, screen } from 'electron';
 import path from 'node:path';
 import * as store from './store';
-import { IPC, WINDOW_BG, uiTextScaleOf } from '../shared/constants';
+import { IPC, UI_TEXT_SCALE_ARG, WINDOW_BG, uiTextScaleOf } from '../shared/constants';
 import type { PtyManager } from './pty-manager';
 import { closePreconfirmations } from './close-preconfirm';
 
@@ -26,7 +26,7 @@ export function broadcastUiTextScale(scale: number): void {
   for (const win of BrowserWindow.getAllWindows()) {
     if (win.isDestroyed()) continue;
     win.webContents.send(IPC.SETTINGS_UI_TEXT_SCALE, scale);
-    win.setWindowButtonPosition({ x: 12, y: trafficLightY(scale) });
+    if (process.platform === 'darwin') win.setWindowButtonPosition({ x: 12, y: trafficLightY(scale) });
   }
 }
 
@@ -51,6 +51,9 @@ export function createWindow(ptyManager?: PtyManager): BrowserWindow {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      // The preload reads this synchronously, so the renderer sizes its chrome
+      // before the first tab bar exists (an IPC read would arrive after it).
+      additionalArguments: [`${UI_TEXT_SCALE_ARG}${uiTextScaleOf(store.getSettings().uiTextScale)}`],
       webSecurity: true,
       allowRunningInsecureContent: false,
       // Keep the renderer fully alive when Patton is backgrounded. Chromium's

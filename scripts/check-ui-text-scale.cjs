@@ -11,6 +11,11 @@
 //    control's content height holds one line of its text);
 //  - the xterm terminal and the compose textarea keep their size (both follow
 //    Font Size, not this setting);
+//  - squeezed strip (40 tabs, every tab at its floor): no tab's close button spills
+//    out of its tab, at 1 and 1.5; the active tab is still in view after a size change;
+//  - the collapsed bookmarks rail's mark is centred on the header row it stood in;
+//  - every text box taller than its text grew with the text (a fixed height shows up as no growth);
+//  - the real preload hands the renderer the launch scale synchronously (additionalArguments);
 // and that the Settings row exists, writes uiTextScale through the real panel,
 // invalid values fall back to 1, and the wiring (App, preload, main) is present.
 // Not covered: the app's real window (no preload bridge, so IPC is a stub),
@@ -73,6 +78,14 @@ async function nodeRunner() {
     bundle: true, platform: 'browser', format: 'iife', outfile: path.join(outDir, 'page.js'),
     loader: { '.css': 'empty' }, logLevel: 'silent',
   });
+  // The real preload (electron left external, as in a sandboxed preload) and a page that reads
+  // what it exposes in its very first script: the proof the launch scale is known synchronously.
+  await build({
+    entryPoints: [path.join(repo, 'src/preload/preload.ts')],
+    bundle: true, platform: 'node', format: 'cjs', external: ['electron'], outfile: path.join(outDir, 'preload.cjs'), logLevel: 'silent',
+  });
+  fs.writeFileSync(path.join(outDir, 'launch.html'),
+    '<!doctype html><html><head><script>window.__atLaunch = window.patton && window.patton.settings.uiTextScaleAtLaunch;</script></head><body></body></html>');
   // The real stylesheets, in the order src/renderer/index.ts imports them.
   const styles = ['main', 'tabs', 'terminal', 'editor', 'settings', 'board']
     .map((n) => fs.readFileSync(path.join(repo, 'src/renderer/styles', n + '.css'), 'utf8'));
@@ -112,7 +125,16 @@ async function nodeRunner() {
   // Source checks: the wiring the hidden page cannot exercise.
   const src = (p) => fs.readFileSync(path.join(repo, p), 'utf8');
   const wiring = [
-    ['App applies the saved value before building anything', /applyUiTextScale\(settings\.uiTextScale, 'startup'\)/.test(src('src/renderer/components/app.ts'))],
+    ['App.init applies the stored value too (idempotent after the launch apply)', /applyUiTextScale\(settings\.uiTextScale, 'startup'\)/.test(src('src/renderer/components/app.ts'))],
+    ['the renderer entry applies the launch scale BEFORE `new App()` builds the tab bar', (() => {
+      const s = src('src/renderer/index.ts');
+      const at = s.indexOf('applyUiTextScale(window.patton.settings.uiTextScaleAtLaunch');
+      const build = s.indexOf('new App()');
+      return at >= 0 && build >= 0 && at < build;
+    })()],
+    ['main passes the launch scale to each window as a preload switch', /additionalArguments:\s*\[`\$\{UI_TEXT_SCALE_ARG\}\$\{uiTextScaleOf\(store\.getSettings\(\)\.uiTextScale\)\}`\]/.test(src('src/main/window-manager.ts'))],
+    ['preload exposes uiTextScaleAtLaunch from process.argv', /uiTextScaleAtLaunch:\s*uiTextScaleFromArgv\(process\.argv\)/.test(src('src/preload/preload.ts'))],
+    ['traffic lights move only on macOS', /process\.platform === 'darwin'\)\s*win\.setWindowButtonPosition/.test(src('src/main/window-manager.ts'))],
     ['App follows a change made in any window', /settings\.onUiTextScale\(\(scale\) => applyUiTextScale\(scale, 'change'\)\)/.test(src('src/renderer/components/app.ts'))],
     ['App applies the value the panel saves', /settings\.uiTextScale !== undefined/.test(src('src/renderer/components/app.ts'))],
     ['preload exposes onUiTextScale on the settings channel', /onUiTextScale[\s\S]{0,200}IPC\.SETTINGS_UI_TEXT_SCALE/.test(src('src/preload/preload.ts'))],
@@ -158,6 +180,17 @@ function electronMain() {
       });
       await win.loadFile(path.join(outDir, 'page.html'));
       const result = await win.webContents.executeJavaScript(`(${pageRun.toString()})(${BIG})`);
+      // The real preload in a sandboxed, context-isolated window, as main creates it.
+      for (const [label, args, want] of [['1.5', ['--patton-ui-scale=1.5'], 1.5], ['0.9', ['--patton-ui-scale=0.9'], 0.9], ['no switch', [], 1], ['a bad switch', ['--patton-ui-scale=7'], 1]]) {
+        const w = new BrowserWindow({
+          show: false, width: 300, height: 200,
+          webPreferences: { preload: path.join(outDir, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, additionalArguments: args },
+        });
+        await w.loadFile(path.join(outDir, 'launch.html'));
+        const got = await w.webContents.executeJavaScript('window.__atLaunch');
+        result.checks.push({ name: `preload (${label}): the page's first script already reads uiTextScaleAtLaunch = ${want}`, ok: got === want, detail: got });
+        w.destroy();
+      }
       write(result);
       app.exit(0);
     } catch (err) {
@@ -412,6 +445,18 @@ async function pageRun(BIG) {
   cuts('x' + BIG);
   check('no text box clips at x1 or x' + BIG, clips.length === 0, clips.slice(0, 8));
 
+  // --- a text box that grew its text grew itself: a fixed pixel height shows up as no growth even
+  // when the larger text still fits inside it (a 20 px row holding 11 px text -> 16.5 px text).
+  // Single-line boxes must gain at least the text's own growth; wrapped ones gain more.
+  const noGrowth = [];
+  for (const [key, a] of one) {
+    const b = big.get(key);
+    if (!b || a.exempt || a.display === 'inline' || b.fs <= a.fs + 0.5) continue;
+    const need = (b.fs - a.fs) * 0.9;
+    if (b.h - a.h < need - 0.1) noGrowth.push({ surface: a.surface, key: key.slice(-48), h1: a.h, hBig: b.h, fs1: a.fs, fsBig: b.fs, text: a.text });
+  }
+  check(`every text box grows with its text at x${BIG} (a fixed height does not)`, noGrowth.length === 0, noGrowth.slice(0, 10));
+
   // --- the terminal and the compose textarea do not move
   const xt1 = [...one.values()].filter((v) => v.exempt);
   const xtBig = [...big.values()].filter((v) => v.exempt);
@@ -450,6 +495,65 @@ async function pageRun(BIG) {
 
   const logged = calls.filter((c) => c.name === 'log.send' && String(c.args[1][0]).startsWith('[SETTINGS] uiTextScale'));
   check('each change is logged with rlog ([SETTINGS] uiTextScale <n>)', logged.length >= 3 && logged.some((c) => c.args[1][0] === '[SETTINGS] uiTextScale 1.5'), logged.map((c) => c.args[1][0]));
+
+  // --- bookmarks rail: the collapsed sidebar's mark sits level with the header row it stood in
+  const hdr = document.querySelector('.bookmarks-header');
+  const hdrCentre = {};
+  for (const s of [1, BIG]) {
+    await setScale(s);
+    const r = hdr.getBoundingClientRect();
+    hdrCentre[s] = r.top + r.height / 2;
+  }
+  await bookmarksPanel.toggle(); // collapse: the rail shows
+  for (const s of [1, BIG]) {
+    await setScale(s);
+    const mark = document.querySelector('.bookmarks-rail-mark');
+    const r = mark.getBoundingClientRect();
+    const centre = r.top + r.height / 2;
+    check(`bookmarks rail mark is centred on the header row at x${s}`, r.height > 0 && Math.abs(centre - hdrCentre[s]) <= 1, { markCentre: centre, headerCentre: hdrCentre[s] });
+  }
+
+  // --- squeezed strip: enough tabs that every one sits at its min-width floor
+  const many = Array.from({ length: 40 }, (_, i) => ({ id: `m${i + 1}`, title: `tab number ${i + 1}`, active: false, flag: i === 3 ? 'red' : undefined }));
+  const withActive = (id) => many.map((t) => ({ ...t, active: t.id === id }));
+  const strip = document.querySelector('.tab-bar-tabs');
+  for (const s of [1, BIG]) {
+    await setScale(s);
+    tabBar.update(withActive('m1'));
+    await frame();
+    const tabEls = [...strip.querySelectorAll('.tab-bar-tab')];
+    const floor = parseFloat(getComputedStyle(tabEls[0]).minWidth);
+    const atFloor = tabEls.filter((t) => Math.abs(t.getBoundingClientRect().width - floor) <= 0.5).length;
+    check(`squeezed strip x${s}: all 40 tabs sit at their ${floor}px floor`, tabEls.length === 40 && atFloor === 40, { tabs: tabEls.length, atFloor, floor });
+    const spills = [];
+    for (const t of tabEls) {
+      const close = t.querySelector('.tab-bar-tab-close');
+      if (!close) { spills.push({ tab: t.dataset.tabId, why: 'no close button' }); continue; }
+      const tr = t.getBoundingClientRect();
+      const cr = close.getBoundingClientRect();
+      const cs = getComputedStyle(close);
+      const ts = getComputedStyle(t);
+      const closeEnd = cr.right + parseFloat(cs.marginRight); // the drawn close button's right edge
+      const contentEnd = tr.right - parseFloat(ts.paddingRight);
+      if (closeEnd > contentEnd + 0.5) spills.push({ tab: t.dataset.tabId, over: +(closeEnd - contentEnd).toFixed(1), tabW: tr.width });
+    }
+    check(`squeezed strip x${s}: no close button spills out of its tab's padding`, spills.length === 0, spills.slice(0, 4));
+  }
+
+  // --- the active tab is still on screen after a size change
+  await setScale(1);
+  tabBar.update(withActive('m30'));
+  await frame();
+  const inView = (id) => {
+    const t = strip.querySelector(`.tab-bar-tab[data-tab-id="${id}"]`).getBoundingClientRect();
+    const c = strip.getBoundingClientRect();
+    return t.left >= c.left - 0.5 && t.right <= c.right + 0.5;
+  };
+  check('active tab m30 is in view at x1 (the scroll baseline)', inView('m30'), strip.scrollLeft);
+  await setScale(BIG);
+  check(`active tab m30 is still in view after the size changes to x${BIG}`, inView('m30'), { scrollLeft: strip.scrollLeft });
+  await setScale(1);
+  check('active tab m30 is still in view after the size changes back to x1', inView('m30'), { scrollLeft: strip.scrollLeft });
 
   return { checks, table, surfaces: surfaceCounts };
 }
