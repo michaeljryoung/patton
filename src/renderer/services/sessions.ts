@@ -1,16 +1,25 @@
 import type { ProjectInfo } from '../../shared/types';
 
+import type { PaneActivity } from './pane-activity';
+
 /**
  * One open session: a pane, in a tab. The command palette lists these when
  * you type, and the bookmarks sidebar counts them per project.
  *
- * - waiting: needs you (the tab's green dot), since `awaitingSince`
+ * Its state is the pane's activity (services/pane-activity.ts), the one the
+ * tab hover card and the dot read, so the palette, the sidebar and the card
+ * never disagree; only a pane the dot raised for a shell reason (a command
+ * finished, a bell, a notification) reads `waiting` over `shell`/`idle`.
+ *
+ * - waiting: Claude stopped and waits for you, or the dot is up
+ * - blocked: a permission, question, login or dialog (or a background task asking)
+ * - error:   Claude stopped on an error
  * - parked:  Claude Code ended its turn but waits on its own background work
- * - working: Claude Code is mid-turn (◐◑)
- * - idle:    Claude Code is stopped (✳) and not flagged as needing you
+ * - working: Claude Code is mid-turn
+ * - idle:    Claude Code reports idle (never ran, or interrupted)
  * - shell:   no Claude Code in the pane
  */
-export type SessionStatus = 'waiting' | 'parked' | 'working' | 'idle' | 'shell';
+export type SessionStatus = PaneActivity;
 
 export interface SessionInfo {
   tabId: string;
@@ -31,19 +40,30 @@ export interface SessionInfo {
   /** The title the program in the pane set, without Claude Code's glyph. */
   paneTitle: string;
   state: SessionStatus;
+  /** For ordering and "waiting 4 min": when the dot rose for this pane, else
+   *  (a needs-you state in the active tab, where the dot never rises) when the
+   *  pane's activity began; null for any other state. */
   awaitingSince: number | null;
 }
 
-const STATE_RANK: Record<SessionStatus, number> = { waiting: 0, parked: 1, working: 2, idle: 2, shell: 2 };
+/** States that need the user: the dot's green, the card's "Waiting for you",
+ *  "Blocked" and "Error". */
+export function sessionNeedsYou(s: Pick<SessionInfo, 'state'>): boolean {
+  return s.state === 'waiting' || s.state === 'blocked' || s.state === 'error';
+}
 
-/** Waiting first (longest wait first), then parked, then the rest; ties keep tab order. */
+const STATE_RANK: Record<SessionStatus, number> = {
+  waiting: 0, blocked: 0, error: 0, parked: 1, working: 2, idle: 2, shell: 2,
+};
+
+/** Needing you first (longest wait first), then parked, then the rest; ties keep tab order. */
 export function orderSessions(sessions: SessionInfo[]): SessionInfo[] {
   return sessions
     .map((s, i) => ({ s, i }))
     .sort((a, b) => {
       const rank = STATE_RANK[a.s.state] - STATE_RANK[b.s.state];
       if (rank !== 0) return rank;
-      if (a.s.state === 'waiting') {
+      if (STATE_RANK[a.s.state] === 0) {
         const wait = (a.s.awaitingSince ?? 0) - (b.s.awaitingSince ?? 0);
         if (wait !== 0) return wait;
       }
@@ -85,9 +105,9 @@ export function formatWait(ms: number): string {
   return rest ? `${hours} h ${rest} min` : `${hours} h`;
 }
 
-/** The state in words: "waiting 4 min", "parked", "working", "idle", "shell". */
+/** The state in words: "waiting 4 min", "blocked 2 min", "parked", "working", "idle", "shell". */
 export function stateWords(s: SessionInfo, now: number): string {
-  if (s.state === 'waiting') return s.awaitingSince ? `waiting ${formatWait(now - s.awaitingSince)}` : 'waiting';
+  if (sessionNeedsYou(s)) return s.awaitingSince ? `${s.state} ${formatWait(now - s.awaitingSince)}` : s.state;
   return s.state;
 }
 
@@ -96,8 +116,9 @@ export function sessionSearchText(s: SessionInfo, now: number): string {
   const parts = [
     s.projectName ?? '', s.worktree?.name ?? '', s.tabTitle, s.paneTitle,
     stateWords(s, now),
-    // "waiting" also finds what needs you under the word the tab tooltip uses.
-    s.state === 'waiting' ? 'needs you' : '',
+    // "needs you" finds every waiting, blocked or error session, under the
+    // word the tab tooltip uses.
+    sessionNeedsYou(s) ? 'needs you' : '',
   ];
   return parts.join(' ').toLowerCase();
 }

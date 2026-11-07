@@ -5,7 +5,7 @@ import { announce } from '../services/announcer';
 import { projectName } from '../services/project-names';
 import { rlog } from '../services/renderer-logger';
 import { runStartupCommand } from '../services/startup-command';
-import { sessionMatchesPath, type SessionInfo } from '../services/sessions';
+import { sessionMatchesPath, sessionNeedsYou, type SessionInfo } from '../services/sessions';
 import { ConfirmDialog } from './confirm-dialog';
 import { ContextMenu } from './context-menu';
 import type { Tab } from './tab';
@@ -398,7 +398,7 @@ export class BookmarksPanel {
 
     // A session of this project that's waiting for you comes first, the
     // longest wait first (listSessions is already in that order).
-    const waiting = this.host.listSessions().find((s) => s.state === 'waiting' && sessionMatchesPath(s, path));
+    const waiting = this.host.listSessions().find((s) => sessionNeedsYou(s) && sessionMatchesPath(s, path));
     if (waiting && this.host.goToSession(waiting.tabId, waiting.paneId)) {
       rlog('info', '[BOOKMARK] open waiting', {
         label: bookmark.label, tabId: waiting.tabId, paneId: waiting.paneId,
@@ -492,7 +492,7 @@ export class BookmarksPanel {
         isOpen,
         isCurrent,
         open: mine.length,
-        waiting: mine.filter((s) => s.state === 'waiting').length,
+        waiting: mine.filter((s) => sessionNeedsYou(s)).length,
         parked: mine.filter((s) => s.state === 'parked').length,
       });
     }

@@ -1,5 +1,5 @@
 import type { PaletteAction } from '../components/command-palette';
-import { sessionName, sessionSearchText, stateWords, type SessionInfo } from './sessions';
+import { sessionName, sessionNeedsYou, sessionSearchText, stateWords, type SessionInfo } from './sessions';
 
 /** Palette action ids for open sessions: `session:<tabId>:<paneId>`. */
 const SESSION_ACTION_PREFIX = 'session:';
@@ -20,7 +20,7 @@ export function sessionPaletteActions(sessions: SessionInfo[], now: number): Pal
       action: `${SESSION_ACTION_PREFIX}${s.tabId}:${s.paneId}`,
       searchOnly: true,
       match: sessionSearchText(s, now),
-      glyph: s.state === 'waiting' || s.state === 'parked' ? s.state : undefined,
+      glyph: sessionNeedsYou(s) ? 'waiting' : s.state === 'parked' ? 'parked' : undefined,
       detail,
       ariaLabel: `Go to ${label}, ${detail === where ? where : `${detail}, ${where}`}`,
     };

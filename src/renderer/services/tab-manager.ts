@@ -9,7 +9,7 @@ import { announce } from './announcer';
 import { onProjectNamesChanged, projectName, startProjectNames } from './project-names';
 import { hoverBlocks, type HoverBlock, type HoverPaneInput } from './tab-hover';
 import type { SessionState, RendererMode, TabFlag } from '../../shared/types';
-import { orderSessions, stripClaudeGlyph, type SessionInfo, type SessionStatus } from './sessions';
+import { orderSessions, sessionNeedsYou, stripClaudeGlyph, type SessionInfo, type SessionStatus } from './sessions';
 import type { ITheme } from '@xterm/xterm';
 
 interface ClosedPaneState {
@@ -200,7 +200,7 @@ export class TabManager {
       () => this.updateTabBar(),
       () => this.onCommandDone?.(tab.id, tab.title),
       () => { if (tab === this.activeTab) this.updateCheckpoint(); this.tabBar.refreshHoverCard(); },
-      () => this.tabBar.refreshHoverCard(),
+      () => { this.tabBar.refreshHoverCard(); this.onTabsChanged?.(); },
     );
     this.tabs.push(tab);
     this.contentContainer.appendChild(tab.element);
@@ -440,8 +440,9 @@ export class TabManager {
   }
 
   /**
-   * Every pane of every tab as a session, waiting first (longest wait first),
-   * then parked, then the rest in tab order. The palette and the bookmarks
+   * Every pane of every tab as a session, in the state the hover card shows:
+   * needing you first (longest wait first), then parked, then the rest in tab
+   * order. The palette and the bookmarks
    * sidebar both read this.
    */
   listSessions(): SessionInfo[] {
@@ -449,14 +450,17 @@ export class TabManager {
     this.tabs.forEach((tab, index) => {
       for (const pane of tab.panes) {
         const project = tab.paneProject(pane);
-        const awaitingSince = tab.awaitingSince(pane);
+        const dotSince = tab.awaitingSince(pane);
         const claude = pane.claudeState;
-        let state: SessionStatus;
-        if (awaitingSince !== null) state = 'waiting';
-        else if (tab.isPaneParked(pane)) state = 'parked';
-        else if (claude.active && claude.working) state = 'working';
-        else if (claude.active) state = 'idle';
-        else state = 'shell';
+        // The card's and the dot's reading (pane-activity.ts). The dot also
+        // rises for a finished command, a bell or a notification, which a
+        // shell or idle pane's activity can't show.
+        let state: SessionStatus = claude.activity;
+        if (dotSince !== null && (state === 'shell' || state === 'idle')) state = 'waiting';
+        const needsYou = sessionNeedsYou({ state });
+        // Ordering only: the dot's time where it rose, else (the active tab,
+        // where it never does) when the pane's activity began.
+        const awaitingSince = needsYou ? (dotSince ?? claude.since) : null;
         sessions.push({
           tabId: tab.id,
           paneId: pane.id,
@@ -571,7 +575,7 @@ export class TabManager {
             () => this.updateTabBar(),
             () => this.onCommandDone?.(tab.id, tab.title),
             () => { if (tab === this.activeTab) this.updateCheckpoint(); this.tabBar.refreshHoverCard(); },
-            () => this.tabBar.refreshHoverCard(),
+            () => { this.tabBar.refreshHoverCard(); this.onTabsChanged?.(); },
           );
           this.tabs.push(tab);
           this.contentContainer.appendChild(tab.element);
