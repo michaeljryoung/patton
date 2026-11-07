@@ -3,6 +3,8 @@ import { announce } from '../services/announcer';
 import { DEFAULTS } from '../../shared/constants';
 import type { TabFlag } from '../../shared/types';
 import type { CheckpointView } from '../services/checkpoint-clock';
+import type { HoverBlock } from '../services/tab-hover';
+import { TabHoverCard } from './tab-hover-card';
 
 export interface TabBarCallbacks {
   onSelect: (id: string) => void;
@@ -16,6 +18,10 @@ export interface TabBarCallbacks {
   onBookmarkProject?: (id: string) => void; // bookmarks sidebar
   /** The checkpoint clock was clicked: run /checkpoint in the focused pane. */
   onCheckpoint?: () => void;
+  /** What the tab hover card shows for a tab, one block per pane (focused
+   *  first), or null if the tab is gone. Given = the card is on, and tabs
+   *  carry no native `title` tooltip (it would cover the card). */
+  describeTab?: (id: string) => HoverBlock[] | null;
 }
 
 interface TabHeaderInfo {
@@ -96,6 +102,7 @@ export class TabBar {
   private heldUpdate: TabHeaderInfo[] | null = null;
   private lastActiveId: string | null = null;
   private lastTabCount = 0;
+  private hoverCard: TabHoverCard | null = null;
 
   constructor(container: HTMLElement, callbacks: TabBarCallbacks) {
     this.container = container;
@@ -118,6 +125,9 @@ export class TabBar {
     this.tabsContainer.className = 'tab-bar-tabs';
     this.tabsContainer.setAttribute('role', 'tablist');
     this.container.appendChild(this.tabsContainer);
+    if (callbacks.describeTab) {
+      this.hoverCard = new TabHoverCard(this.tabsContainer, callbacks.describeTab);
+    }
 
     // --- Keyboard navigation (WAI-ARIA roving tabindex pattern) ---
     // Arrow keys move focus between tabs and activate them; Home/End jump
@@ -312,17 +322,18 @@ export class TabBar {
         ring.className = 'tab-bar-tab-indicator parked';
         const text = parkedText(tab.parked);
         ring.setAttribute('aria-label', text);
-        ring.title = text;
+        if (!this.hoverCard) ring.title = text;
         ring.setAttribute('role', 'img');
         el.appendChild(ring);
       }
 
       // One label for screen readers and the hover tooltip: a tab's children
       // are presentational in ARIA, so the dots' own labels never reach the
-      // tab's accessible name, and the dots themselves have no tooltip.
+      // tab's accessible name, and the dots themselves have no tooltip. With
+      // the hover card on, the card is the tooltip and the tab has no title.
       const label = tabLabel(tab, needsYou, shownFlag);
       el.setAttribute('aria-label', label);
-      el.title = label;
+      if (!this.hoverCard) el.title = label;
 
       const titleSpan = document.createElement('span');
       titleSpan.className = 'tab-bar-tab-title';
@@ -486,6 +497,12 @@ export class TabBar {
     }
     this.lastActiveId = active?.id ?? null;
     this.lastTabCount = tabs.length;
+    this.hoverCard?.afterUpdate();
+  }
+
+  /** A pane's state changed: re-read the open hover card, if any. */
+  refreshHoverCard(): void {
+    this.hoverCard?.refresh();
   }
 
   /** Swap a tab's title for an inline text box. Enter or clicking away commits,
@@ -562,6 +579,7 @@ export class TabBar {
   }
 
   dispose(): void {
+    this.hoverCard?.dispose();
     this.contextMenu.dispose();
     this.container.innerHTML = '';
   }

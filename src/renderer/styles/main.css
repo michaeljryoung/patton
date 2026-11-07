@@ -836,6 +836,96 @@ select:focus-visible {
   margin: 4px 0;
 }
 
+/* --- Tab hover card ---
+ * What each pane of a tab is doing, under the tab (components/tab-hover-card.ts).
+ * Ledger look: ink on white, one hairline, square, uppercase tracked heads;
+ * colour only where the state means something (waiting, blocked, error). */
+.tab-hover-card {
+  position: fixed;
+  z-index: 1500;
+  max-width: 320px;
+  min-width: 200px;
+  background: var(--bg);
+  color: var(--ink);
+  border: 1px solid var(--hairline);
+  border-radius: 0;
+  font-family: var(--font-ui);
+  font-size: var(--ui);
+  line-height: 1.35;
+  animation: tab-hover-in 0.12s ease-out;
+}
+
+.tab-hover-card[hidden] {
+  display: none;
+}
+
+@keyframes tab-hover-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.tab-hover-block {
+  padding: 6px 10px 7px;
+}
+
+.tab-hover-block + .tab-hover-block {
+  border-top: 1px solid var(--hairline);
+}
+
+.tab-hover-head {
+  font-size: var(--head);
+  letter-spacing: var(--head-ls);
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+
+.tab-hover-title {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.tab-hover-place,
+.tab-hover-checkpoint,
+.tab-hover-tasks {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.tab-hover-state {
+  margin-top: 3px;
+}
+
+.tab-hover-state[data-activity="waiting"],
+.tab-hover-state[data-activity="blocked"] {
+  font-weight: 600;
+}
+
+.tab-hover-state[data-activity="blocked"],
+.tab-hover-state[data-activity="error"] {
+  color: var(--error-text);
+}
+
+.tab-hover-detail {
+  overflow-wrap: anywhere;
+}
+
+.tab-hover-tasks {
+  list-style: none;
+  margin: 2px 0 0;
+  padding: 0 0 0 10px;
+}
+
+.tab-hover-checkpoint {
+  margin-top: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tab-hover-card {
+    animation: none;
+  }
+}
+
 /* --- Command Palette --- */
 .command-palette-overlay {
   position: fixed;

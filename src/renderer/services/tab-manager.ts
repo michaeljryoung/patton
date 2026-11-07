@@ -7,6 +7,7 @@ import { HistoryManager } from './history-manager';
 import { DEFAULTS } from '../../shared/constants';
 import { announce } from './announcer';
 import { onProjectNamesChanged, projectName, startProjectNames } from './project-names';
+import { hoverBlocks, type HoverBlock, type HoverPaneInput } from './tab-hover';
 import type { SessionState, RendererMode, TabFlag } from '../../shared/types';
 import { orderSessions, stripClaudeGlyph, type SessionInfo, type SessionStatus } from './sessions';
 import type { ITheme } from '@xterm/xterm';
@@ -70,6 +71,7 @@ export class TabManager {
       onRenameProject: (id, name) => this.renameProject(id, name),
       onSetFlag: (id, flag) => this.setTabFlag(id, flag),
       onCheckpoint: () => { this.runCheckpoint(); },
+      describeTab: (id) => this.describeTab(id),
       // --- Bookmarks ---
       onBookmarkProject: (id) => {
         const tab = this.tabs.find(t => t.id === id);
@@ -195,7 +197,7 @@ export class TabManager {
       (pane) => this.unregisterPane(pane),
       () => this.updateTabBar(),
       () => this.onCommandDone?.(tab.id, tab.title),
-      () => { if (tab === this.activeTab) this.updateCheckpoint(); },
+      () => { if (tab === this.activeTab) this.updateCheckpoint(); this.tabBar.refreshHoverCard(); },
     );
     this.tabs.push(tab);
     this.contentContainer.appendChild(tab.element);
@@ -556,7 +558,7 @@ export class TabManager {
             (pane) => this.unregisterPane(pane),
             () => this.updateTabBar(),
             () => this.onCommandDone?.(tab.id, tab.title),
-            () => { if (tab === this.activeTab) this.updateCheckpoint(); },
+            () => { if (tab === this.activeTab) this.updateCheckpoint(); this.tabBar.refreshHoverCard(); },
           );
           this.tabs.push(tab);
           this.contentContainer.appendChild(tab.element);
@@ -707,6 +709,36 @@ export class TabManager {
   private updateCheckpoint(): void {
     const pane = this.activeTab?.focusedPane;
     this.tabBar.setCheckpoint(checkpointView(pane ? pane.checkpointSource : null, this.checkpointNudgePct));
+  }
+
+  // ---- Tab hover card (services/tab-hover.ts) ----
+
+  /** One block per pane of the tab, the focused pane first. */
+  private describeTab(id: string): HoverBlock[] | null {
+    const tab = this.tabs.find(t => t.id === id);
+    if (!tab) return null;
+    const project = tab.project ? projectName(tab.project) : null;
+    const panes = tab.panes.map((pane) => {
+      const focused = pane === tab.focusedPane;
+      const c = pane.claudeState;
+      const input: HoverPaneInput = {
+        title: pane.title,
+        cwd: pane.getCwd(),
+        project: focused ? project : null,
+        claude: {
+          activity: c.activity,
+          since: c.since,
+          title: c.title,
+          blockedKind: c.blockedKind,
+          msg: c.msg,
+          blockedTask: c.blockedTask,
+          parked: c.parked,
+        },
+        checkpoint: pane.checkpointSource,
+      };
+      return { focused, input };
+    });
+    return hoverBlocks(panes, Date.now());
   }
 
   /** The clock's click and the palette's "Checkpoint this session". */
