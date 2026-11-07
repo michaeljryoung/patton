@@ -131,6 +131,8 @@ export class BookmarksPanel {
   private dragId: string | null = null;
   // Paths whose tab is being created, so a double-click can't open two tabs.
   private opening = new Set<string>();
+  /** The row whose menu was opened last, so a rebuild can re-aim its focus return. */
+  private menuRowId: string | null = null;
   // Clicks are ignored until App.init has restored the session and run the
   // startup command: a tab opened meanwhile could become the active one and get
   // the startup command twice.
@@ -406,6 +408,16 @@ export class BookmarksPanel {
       return;
     }
 
+    // Row state counts sessions per pane, so a click goes to one of those
+    // before anything else (the first is the best-ranked: listSessions order).
+    const session = this.host.listSessions().find((s) => sessionMatchesPath(s, path));
+    if (session && this.host.goToSession(session.tabId, session.paneId)) {
+      rlog('info', '[BOOKMARK] open', { kind: 'project', label: bookmark.label, action: 'went to existing session' });
+      this.host.focusTerminal();
+      this.scheduleRefresh();
+      return;
+    }
+
     const existing = this.findTabFor(path);
     if (existing) {
       rlog('info', '[BOOKMARK] open', { kind: 'project', label: bookmark.label, action: 'activated existing tab' });
@@ -534,6 +546,12 @@ export class BookmarksPanel {
     }
 
     if (hadFocusId) this.focusRow(hadFocusId);
+    // A row menu open while the rows rebuilt would hand focus back to a row
+    // that is gone; give it the rebuilt one.
+    if (this.menuRowId && this.contextMenu.isShown) {
+      const row = this.listEl.querySelector<HTMLElement>(`.bookmark-row[data-bookmark-id="${CSS.escape(this.menuRowId)}"]`);
+      if (row) this.contextMenu.retargetFocus(row);
+    }
   }
 
   private renderRow(bookmark: Bookmark, rowState: RowState, canDrag: boolean): HTMLElement {
@@ -759,6 +777,7 @@ export class BookmarksPanel {
   private showRowMenu(bookmark: Bookmark, x: number, y: number, row: HTMLElement, viaKeyboard: boolean): void {
     const sameKind = this.bookmarks.filter((b) => b.kind === bookmark.kind);
     const pos = sameKind.findIndex((b) => b.id === bookmark.id);
+    this.menuRowId = bookmark.id;
     this.contextMenu.show(x, y, [
       { label: bookmark.kind === 'project' ? 'Open' : 'Open in Browser', action: () => { this.open(bookmark).catch(console.error); } },
       { label: 'Rename…', action: () => this.startRename(bookmark) },

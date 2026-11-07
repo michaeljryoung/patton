@@ -128,6 +128,17 @@ export class ContextMenu {
     }
   }
 
+  /** Whether the menu is showing. */
+  get isShown(): boolean {
+    return this.overlay.classList.contains('visible');
+  }
+
+  /** Point the focus return at a replacement control, when the one the menu
+   *  was opened from has been rebuilt underneath it. */
+  retargetFocus(el: HTMLElement): void {
+    if (this.isShown && this.returnFocusTo) this.returnFocusTo = el;
+  }
+
   hide(): void {
     this.overlay.classList.remove('visible');
     const target = this.returnFocusTo;
