@@ -32,7 +32,7 @@ export function createWindow(ptyManager?: PtyManager): BrowserWindow {
     // The chrome's own ground (main.css --bg) so the first paint doesn't flash.
     backgroundColor: nativeTheme.shouldUseDarkColors ? WINDOW_BG.dark : WINDOW_BG.light,
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
+      preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,

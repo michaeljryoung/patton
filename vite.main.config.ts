@@ -10,6 +10,9 @@ export default defineConfig({
   build: {
     rollupOptions: {
       external: ['node-pty', 'electron-store'],
+      // Vite 8 (Rolldown) omits "use strict" from CJS output by default; Vite 5
+      // emitted it, so keep the main process in strict mode as before.
+      output: { strict: true },
     },
   },
 });
