@@ -6,6 +6,7 @@ import { ConfirmDialog } from '../components/confirm-dialog';
 import { HistoryManager } from './history-manager';
 import { DEFAULTS } from '../../shared/constants';
 import { announce } from './announcer';
+import { rlog } from './renderer-logger';
 import { onProjectNamesChanged, projectName, startProjectNames } from './project-names';
 import { hoverBlocks, type HoverBlock, type HoverPaneInput } from './tab-hover';
 import type { SessionState, RendererMode, TabFlag } from '../../shared/types';
@@ -429,6 +430,9 @@ export class TabManager {
   }
 
   async closeActivePane(): Promise<void> {
+    // ⌘W while the close dialog is already up confirms it (⌘W twice closes)
+    // instead of opening a second dialog over the first.
+    if (this.confirmDialog.confirmByShortcut()) return;
     const tab = this.activeTab;
     if (!tab) return;
     const closingWholeTab = tab.panes.length <= 1;
@@ -473,15 +477,23 @@ export class TabManager {
 
   /** Shared "are you sure you want to close this?" prompt for user-initiated
    *  closes. Not used by automatic closes (PTY exit), which must not prompt. */
-  private confirmClose(kind: 'tab' | 'pane', title: string): Promise<boolean> {
+  private async confirmClose(kind: 'tab' | 'pane', title: string): Promise<boolean> {
     const name = title?.trim();
     const subject = name ? `“${name}”` : `this ${kind}`;
-    return this.confirmDialog.confirm({
+    // Close is focused (Enter closes) and ⌘W again confirms: Michael's
+    // "Command+W, press it twice, and it will close immediately".
+    const defaultFocus = 'confirm';
+    rlog('info', '[CLOSE] confirm shown', { kind, defaultFocus });
+    const ok = await this.confirmDialog.confirm({
       title: kind === 'tab' ? 'Close this tab?' : 'Close this pane?',
       message: `Closing ${subject} ends the shell and any process running inside it.`,
       confirmLabel: kind === 'tab' ? 'Close Tab' : 'Close Pane',
       cancelLabel: 'Cancel',
+      defaultFocus,
+      shortcutConfirms: true,
     });
+    rlog('info', '[CLOSE] confirm answered', { kind, ok, by: this.confirmDialog.lastAnswer });
+    return ok;
   }
 
   splitVertical(): void {
