@@ -6,7 +6,7 @@
 **Goal:** (S44 → v1.15) A tile board of every project in Michael's project list, shown in each new empty tab: themes he names as tinted areas, tiles that snap to a grid and drag between themes, worktrees inside their project's tile, + Project and + Theme, and a click that opens the project with Claude started. Michael chose it from three sketches made in the Claude Launcher session (spec `~/Projects/claude-launcher/docs/project-board-spec.md`, outside this repo).
 **Done when:** v1.15.x is released (cask sha matches the DMG) and installed from its tag, after lint, `tsc`, the package build, a node suite on the main-process module (parse, nesting, validation, and a project-list append that `cc`'s own parser reads back) and a jsdom suite on the real board (tiles from a fixture list, drag between themes and theme reorder saved, a new tab shows it while restored and bookmark tabs don't) all pass and a fresh review leaves no open major finding; then live: ⌘T shows the board with his themes and a tile click starts Claude in its project.
 _Previous goals: S43 → v1.14 (find, checkpoint, Claude's own state) and S40 (signals, image paste, bookmarks, look) reached except their live checks, which stay below._
-**Last verified:** 2026-11-07 15:05 (Session 44, run from the Claude Launcher session: v1.14.0 tag and /Applications install confirmed; P7 added)
+**Last verified:** 2026-11-07 16:40 (Session 44, run from the Claude Launcher session: P7 shipped as v1.15.0, cask checked, installed from its tag; live checks open)
 
 **Retired:** 12 finished nodes, in `docs/map-archive.md`
 
@@ -42,13 +42,13 @@ flowchart TD
     v114_verify[live checks v1.14]:::todo
   end
   subgraph P7["Phase 7 — S44 → v1.15: project board"]
-    board_main[main: list, nesting, layout, IPC]:::todo
-    board_ui[board component]:::todo
-    board_newtab[new-tab wiring + settings]:::todo
-    board_checks[node + jsdom suites]:::todo
-    board_review[fresh review + fixes]:::todo
-    board_seed[seed Michael's themes]:::todo
-    v115_release[release + install v1.15]:::todo
+    board_main[main: list, nesting, layout, IPC]:::done
+    board_ui[board component]:::done
+    board_newtab[new-tab wiring + settings]:::done
+    board_checks[node + jsdom suites]:::done
+    board_review[fresh review + fixes]:::done
+    board_seed[seed Michael's themes]:::done
+    v115_release[release + install v1.15]:::done
     v115_verify[live checks v1.15]:::todo
   end
   subgraph P4["Phase 4 — Look"]
@@ -129,13 +129,13 @@ flowchart TD
 | `v114_release` | Each wave reviewed fresh (no open major), merged, pushed; CI release; cask checksum verified; installed from the tag | done | `ckpt_clock`, `bookmark_state`, `palette_sessions`, `osc8_links`, `hover_card` | tag `v1.14.0` (run 42383125028; cask 1.14.0, sha `b7cfa349…` matches the DMG); installed from the tag 14:48, reports 1.14.0 |
 | `v114_verify` | The live checks listed under Done when | todo | `v114_release` | — |
 | `merge_release` | Merge `feat/image-paste` and `feat/bookmarks` into main, code review, `npm run lint && npm run package`, release v1.11.0, Homebrew step green | done | `parked_state`, `wake_yellow`, `hook_install`, `paste_thumbnail`, `bookmark_open` | tag `v1.11.0` (release run 42203278111, macos-15; cask 1.11.0 pushed by CI) |
-| `board_main` | Main process: read the project list (a markdown table; path between the first backtick pair, as `cc` reads it), nest sub-projects (a folder inside a listed project, or a linked worktree whose main repo is listed), last-session time from `~/.claude/projects/<slug>`, layout file in userData, validated and rate-limited IPC, + Project appends a row inside the table (atomic write) | todo | — | — |
-| `board_ui` | Renderer: board component (areas grid, two-column tiles, wide tiles with sub-project chips, a tint per theme, search, + Theme / + Project / Plain terminal, area and tile menus, drag with the blue line, keyboard route, live state from the v1.14 activity) | todo | `board_main` | — |
-| `board_newtab` | Shown in each new empty tab (⌘T, palette, tab bar) while the setting is on and the list file exists; never in restored, bookmark, split or launch tabs; a tile opens or activates its project through one shared `openProject` (the bookmarks panel reuses it) and the board's tab goes; Settings: board on/off, list file | todo | `board_ui` | — |
-| `board_checks` | Node suite on `board_main` (parse, nesting, validation, append read back by `cc`'s parser) and jsdom suite on the real board and new-tab wiring, generic fixtures only (public repo); lint, `tsc`, `PATTON_NO_INSTALL=1` package | todo | `board_main`, `board_ui`, `board_newtab` | — |
-| `board_review` | Fresh code review of the whole feature, a fix pass, `board_checks` re-run | todo | `board_checks` | — |
-| `board_seed` | Michael's layout file seeded from the sketch's grouping (seven themes with tints), checked by a fresh-eyes agent; lives in userData, never in the repo | todo | `board_main` | — |
-| `v115_release` | ff-merge, push, CI release v1.15.x, cask sha matches the DMG, installed from the tag | todo | `board_review` | — |
+| `board_main` | Main process: read the project list (a markdown table; path between the first backtick pair, as `cc` reads it), nest sub-projects (a folder inside a listed project, or a linked worktree whose main repo is listed), last-session time from `~/.claude/projects/<slug>`, layout file in userData, validated and rate-limited IPC, + Project appends a row inside the table (atomic write) | done | — | `src/main/project-board.ts` · `scripts/check-project-board.mjs` (132 with `CC_LAUNCHER`, 119 without) · `e696151` · `7ee8a16` · `63e3922` · `33fbd86` |
+| `board_ui` | Renderer: board component (areas grid, two-column tiles, wide tiles with sub-project chips, a tint per theme, search, + Theme / + Project / Plain terminal, area and tile menus, drag with the blue line, keyboard route, live state from the v1.14 activity) | done | `board_main` | `src/renderer/components/project-board.ts` · `src/renderer/styles/board.css` · `scripts/check-project-board-ui.mjs` (125, `JSDOM_DIR`) · `1277ffd` · `0c59110` · `9d91bdd` |
+| `board_newtab` | Shown in each new empty tab (⌘T, palette, tab bar) while the setting is on and the list file exists; never in restored, bookmark, split or launch tabs; a tile opens or activates its project through one shared `openProject` (the bookmarks panel reuses it) and the board's tab goes; Settings: board on/off, list file | done | `board_ui` | `src/renderer/services/project-boards.ts` · `src/renderer/services/open-project.ts` · `scripts/check-project-board-wire.mjs` (59) · `e32b6cd` · `938342d` · `665329f` |
+| `board_checks` | Node suite on `board_main` (parse, nesting, validation, append read back by `cc`'s parser) and jsdom suite on the real board and new-tab wiring, generic fixtures only (public repo); lint, `tsc`, `PATTON_NO_INSTALL=1` package | done | `board_main`, `board_ui`, `board_newtab` | the three scripts above all green; lint, `tsc` clean; `PATTON_NO_INSTALL=1` package, asar 16:33:58 after the last commit · `9d91bdd` |
+| `board_review` | Fresh code review of the whole feature, a fix pass, `board_checks` re-run | done | `board_checks` | review 1: 2 major + 10 minor, all fixed (`7ee8a16`, `665329f`, `0c59110`); final review: ship, 3 minor + 1 race, fixed (`63e3922`, `33fbd86`, `9d91bdd`); left: two adds whose list updates reach a board out of order (reasoned, very unlikely, untested) |
+| `board_seed` | Michael's layout file seeded from the sketch's grouping (seven themes with tints), checked by a fresh-eyes agent; lives in userData, never in the repo | done | `board_main` | userData `project-board.json` written 2026-11-07 16:34 (6 themes, 39 tiles, 7 sub-projects nested), passed the real `validateLayout` + `loadBoard`; grouping checked by a fresh-eyes agent · `src/main/project-board.ts::validateLayout` |
+| `v115_release` | ff-merge, push, CI release v1.15.x, cask sha matches the DMG, installed from the tag | done | `board_review` | tag `v1.15.0` → `9d91bdd` (run 42391977593 success); cask 1.15.0 sha `9b37f9ad…` matches the DMG; installed from the tag 16:37 (asar, CFBundleShortVersionString 1.15.0, codesign ok) |
 | `v115_verify` | Live: ⌘T shows the board with his themes; a tile dragged to another theme stays there after a relaunch; a tile click starts Claude in its project; Plain terminal leaves a plain shell | todo | `v115_release`, `board_seed` | — |
 <!-- MAP:END -->
 
