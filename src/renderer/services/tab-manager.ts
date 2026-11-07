@@ -457,10 +457,10 @@ export class TabManager {
           worktree: project?.worktree ?? null,
           cwd: pane.getCwd(),
           tabTitle: tab.title,
+          hasCustomTitle: tab.hasCustomTitle,
           paneTitle: stripClaudeGlyph(pane.title),
           state,
           awaitingSince,
-          current: tab === this.activeTab && pane === tab.focusedPane,
         });
       }
     });

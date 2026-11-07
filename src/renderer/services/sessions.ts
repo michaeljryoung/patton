@@ -26,12 +26,12 @@ export interface SessionInfo {
   cwd: string;
   /** What the tab is called (may be a name the user typed). */
   tabTitle: string;
+  /** The user named the tab, and that name wins over the project's. */
+  hasCustomTitle: boolean;
   /** The title the program in the pane set, without Claude Code's glyph. */
   paneTitle: string;
   state: SessionStatus;
   awaitingSince: number | null;
-  /** The pane is in the active tab and focused. */
-  current: boolean;
 }
 
 const STATE_RANK: Record<SessionStatus, number> = { waiting: 0, parked: 1, working: 2, idle: 2, shell: 2 };
@@ -57,10 +57,22 @@ export function stripClaudeGlyph(title: string): string {
   return title.replace(/^[◐◑✳]\s*/u, '').trim();
 }
 
-/** "patton ⎇ feat-x", else the tab's title. */
+/** A project's display title: "patton", or "patton ⎇ feat-x" in a linked
+ *  worktree. The one place the format is written (tab titles and the palette). */
+export function formatProjectTitle(name: string, worktree: { name: string } | null | undefined): string {
+  return worktree ? `${name} \u2387 ${worktree.name}` : name;
+}
+
+/**
+ * What the palette calls a session: the tab's own name if the user typed one;
+ * else the project ("patton ⎇ feat-x"); else, in a split, the pane's own title
+ * or folder (the tab's title belongs to the focused pane); else the tab's title.
+ */
 export function sessionName(s: SessionInfo): string {
-  if (!s.projectName) return s.tabTitle;
-  return s.worktree ? `${s.projectName} ⎇ ${s.worktree.name}` : s.projectName;
+  if (s.hasCustomTitle) return s.tabTitle;
+  if (s.projectName) return formatProjectTitle(s.projectName, s.worktree);
+  if (s.paneCount > 1) return s.paneTitle || s.cwd.split('/').filter(Boolean).pop() || s.tabTitle;
+  return s.tabTitle;
 }
 
 /** "4 min", "1 h 5 min", "<1 min". */

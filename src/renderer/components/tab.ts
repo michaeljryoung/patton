@@ -4,6 +4,7 @@ import { SearchOverlay } from './search-overlay';
 import { HistoryManager } from '../services/history-manager';
 import { projectName } from '../services/project-names';
 import { rlog } from '../services/renderer-logger';
+import { formatProjectTitle } from '../services/sessions';
 import {
   splitPane as splitPaneInTree,
   closePane as closePaneInTree,
@@ -30,8 +31,7 @@ function sameProject(a: ProjectInfo | null, b: ProjectInfo | null): boolean {
 /** A project's tab title: its name, plus the worktree for a linked worktree
  *  ("patton ⎇ feat-x"). */
 export function projectTitle(project: ProjectInfo): string {
-  const name = projectName(project);
-  return project.worktree ? `${name} \u2387 ${project.worktree.name}` : name;
+  return formatProjectTitle(projectName(project), project.worktree);
 }
 
 export class Tab {
@@ -219,13 +219,17 @@ export class Tab {
 
   /** The project this pane's folder belongs to, once looked up. */
   paneProject(pane: Pane): ProjectInfo | null {
-    return this._paneProjects.get(pane) ?? (pane === this._focusedPane ? this._project : null);
+    // A resolved null ("not in a project") is an answer; only a pane not yet
+    // looked up falls back to the tab's project.
+    if (this._paneProjects.has(pane)) return this._paneProjects.get(pane) ?? null;
+    return pane === this._focusedPane ? this._project : null;
   }
 
   /** Focus one of this tab's panes by id (palette, bookmarks). False if it's gone. */
   focusPaneById(paneId: string): boolean {
     const pane = this._panes.find((p) => p.id === paneId);
     if (!pane) return false;
+    if (this._zoomed) this.toggleZoom(); // a zoomed tab shows only its focused pane
     this.setFocusedPane(pane);
     requestAnimationFrame(() => pane.focus());
     return true;
@@ -457,6 +461,7 @@ export class Tab {
 
       // Focus the new pane after DOM is rebuilt
       requestAnimationFrame(() => newPane.focus());
+      this.onTitleChanged?.(); // the bookmarks sidebar counts panes
     } finally {
       this.splitting = false;
     }
@@ -500,6 +505,7 @@ export class Tab {
     if (wasClosingFocused) {
       requestAnimationFrame(() => this._focusedPane.focus());
     }
+    this.onTitleChanged?.(); // the bookmarks sidebar counts panes
   }
 
   private handlePaneSwap(sourceId: string, targetId: string): void {

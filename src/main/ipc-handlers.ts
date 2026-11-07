@@ -230,7 +230,8 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
   // A tab is named after the project its folder belongs to (see projects.ts).
   // Renaming a project updates its tabs in every window.
   // A lookup is a handful of existsSync calls, so the cap is generous: restoring
-  // a full session (100 tabs, the session cap) looks up every tab at once.
+  // a full session (100 tabs, the session cap) looks up every tab at once, and
+  // now every pane too (up to 5 per tab).
   // Failures throw rather than return null, so the renderer can tell "couldn't
   // check" (keep the current name) from "not in a project".
   const projectResolveLimiter = new RateLimiter(100);
