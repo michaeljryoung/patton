@@ -4,6 +4,17 @@ export interface PaletteAction {
   label: string;
   shortcut?: string;
   action: string;
+  /** Listed only once something is typed (open sessions), so the empty
+   *  palette stays the command list it always was. */
+  searchOnly?: boolean;
+  /** What a query matches, lower-cased; defaults to the label. */
+  match?: string;
+  /** The status glyph before the label: green dot or hollow ring. */
+  glyph?: 'waiting' | 'parked';
+  /** Muted text on the right, where a command's shortcut goes. */
+  detail?: string;
+  /** The option's accessible name, when the label alone doesn't say enough. */
+  ariaLabel?: string;
 }
 
 export class CommandPalette {
@@ -40,8 +51,8 @@ export class CommandPalette {
     this.input = document.createElement('input');
     this.input.type = 'text';
     this.input.className = 'command-palette-input';
-    this.input.placeholder = 'Type a command...';
-    this.input.setAttribute('aria-label', 'Search commands');
+    this.input.placeholder = 'Type a command or a session…';
+    this.input.setAttribute('aria-label', 'Search commands and open sessions');
     this.input.setAttribute('autocomplete', 'off');
     this.input.setAttribute('spellcheck', 'false');
     this.input.setAttribute('role', 'combobox');
@@ -107,7 +118,7 @@ export class CommandPalette {
 
   show(actions: PaletteAction[]): void {
     this.actions = actions;
-    this.filteredActions = [...actions];
+    this.filteredActions = actions.filter((a) => !a.searchOnly);
     this.selectedIndex = 0;
     this.input.value = '';
     this.renderActions();
@@ -149,12 +160,14 @@ export class CommandPalette {
     const query = this.input.value.toLowerCase().trim();
 
     if (!query) {
-      this.filteredActions = [...this.actions];
+      this.filteredActions = this.actions.filter((a) => !a.searchOnly);
     } else {
-      // Fuzzy substring match
-      this.filteredActions = this.actions.filter(action =>
-        action.label.toLowerCase().includes(query)
-      );
+      // Every word of the query must appear somewhere ("patton wait").
+      const words = query.split(/\s+/);
+      this.filteredActions = this.actions.filter((action) => {
+        const text = action.match ?? action.label.toLowerCase();
+        return words.every((w) => text.includes(w));
+      });
     }
 
     this.selectedIndex = 0;
@@ -187,13 +200,28 @@ export class CommandPalette {
         item.setAttribute('aria-selected', 'false');
       }
 
+      if (action.ariaLabel) item.setAttribute('aria-label', action.ariaLabel);
+
+      if (action.searchOnly) {
+        item.classList.add('session');
+        const glyph = document.createElement('span');
+        glyph.className = `command-palette-glyph${action.glyph ? ` ${action.glyph}` : ''}`;
+        glyph.setAttribute('aria-hidden', 'true');
+        item.appendChild(glyph);
+      }
+
       const label = document.createElement('span');
       label.className = 'command-palette-label';
       label.textContent = action.label;
 
       item.appendChild(label);
 
-      if (action.shortcut) {
+      if (action.detail) {
+        const detail = document.createElement('span');
+        detail.className = 'command-palette-shortcut command-palette-detail';
+        detail.textContent = action.detail;
+        item.appendChild(detail);
+      } else if (action.shortcut) {
         const shortcut = document.createElement('span');
         shortcut.className = 'command-palette-shortcut';
         shortcut.textContent = action.shortcut;

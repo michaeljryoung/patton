@@ -475,6 +475,18 @@ html, body {
   background: var(--blue);
 }
 
+/* A session of the project waits for you (green dot) or is parked on its own
+ * background work (hollow ring): the tab bar's glyphs, without the pulse. */
+.bookmark-row.has-waiting .bookmark-dot {
+  background: var(--prompt-ready);
+  box-shadow: 0 0 0 1px var(--dot-edge);
+}
+
+.bookmark-row.has-parked .bookmark-dot {
+  background: transparent;
+  border: 1.5px solid var(--parked);
+}
+
 .bookmark-row.is-open .bookmark-label {
   font-weight: 600;
 }
@@ -894,6 +906,53 @@ select:focus-visible {
   color: var(--muted);
   font-family: var(--font-mono);
   margin-left: 16px;
+}
+
+/* Open sessions (listed once something is typed): a glyph slot before the
+ * label — the tab bar's green dot for "waiting for you", its hollow ring for
+ * "parked", empty otherwise — and the pane's own title on the right. Static:
+ * the tab bar already pulses. */
+.command-palette-item.session {
+  justify-content: flex-start;
+  gap: 8px;
+}
+
+.command-palette-item.session .command-palette-label {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.command-palette-glyph {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.command-palette-glyph.waiting {
+  background: var(--prompt-ready);
+  box-shadow: 0 0 0 1px var(--dot-edge);
+}
+
+.command-palette-glyph.parked {
+  border: 1.5px solid var(--parked);
+}
+
+.command-palette-detail {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: right;
+  font-family: var(--font-ui);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.command-palette-item.selected .command-palette-glyph.parked {
+  border-color: currentColor;
 }
 
 .command-palette-item.selected .command-palette-shortcut {

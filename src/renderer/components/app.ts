@@ -4,7 +4,7 @@ import { NotificationSound } from '../services/notification-sound';
 import { getThemeById } from '../services/themes';
 import { announce } from '../services/announcer';
 import { SettingsPanel } from './settings-panel';
-import { CommandPalette } from './command-palette';
+import { CommandPalette, type PaletteAction } from './command-palette';
 import { QuickTerminal } from './quick-terminal';
 import { NotesPanel } from './notes-panel';
 import { BookmarksPanel } from './bookmarks-panel';
@@ -13,6 +13,8 @@ import { Onboarding } from './onboarding';
 import { DEFAULTS } from '../../shared/constants';
 import { setConfirmMultilinePaste } from '../services/paste-confirm';
 import { paletteShortcuts, displayKeys } from '../../shared/shortcuts';
+import { parseSessionAction, sessionPaletteActions } from '../services/session-palette';
+import { rlog } from '../services/renderer-logger';
 
 export class App {
   private tabManager: TabManager;
@@ -112,6 +114,8 @@ export class App {
       getActiveTab: () => this.tabManager.getActiveTab(),
       switchToTab: (id) => this.tabManager.switchToId(id),
       createTab: (cwd, opts) => this.tabManager.createTab(cwd, opts),
+      listSessions: () => this.tabManager.listSessions(),
+      goToSession: (tabId, paneId) => this.tabManager.goToSession(tabId, paneId),
       focusTerminal: () => this.tabManager.getActiveTab()?.focusedPane.focus(),
     });
 
@@ -393,7 +397,7 @@ export class App {
     );
   }
 
-  private getPaletteActions(): { label: string; shortcut?: string; action: string }[] {
+  private getPaletteActions(): PaletteAction[] {
     return [
       // Generated from the shortcuts registry \u2014 adding a `palette: true` entry
       // there is all it takes to list a command here.
@@ -408,10 +412,21 @@ export class App {
           ? 'Switch to Compatibility Renderer (fixes garbled text)'
           : 'Switch to GPU Renderer (fast)',
         action: 'toggle-renderer' },
+      // Open sessions, matched only once something is typed; after the
+      // commands, so a typed command name still runs on Enter as before.
+      ...sessionPaletteActions(this.tabManager.listSessions(), Date.now()),
     ];
   }
 
   private executeAction(actionId: string): void {
+    const session = parseSessionAction(actionId);
+    if (session) {
+      const { tabId, paneId } = session;
+      const ok = this.tabManager.goToSession(tabId, paneId);
+      rlog('info', '[PALETTE] go to session', { tabId, paneId, ok });
+      if (!ok) announce('That session has closed', 'assertive');
+      return;
+    }
     const tab = this.tabManager.getActiveTab();
     switch (actionId) {
       case 'new-tab':

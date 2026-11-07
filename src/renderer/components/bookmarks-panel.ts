@@ -5,6 +5,7 @@ import { announce } from '../services/announcer';
 import { projectName } from '../services/project-names';
 import { rlog } from '../services/renderer-logger';
 import { runStartupCommand } from '../services/startup-command';
+import { sessionMatchesPath, type SessionInfo } from '../services/sessions';
 import { ConfirmDialog } from './confirm-dialog';
 import { ContextMenu } from './context-menu';
 import type { Tab } from './tab';
@@ -30,8 +31,32 @@ export interface BookmarksHost {
   /** `forProject` tells the new tab's shell which project it was opened for
    *  (PATTON_PROJECT_DIR), so a launcher can open that project directly. */
   createTab(cwd: string, opts?: { forProject?: boolean }): Promise<Tab>;
+  /** Open sessions (every pane), waiting first, longest wait first. */
+  listSessions(): SessionInfo[];
+  /** Activate a tab and focus one of its panes; false if either has gone. */
+  goToSession(tabId: string, paneId: string): boolean;
   /** Hand keyboard focus back to the active terminal pane. */
   focusTerminal(): void;
+}
+
+/** A project row's live state: its tab, and its sessions by state. */
+interface RowState {
+  isOpen: boolean;
+  isCurrent: boolean;
+  /** Sessions (panes) in the project, and how many wait for you or are parked. */
+  open: number;
+  waiting: number;
+  parked: number;
+}
+
+const CLOSED: RowState = { isOpen: false, isCurrent: false, open: 0, waiting: 0, parked: 0 };
+
+/** The row's second line while sessions are open: "2 open · 1 waiting". */
+function countText(state: RowState): string {
+  const parts = [`${state.open} open`];
+  if (state.waiting) parts.push(`${state.waiting} waiting`);
+  if (state.parked) parts.push(`${state.parked} parked`);
+  return parts.join(' \u00b7 ');
 }
 
 function folderName(path: string): string {
@@ -368,6 +393,19 @@ export class BookmarksPanel {
       return;
     }
 
+    // A session of this project that's waiting for you comes first, the
+    // longest wait first (listSessions is already in that order).
+    const waiting = this.host.listSessions().find((s) => s.state === 'waiting' && sessionMatchesPath(s, path));
+    if (waiting && this.host.goToSession(waiting.tabId, waiting.paneId)) {
+      rlog('info', '[BOOKMARK] open waiting', {
+        label: bookmark.label, tabId: waiting.tabId, paneId: waiting.paneId,
+        waitedMs: waiting.awaitingSince ? Date.now() - waiting.awaitingSince : null,
+      });
+      this.host.focusTerminal();
+      this.scheduleRefresh();
+      return;
+    }
+
     const existing = this.findTabFor(path);
     if (existing) {
       rlog('info', '[BOOKMARK] open', { kind: 'project', label: bookmark.label, action: 'activated existing tab' });
@@ -430,12 +468,20 @@ export class BookmarksPanel {
 
     const tabs = this.host.getTabs();
     const active = this.host.getActiveTab();
-    const states = new Map<string, { isOpen: boolean; isCurrent: boolean }>();
+    const sessions = this.host.listSessions();
+    const states = new Map<string, RowState>();
     for (const bookmark of this.bookmarks) {
       const path = bookmark.kind === 'project' ? bookmark.path : undefined;
-      const isOpen = !!path && tabs.some((t) => this.tabMatches(t, path));
+      const mine = path ? sessions.filter((s) => sessionMatchesPath(s, path)) : [];
+      const isOpen = !!path && (mine.length > 0 || tabs.some((t) => this.tabMatches(t, path)));
       const isCurrent = isOpen && !!path && !!active && this.tabMatches(active, path);
-      states.set(bookmark.id, { isOpen, isCurrent });
+      states.set(bookmark.id, {
+        isOpen,
+        isCurrent,
+        open: mine.length,
+        waiting: mine.filter((s) => s.state === 'waiting').length,
+        parked: mine.filter((s) => s.state === 'parked').length,
+      });
     }
     const signature = JSON.stringify([this.bookmarks, [...states.entries()]]);
     if (signature === this.lastRendered) return;
@@ -481,8 +527,7 @@ export class BookmarksPanel {
       const ul = document.createElement('ul');
       ul.className = 'bookmarks-items';
       for (const bookmark of items) {
-        const state = states.get(bookmark.id) ?? { isOpen: false, isCurrent: false };
-        ul.appendChild(this.renderRow(bookmark, state.isOpen, state.isCurrent, items.length > 1));
+        ul.appendChild(this.renderRow(bookmark, states.get(bookmark.id) ?? CLOSED, items.length > 1));
       }
       section.appendChild(ul);
       this.listEl.appendChild(section);
@@ -491,7 +536,8 @@ export class BookmarksPanel {
     if (hadFocusId) this.focusRow(hadFocusId);
   }
 
-  private renderRow(bookmark: Bookmark, isOpen: boolean, isCurrent: boolean, canDrag: boolean): HTMLElement {
+  private renderRow(bookmark: Bookmark, rowState: RowState, canDrag: boolean): HTMLElement {
+    const { isOpen, isCurrent } = rowState;
     const li = document.createElement('li');
     const row = document.createElement('button');
     row.type = 'button';
@@ -503,11 +549,18 @@ export class BookmarksPanel {
     row.setAttribute('aria-haspopup', 'menu');
 
     row.classList.toggle('is-missing', bookmark.missing === true);
+    // While the project has sessions open, the second line counts them
+    // ("2 open · 1 waiting"); the folder stays in the tooltip.
+    const counts = bookmark.kind === 'project' && !bookmark.missing && rowState.open > 0 ? countText(rowState) : '';
     const subtitle = bookmark.kind === 'project'
-      ? (bookmark.missing ? 'Folder missing' : (bookmark.displayPath ?? bookmark.path ?? ''))
+      ? (bookmark.missing ? 'Folder missing' : counts || (bookmark.displayPath ?? bookmark.path ?? ''))
       : hostOf(bookmark.url ?? '');
-    const state = isCurrent ? ', open in the active tab' : isOpen ? ', open' : '';
+    const state = isCurrent ? ', open in the active tab' : isOpen && !counts ? ', open' : '';
     row.setAttribute('aria-label', `${bookmark.label}, ${subtitle}${state}`);
+    // Green dot: a session here waits for you; hollow ring: one is parked on
+    // its own background work. The tab bar's glyphs, static here.
+    row.classList.toggle('has-waiting', rowState.waiting > 0);
+    row.classList.toggle('has-parked', rowState.waiting === 0 && rowState.parked > 0);
     row.title = bookmark.kind === 'project' ? (bookmark.path ?? '') : (bookmark.url ?? '');
     if (bookmark.missing) row.setAttribute('aria-disabled', 'true');
 
