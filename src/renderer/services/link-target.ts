@@ -4,7 +4,8 @@
  * (targets a program asked us to link). Pure functions, no DOM, no IPC.
  *
  * Main re-validates everything it receives (ipc-handlers.ts: openWebUrl and
- * APP_OPEN_IN_EDITOR); these rules are the first gate, not the only one.
+ * APP_OPEN_IN_EDITOR) and decides whether a file is opened or only revealed
+ * (main/link-open-policy.ts); these rules are the first gate, not the only one.
  */
 
 import type { FileLinkAction } from '../../shared/types';
