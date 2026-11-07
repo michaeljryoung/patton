@@ -15,6 +15,7 @@ import { setProgramStatusEnabled } from '../services/program-status-switch';
 import { paletteShortcuts, displayKeys } from '../../shared/shortcuts';
 import { parseSessionAction, sessionPaletteActions } from '../services/session-palette';
 import { rlog } from '../services/renderer-logger';
+import { loadSystemFonts } from '../services/system-fonts';
 import type { OpenProjectHost } from '../services/open-project';
 import { ProjectBoards } from '../services/project-boards';
 
@@ -69,8 +70,7 @@ export class App {
         this.quickTerminal.setFontSize(this.fontSize);
       }
       if (settings.fontFamily !== undefined) {
-        this.tabManager.setFontFamily(settings.fontFamily);
-        this.quickTerminal.setFontFamily(settings.fontFamily);
+        this.applyFontFamily(settings.fontFamily);
       }
       if (settings.scrollback !== undefined) {
         this.tabManager.setScrollback(settings.scrollback);
@@ -178,16 +178,19 @@ export class App {
   }
 
   async init(): Promise<void> {
-    // Load settings and history in parallel (two independent IPC calls)
+    // Load settings, history and the Mac's SF Mono in parallel. The fonts
+    // must be registered before the first terminal below is created: xterm
+    // measures its cell when fontFamily changes and never re-measures when a
+    // font arrives later. No terminal exists before this point (tabs are
+    // created further down, the quick terminal on first show).
     const [settings] = await Promise.all([
       window.patton.settings.get(),
       this.tabManager.loadHistory(),
+      loadSystemFonts(),
     ]);
     this.fontSize = settings.fontSize;
     this.tabManager.setFontSize(this.fontSize);
-    if (settings.fontFamily) {
-      this.tabManager.setFontFamily(settings.fontFamily);
-    }
+    this.applyFontFamily(settings.fontFamily || DEFAULTS.FONT_FAMILY);
     if (settings.scrollback) {
       this.tabManager.setScrollback(settings.scrollback);
     }
@@ -219,7 +222,6 @@ export class App {
     if (settings.shell) this.quickTerminal.setShell(settings.shell);
     this.quickTerminal.setHistoryManager(this.tabManager['sharedHistory']);
     this.quickTerminal.setFontSize(this.fontSize);
-    if (settings.fontFamily) this.quickTerminal.setFontFamily(settings.fontFamily);
     if (settings.scrollback) this.quickTerminal.setScrollback(settings.scrollback);
     this.quickTerminal.setRenderer(settings.renderer || 'dom');
 
@@ -564,6 +566,17 @@ export class App {
         this.settingsPanel.toggle();
         break;
     }
+  }
+
+  /**
+   * One font family for every terminal (tabs and the quick terminal), the
+   * compose box (via Pane) and the app's own mono text (`--font-mono`: the
+   * board, settings fields), so a change is seen everywhere at once.
+   */
+  private applyFontFamily(family: string): void {
+    this.tabManager.setFontFamily(family);
+    this.quickTerminal.setFontFamily(family);
+    document.documentElement.style.setProperty('--font-mono', family);
   }
 
   private applyTheme(themeId: string): void {

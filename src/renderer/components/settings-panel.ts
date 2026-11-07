@@ -4,6 +4,7 @@ import { settingsShortcuts, displayKeys, acceleratorToDisplay } from '../../shar
 import { trapFocus } from '../services/focus-trap';
 import { rlog } from '../services/renderer-logger';
 import { wakeCommandOf } from '../services/board-wake';
+import { buildFontOptions, fontDraws } from '../services/font-choices';
 
 export class SettingsPanel {
   private overlay: HTMLElement;
@@ -45,14 +46,7 @@ export class SettingsPanel {
           </div>
           <div class="settings-group">
             <label class="settings-label" for="setting-font-family">Font Family</label>
-            <select class="settings-input" id="setting-font-family">
-              <option value="'SF Mono', 'Menlo', 'Monaco', 'Courier New', monospace">SF Mono</option>
-              <option value="'Menlo', 'Monaco', 'Courier New', monospace">Menlo</option>
-              <option value="'JetBrains Mono', 'Fira Code', monospace">JetBrains Mono</option>
-              <option value="'Fira Code', monospace">Fira Code</option>
-              <option value="'Monaco', 'Courier New', monospace">Monaco</option>
-              <option value="'Courier New', monospace">Courier New</option>
-            </select>
+            <select class="settings-input" id="setting-font-family"></select>
           </div>
           <div class="settings-group">
             <label class="settings-label" for="setting-scrollback">Scrollback Lines</label>
@@ -245,6 +239,8 @@ export class SettingsPanel {
     });
 
     listen(fontFamilyInput, 'change', () => {
+      const chosen = fontFamilyInput.selectedOptions[0];
+      rlog('info', '[FONT] family set', { family: fontFamilyInput.value, available: chosen?.dataset.available === 'true' });
       this.saveAndNotify({ fontFamily: fontFamilyInput.value });
     });
 
@@ -425,6 +421,26 @@ export class SettingsPanel {
     }
   }
 
+  /**
+   * Lists only the families that draw on this Mac (measured now, so fonts
+   * registered or installed since last time count), plus the saved one
+   * labelled "(not on this Mac)" when it doesn't, so the select never shows
+   * a font that isn't the one in use.
+   */
+  private populateFontFamilies(saved: string): void {
+    const select = this.overlay.querySelector('#setting-font-family') as HTMLSelectElement;
+    const options = buildFontOptions(saved, (family) => fontDraws(family));
+    select.replaceChildren();
+    for (const o of options) {
+      const el = document.createElement('option');
+      el.value = o.value;
+      el.textContent = o.label;
+      el.dataset.available = String(o.available);
+      select.appendChild(el);
+    }
+    select.value = saved;
+  }
+
   /** Pre-load settings into cache so show() is instant. Call from App.init(). */
   loadSettings(settings: AppSettings): void {
     this.cachedSettings = { ...settings };
@@ -473,12 +489,7 @@ export class SettingsPanel {
     (this.overlay.querySelector('#setting-opacity') as HTMLInputElement).value = String(opacityPct);
     (this.overlay.querySelector('#setting-opacity-value') as HTMLSpanElement).textContent = `${opacityPct}%`;
 
-    const select = this.overlay.querySelector('#setting-font-family') as HTMLSelectElement;
-    const options = Array.from(select.options);
-    const match = options.find(o => o.value === settings.fontFamily);
-    if (match) {
-      select.value = match.value;
-    }
+    this.populateFontFamilies(settings.fontFamily || DEFAULTS.FONT_FAMILY);
   }
 
   hide(): void {

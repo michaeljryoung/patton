@@ -19,6 +19,9 @@ export class QuickTerminal {
   private disposables: (() => void)[] = [];
   private releaseFocusTrap: (() => void) | null = null;
   private renderer: 'webgl' | 'dom' = 'webgl';
+  private fontSize: number | undefined;
+  private fontFamily: string | undefined;
+  private scrollback: number | undefined;
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -131,19 +134,27 @@ export class QuickTerminal {
     });
 
     this.pane.setRenderer(this.renderer);
+    if (this.fontSize !== undefined) this.pane.setFontSize(this.fontSize);
+    if (this.fontFamily !== undefined) this.pane.setFontFamily(this.fontFamily);
+    if (this.scrollback !== undefined) this.pane.setScrollback(this.scrollback);
     this.panel.appendChild(this.pane.element);
     await this.pane.init();
   }
 
+  // Kept so the pane, created on first show, gets them: settings applied at
+  // startup arrive before it exists (the Tab.createPaneInstance gotcha).
   setFontSize(size: number): void {
+    this.fontSize = size;
     this.pane?.setFontSize(size);
   }
 
   setFontFamily(family: string): void {
+    this.fontFamily = family;
     this.pane?.setFontFamily(family);
   }
 
   setScrollback(lines: number): void {
+    this.scrollback = lines;
     this.pane?.setScrollback(lines);
   }
 

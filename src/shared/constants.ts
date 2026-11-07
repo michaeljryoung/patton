@@ -91,6 +91,9 @@ export const IPC = {
   BOARD_CHANGED: 'board:changed',
   BOARD_LIST_CHANGED: 'board:list-changed',
   // --- end project board ---
+  // --- System fonts (SF Mono from Terminal.app) ---
+  FONTS_GET_SYSTEM: 'fonts:getSystem',
+  // --- end system fonts ---
 } as const;
 
 /** The notification sounds Patton ships; settings outside this list are ignored. */

@@ -10,6 +10,7 @@ import { getHookStatus, installHook, refreshInstalledScript, removeHook, type Cl
 import { getResourcesPath } from './resources-path';
 import * as store from './store';
 import { registerClipboardImageHandlers } from './clipboard-image';
+import { getSystemFonts } from './system-fonts';
 import { RateLimiter } from './rate-limiter';
 import { decideFileOpen, extensionOf, parseLinkPath, type OpenDecision } from './link-open-policy';
 import { annotateBookmarks, validateBookmarks } from './bookmarks'; // bookmarks sidebar
@@ -708,6 +709,9 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
   ipcMain.handle(IPC.APP_OPEN_EXTERNAL, (_event, url: string) => {
     openWebUrl(url);
   });
+
+  // --- System fonts: SF Mono from the Mac's own Terminal.app (fixed paths, read once) ---
+  ipcMain.handle(IPC.FONTS_GET_SYSTEM, () => getSystemFonts());
 
   // --- Host name (tells local file:// hyperlinks from remote ones) ---
   ipcMain.handle(IPC.APP_GET_HOSTNAME, () => hostname());

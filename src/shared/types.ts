@@ -336,6 +336,12 @@ export interface PattonAPI {
     readImage: (save: boolean) => Promise<ClipboardImageThumb | null>;
   };
   // --- end image paste ---
+  // --- System fonts ---
+  fonts: {
+    /** Font files macOS ships but doesn't expose by family name (SF Mono), read from fixed paths in main. */
+    getSystem: () => Promise<SystemFontFamily[]>;
+  };
+  // --- end system fonts ---
   app: {
     onSettings: (callback: () => void) => () => void;
     onToggleNotes: (callback: () => void) => () => void;
@@ -390,4 +396,21 @@ declare global {
   interface Window {
     patton: PattonAPI;
   }
+}
+
+/** One face of a font family main read from the Mac's own files (never bundled with Patton). */
+export interface SystemFontFace {
+  /** CSS font-weight descriptor, e.g. '400' or '700'. */
+  weight: string;
+  style: 'normal' | 'italic';
+  /** The font file's bytes. */
+  data: Uint8Array;
+}
+
+/** A family to register in the renderer's `document.fonts` under `family`. */
+export interface SystemFontFamily {
+  family: string;
+  /** Where the files were found (for logs). */
+  dir: string;
+  faces: SystemFontFace[];
 }

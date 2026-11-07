@@ -107,6 +107,11 @@ const api: PattonAPI = {
     readImage: (save: boolean) => ipcRenderer.invoke(IPC.CLIPBOARD_READ_IMAGE, save),
   },
   // --- end image paste ---
+  // --- System fonts ---
+  fonts: {
+    getSystem: () => ipcRenderer.invoke(IPC.FONTS_GET_SYSTEM),
+  },
+  // --- end system fonts ---
   app: {
     onSettings: (cb) => {
       const listener = () => cb();
