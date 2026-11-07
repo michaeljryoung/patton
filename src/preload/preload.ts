@@ -257,6 +257,10 @@ const api: PattonAPI = {
   openExternal: (url) => ipcRenderer.invoke(IPC.APP_OPEN_EXTERNAL, url),
   getHostname: () => ipcRenderer.invoke(IPC.APP_GET_HOSTNAME),
   moveWindowBy: (dx, dy) => ipcRenderer.send(IPC.WINDOW_MOVE_BY, dx, dy),
+  closeGuard: {
+    info: () => ipcRenderer.invoke(IPC.WINDOW_CLOSE_INFO),
+    preconfirm: () => ipcRenderer.invoke(IPC.WINDOW_PRECONFIRM_CLOSE),
+  },
 };
 
 contextBridge.exposeInMainWorld('patton', api);

@@ -26,6 +26,7 @@ Patton implements defense-in-depth for a desktop Electron application:
 - `FORCE_HYPERLINK=1` (tells Claude Code to print OSC 8 links) is exported only into the pane that runs the startup command, not every shell: tools using `supports-hyperlinks` honour it even when their output is piped, so it puts OSC 8 escape bytes into logs and JSON. It is still inherited by everything that shell and Claude start (Claude's Bash-tool commands included) and stays set after Claude exits.
 - Rate limiting: sliding-window (5000/s for PTY writes, 10/s for settings changes)
 - Maximum 50 PTYs per window
+- Closing a window with live shells asks first (main's close guard; ⌘Q asks in `before-quit`). ⌘W on a window's last tab asks in the app instead, and on confirm the renderer pre-confirms the close (`window:preconfirm-close`) so the native box isn't shown twice. That record covers only the sender's own window, is consumed by its next close and expires after 5 s (`src/main/close-preconfirm.ts`), so a renderer can at most close its own window without the native prompt, which it could already ask for; the red button, Window → Close and ⌘Q keep the native guard.
 
 ### Content Security
 - Content Security Policy enforced via `onHeadersReceived`

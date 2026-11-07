@@ -3,9 +3,17 @@ import path from 'node:path';
 import * as store from './store';
 import { WINDOW_BG } from '../shared/constants';
 import type { PtyManager } from './pty-manager';
+import { closePreconfirmations } from './close-preconfirm';
 
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
 declare const MAIN_WINDOW_VITE_NAME: string;
+
+/** True when Patton has exactly one window, so closing it quits Patton
+ *  (`window-all-closed` → `app.quit()`). Shared by the close guard and the
+ *  renderer's last-tab dialog (`WINDOW_CLOSE_INFO`), so both say the same. */
+export function isOnlyWindow(): boolean {
+  return BrowserWindow.getAllWindows().length === 1;
+}
 
 export function createWindow(ptyManager?: PtyManager): BrowserWindow {
   const savedState = store.getWindowState();
@@ -185,19 +193,29 @@ export function createWindow(ptyManager?: PtyManager): BrowserWindow {
     saveTimer = setTimeout(saveState, 500);
   };
 
+  const windowId = window.id;
   window.on('close', (e) => {
-    // Guard against silently killing live PTYs by closing a window — the red
-    // button, or ⌘W on its last tab (the renderer hands that here before
-    // touching the tab, so its shells are still alive). On macOS,
+    // Guard against silently killing live PTYs by closing a window: the red
+    // button, Window → Close, or ⌘W on its last tab. On macOS,
     // `window-all-closed` triggers `app.quit()` here (Patton is a terminal
     // app, not something that stays dockside windowless), so closing the
     // final window IS a quit action; the before-quit handler can't catch that
-    // path because this handler destroys the window's PTYs first. ⌘Q asks in
-    // before-quit and destroys every PTY before windows close, so it is never
-    // asked twice.
+    // path because this handler destroys the window's PTYs first, so it then
+    // finds none alive and never asks a second time. ⌘Q asks in before-quit
+    // and destroys every PTY before windows close, so it is never asked twice
+    // either.
+    //
+    // ⌘W on the last tab has already asked in the app ("Quit Patton?" or
+    // "Close this window?"): its renderer records that here just before
+    // calling window.close(), without disposing the tab, so the shells are
+    // still alive. A fresh record for THIS window skips the native box once;
+    // a stale or absent one leaves the guard as it was (close-preconfirm.ts).
+    const preconfirm = closePreconfirmations.take(windowId);
+    if (preconfirm === 'confirmed') console.info('[CLOSE] window close pre-confirmed', { windowId });
+    if (preconfirm === 'expired') console.info('[CLOSE] window close pre-confirmation expired', { windowId });
     const count = ptyManager?.liveCountForWindow(window) ?? 0;
-    if (count > 0) {
-      const isLastWindow = BrowserWindow.getAllWindows().length === 1;
+    if (count > 0 && preconfirm !== 'confirmed') {
+      const isLastWindow = isOnlyWindow();
       const terminals = `${count} terminal${count === 1 ? '' : 's'}`;
       const result = dialog.showMessageBoxSync(window, {
         type: 'warning',
@@ -223,6 +241,7 @@ export function createWindow(ptyManager?: PtyManager): BrowserWindow {
     saveState();
     ptyManager?.destroyByWindow(window);
   });
+  window.on('closed', () => closePreconfirmations.forget(windowId));
   window.on('resize', debouncedSave);
   window.on('move', debouncedSave);
 

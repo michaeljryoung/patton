@@ -12,6 +12,8 @@ import * as store from './store';
 import { registerClipboardImageHandlers } from './clipboard-image';
 import { getSystemFonts } from './system-fonts';
 import { RateLimiter } from './rate-limiter';
+import { closePreconfirmations } from './close-preconfirm';
+import { isOnlyWindow } from './window-manager';
 import { decideFileOpen, extensionOf, parseLinkPath, type OpenDecision } from './link-open-policy';
 import { annotateBookmarks, validateBookmarks } from './bookmarks'; // bookmarks sidebar
 import { AdditionLog, addProject, loadBoard, saveLayout, type BoardSources } from './project-board';
@@ -761,6 +763,35 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
       const [x, y] = win.getPosition();
       win.setPosition(Math.round(x + dx), Math.round(y + dy));
     }
+  });
+
+  // --- ⌘W on the last tab: the in-app "Quit Patton?" dialog (tab-manager.ts) ---
+  // Both act only on the SENDER's own window: a renderer can learn about, and
+  // pre-confirm the close of, its own window and no other. The pre-confirm is
+  // one-shot and expires (close-preconfirm.ts), so it can't disarm the guard
+  // for a later red-button click or ⌘Q. One call per user action, so a
+  // refusal past the limit is rare; the renderer then calls window.close()
+  // anyway and the native guard asks, which is the safe direction.
+  const closeGuardLimiter = new RateLimiter(10);
+  ipcMain.handle(IPC.WINDOW_CLOSE_INFO, (event) => {
+    if (!closeGuardLimiter.allow()) {
+      console.warn('[SECURITY] Rate limit exceeded', { channel: IPC.WINDOW_CLOSE_INFO });
+      return null;
+    }
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win || win.isDestroyed()) return null;
+    return { isLastWindow: isOnlyWindow(), liveShells: ptyManager.liveCountForWindow(win) };
+  });
+  ipcMain.handle(IPC.WINDOW_PRECONFIRM_CLOSE, (event) => {
+    if (!closeGuardLimiter.allow()) {
+      console.warn('[SECURITY] Rate limit exceeded', { channel: IPC.WINDOW_PRECONFIRM_CLOSE });
+      return false;
+    }
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win || win.isDestroyed()) return false;
+    closePreconfirmations.mark(win.id);
+    console.info('[CLOSE] window close confirmed in the app', { windowId: win.id });
+    return true;
   });
 
   // --- Claude Code Stop hook (Settings → Claude Code; logic in claude-hook.ts) ---

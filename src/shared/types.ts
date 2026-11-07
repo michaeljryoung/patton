@@ -378,6 +378,21 @@ export interface PattonAPI {
   /** This Mac's host name, to tell `file://<hostname>/…` links from remote ones. */
   getHostname: () => Promise<string>;
   moveWindowBy: (dx: number, dy: number) => void;
+  /** ⌘W on the last tab: the in-app dialog asks, then tells main's close guard. */
+  closeGuard: {
+    /** What closing the caller's window means; null if main can't say. */
+    info: () => Promise<WindowCloseInfo | null>;
+    /** Record that the caller's own window close was confirmed in the app
+     *  (one-shot, expires after a few seconds). False if main refused it. */
+    preconfirm: () => Promise<boolean>;
+  };
+}
+
+/** Answer to `closeGuard.info()`: is this the only window, and how many of
+ *  its shells are still running. */
+export interface WindowCloseInfo {
+  isLastWindow: boolean;
+  liveShells: number;
 }
 
 // --- Claude Code Stop hook ---
