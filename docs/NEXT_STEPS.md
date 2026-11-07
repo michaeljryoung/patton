@@ -3,10 +3,10 @@
 <!-- MAP:BEGIN -->
 ## 🗺 THE MAP — S40: signals, image paste, bookmarks, look
 
-**Goal:** (S44 → v1.15) A tile board of every project in Michael's project list, shown in each new empty tab: themes he names as tinted areas, tiles that snap to a grid and drag between themes, worktrees inside their project's tile, + Project and + Theme, and a click that opens the project with Claude started. Michael chose it from three sketches made in the Claude Launcher session (spec `~/Projects/claude-launcher/docs/project-board-spec.md`, outside this repo).
-**Done when:** v1.15.x is released (cask sha matches the DMG) and installed from its tag, after lint, `tsc`, the package build, a node suite on the main-process module (parse, nesting, validation, and a project-list append that `cc`'s own parser reads back) and a jsdom suite on the real board (tiles from a fixture list, drag between themes and theme reorder saved, a new tab shows it while restored and bookmark tabs don't) all pass and a fresh review leaves no open major finding; then live: ⌘T shows the board with his themes and a tile click starts Claude in its project.
-_Previous goals: S43 → v1.14 (find, checkpoint, Claude's own state) and S40 (signals, image paste, bookmarks, look) reached except their live checks, which stay below._
-**Last verified:** 2026-11-07 18:15 (Session 44 reality check)
+**Goal:** (S45) The terminal font setting works and the default reads as modern (SF Mono, loaded from the Mac's own Terminal.app copy); a "Claude" button at the board's top right starts a plain `claude` session; Forge 8 and a dependency security pass land without risking Michael's live sessions ("make sure our existing patton sessions dont crash so wait if a risk").
+**Done when:** the font fix and the Claude button are released (cask sha matches the DMG) after lint, `tsc`, `check-fonts.cjs`, the board suites, a no-install package and a fresh review with no open major; Forge 8 + the dependency pass are merged only after their build has launched once; nothing is installed into /Applications while Patton runs without Michael's word.
+_Previous goals: S44 → v1.15 (project board), S43 → v1.14 (find, checkpoint, Claude's own state) and S40 (signals, image paste, bookmarks, look) reached except their live checks, which stay below._
+**Last verified:** 2026-11-07 19:47 (Session 45, S45 nodes from this session's checks)
 
 **Retired:** 26 finished nodes, in `docs/map-archive.md`
 
@@ -39,6 +39,16 @@ flowchart TD
     v115_release[release + install v1.15]:::done
     v115_verify[live checks v1.15]:::live
   end
+  subgraph P8["Phase 8 — S45: font, Claude button, Forge 8, dependencies"]
+    font_fix[SF Mono that draws + honest font list]:::done
+    claude_button[board 'Claude' button]:::done
+    close_confirm[⌘W twice closes a tab]:::done
+    s45_release[merge, review, release]:::live
+    forge8[Forge 8 upgrade]:::todo
+    devdeps[dependency security pass]:::todo
+    forge8_launch[launch the Forge 8 build once]:::todo
+    s45_install[install on Michael's word]:::todo
+  end
   subgraph P5["Phase 5 — Typing and release"]
     merge_release[merge, review, release v1.11.0]:::done
   end
@@ -61,6 +71,14 @@ flowchart TD
   v114_release --> v114_verify
   v115_release --> v115_verify
   board_seed --> v115_verify
+  font_fix --> s45_release
+  claude_button --> s45_release
+  close_confirm --> s45_release
+  forge8 --> devdeps
+  devdeps --> forge8_launch
+  s45_release --> forge8_launch
+  s45_release --> s45_install
+  forge8_launch --> s45_install
   classDef done fill:#1a7f37,color:#fff
   classDef live fill:#0969da,color:#fff
   classDef todo fill:#8c959f,color:#fff
@@ -89,6 +107,14 @@ flowchart TD
 | `board_seed` | Michael's layout file seeded from the sketch's grouping (seven themes with tints), checked by a fresh-eyes agent; lives in userData, never in the repo | done | `board_main` | userData `project-board.json` written 2026-11-07 16:34 (6 themes, 39 tiles, 7 sub-projects nested), passed the real `validateLayout` + `loadBoard`; grouping checked by a fresh-eyes agent · `src/main/project-board.ts::validateLayout` |
 | `v115_release` | ff-merge, push, CI release v1.15.x, cask sha matches the DMG, installed from the tag | done | `board_review` | tag `v1.15.0` → `9d91bdd` (run 42391977593 success); cask 1.15.0 sha `9b37f9ad…` matches the DMG; installed from the tag 16:37 (asar, CFBundleShortVersionString 1.15.0, codesign ok); v1.15.1 (launch tab on the board, one Esc, "Terminal") tag → `0571119`, run 42394762317, cask `015a4d8a…` matches, installed 17:11; v1.15.2 (Wake button) tag → `bb5c063`, run 42398761505, cask `f5ee0fcf…` matches, installed 17:59 |
 | `v115_verify` | Live: ⌘T shows the board with his themes; a tile dragged to another theme stays there after a relaunch; a tile click starts Claude in its project; Plain terminal leaves a plain shell | live | `v115_release`, `board_seed` | main.log 2026-11-07: ⌘T board shown 17:01:43 ("that looks great"), `tile moved` via drag + `Layout saved` 17:01:47; after a relaunch `Loaded` that layout and `shown at launch` 17:42:17, `Esc pressed` → `removed` (terminal) 17:42:20; **S44 audit:** tile click seen twice: `[BOARD] opened` (new tab, CK3 Rome Mod) 17:42:51 and 18:06:37, each followed by `PATTON_PROJECT_DIR exported`, `Startup command sent` and `[7501] state working app claude-code` on the new pane; Esc / Terminal path `removed reason:terminal` three times, with no 7501 line on those panes; `project-board.json` mtime 17:01 (after the drag). Not provable from the log: that the dragged tile sits in its new theme after the relaunch (no positions logged). **S45 (log 18:15–18:19):** Wake button seen: `wake clicked {awake:false}` → `wake started` in a new tab (tab-6, board tab kept) → `Startup command sent` 18:15:37; a third tile click (Patton) 18:19:20. Still unseen: "Awake" jumping to the wake tab (no log line for it) |
+| `font_fix` | Settings → Font Family changes the font: SF Mono's faces read from Terminal.app's own copy in main (fixed paths, never bundled), registered as a FontFace before any terminal opens; the list shows only fonts that draw on this Mac; `[FONT]` logs; quick terminal keeps its startup font, size and scrollback | done | — | cause (S45): a hidden-Electron probe showed `'SF Mono'` and `'Fira Code'` draw Menlo in Patton's Chromium, and a FontFace from `SF-Mono-Regular.otf` makes SF Mono draw. Branch `font-fix` `878e2d7` `3ea4c02`: `check-fonts.cjs` 23 pass, each fix reverted once; review: 0 major, 5 minor, all fixed (`00b7abf` `1e76cc6` `f947fd5` `74d25c6`), 4 of 8 nits skipped with reasons; `check-fonts.cjs` 52 pass, seven fixes each reverted once and caught |
+| `claude_button` | "Claude" rightmost in the board header: removes the board like Terminal, then types `claude` + Enter (never the startup command `cc`); one send per click; `[BOARD] claude clicked` | done | — | branch `claude-button` `3b55dd6`; UI suite 149 → 160, wire 106 → 121, 0 fails, ten deliberate breaks each caught; asar has "Start a plain Claude Code session"; review 2 major (readiness by clock, no `FORCE_HYPERLINK`) + 4 minor fixed `3a3e4d7`; final review of the combined branch: ship, 0 major, 3 minor (first pane's early prompt, csh/tcsh prefix, pasted input) fixed `072ab60`, with `pty:get-shell` IPC; board 132, UI 161, wire 155 |
+| `close_confirm` | Tab and pane close confirmations open with Close focused and a second ⌘W confirms; every other confirm keeps Cancel focused | done | — | Michael 2026-11-07: "When you press Command+W on this tab, it should select 'Close Tab.' I can do Command+W, press it twice, and it will close immediately." `8f372b8` `aa6e487`; `check-close-confirm.mjs` 29 pass; last tab unchanged: ⌘W there still goes to main's native quit warning (Cancel focused), so ⌘W twice never quits Patton |
+| `s45_release` | All three branches merged to main with no-install builds, pushed, CI release; cask sha matches the DMG | live | `font_fix`, `claude_button`, `close_confirm` | combined tip `aa6e487`: lint, tsc, board 132, UI 161, wire 155, close 29, fonts 52, link policy 116, link target 43; no-install asar 19:46, /Applications still 17:59 |
+| `forge8` | Forge 7.11.2 → 8.0.1, Vite 5 → 8, CI Node 20 → 22; package identical in fuses, natives, Info.plist, signing, helpers, Resources | todo | — | branch `forge8` `a21618b` `100f33c`: lint, tsc, all five suites same counts; plain `electron-forge package` works on Node 26; asar 21% smaller (duplicates removed); entry files renamed `main.cjs`/`preload.cjs`, never launched; CI on Node 22 untested; local DMG needs Node 24 (as before) |
+| `devdeps` | `npm audit` cleared without `--force`, respecting `min-release-age`; Electron security patch if one is old enough; prod gate stays 0 | todo | `forge8` | before: 57 advisories (1 critical, 41 high), about 35 cleared by Forge 8; branch `devdeps` (running) |
+| `forge8_launch` | The Forge 8 + dependency build starts and runs a tab before it merges: launched once, isolated from Michael's settings and sessions (Patton has no single-instance lock, so a second copy would share userData), or installed at a relaunch he chooses with the last release kept to roll back to | todo | `devdeps`, `s45_release` | — |
+| `s45_install` | /Applications gets the new build only on Michael's word, while he is ready to quit and relaunch | todo | `s45_release`, `forge8_launch` | Michael 2026-11-07: "make sure our existing patton sessions dont crash so wait if a risk" |
 <!-- MAP:END -->
 
 Last updated: 2026-11-07 (Session 44, v1.15.2)
