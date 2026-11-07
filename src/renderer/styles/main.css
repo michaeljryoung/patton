@@ -8,6 +8,8 @@
 :root {
   /* Palette */
   --ink: #0b0d12;
+  /* --bg here and in the dark block must equal WINDOW_BG in src/shared/constants.ts
+     (the window's colour before first paint, read by window-manager.ts). */
   --bg: #ffffff;
   --surface: #f4f5f7;
   --surface-hover: #eceef2;
