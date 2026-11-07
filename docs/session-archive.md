@@ -432,3 +432,32 @@ _Earlier entries archived → `docs/session-archive.md` (latest trim 2026-11-04,
 - [x] **DONE — Session 29**: **Option+drag text selection** during mouse mode (`macOptionClickForcesSelection: true`) — previously no selection modifier worked on macOS while an app (Claude Code fullscreen, vim, tmux) held the mouse.
 - [x] **DONE — Session 29**: **Diagnosed Claude Code v2.1.x fullscreen rendering** as the single cause of the selection breakage + "Jump to bottom" button + glyph-corruption recurrence. Disable via `/tui default` or `CLAUDE_CODE_DISABLE_MOUSE=1`.
 - [x] **DONE — Session 29**: **`fast-uri` ^3.1.2 security pin** — closed the prod path-traversal advisory + unblocked the `npm audit` build gate (partial close of "CVE scan of dep tree").
+
+## Session Log (S42 trim 2026-11-07)
+
+### 2026-11-03 (Session 38 — from a `~` session: what switching engines or accounts would take; docs only)
+- **The ask:** whether Patton could switch between Claude Code and OpenAI's Codex while keeping projects and checkpoints. From the code: the only Claude-specific logic is the title glyphs (`src/renderer/components/pane.ts:71`), a bell and OSC 9 already raise the dot (`pane.ts:288`, `:296`), and the startup command is one global setting (`app.ts:196`).
+- **Outcome:** the user chose an account switch over an engine switch. Queued in `docs/NEXT_STEPS.md` (`4e0e460`); why and when are in private notes. No code changed, no release.
+- **Size pass:** this file from 35,958 to about 28,000 characters, entries moved word for word; still over the 20,000 line, with Key Files and the older gotchas the next candidates.
+
+_Earlier entries archived → `docs/session-archive.md` (latest trim 2026-11-06, S40)._
+
+## Decisions (S42 trim 2026-11-07)
+
+- **2026-11-06 (S41) — The whole bookmark row drags, not a grip.** The Finder/Safari sidebar pattern; Chromium starts a drag only past a few pixels of travel, so a click still opens. The tab bar stays grip-only because its tab body drags the window. A fresh review's grip-only alternative was weighed and declined.
+
+- **2026-11-06 (S41) — One hidden state for the sidebar: the "+" strip.** The chevron, the strip and ⌃⌘B toggle the same two states rather than adding a fully hidden third; the hide glyph is a chevron because a "−" beside the add "+" reads as "remove bookmark".
+
+- **2026-11-06 (S40) — "One project open at a time" = never a second tab for an open project, per window.** Clicking a bookmark activates the tab already in that project in this window; cross-window lookup would need main-process tracking and was left out.
+
+## Gotchas (S42 trim 2026-11-07)
+
+- **GitHub retired the `macos-14` runner images on 2 Nov 2026** (S40): a release run on that label is *cancelled* before its first step with the annotation "The configuration 'macos-14-arm64-us-default' is not supported" and an empty log. `release.yml` now runs on `macos-15` (arm64); `macos-latest` is macOS 26. Check `github.com/actions/runner-images` when a run cancels with no steps.
+
+- **Layering multiple `window.on('close')` handlers doesn't work for guards.** Electron runs every registered 'close' handler even if one calls `e.preventDefault()`. The guard must live INSIDE the destructive handler so teardown only runs when the guard passes.
+
+## Completed / superseded / dropped items (swept 2026-11-07, S42)
+
+- [x] **DONE — Session 31**: **Shipped the confirm-before-closing-a-tab/pane dialog → v1.7.0** (commit `f935a2b`). ⌘W / ✕ / middle-click now prompt before ending a shell; the last-tab case defers to the app-quit guard (no double prompt); automatic PTY-exit closes don't prompt. Recovered from a crashed session's uncommitted on-disk work via transcript forensics.
+- [x] **DONE — Session 31**: **Hand-bumped the Homebrew tap 1.6.0→1.7.0** (`homebrew-patton` `72c8d40`, SHA-256 independently verified). CI's cask step stayed red on the expired `HOMEBREW_PAT`, as every release since S28.
+- [-] **DROPPED (S31): Install the actual DMG for a correct version string** (was S28→S30 cosmetic) — **moot**. Installing the released DMG *does* set the right version string, but the post-commit auto-rebuild hook re-`package`s + copies a 1.0.0 build to /Applications on the very next commit, so it never survives. /Applications stays code-current but self-reports 1.0.0. The real fix is to stamp the version into `package.json`/the build (folded into the `app.getVersion` Gotcha). WHY: S31 Decisions.
