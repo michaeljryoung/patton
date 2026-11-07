@@ -177,10 +177,10 @@ export class TabManager {
     return this.currentRenderer;
   }
 
-  async createTab(cwd?: string): Promise<Tab> {
+  async createTab(cwd?: string, opts?: { forProject?: boolean }): Promise<Tab> {
     // Only use explicitly provided CWD (e.g. session restore, reopen closed).
     // New tabs (Cmd+T / +) start at home directory.
-    const tab = new Tab(cwd);
+    const tab = new Tab(cwd, opts?.forProject === true);
     if (this.currentShell) tab.setShell(this.currentShell);
     tab.setHistoryManager(this.sharedHistory);
     tab.setRegistrationCallbacks(

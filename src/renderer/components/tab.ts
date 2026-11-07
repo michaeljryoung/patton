@@ -80,7 +80,9 @@ export class Tab {
   // background tasks or timers (Stop hook). Runtime only, never persisted.
   private _parkedPanes = new Map<Pane, ParkedInfo>();
 
-  constructor(initialCwd?: string) {
+  /** `forProject`: the first pane's shell is told its project (PATTON_PROJECT_DIR).
+   *  Only that pane: splits and restored panes never get it. */
+  constructor(initialCwd?: string, forProject = false) {
     this.id = `tab-${++tabIdCounter}`;
 
     // Create DOM structure
@@ -90,7 +92,7 @@ export class Tab {
     this.element.setAttribute('role', 'tabpanel');
 
     // Create the initial pane (inherit CWD if provided)
-    const pane = this.createPaneInstance(initialCwd);
+    const pane = this.createPaneInstance(initialCwd, forProject);
     this._focusedPane = pane;
     this.rootNode = pane;
     this.element.appendChild(pane.element);
@@ -104,9 +106,10 @@ export class Tab {
     this._historyManager = hm;
   }
 
-  private createPaneInstance(cwd?: string): Pane {
+  private createPaneInstance(cwd?: string, forProject = false): Pane {
     const pane = new Pane({
       ...(cwd ? { cwd } : {}),
+      ...(cwd && forProject ? { projectDir: true } : {}),
       ...(this._shell ? { shell: this._shell } : {}),
       ...(this._historyManager ? { historyManager: this._historyManager } : {}),
       onFocus: (p) => this.setFocusedPane(p),

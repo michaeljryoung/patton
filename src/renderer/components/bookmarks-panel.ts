@@ -27,7 +27,9 @@ export interface BookmarksHost {
   getTabs(): readonly Tab[];
   getActiveTab(): Tab | null;
   switchToTab(id: string): void;
-  createTab(cwd: string): Promise<Tab>;
+  /** `forProject` tells the new tab's shell which project it was opened for
+   *  (PATTON_PROJECT_DIR), so a launcher can open that project directly. */
+  createTab(cwd: string, opts?: { forProject?: boolean }): Promise<Tab>;
   /** Hand keyboard focus back to the active terminal pane. */
   focusTerminal(): void;
 }
@@ -60,7 +62,8 @@ function newId(): string {
  * A sidebar of bookmarks docked LEFT of the terminal, toggled by ⌃⌘B.
  *
  * Two kinds: a project (a folder — clicking it opens a tab there and runs the
- * startup command, which on Michael's Mac launches Claude Code) and an
+ * startup command; the new tab's shell also gets PATTON_PROJECT_DIR, so a
+ * launcher such as Michael's `cc` picker can open that project directly) and an
  * artifact (an https link, opened in the browser).
  *
  * One tab per project: clicking a project that already has a tab in this
@@ -378,7 +381,7 @@ export class BookmarksPanel {
     this.opening.add(path);
     try {
       const settings = await window.patton.settings.get();
-      const tab = await this.host.createTab(path);
+      const tab = await this.host.createTab(path, { forProject: true });
       if (settings.startupCommand) runStartupCommand(tab, settings.startupCommand);
       rlog('info', '[BOOKMARK] open', {
         kind: 'project', label: bookmark.label, action: 'new tab', startupCommand: Boolean(settings.startupCommand),

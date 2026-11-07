@@ -110,7 +110,7 @@ export class App {
       getTabs: () => this.tabManager.getTabs(),
       getActiveTab: () => this.tabManager.getActiveTab(),
       switchToTab: (id) => this.tabManager.switchToId(id),
-      createTab: (cwd) => this.tabManager.createTab(cwd),
+      createTab: (cwd, opts) => this.tabManager.createTab(cwd, opts),
       focusTerminal: () => this.tabManager.getActiveTab()?.focusedPane.focus(),
     });
 

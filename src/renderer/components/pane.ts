@@ -42,6 +42,8 @@ export interface PaneCallbacks {
    *  so the bracketing follows that pane's mode, not this one's. */
   onBroadcastPaste?: (text: string) => void;
   cwd?: string;
+  /** Ask main to export PATTON_PROJECT_DIR (the validated cwd) into this shell. */
+  projectDir?: boolean;
   shell?: string;
   historyManager?: HistoryManager;
 }
@@ -489,6 +491,7 @@ export class Pane {
         cols: dims.cols,
         rows: dims.rows,
         ...(this.initialCwd ? { cwd: this.initialCwd } : {}),
+        ...(this.initialCwd && this.callbacks.projectDir ? { projectDir: true } : {}),
         ...(shellPath ? { shell: shellPath } : {}),
         isDark: this.terminalView.isDarkBackground(),
       });

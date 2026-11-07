@@ -164,9 +164,16 @@ export class PtyManager {
     const id = this.nextId++;
     const shell = validateShell(opts?.shell || process.env.SHELL || DEFAULTS.SHELL);
     const cwd = validateCwd(opts?.cwd);
+    // Only when the renderer asked (literal true) and the requested folder
+    // passed validation, not when validateCwd fell back to home.
+    const exportProjectDir = opts?.projectDir === true && !!opts.cwd && cwd === opts.cwd;
 
     const shellBase = shell.split('/').pop() || '';
     const safeEnv = getSafeEnv(this.shellIntegrationEnabled, opts?.isDark);
+    if (exportProjectDir) {
+      safeEnv.PATTON_PROJECT_DIR = cwd;
+      console.info('[PTY] PATTON_PROJECT_DIR exported', { cwd });
+    }
     let shellArgs: string[] = ['--login'];
 
     // Inject shell integration via startup mechanisms (not PTY write) to avoid

@@ -6,6 +6,10 @@ export interface PtyCreateOptions {
   cols?: number;
   rows?: number;
   isDark?: boolean;
+  /** True when the tab was opened for a project (a bookmark click). Main then
+   *  exports PATTON_PROJECT_DIR=<validated cwd> into the shell, unless the cwd
+   *  was rejected. Only a literal `true` counts; no path is ever sent. */
+  projectDir?: boolean;
 }
 
 export interface HistoryEntry {
