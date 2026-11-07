@@ -5,7 +5,7 @@ import { findWakePane, wakeCommandOf } from './board-wake';
 import { openProject, type OpenProjectHost } from './open-project';
 import { projectLiveState, type LiveStateSnapshot, type ProjectLiveState } from './project-live-state';
 import { rlog } from './renderer-logger';
-import { runStartupCommand } from './startup-command';
+import { PROMPT_FALLBACK_MS, runStartupCommand } from './startup-command';
 import type { TabManager } from './tab-manager';
 
 /** Whether a new tab the user opened gets the project board, and why not. */
@@ -29,6 +29,9 @@ const LAUNCH_BOARD_TIMEOUT_MS = 1500;
 
 /** The tab manager calls the board's tab-change refresh at most this often. */
 const REFRESH_DELAY_MS = 50;
+
+/** What the Claude button types: plain `claude`, whatever the startup command is. */
+export const PLAIN_CLAUDE_COMMAND = 'claude';
 
 interface MountedBoard {
   board: ProjectBoard;
@@ -85,6 +88,7 @@ export class ProjectBoards {
    *  The settings and the board are read while the tab's shell starts. */
   async openNewTab(): Promise<Tab> {
     const decision = this.loadDecision();
+    const shellStartedAt = Date.now();
     const tab = await this.tabs.createTab();
     const decided = await decision;
     if (decided.show === false) {
@@ -95,7 +99,7 @@ export class ProjectBoards {
       rlog('info', '[BOARD] skipped', { tabId: tab.id, reason: 'tab closed before the board loaded' });
       return tab;
     }
-    this.mount(tab, decided.payload);
+    this.mount(tab, decided.payload, '[BOARD] shown', shellStartedAt);
     return tab;
   }
 
@@ -107,12 +111,12 @@ export class ProjectBoards {
    * command as before. Resolves whether the board was shown.
    */
   startLaunchTab(tab: Tab, startupCommand: string): Promise<boolean> {
-    const covered = this.coverLaunchTab(tab);
+    const covered = this.coverLaunchTab(tab, Date.now());
     if (startupCommand) runStartupCommand(tab, startupCommand, covered.then((shown) => !shown));
     return covered;
   }
 
-  private async coverLaunchTab(tab: Tab): Promise<boolean> {
+  private async coverLaunchTab(tab: Tab, shellStartedAt: number): Promise<boolean> {
     let timer: ReturnType<typeof setTimeout> | null = null;
     const timeout = new Promise<BoardDecision>((resolve) => {
       timer = setTimeout(() => resolve({ show: false, reason: 'board too slow' }), LAUNCH_BOARD_TIMEOUT_MS);
@@ -127,7 +131,7 @@ export class ProjectBoards {
       rlog('info', '[BOARD] skipped at launch', { tabId: tab.id, reason: 'tab closed before the board loaded' });
       return false;
     }
-    this.mount(tab, decided.payload, '[BOARD] shown at launch');
+    this.mount(tab, decided.payload, '[BOARD] shown at launch', shellStartedAt);
     return true;
   }
 
@@ -178,7 +182,7 @@ export class ProjectBoards {
     }
   }
 
-  private mount(tab: Tab, payload: BoardPayload, event = '[BOARD] shown'): void {
+  private mount(tab: Tab, payload: BoardPayload, event = '[BOARD] shown', shellStartedAt = Date.now()): void {
     const host: ProjectBoardHost = {
       // The board announces a failure, so the rejection goes back to it.
       openProject: (path) => this.openFromBoard(tab, path).catch((err: unknown) => {
@@ -190,6 +194,7 @@ export class ProjectBoards {
       },
       liveState: (path) => this.liveState(path),
       wakeState: () => ({ command: this.wakeCommand, awake: findWakePane(this.tabs.getTabs()) !== null }),
+      startClaude: () => this.startClaude(tab, shellStartedAt),
       wake: () => {
         this.wake(tab).catch((err: unknown) => rlog('error', '[BOARD] wake failed', { tabId: tab.id, error: String(err) }));
       },
@@ -212,6 +217,27 @@ export class ProjectBoards {
     mounted.board.dispose();
     rlog('info', '[BOARD] removed', { tabId: tab.id, reason });
     return true;
+  }
+
+  /**
+   * The Claude button. Lifts the board exactly as "Terminal" does, then types
+   * a plain `claude` into this tab's shell (never the startup command, which is
+   * a project picker for some users): the folder is wherever the shell is, home
+   * for a new tab. The board is gone after the first click, so a second click
+   * (or a double click) finds nothing to do.
+   */
+  private startClaude(tab: Tab, shellStartedAt: number): void {
+    rlog('info', '[BOARD] claude clicked', { tabId: tab.id });
+    if (!this.forget(tab, 'claude')) {
+      rlog('info', '[BOARD] claude ignored', { tabId: tab.id, reason: 'board already gone' });
+      return;
+    }
+    tab.setCover(null);
+    // The shell has had this long to start; a prompt it showed earlier is not
+    // replayed, so only what is left of the usual wait remains.
+    const fallbackMs = PROMPT_FALLBACK_MS - (Date.now() - shellStartedAt);
+    runStartupCommand(tab, PLAIN_CLAUDE_COMMAND, Promise.resolve(true), { label: 'Plain claude', fallbackMs });
+    rlog('info', '[BOARD] claude started', { tabId: tab.id, waitMs: Math.max(0, fallbackMs) });
   }
 
   private async openFromBoard(boardTab: Tab, path: string): Promise<void> {

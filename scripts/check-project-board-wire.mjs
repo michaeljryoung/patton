@@ -578,6 +578,56 @@ async function main() {
   await tm.closeById(wakeTab.id);
   await tm.closeById(wt.id);
 
+  // --- the Claude button (host side; the button itself: check-project-board-ui.mjs) ---
+  // The startup command is a project picker here ('cc'): it must never be typed.
+  state.settings = { startupCommand: 'cc' };
+  const ct = await tm.userNewTab();
+  const boardC = globalThis.__boards.at(-1);
+  const writesC = state.writes.length;
+  const logC = logs.length;
+  const sentC = (data) => state.writes.slice(writesC).filter((wr) => wr.data === data).length;
+  check('claude: the board is up before the click', ct.hasCover && !boardC.disposed);
+  boardC.host.startClaude();
+  boardC.host.startClaude(); // a double click: the second finds no board
+  check('claude click: the board is removed like Terminal', boardC.disposed && !ct.hasCover && !boards.hasBoard(ct));
+  check('claude click: nothing typed before the shell is ready', sentC('claude\r') === 0, sentC('claude\r'));
+  emit(ct.ptyId, '\x1b]133;A\x07');
+  check('claude click: "claude" + Enter typed once the prompt shows', await until(() => sentC('claude\r') === 1, 1000), sentC('claude\r'));
+  await tick(1700); // past the 1.5 s fallback of the first send
+  check('claude click: a double click typed it once, not twice', sentC('claude\r') === 1, sentC('claude\r'));
+  check('claude click: typed into this tab only', state.writes.slice(writesC).every((wr) => wr.id === ct.ptyId));
+  check('claude click: the startup command (cc) is never typed', sentC('cc\r') === 0 && !state.writes.slice(writesC).some((wr) => wr.data.includes('cc')));
+  const claudeLogs = logs.slice(logC).filter((l) => l[0].startsWith('[BOARD] claude'));
+  check('claude click: logged with the tab id', claudeLogs.some((l) => l[0] === '[BOARD] claude clicked' && l[1]?.tabId === ct.id));
+  check('claude click: the second click is logged as ignored', claudeLogs.some((l) => l[0] === '[BOARD] claude ignored'));
+  check('claude click: the start is logged', claudeLogs.some((l) => l[0] === '[BOARD] claude started' && l[1]?.tabId === ct.id));
+  check('claude click: no new tab, the tab stays', tm.getTabs().includes(ct));
+  const claudeCreate = state.creates.find((c) => c.id === ct.ptyId);
+  check('claude: the tab is at home (no folder, not a project tab)', claudeCreate && !claudeCreate.opts?.cwd && !claudeCreate.opts?.projectDir, claudeCreate?.opts);
+
+  // A shell that has been up a while and gave no prompt signal: it is sent without waiting out another 1.5 s.
+  const cl = await tm.userNewTab();
+  const boardL = globalThis.__boards.at(-1);
+  const writesL = state.writes.length;
+  await tick(1600);
+  const tL = Date.now();
+  boardL.host.startClaude();
+  const lateSent = await until(() => state.writes.slice(writesL).some((wr) => wr.id === cl.ptyId && wr.data === 'claude\r'), 1000);
+  check('claude late click: sent at once by the fallback, no further wait', lateSent && Date.now() - tL < 400, Date.now() - tL);
+
+  // A tab closed before the click: nothing to type into, nothing thrown.
+  const cg = await tm.userNewTab();
+  const boardG = globalThis.__boards.at(-1);
+  await tm.closeById(cg.id);
+  const logG = logs.length;
+  boardG.host.startClaude();
+  check('claude: a click on a closed tab\'s board does nothing', logs.slice(logG).every((l) => l[0] !== '[BOARD] claude started'));
+  const hostSrc = readFileSync(join(root, 'src', 'renderer', 'services', 'project-boards.ts'), 'utf8');
+  check('claude: the host types the literal claude', /PLAIN_CLAUDE_COMMAND = 'claude'/.test(hostSrc));
+  await tm.closeById(ct.id);
+  await tm.closeById(cl.id);
+  state.settings = { startupCommand: '' };
+
   boards.dispose();
   console.info = info;
   console.log(`\n${passed} passed, ${failed} failed`);

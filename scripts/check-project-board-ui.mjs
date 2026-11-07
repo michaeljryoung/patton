@@ -96,7 +96,7 @@ function setup(payload = fixture(), opts = {}) {
   const win = dom.window;
   if (!win.CSS) win.CSS = {};
   if (!win.CSS.escape) win.CSS.escape = (s) => String(s).replace(/["\\]/g, '\\$&');
-  const calls = { open: [], dismiss: 0, setLayout: [], generations: [], pick: 0, add: [], wake: 0 };
+  const calls = { open: [], dismiss: 0, setLayout: [], generations: [], pick: 0, add: [], wake: 0, claude: 0 };
   // The Wake button's state as the host reports it; a check changes it and refreshes.
   const wake = { command: opts.wakeCommand ?? 'wake', awake: false };
   const live = new Map(Object.entries({
@@ -136,6 +136,7 @@ function setup(payload = fixture(), opts = {}) {
     liveState: (path) => live.get(path) ?? CLOSED,
     wakeState: () => ({ ...wake }),
     wake: () => calls.wake++,
+    startClaude: () => calls.claude++,
   };
   const board = new win.PB.ProjectBoard(host, payload);
   win.document.body.appendChild(board.element);
@@ -211,11 +212,13 @@ function setup(payload = fixture(), opts = {}) {
   const label = t.tile('beta').querySelector('.pb-tile-main').getAttribute('aria-label');
   check('tile label has name, theme and state', label === 'Beta, Work, needs you', label);
   check('tiles are focusable buttons', t.qa('.pb-tile-main').every((b) => b.tagName === 'BUTTON'));
-  check('header buttons present', ['+ Theme', '+ Project', 'Terminal'].every((s) => t.qa('.pboard-btn').some((b) => b.textContent === s)));
+  check('header buttons present', ['+ Theme', '+ Project', 'Terminal', 'Claude'].every((s) => t.qa('.pboard-btn').some((b) => b.textContent === s)));
   check('no "Plain terminal" left', !t.el.textContent.includes('Plain terminal'));
   const headEnd = t.q('.pboard-head').lastElementChild;
-  check('Terminal is the header\'s right end, with its key named', headEnd.textContent === 'Terminal' && headEnd.classList.contains('pboard-terminal')
-    && headEnd.getAttribute('aria-keyshortcuts') === 'Escape', headEnd.textContent);
+  check('Claude is the header\'s right end', headEnd.textContent === 'Claude' && headEnd.classList.contains('pboard-claude'), headEnd.textContent);
+  const termBtn = t.q('.pboard-terminal');
+  check('Terminal sits just left of Claude, its key named', termBtn.nextElementSibling === headEnd && termBtn.textContent === 'Terminal'
+    && termBtn.getAttribute('aria-keyshortcuts') === 'Escape', termBtn.textContent);
   check('search field labelled', t.q('.pboard-search').placeholder === 'Find a project');
 
   // Ages in hours and weeks
@@ -775,6 +778,31 @@ const submit = (t) => t.q('.pboard-add').dispatchEvent(new t.win.Event('submit',
   const dotRule = css.match(/\.pboard-wake-dot \{([^}]*)\}/)?.[1] ?? '';
   check('wake css: the dot is --amber with the light-mode edge', dotRule.includes('background: var(--amber)') && dotRule.includes('box-shadow: 0 0 0 1px var(--dot-edge)'), dotRule);
   check('wake css: hidden means gone', /\.pboard-wake\[hidden\] \{\s*display: none;/.test(css));
+}
+
+// ── The Claude button ──
+{
+  const t = setup();
+  const btn = t.q('.pboard-claude');
+  const TIP = 'Start a plain Claude Code session in this tab';
+  check('claude: one button, reading Claude', t.qa('.pboard-claude').length === 1 && btn.textContent === 'Claude', btn?.textContent);
+  check('claude: the last child of the header, after Terminal', t.q('.pboard-head').lastElementChild === btn && btn.previousElementSibling === t.q('.pboard-terminal'));
+  check('claude: a header button like the others', btn.tagName === 'BUTTON' && btn.type === 'button' && btn.classList.contains('pboard-btn') && btn.tabIndex === 0 && !btn.hidden);
+  check('claude: tooltip and aria-label say what it does', btn.title === TIP && btn.getAttribute('aria-label') === TIP, [btn.title, btn.getAttribute('aria-label')]);
+  btn.click();
+  check('claude: a click asks the host once, nothing else', t.calls.claude === 1 && t.calls.dismiss === 0 && t.calls.wake === 0 && t.calls.open.length === 0, t.calls);
+  t.key(btn, 'Escape');
+  check('claude: Esc on it leaves the board like the rest', t.calls.dismiss === 1);
+  const off = setup(fixture(), { wakeCommand: '' });
+  check('claude: shown even with no wake command', off.q('.pboard-claude') && !off.q('.pboard-claude').hidden && off.q('.pboard-head').lastElementChild === off.q('.pboard-claude'));
+
+  const css = readFileSync(join(repo, 'src/renderer/styles/board.css'), 'utf8');
+  const rule = css.match(/\.pboard-claude \{([^}]*)\}/)?.[1] ?? '';
+  check('claude css: inverse ink as the primary action', rule.includes('background: var(--inverse-bg)') && rule.includes('color: var(--inverse-fg)'), rule);
+  const hover = css.match(/\.pboard-claude:hover \{([^}]*)\}/)?.[1] ?? '';
+  check('claude css: a hover state that keeps the text readable', hover.includes('var(--accent)') && !hover.includes('color:'), hover);
+  const colours = [...(rule + hover).matchAll(/(#[0-9a-fA-F]{3,8}|rgba?\()/g)];
+  check('claude css: existing variables only, no literal colours (light and dark follow)', colours.length === 0, colours.map((m) => m[0]));
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

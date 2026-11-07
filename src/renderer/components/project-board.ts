@@ -30,7 +30,13 @@ export interface ProjectBoardHost {
   /** Wake button click: the host starts the command in a new tab, or goes to
    *  the tab already running it, and keeps this board in front for a start. */
   wake(): void;
+  /** Claude button click: the host removes the board as "Terminal" does and
+   *  types a plain `claude` into this tab's shell (once, however often clicked). */
+  startClaude(): void;
 }
+
+/** The Claude button's tooltip and accessible name. */
+export const CLAUDE_BUTTON_LABEL = 'Start a plain Claude Code session in this tab';
 
 /** What the header's Wake button shows. */
 export interface BoardWakeState {
@@ -160,11 +166,16 @@ export class ProjectBoard {
     // Wake: starts the configured command in a new tab behind the board, or,
     // while it runs, goes to that tab. Painted by paintWake().
     this.wakeBtn = this.button('Wake', 'pboard-btn pboard-wake', () => this.onWakeClick());
-    // The way out, at the right end where a reader looks for it.
+    // The way out to a plain shell, just left of Claude.
     const terminal = this.button('Terminal', 'pboard-btn pboard-terminal', () => this.host.dismiss());
     terminal.title = 'Close the board and use this tab as a terminal (Esc)';
     terminal.setAttribute('aria-keyshortcuts', 'Escape');
-    head.append(title, this.countEl, this.searchInput, addTheme, addProject, this.wakeBtn, terminal);
+    // Claude, the primary action at the far right: a plain `claude` session in
+    // this tab, with no project.
+    const claude = this.button('Claude', 'pboard-btn pboard-claude', () => this.onClaudeClick());
+    claude.title = CLAUDE_BUTTON_LABEL;
+    claude.setAttribute('aria-label', CLAUDE_BUTTON_LABEL);
+    head.append(title, this.countEl, this.searchInput, addTheme, addProject, this.wakeBtn, terminal, claude);
 
     this.formEl = document.createElement('div');
     this.formEl.className = 'pboard-form';
@@ -662,6 +673,10 @@ export class ProjectBoard {
       btn.title = `Keep the Mac awake: runs ${command} in a new tab at the end of the tab strip`;
       btn.setAttribute('aria-label', `Wake: run ${command} in a new tab`);
     }
+  }
+
+  private onClaudeClick(): void {
+    this.host.startClaude();
   }
 
   private onWakeClick(): void {
