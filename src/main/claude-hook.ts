@@ -144,6 +144,22 @@ function writeSettings(file: string, settings: Record<string, unknown>): void {
   console.info('[HOOK] Wrote settings', { file: target, mode: mode.toString(8) });
 }
 
+/** Keep an installed copy in step with this build's script, so a Patton
+ *  update that changes the hook reaches Claude Code without a reinstall. Runs
+ *  at app startup (ipc-handlers.ts) and whenever Settings asks for the status.
+ *  Never installs: without an installed copy it does nothing. */
+export function refreshInstalledScript(paths: ClaudeHookPaths): void {
+  if (!existsSync(paths.installedScript) || !existsSync(paths.bundledScript)) return;
+  try {
+    if (readFileSync(paths.bundledScript, 'utf8') !== readFileSync(paths.installedScript, 'utf8')) {
+      copyScript(paths);
+      console.info('[HOOK] Refreshed installed script from this build', { script: paths.installedScript });
+    }
+  } catch (err) {
+    console.warn('[HOOK] Could not refresh installed script', { error: (err as Error).message });
+  }
+}
+
 export function getHookStatus(paths: ClaudeHookPaths): ClaudeHookStatus {
   const scriptPresent = existsSync(paths.installedScript);
   let entryPresent = false;
@@ -153,18 +169,7 @@ export function getHookStatus(paths: ClaudeHookPaths): ClaudeHookStatus {
   } catch (err) {
     error = (err as Error).message;
   }
-  // Keep an installed copy in step with this build's script, so a Patton
-  // update that changes the hook reaches Claude Code without a reinstall.
-  if (scriptPresent && existsSync(paths.bundledScript)) {
-    try {
-      if (readFileSync(paths.bundledScript, 'utf8') !== readFileSync(paths.installedScript, 'utf8')) {
-        copyScript(paths);
-        console.info('[HOOK] Refreshed installed script from this build', { script: paths.installedScript });
-      }
-    } catch (err) {
-      console.warn('[HOOK] Could not refresh installed script', { error: (err as Error).message });
-    }
-  }
+  if (scriptPresent) refreshInstalledScript(paths);
   return {
     installed: scriptPresent && entryPresent,
     scriptPresent,
