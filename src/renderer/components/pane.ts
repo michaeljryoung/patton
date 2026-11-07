@@ -6,6 +6,7 @@ import { PasteDialog } from './paste-dialog';
 import { ContextMenu } from './context-menu';
 import { HistoryManager } from '../services/history-manager';
 import { FileLinkProvider } from '../services/file-link-provider';
+import { createOsc8LinkHandler } from '../services/osc8-links';
 import { rlog } from '../services/renderer-logger';
 import { announce } from '../services/announcer';
 import { stripPasteControls } from '../services/paste-sanitize';
@@ -69,6 +70,9 @@ export class Pane {
   private pasteDialog: PasteDialog;
   private contextMenu: ContextMenu;
   private initialCwd: string | undefined;
+  // Set before init() on the pane that will run the startup command: its
+  // shell gets FORCE_HYPERLINK=1 (see PtyCreateOptions.hyperlinks).
+  private hyperlinkEnv = false;
   private currentCwd = '';
   // Set by the first OSC 133 event: this pane's shell reports every prompt,
   // so the cwd can be re-read on prompts instead of polled.
@@ -464,6 +468,14 @@ export class Pane {
     this.contextMenu = new ContextMenu();
   }
 
+  /** This pane will run the startup command (Claude): ask main for
+   *  FORCE_HYPERLINK=1 in its shell. Only before init(); later it can't
+   *  reach a shell that already exists. */
+  enableHyperlinkEnv(): void {
+    if (this.ptyId !== null) return;
+    this.hyperlinkEnv = true;
+  }
+
   async init(): Promise<void> {
     // Mount terminal
     this.terminalView.mount();
@@ -492,6 +504,12 @@ export class Pane {
     );
     this.disposables.push(() => linkDisposable.dispose());
 
+    // OSC 8 hyperlinks a program prints (read from the option at hover time).
+    this.terminalView.terminal.options.linkHandler = createOsc8LinkHandler(
+      this.terminalView.terminal,
+      () => this.currentCwd,
+    );
+
     // Display welcome quote instantly (pre-PTY) so the tab feels responsive
     const quote = PATTON_QUOTES[Math.floor(Math.random() * PATTON_QUOTES.length)];
     this.terminalView.write(`\r\n  \x1b[1m"\x1b[3m${quote}\x1b[0m\x1b[1m"\x1b[0m\r\n  \x1b[2m— General George S. Patton\x1b[0m\r\n\r\n`);
@@ -505,6 +523,7 @@ export class Pane {
         rows: dims.rows,
         ...(this.initialCwd ? { cwd: this.initialCwd } : {}),
         ...(this.initialCwd && this.callbacks.projectDir ? { projectDir: true } : {}),
+        ...(this.hyperlinkEnv ? { hyperlinks: true } : {}),
         ...(shellPath ? { shell: shellPath } : {}),
         isDark: this.terminalView.isDarkBackground(),
       });

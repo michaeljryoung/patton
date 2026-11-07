@@ -29,8 +29,9 @@ export interface BookmarksHost {
   getActiveTab(): Tab | null;
   switchToTab(id: string): void;
   /** `forProject` tells the new tab's shell which project it was opened for
-   *  (PATTON_PROJECT_DIR), so a launcher can open that project directly. */
-  createTab(cwd: string, opts?: { forProject?: boolean }): Promise<Tab>;
+   *  (PATTON_PROJECT_DIR), so a launcher can open that project directly;
+   *  `startupCommand` gives that shell FORCE_HYPERLINK=1 for Claude. */
+  createTab(cwd: string, opts?: { forProject?: boolean; startupCommand?: boolean }): Promise<Tab>;
   /** Open sessions (every pane), waiting first, longest wait first. */
   listSessions(): SessionInfo[];
   /** Activate a tab and focus one of its panes; false if either has gone. */
@@ -431,7 +432,7 @@ export class BookmarksPanel {
     this.opening.add(path);
     try {
       const settings = await window.patton.settings.get();
-      const tab = await this.host.createTab(path, { forProject: true });
+      const tab = await this.host.createTab(path, { forProject: true, startupCommand: Boolean(settings.startupCommand) });
       if (settings.startupCommand) runStartupCommand(tab, settings.startupCommand);
       rlog('info', '[BOOKMARK] open', {
         kind: 'project', label: bookmark.label, action: 'new tab', startupCommand: Boolean(settings.startupCommand),
