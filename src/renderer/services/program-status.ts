@@ -225,6 +225,20 @@ export function shortText(text: string, max = SHOWN_TEXT_MAX): string {
   return t.length > max ? `${t.slice(0, max - 1)}…` : t;
 }
 
+// Every control character, for text from anywhere (a pane title set over
+// OSC 0/2 included), replaced rather than refused: what is left is shown.
+// eslint-disable-next-line no-control-regex
+const CONTROL_ALL_RE = /[\u0000-\u001f\u007f-\u009f]/g;
+
+/** Untrusted text from any program, made safe to show as text: control
+ *  characters become spaces, direction overrides and invisible formatting go,
+ *  runs of white space collapse, and it is cut to `max` characters. Still to
+ *  be set with `textContent` only. */
+export function shownText(text: string, max = SHOWN_TEXT_MAX): string {
+  const clean = text.replace(CONTROL_ALL_RE, ' ').replace(INVISIBLE_RE, '').replace(/\s+/g, ' ');
+  return shortText(clean, max);
+}
+
 function withMsg(lead: string, msg: string | null): string {
   return msg ? `${lead}: ${shortText(msg)}` : lead;
 }

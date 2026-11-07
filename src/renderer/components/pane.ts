@@ -14,7 +14,8 @@ import { shouldConfirmMultilinePaste } from '../services/paste-confirm';
 import { PATTON_QUOTES } from '../../shared/constants';
 import { shortcutKeys } from '../../shared/shortcuts';
 import type { CheckpointSource } from '../services/checkpoint-clock';
-import { ProgramStatusRecords, programSignal, type ProgramSignal, type ProgramState } from '../services/program-status';
+import { ProgramStatusRecords, programSignal, type BlockedKind, type ProgramSignal, type ProgramState } from '../services/program-status';
+import { paneActivity, type PaneActivity } from '../services/pane-activity';
 
 import type { ITheme } from '@xterm/xterm';
 import type { TabFlag } from '../../shared/types';
@@ -47,6 +48,16 @@ export interface ClaudeState {
   /** Why the pane last raised "needs you" (7501 only), as plain text. */
   needsYouText: string | null;
   parked: ParkedInfo | null;
+  /** Claude's own title for the session (7501 root `title`), untrusted text. */
+  title: string | null;
+  /** What a blocked root waits on (7501 `kind`, `msg`), untrusted text. */
+  blockedKind: BlockedKind | null;
+  msg: string | null;
+  /** A background task asking for input (7501 child, blocked): its title. */
+  blockedTask: string | null;
+  /** What the pane is doing in one word, and since when (ms epoch). */
+  activity: PaneActivity;
+  since: number;
 }
 
 let paneIdCounter = 0;
@@ -145,6 +156,10 @@ export class Pane {
   private lastProgramLogKey = '';
   private lastIgnoredLogMs = 0;
   private needsYouText: string | null = null;
+  // What the pane is doing and since when (see noteActivity): the hover
+  // card's "Working · 2 min". Starts as a shell at creation.
+  private lastActivity: PaneActivity = 'shell';
+  private stateSince = Date.now();
   // Root done and its last child task just finished: Claude usually wakes to
   // read the task's result, so give it a moment to report working before
   // calling it a stop. Unmeasured; the [7501] state lines are the data.
@@ -432,15 +447,52 @@ export class Pane {
 
   /** This pane's Claude Code state: the one API every consumer reads. */
   get claudeState(): ClaudeState {
+    const root = this.programStatus.root;
+    const blockedTask = this.blockedTaskTitle();
     return {
       source: this.statusReporting ? '7501' : 'title',
       active: this.claudeActive,
       working: this.claudeWorking,
       blocked: this.claudeBlocked,
-      root: this.programStatus.root?.state ?? null,
+      root: root?.state ?? null,
       needsYouText: this.needsYouText,
       parked: this.parked,
+      title: root?.title ?? null,
+      blockedKind: root?.kind ?? null,
+      msg: root?.msg ?? null,
+      blockedTask,
+      activity: this.currentActivity(blockedTask),
+      since: this.stateSince,
     };
+  }
+
+  /** The first background task (7501 child) blocked on input, by title (else id). */
+  private blockedTaskTitle(): string | null {
+    if (!this.statusReporting) return null;
+    const child = this.programStatus.children().find((c) => c.record.state === 'blocked');
+    return child ? (child.record.title ?? child.id) : null;
+  }
+
+  private currentActivity(blockedTask = this.blockedTaskTitle()): PaneActivity {
+    return paneActivity({
+      active: this.claudeActive,
+      working: this.claudeWorking,
+      blocked: this.claudeBlocked,
+      root: this.programStatus.root?.state ?? null,
+      reporting: this.statusReporting,
+      parked: this.parked !== null,
+      taskBlocked: blockedTask !== null,
+    });
+  }
+
+  /** Restart the "for how long" clock when the pane's activity changes. The
+   *  one place `stateSince` is written: called from notifyCheckpoint, which
+   *  every working/blocked/active/7501 transition reaches, and setParked. */
+  private noteActivity(): void {
+    const activity = this.currentActivity();
+    if (activity === this.lastActivity) return;
+    this.lastActivity = activity;
+    this.stateSince = Date.now();
   }
 
   /** ✳ has held for the settle: apply the stored verdict, else the title path. */
@@ -508,6 +560,7 @@ export class Pane {
    *  no longer running Claude forgets its reading first, so the next session
    *  starts at "✓ —". */
   private notifyCheckpoint(): void {
+    this.noteActivity();
     if (!this.claudeActive) {
       this.ctxTokens = null;
       this.sinceTokens = null;
@@ -587,6 +640,7 @@ export class Pane {
     if (info && this.parked && info.tasks === this.parked.tasks && info.crons === this.parked.crons
       && (info.titles ?? []).join('\n') === (this.parked.titles ?? []).join('\n')) return;
     this.parked = info;
+    this.noteActivity();
     this.callbacks.onParked?.(this, info);
   }
 
