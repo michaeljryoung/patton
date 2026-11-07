@@ -12,7 +12,7 @@
   overflow: hidden;
   font-family: var(--font-ui);
   font-size: var(--ui);
-  transition: max-height 0.2s ease, opacity 0.2s ease, min-height 0.2s ease, padding 0.2s ease;
+  transition: max-height 0.2s ease, opacity 0.2s ease, min-height 0.2s ease, padding 0.2s ease, visibility 0s linear 0s;
 }
 
 /* Collapsed state: fully hidden */
@@ -25,6 +25,9 @@
   border-top: none;
   opacity: 0;
   pointer-events: none;
+  /* Out of the tab order and the accessibility tree once the collapse has played. */
+  visibility: hidden;
+  transition: max-height 0.2s ease, opacity 0.2s ease, min-height 0.2s ease, padding 0.2s ease, visibility 0s linear 0.2s;
 }
 
 .editor-container.collapsed .editor-textarea,
@@ -156,7 +159,8 @@
   opacity: 0;
   transform: translateY(8px);
   pointer-events: none;
-  transition: opacity 0.15s ease, transform 0.15s ease;
+  visibility: hidden;
+  transition: opacity 0.15s ease, transform 0.15s ease, visibility 0s linear 0.15s;
   overflow: hidden;
   font-family: var(--font-ui);
 }
@@ -165,6 +169,8 @@
   opacity: 1;
   transform: translateY(0);
   pointer-events: auto;
+  visibility: visible;
+  transition-delay: 0s;
 }
 
 .history-search-header {

@@ -12,7 +12,8 @@
   justify-content: center;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.2s ease;
+  visibility: hidden;
+  transition: opacity 0.2s ease, visibility 0s linear 0.2s;
   font-family: var(--font-ui);
   font-size: var(--ui);
 }
@@ -20,6 +21,8 @@
 .settings-overlay.visible {
   opacity: 1;
   pointer-events: auto;
+  visibility: visible;
+  transition-delay: 0s;
 }
 
 .settings-backdrop {
@@ -334,13 +337,16 @@ select.settings-input {
   justify-content: center;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.15s ease;
+  visibility: hidden;
+  transition: opacity 0.15s ease, visibility 0s linear 0.15s;
   font-family: var(--font-ui);
 }
 
 .paste-dialog-overlay.visible {
   opacity: 1;
   pointer-events: auto;
+  visibility: visible;
+  transition-delay: 0s;
 }
 
 .paste-dialog-overlay.visible::before {
@@ -416,13 +422,16 @@ select.settings-input {
   justify-content: center;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.15s ease;
+  visibility: hidden;
+  transition: opacity 0.15s ease, visibility 0s linear 0.15s;
   font-family: var(--font-ui);
 }
 
 .confirm-dialog-overlay.visible {
   opacity: 1;
   pointer-events: auto;
+  visibility: visible;
+  transition-delay: 0s;
 }
 
 .confirm-dialog-overlay.visible::before {
@@ -483,13 +492,16 @@ select.settings-input {
   background: var(--scrim);
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.2s ease;
+  visibility: hidden;
+  transition: opacity 0.2s ease, visibility 0s linear 0.2s;
   font-family: var(--font-ui);
 }
 
 .onboarding-overlay.visible {
   opacity: 1;
   pointer-events: auto;
+  visibility: visible;
+  transition-delay: 0s;
 }
 
 .onboarding-panel {
