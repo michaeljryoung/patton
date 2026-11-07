@@ -611,6 +611,18 @@ html, body {
   inset: 0;
 }
 
+/* Something shown over a tab's panes (the project board, tab.ts setCover).
+   Opaque, so the shell beneath stays sized but out of sight. */
+.tab-cover {
+  position: absolute;
+  inset: 0;
+  z-index: 150; /* above pane overlays (search 100), below app dialogs (900+) */
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  overflow: auto;
+}
+
 
 /* --- Focus indicators --- */
 button:focus-visible,
