@@ -89,7 +89,26 @@ check "ctx: no task fields (ctx message only)" \
 check "ctx: no task fields, missing transcript (nothing)" "" "$(ctxjson "$TD/nope.jsonl" '')"
 PARSER=osascript
 check "ctx: osascript fallback leaves the ctx fields out" "$(stopwant '')" "$(ctxjson "$TD/after.jsonl" "$BOTH")"
-rm -f "$TD"/*.jsonl && rmdir "$TD"
+
+PARSER=jq
+# Skill-tool checkpoint, attachment/peer lines, tool-result flood, perl magic open.
+SKILLCALL='{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t","name":"Skill","input":{"skill":"checkpoint"}}],"usage":{"input_tokens":1,"cache_read_input_tokens":200000,"cache_creation_input_tokens":0,"output_tokens":9}},"timestamp":"2026-10-11T04:48:38.277Z"}'
+ATTACH='{"type":"attachment","attachment":{"type":"queued_command","origin":{"kind":"human"},"prompt":"x"},"timestamp":"2026-10-11T05:30:00.000Z"}'
+PEER='{"type":"user","message":{"role":"user","content":"hello from a peer"},"origin":{"kind":"peer"}}'
+{ human hi; u 10 100000 0; echo "$SKILLCALL"; u 1 250000 0; human next; u 1 300000 0; } > "$TD/skill.jsonl"
+check "ctx: model-invoked checkpoint (Skill tool_use) is a start, turn ends at the next human prompt" \
+  "$(stopwant ";ctx=300001;since=50000;cpt=$CPT")" "$(ctxjson "$TD/skill.jsonl" "$BOTH")"
+{ echo "$CKPT"; u 0 400000 0; echo "$ATTACH"; u 0 500000 0; echo "$PEER"; u 0 600000 0; } > "$TD/attach.jsonl"
+check "ctx: attachment with an origin and a peer message don't end the turn" \
+  "$(stopwant ";ctx=600000;since=0;cpt=$CPT")" "$(ctxjson "$TD/attach.jsonl" "$BOTH")"
+{ echo "$CKPT"; u 0 400000 0; human next; u 0 450000 0; for i in $(seq 1 30); do echo "$QUOTED"; done; u 0 480000 0; } > "$TD/flood.jsonl"
+check "ctx: 30 tool results quoting the tag don't push the checkpoint out of the window" \
+  "$(stopwant ";ctx=480000;since=80000;cpt=$CPT")" "$(ctxjson "$TD/flood.jsonl" "$BOTH")"
+EVIL="$TD/x;touch pwned|"
+cp "$TD/after.jsonl" "$EVIL"
+( cd "$TD" && printf '%s' "$(ctxjson "$EVIL" "$BOTH")" | bash "$HOOK" >/dev/null 2>&1 )
+if [ -e "$TD/pwned" ]; then echo "FAIL transcript path ending in | was executed"; fail=1; else echo "ok   transcript path ending in | is not executed"; fi
+rm -f "$TD"/*.jsonl "$EVIL" "$TD/pwned" && rmdir "$TD"
 
 # Quoted path: the installer's command (hookCommand in src/main/claude-hook.ts),
 # run the way Claude Code runs hook commands (through `sh -c`), for a script
@@ -114,6 +133,34 @@ if command -v node >/dev/null 2>&1; then
   rm -f "$ODD/hook.sh" && rmdir "$ODD" "$TMPD/App Support" "$TMPD"
 else
   echo "skip quoted path (no node)"
+fi
+
+# The renderer's parse of the OSC 777 message: unknown or malformed trailing
+# fields must not cost the stop verdict. Needs Node 22.18+; skipped without it.
+if command -v node >/dev/null 2>&1; then
+  out=$(node --no-warnings -e '
+    import(process.argv[1]).then((m) => {
+      const t = (s) => JSON.stringify(m.parsePattonOsc(s));
+      const cases = [
+        ["patton;stop;tasks=1;crons=2", "{\"kind\":\"stop\",\"tasks\":1,\"crons\":2,\"context\":null}"],
+        ["patton;stop;tasks=0;crons=0;ctx=5;since=3;cpt=9", "{\"kind\":\"stop\",\"tasks\":0,\"crons\":0,\"context\":{\"ctxTokens\":5,\"sinceTokens\":3,\"checkpointAt\":9}}"],
+        ["patton;stop;tasks=0;crons=0;ctx=5;since=3;future=abc;x", "{\"kind\":\"stop\",\"tasks\":0,\"crons\":0,\"context\":{\"ctxTokens\":5,\"sinceTokens\":3,\"checkpointAt\":null}}"],
+        ["patton;stop;tasks=0;crons=0;ctx=5;since=3;cpt=oops", "{\"kind\":\"stop\",\"tasks\":0,\"crons\":0,\"context\":{\"ctxTokens\":5,\"sinceTokens\":3,\"checkpointAt\":null}}"],
+        ["patton;stop;tasks=0;crons=0;ctx=bad;since=3", "{\"kind\":\"stop\",\"tasks\":0,\"crons\":0,\"context\":null}"],
+        ["patton;stop;tasks=0;crons=0;zzz", "{\"kind\":\"stop\",\"tasks\":0,\"crons\":0,\"context\":null}"],
+        ["patton;ctx;ctx=5;since=3;new=1", "{\"kind\":\"ctx\",\"context\":{\"ctxTokens\":5,\"sinceTokens\":3,\"checkpointAt\":null}}"],
+        ["patton;ctx;ctx=5", "null"],
+        ["patton;stop;tasks=x;crons=0", "null"],
+      ];
+      let bad = 0;
+      for (const [i, want] of cases) { const got = t(i); if (got !== want) { bad++; console.log("FAIL parse <" + i + "> got " + got); } }
+      console.log(bad ? "parse FAILED" : "ok   OSC 777 parse (" + cases.length + " cases)");
+      process.exit(bad ? 1 : 0);
+    });
+  ' "$ROOT/src/renderer/services/patton-osc.ts" 2>&1) || fail=1
+  echo "$out"
+else
+  echo "skip OSC parse (no node)"
 fi
 
 if [ $fail -ne 0 ]; then echo "probe FAILED"; exit 1; fi

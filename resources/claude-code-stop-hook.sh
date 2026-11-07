@@ -26,7 +26,9 @@
 #      synthetic message carries, is skipped).
 #   S  C minus the context at the end of the last /checkpoint turn: the user
 #      line carrying `<command-name>/checkpoint</command-name>` (a human
-#      prompt) up to the next human prompt or task notification; its last
+#      prompt), or an assistant `tool_use` of the Skill tool with skill
+#      "checkpoint" (the model invoked it), up to the next human prompt or task
+#      notification (a `user` line; peer messages don't end a turn); its last
 #      usage is the baseline. No checkpoint, a `compact_boundary` after it, or
 #      C below the baseline: baseline 0.
 #   T  that checkpoint line's timestamp in Unix seconds (absent without one).
@@ -103,23 +105,34 @@ context_fields() { # transcript path -> ";ctx=C;since=S[;cpt=T]" or nothing
   [ -n "$ctx" ] || ctx=$(usage_of < "$t")
   [[ "$ctx" =~ ^[0-9]+$ ]] || return 0
 
-  # Last human /checkpoint prompt: "<line> <unix seconds or empty>". The tag
-  # also turns up quoted in tool results and agent briefs, so jq checks the
-  # line is a human prompt (origin human; an older line with no origin counts
-  # when its content is a plain string) and the tag is in its own text.
+  # Last /checkpoint start: "<line> <unix seconds or empty>". Two forms: a
+  # human prompt carrying the command tag, and the model invoking the Skill
+  # tool with skill "checkpoint". The tag also turns up quoted in tool results
+  # and agent briefs (skipped here, so they can't fill the candidate window),
+  # so jq checks the form properly: for the prompt, origin human (an older line
+  # with no origin counts when its content is a plain string) and the tag in
+  # its own text; for the tool call, a non-sidechain assistant tool_use block.
+  # The file is read through `<`, never as a perl argument (perl's magic open
+  # would run a path ending in `|`).
   cp=$("$PERL" -ne '
-      if (index($_, q(<command-name>/checkpoint</command-name>)) >= 0 && index($_, q("type":"user")) >= 0) {
+      if (index($_, q("type":"tool_result")) < 0 && (
+            (index($_, q(<command-name>/checkpoint</command-name>)) >= 0 && index($_, q("type":"user")) >= 0)
+         || (index($_, q("skill":"checkpoint")) >= 0 && index($_, q("name":"Skill")) >= 0))) {
         push @c, "$.:$_"; shift @c if @c > 20;
       }
-      END { print @c }' "$t" | "$JQ" -R -r '
+      END { print @c }' < "$t" | "$JQ" -R -r '
     (index(":")) as $i | .[:$i] as $n | (.[$i+1:] | fromjson?) as $o
     | try (
-      select($o.type == "user" and ($o.isMeta != true) and ($o.isSidechain != true))
-      | select(($o.origin.kind? // null) == "human"
-               or ($o.origin == null and ($o.message.content | type) == "string"))
-      | select(($o.message.content
-                | if type == "string" then . else ([.[]? | select(.type? == "text") | .text] | join("\n")) end)
-               | contains("<command-name>/checkpoint</command-name>"))
+      select(($o.isMeta != true) and ($o.isSidechain != true))
+      | select(
+          ($o.type == "user"
+           and (($o.origin.kind? // null) == "human"
+                or ($o.origin == null and ($o.message.content | type) == "string"))
+           and (($o.message.content
+                 | if type == "string" then . else ([.[]? | select(.type? == "text") | .text] | join("\n")) end)
+                | contains("<command-name>/checkpoint</command-name>")))
+          or ($o.type == "assistant"
+              and any($o.message.content[]?; .type? == "tool_use" and .name? == "Skill" and (.input.skill? // null) == "checkpoint")))
       | $n + " " + ((try ($o.timestamp | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601 | floor | tostring) catch "") // "")
     ) catch empty' 2>/dev/null | tail -n 1)
 
@@ -127,15 +140,17 @@ context_fields() { # transcript path -> ";ctx=C;since=S[;cpt=T]" or nothing
   if [[ "$cp" =~ ^([0-9]+)\ ([0-9]*)$ ]]; then
     line=${BASH_REMATCH[1]}; ts=${BASH_REMATCH[2]}
     # One pass from the checkpoint line: its turn ends at the next human
-    # prompt or task notification; keep the usage lines inside it, unless a
+    # prompt or task notification (a `user` line; an attachment that merely
+    # carries an origin, or a peer message, does not end it); keep the usage lines inside it, unless a
     # compact_boundary follows the checkpoint anywhere (then baseline 0).
     range=$(L="$line" "$PERL" -ne '
         next if $. < $ENV{L};
         if (index($_, q("subtype":"compact_boundary")) >= 0) { $b = 1; last }
-        if (!$end && $. > $ENV{L} && (index($_, q("origin":{"kind":"human")) >= 0
-            || index($_, q("origin":{"kind":"task-notification")) >= 0)) { $end = 1 }
+        if (!$end && $. > $ENV{L} && index($_, q("type":"user")) >= 0
+            && (index($_, q("origin":{"kind":"human")) >= 0
+                || index($_, q("origin":{"kind":"task-notification")) >= 0)) { $end = 1 }
         if (!$end && index($_, q("usage")) >= 0) { push @u, $_; shift @u if @u > 40 }
-        END { print($b ? "COMPACT\n" : @u) }' "$t")
+        END { print($b ? "COMPACT\n" : @u) }' < "$t")
     if [ "$range" != COMPACT ]; then
       base=$(printf '%s\n' "$range" | usage_of)
       [[ "$base" =~ ^[0-9]+$ ]] || base=0
