@@ -5,7 +5,7 @@
 
 **Goal:** Patton reads Claude Code sessions truthfully (parked ≠ needs you), takes a pasted image with a thumbnail, keeps project and artifact bookmarks in a left sidebar, and gets a look Michael picks from five mocks.
 **Done when:** v1.11.0 is released and, live in it: a Claude tab whose turn ends with a background agent or timer shows "parked" and goes green only at a true stop (synthetic Stop-hook probe + one live run); ⌘V of a clipboard image in a Claude tab reaches Claude and shows a thumbnail; the sidebar activates an open project's tab rather than opening a second and opens an artifact in the browser; five look mocks are published; the compose-default reason is reported.
-**Last verified:** 2026-11-07 12:10 (Session 43: `s41_install` closed by the v1.13.1 release and the local install at its tag)
+**Last verified:** 2026-11-07 12:50 (Session 43: `s41_install` closed by v1.13.1 and the local install at its tag; `s43_fixes` released as v1.13.2)
 
 **Retired:** 10 finished nodes, in `docs/map-archive.md`
 
@@ -28,6 +28,8 @@ flowchart TD
     bookmark_hide[S41: hide to a + strip]:::done
     s41_install[S41: install into /Applications]:::todo
     s41_verify[S41: live drag + hide check]:::todo
+    s43_fixes[S43: review fixes, v1.13.2]:::done
+    s43_verify[S43: fixes seen live]:::todo
   end
   subgraph P4["Phase 4 — Look"]
     look_pick[Michael picks a combination]:::done
@@ -44,6 +46,8 @@ flowchart TD
   bookmark_reorder --> s41_install
   bookmark_hide --> s41_install
   s41_install --> s41_verify
+  s41_install --> s43_fixes
+  s43_fixes --> s43_verify
   parked_state --> merge_release
   wake_yellow --> merge_release
   hook_install --> merge_release
@@ -77,10 +81,12 @@ flowchart TD
 | `bookmark_hide` | Header chevron hides the sidebar; hidden, a 22 px strip with a boxed "+" (whole strip is the button) brings it back; ⌃⌘B toggles the same two states | done | `bookmarks_panel` | `bookmarks-panel.ts::setupRail` · `#bookmarks-rail` in `main.css` · `6ec77ff` |
 | `s41_install` | The S41 build, plus S42's three fixes (multi-line paste confirmation off by default, `8266f90`; Stop-hook verdicts kept 40 s, `c6d1af8`; a bookmark for a closed project launches Claude there instead of the `cc` picker, `5be6a3b` with claude-launcher `238974c`), reaches /Applications/Patton.app. Michael asked that nothing touch the running app during the session ("don't activate anything while we're in here") and chose to install in a later session run from a plain terminal ("we'll update in a later session in terminal so this doesnt all break"): from Terminal.app, `npm run install-app` in the repo, then quit and relaunch Patton | done | `bookmark_reorder`, `bookmark_hide` | `PATTON_NO_INSTALL=1` build verified 13:11 and 13:25 with /Applications untouched (asar mtime 11:40:58 throughout); released as `v1.13.0` (run 42225415151; cask 1.13.0, sha `2d0fe426…` matches the DMG); **S43 (7 Nov):** installed from iTerm with Patton closed, then pushed and released as `v1.13.1` (run 42371043455; cask 1.13.1, sha `39e75b04…` matches the DMG); /Applications rebuilt at the tag reports `1.13.1`, asar 12:10, `PATTON_PROJECT_DIR`, "Confirm multi-line pastes" and `afterMs` literals present |
 | `s41_verify` | Live: click the bookmark of a project with no open tab: Claude Code starts there with "let's work on <name> project", no picker, and `main.log` has `[PTY] PATTON_PROJECT_DIR exported`. Dictate or paste 3+ lines into a Claude tab: no dialog, `[PASTE] multi-line text` with `confirm:false` in `main.log`; `[DOT] Hook verdict applied` lines carry `afterMs`, and no `Needs-you` with source `claude` follows a verdict that reported tasks. Drag a project row to a new place (blue line, order persists across relaunch), drag onto the other group (refused); chevron hides to the strip, the strip's "+" brings it back, ⌃⌘B the same | todo | `s41_install` | — |
+| `s43_fixes` | Eight bugs a post-restyle review found (two agents; claims checked against code and `main.log`) plus four from a fresh code review, released as v1.13.2: autosave saved `''` for panes past the tenth (cwd IPC capped 10/s), now spaced refresh + per-pane cache; notifications latch off only on macOS's "not allowed"; terminal frame takes the theme background (`--term-bg`); closed overlays `visibility: hidden` and focus returns on close; tab tooltip/aria carries status; larger hit areas, tab min-width 76 px, active tab kept in view; Color Theme no longer writes 18 old-look properties; opacity/font-size saves no longer refused | done | `s41_install` | `a68f871`…`a025b79`; lint + tsc + jsdom checks (13 stale panes all save real folders, ≤9 calls/s) + no-install build; tag `v1.13.2` (run 42374027568; cask 1.13.2, sha `049e5339…` matches the DMG) |
+| `s43_verify` | Live, after install: a split tab where one pane runs `cc` reopens both panes in their own folders after a relaunch; with 11+ panes open `grep -c 'pty:get-cwd' main.log` stops growing; a dark terminal theme on a light Mac has no white frame; Tab never lands in a closed dialog and closing search/settings returns focus to the terminal; hovering a tab shows its state; tab close and grip are easy to hit; with many tabs the active one stays visible | todo | `s43_fixes` | — |
 | `merge_release` | Merge `feat/image-paste` and `feat/bookmarks` into main, code review, `npm run lint && npm run package`, release v1.11.0, Homebrew step green | done | `parked_state`, `wake_yellow`, `hook_install`, `paste_thumbnail`, `bookmark_open` | tag `v1.11.0` (release run 42203278111, macos-15; cask 1.11.0 pushed by CI) |
 <!-- MAP:END -->
 
-Last updated: 2026-11-07 (Session 43)
+Last updated: 2026-11-07 (Session 43, v1.13.2)
 
 CLAUDE.md's `## Next Steps` section points here; this is the canonical list. Items leave only via `[x] DONE — Session N`, `[~] SUPERSEDED — <pointer>`, or `[-] DROPPED: <reason>`. Marked items linger 10 checkpoints, then sweep to `docs/session-archive.md`.
 
@@ -116,6 +122,10 @@ CLAUDE.md's `## Next Steps` section points here; this is the canonical list. Ite
 
 ## Considered / low-priority
 
+- [ ] **Light-mode status dots below 3:1** (S43 review, Michael's call): yellow flag 1.87, green needs-you 2.34, red flag 2.97 on the strip `#f4f5f7`; dark mode passes. Offered: a 1 px `#747579` edge in light mode only (keeps his mixer colours) or deeper hues (`#10a175`, `#bf811c`, `#fa4b5c`).
+- [ ] **Why compose-first went off** (S43): switched off in Settings for every pane at 2026-11-06 18:45:46; no compose submit since; no note or message says why. Ask before building on it.
+- [ ] **S43 review proposals** (offered, ranked by value for effort; evidence in the review page linked from Status): (1) jump to the session that has waited longest (S; 21 needs-you from 9 panes in the 7 Nov 09h hour); (2) worktree sessions named and bookmarked under their main project (S; `projects.ts` treats a `.git` file as a root); (3) answer Claude Code's `OSC 7501` status probe (M; 2.1.319 sends it; once answered Claude drops the title glyph, so compose-first, image-paste routing and chips must move in the same change; spec rev 0.4); (4) hover card with Claude's own title and state (S); (5) resume each tab's Claude session after relaunch via the Stop hook's `session_id` and `cc` (M; needs claude-launcher); (6) "Go to session" in the palette (S); (7) bookmark rows show live state (S–M); (8) OSC 8 links from Claude Code (S–M; 6 failed opens since 12 Oct). Not recommended: more compose-first, macOS banners, agent-view background sessions, per-tab cost meter, a permission-prompt hook, screen reading.
+- [ ] **S43 polish batch** (offered): 18 small restyle loose ends, F3–F25 in the review (rounded corners at 12 sites, dark hairline glare, dimmed text under 4.5:1, duplicated focus rules, `!important` fights, 10 px bookmark subtitles, untitled truncations, bold active tab shifting neighbours, keyboard tab reorder, …).
 - [ ] **Paste warning that asks only where pasted lines would run** (offered S42). With bracketed paste on (zsh, bash 5.1+, Claude Code) never ask; without it (macOS's bash 3.2) ask. Would let the default return to on for everyone.
 - [ ] **Make renderer-only bindings registry-driven too** (S36 follow-up, optional). `keybinding-manager.ts` still matches raw `KeyboardEvent` fields by hand (⌘E compose, ⌘⇧K reset renderer, ⌃R history search, ⌘⌥arrows pane nav), so those four keys are written down twice: once as a matcher there, once as a `rendererOnly` accelerator in `src/shared/shortcuts.ts` for display. A small accelerator→event matcher would close the last drift seam. Deliberately out of scope in S36 — key-matching edge cases (layout, `e.key` case, Option-composed characters) carry real regression risk for a purely cosmetic gain, and a comment on the class flags the coupling.
 - [ ] **Consider Apple's canonical modifier order** (S36, cosmetic). `acceleratorToDisplay()` renders ⌃⌘⌥⇧ — the order Patton's UI has always used (⌘⇧D, ⌃⌘N). Apple's HIG order is ⌃⌥⇧⌘ (so ⇧⌘D). Deliberately preserved so existing strings didn't shuffle; now a one-line change in `MODIFIER_ORDER` if the native look is ever wanted.
