@@ -36,6 +36,11 @@ export default [
     languageOptions: { ecmaVersion: 'latest', sourceType: 'module', globals: { ...globals.node } },
   },
   {
+    // Hidden-Electron checks: Node on the outside, a page function serialized into the window.
+    files: ['scripts/**/*.cjs'],
+    languageOptions: { ecmaVersion: 'latest', sourceType: 'commonjs', globals: { ...globals.node, ...globals.browser } },
+  },
+  {
     ignores: ['node_modules/', 'dist/', '.vite/', 'out/', '.worktrees/', 'eslint.config.mjs'],
   },
 ];
