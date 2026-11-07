@@ -792,6 +792,13 @@ select:focus-visible {
   outline: none;
 }
 
+.context-menu-item.disabled,
+.context-menu-item.disabled:hover {
+  background: transparent;
+  color: var(--muted);
+  cursor: default;
+}
+
 .context-menu-shortcut {
   font-size: 11px;
   color: var(--muted);

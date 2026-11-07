@@ -1,4 +1,5 @@
 import { ContextMenu } from './context-menu';
+import { announce } from '../services/announcer';
 import { DEFAULTS } from '../../shared/constants';
 import type { TabFlag } from '../../shared/types';
 
@@ -162,6 +163,15 @@ export class TabBar {
     this.container.appendChild(newBtn);
   }
 
+  /** The tab next to this one in the strip (-1 left, 1 right), or null at an end. */
+  private neighbourId(tabId: string, dir: -1 | 1): string | null {
+    const ids = Array.from(this.tabsContainer.querySelectorAll<HTMLElement>('.tab-bar-tab'))
+      .map((el) => el.dataset.tabId);
+    const idx = ids.indexOf(tabId);
+    if (idx === -1) return null;
+    return ids[idx + dir] ?? null;
+  }
+
   update(tabs: TabHeaderInfo[]): void {
     if (this.renameOpen) {
       this.heldUpdate = tabs;
@@ -274,6 +284,8 @@ export class TabBar {
       const titleSpan = document.createElement('span');
       titleSpan.className = 'tab-bar-tab-title';
       titleSpan.textContent = tab.title;
+      // Reserves the bold (active) width in CSS so switching tabs doesn't shift the rest.
+      titleSpan.dataset.title = tab.title;
       el.appendChild(titleSpan);
 
       // Double-click to rename this one tab
@@ -305,6 +317,19 @@ export class TabBar {
             label: 'Clear Flag',
             action: () => this.callbacks.onSetFlag(tab.id, null),
           },
+          // --- Reorder from the keyboard-reachable menu (the grip is mouse-only) ---
+          { separator: true as const },
+          ...([-1, 1] as const).map((dir) => ({
+            label: dir < 0 ? 'Move Left' : 'Move Right',
+            disabled: this.neighbourId(tab.id, dir) === null,
+            action: () => {
+              // The bar may have been rebuilt while the menu was open: look again.
+              const neighbour = this.neighbourId(tab.id, dir);
+              if (!neighbour) return;
+              this.callbacks.onReorder(tab.id, neighbour);
+              announce(`${tab.title} moved ${dir < 0 ? 'left' : 'right'}`);
+            },
+          })),
           // --- Bookmarks ---
           ...(this.callbacks.onBookmarkProject ? [
             { separator: true as const },

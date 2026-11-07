@@ -151,6 +151,18 @@
   pointer-events: auto;
 }
 
+/* The active tab is bold and so wider: this hidden bold copy of the title
+ * (data-title) makes every tab as wide as its bold self, so switching tabs
+ * doesn't shift the ones to its right. */
+.tab-bar-tab-title::after {
+  content: attr(data-title);
+  display: block;
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+  font-weight: 700;
+}
+
 /* "Awaiting input" indicator — small dot before the tab title when an
  * inactive tab needs the user (Claude Code stopped working, a shell command
  * finished, OSC 9 notification, bell). Uses the same green
@@ -178,13 +190,16 @@
 }
 
 /* --- Manual colour flags (right-click a tab → Flag) ---
- * Same dot, user-chosen colour. Deliberately NOT animated and without the
+ * Same size and colours, but a square: circle = automatic status, square =
+ * your own flag, ring = parked. The light-mode --dot-edge shadow follows the
+ * square. Deliberately NOT animated and without the
  * halo: the pulse means "this just happened, look now", whereas a flag is a
  * standing note-to-self. Keeping both off is what lets you tell the two apart
  * at a glance when both kinds of dot are on screen. */
 .tab-bar-tab-indicator.flag-green,
 .tab-bar-tab-indicator.flag-yellow,
 .tab-bar-tab-indicator.flag-red {
+  border-radius: 0;
   animation: none;
   box-shadow: 0 0 0 1px var(--dot-edge);
 }
