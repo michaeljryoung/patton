@@ -80,7 +80,7 @@ export class HistorySearch {
     this.list.innerHTML = items.map((entry, i) => {
       const escaped = entry.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
       const active = i === this.selectedIndex ? 'active' : '';
-      return `<div class="history-search-item ${active}" role="option" aria-selected="${i === this.selectedIndex}" data-index="${i}">${escaped}</div>`;
+      return `<div class="history-search-item ${active}" role="option" aria-selected="${i === this.selectedIndex}" data-index="${i}" title="${escaped}">${escaped}</div>`;
     }).join('');
 
     if (this.filtered.length === 0) {

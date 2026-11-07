@@ -508,7 +508,7 @@ export class BookmarksPanel {
       : hostOf(bookmark.url ?? '');
     const state = isCurrent ? ', open in the active tab' : isOpen ? ', open' : '';
     row.setAttribute('aria-label', `${bookmark.label}, ${subtitle}${state}`);
-    row.title = bookmark.kind === 'project' ? (bookmark.path ?? '') : (bookmark.url ?? '');
+    row.title = `${bookmark.label}\n${bookmark.kind === 'project' ? (bookmark.path ?? '') : (bookmark.url ?? '')}`;
     if (bookmark.missing) row.setAttribute('aria-disabled', 'true');
 
     const dot = document.createElement('span');
