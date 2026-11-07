@@ -57,6 +57,14 @@ export class ProjectBoards {
           mounted.board.setLayout(layout);
         }
       }),
+      // A project was added on some board: every board gets the new list.
+      window.patton.board.onListChanged((payload) => {
+        for (const mounted of this.boards.values()) {
+          mounted.payload = payload;
+          mounted.board.setPayload(payload);
+        }
+        rlog('info', '[BOARD] list changed', { boards: this.boards.size, projects: payload.projects.length });
+      }),
     );
   }
 
@@ -116,11 +124,11 @@ export class ProjectBoards {
 
   private mount(tab: Tab, payload: BoardPayload): void {
     const host: ProjectBoardHost = {
-      openProject: (path) => {
-        this.openFromBoard(tab, path).catch((err) => {
-          rlog('error', '[BOARD] open failed', { tabId: tab.id, error: String(err) });
-        });
-      },
+      // The board announces a failure, so the rejection goes back to it.
+      openProject: (path) => this.openFromBoard(tab, path).catch((err: unknown) => {
+        rlog('error', '[BOARD] open failed', { tabId: tab.id, error: String(err) });
+        throw err;
+      }),
       dismiss: () => {
         if (this.forget(tab, 'plain terminal')) tab.setCover(null);
       },

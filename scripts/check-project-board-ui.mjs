@@ -43,6 +43,11 @@ const check = (name, ok, detail) => {
     console.log('FAIL', name, detail === undefined ? '' : JSON.stringify(detail));
   }
 };
+// A promise the board leaves unhandled is a failure, not a crash that hides the rest.
+process.on('unhandledRejection', (err) => {
+  failed++;
+  console.log('FAIL unhandled rejection', String(err));
+});
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const SAVE_WAIT = 380;
 
@@ -89,7 +94,7 @@ function setup(payload = fixture(), opts = {}) {
   const win = dom.window;
   if (!win.CSS) win.CSS = {};
   if (!win.CSS.escape) win.CSS.escape = (s) => String(s).replace(/["\\]/g, '\\$&');
-  const calls = { open: [], dismiss: 0, setLayout: [], pick: 0, add: [] };
+  const calls = { open: [], dismiss: 0, setLayout: [], generations: [], pick: 0, add: [] };
   const live = new Map(Object.entries({
     [P('alpha')]: { ...CLOSED, isOpen: true, open: 1, working: 1 },
     [P('beta')]: { ...CLOSED, isOpen: true, open: 1, waiting: 1 },
@@ -99,12 +104,15 @@ function setup(payload = fixture(), opts = {}) {
   win.patton = {
     board: {
       get: async () => fixture(),
-      setLayout: async (layout) => {
+      setLayout: async (layout, generation) => {
         calls.setLayout.push(JSON.parse(JSON.stringify(layout)));
+        calls.generations.push(generation);
+        if (opts.setLayout) return opts.setLayout(layout, calls.setLayout.length);
         return opts.refuseSave ? null : layout;
       },
       pickFolder: async () => {
         calls.pick++;
+        if (opts.pickFolder) return opts.pickFolder();
         return opts.pick ?? null;
       },
       addProject: async (req) => {
@@ -116,7 +124,10 @@ function setup(payload = fixture(), opts = {}) {
   };
   win.eval(code);
   const host = {
-    openProject: (path) => calls.open.push(path),
+    openProject: (path) => {
+      calls.open.push(path);
+      return opts.openProject ? opts.openProject(path) : undefined;
+    },
     dismiss: () => calls.dismiss++,
     liveState: (path) => live.get(path) ?? CLOSED,
   };
@@ -159,7 +170,8 @@ function setup(payload = fixture(), opts = {}) {
   const contextMenu = (target) => target.dispatchEvent(new win.MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }));
   const lastSaved = () => calls.setLayout[calls.setLayout.length - 1];
   const themeOf = (layout, id) => layout.themes.find((t) => t.id === id);
-  return { win, board, el, q, qa, tile, areaIds, tilesIn, metaOf, key, click, dragEvent, drag, menuLabels, menuClick, contextMenu, calls, live, logs, lastSaved, themeOf };
+  const announced = () => Array.from(win.document.querySelectorAll('[aria-live]')).map((r) => r.textContent).join(' | ');
+  return { win, board, el, q, qa, tile, areaIds, tilesIn, metaOf, key, click, dragEvent, drag, menuLabels, menuClick, contextMenu, calls, live, logs, lastSaved, themeOf, announced };
 }
 
 // ── 1. Rendering from the fixture ──
@@ -529,6 +541,138 @@ function setup(payload = fixture(), opts = {}) {
   t.board.dispose();
   await sleep(10);
   check('dispose saves a pending change and removes the board', t.calls.setLayout.length === 1 && !t.el.isConnected);
+}
+
+// ── 13. Review fixes: races, double clicks, failures, IME ──
+const deferred = () => {
+  let resolve;
+  const promise = new Promise((r) => { resolve = r; });
+  return { promise, resolve };
+};
+const withNewOne = (place = 'home', generation) => {
+  const p = fixture();
+  p.projects.push({ path: P('new-one'), name: 'New One', subProjects: [] });
+  if (place) p.layout.themes.find((th) => th.id === place).projects.push(P('new-one'));
+  if (generation !== undefined) p.generation = generation;
+  return p;
+};
+const plusProject = (t) => t.click(t.qa('.pboard-btn').find((b) => b.textContent === '+ Project'));
+const submit = (t) => t.q('.pboard-add').dispatchEvent(new t.win.Event('submit', { bubbles: true, cancelable: true }));
+
+// m4: a double click on + Project opens one picker and one form, and the board stays usable.
+{
+  const picks = [deferred(), deferred()];
+  let n = 0;
+  const t = setup(fixture(), { pickFolder: () => (picks[n++] ?? { promise: Promise.resolve(null) }).promise });
+  plusProject(t);
+  plusProject(t);
+  picks[0].resolve(P('new-one'));
+  picks[1]?.resolve(P('new-two'));
+  await sleep(10);
+  check('m4: double click opens one picker', t.calls.pick === 1, t.calls.pick);
+  check('m4: one form', t.qa('.pboard-add').length === 1);
+  t.key(t.q('.pboard-add-name'), 'Escape');
+  t.board.setPayload(withNewOne());
+  check('m4: after the form closes the board renders again', !!t.tile('new-one'));
+  plusProject(t);
+  await sleep(10);
+  check('m4: + Project works again after the pick', t.calls.pick === 2);
+}
+
+// m5: an open that fails is announced.
+{
+  const t = setup(fixture(), { openProject: () => Promise.reject(new Error('no pty')) });
+  t.click(t.tile('beta').querySelector('.pb-tile-main') ?? t.tile('beta'));
+  await sleep(40);
+  check('m5: a failed open is announced', /Could not open Beta/.test(t.announced()), t.announced());
+}
+
+// m9: Enter and Esc that belong to an input method's composition do nothing.
+{
+  const t = setup();
+  t.q('.pboard-search').value = 'bet';
+  t.q('.pboard-search').dispatchEvent(new t.win.Event('input', { bubbles: true }));
+  t.key(t.q('.pboard-search'), 'Enter', { isComposing: true });
+  t.key(t.q('.pboard-search'), 'Escape', { isComposing: true });
+  check('m9: composing Enter opens nothing, composing Esc keeps the search', t.calls.open.length === 0 && t.calls.dismiss === 0 && t.q('.pboard-search').value === 'bet');
+  t.key(t.q('.pboard-search'), 'Enter');
+  check('m9: a plain Enter still opens the match', t.calls.open[0] === P('beta'), t.calls.open);
+}
+
+// m2 (renderer): a project added elsewhere keeps its theme on a board with an unsaved change.
+{
+  const t = setup(fixture());
+  t.contextMenu(t.tile('beta'));
+  t.menuClick('Make wide');
+  t.board.setPayload(withNewOne('home', 4));
+  await sleep(SAVE_WAIT);
+  const saved = t.lastSaved();
+  check('m2: the new tile shows in its theme', t.tilesIn('home').includes('new-one'), t.tilesIn('home'));
+  check('m2: the save keeps both our change and the new placement',
+    saved.tiles[P('beta')]?.wide === true && t.themeOf(saved, 'home').projects.includes(P('new-one')), saved);
+  check('m2: the save carries the add count it has seen', t.calls.generations.at(-1) === 4, t.calls.generations);
+}
+
+// m6a: a refused flush before an add, then the retry, keeps the new tile's theme.
+{
+  const t = setup(fixture(), { pick: P('new-one'), addResult: () => withNewOne('home'), setLayout: (layout, nth) => (nth === 1 ? null : layout) });
+  t.contextMenu(t.tile('beta'));
+  t.menuClick('Make wide');
+  plusProject(t);
+  await sleep(10);
+  t.q('.pboard-add-select').value = 'home';
+  submit(t);
+  await sleep(1300);
+  const saved = t.lastSaved();
+  check('m6a: the retried save has the new tile in its theme', t.calls.setLayout.length >= 2
+    && t.themeOf(saved, 'home').projects.includes(P('new-one')) && saved.tiles[P('beta')]?.wide === true, saved);
+}
+
+// m6b: Cancel while the add is on its way still shows the added project.
+{
+  const add = deferred();
+  const t = setup(fixture(), { pick: P('new-one'), addResult: () => add.promise });
+  plusProject(t);
+  await sleep(10);
+  submit(t);
+  await sleep(5);
+  t.key(t.q('.pboard-add-name'), 'Escape');
+  add.resolve(withNewOne('home'));
+  await sleep(20);
+  check('m6b: the tile appears though the form was cancelled', t.tilesIn('home').includes('new-one'), t.tilesIn('home'));
+}
+
+// m6c: an echo of an older save, landing while a newer save is on its way, doesn't undo the newer change.
+{
+  const replies = [];
+  const t = setup(fixture(), { setLayout: (layout) => { const d = deferred(); replies.push(() => d.resolve(layout)); return d.promise; } });
+  t.contextMenu(t.tile('beta'));
+  t.menuClick('Make wide');
+  await sleep(SAVE_WAIT);
+  const echo1 = t.lastSaved();
+  t.contextMenu(t.tile('gamma'));
+  t.menuClick('Make narrow');
+  await sleep(SAVE_WAIT);
+  t.board.setLayout(echo1); // the echo of save 1 arrives; save 2 is still unanswered
+  t.contextMenu(t.tile('zeta'));
+  t.menuClick('Make wide');
+  await sleep(SAVE_WAIT);
+  const third = t.lastSaved();
+  check('m6c: the third save keeps the second change', t.calls.setLayout.length === 3 && !third.tiles[P('gamma')]?.wide
+    && third.tiles[P('zeta')]?.wide === true && third.tiles[P('beta')]?.wide === true, third.tiles);
+  for (const r of replies) r();
+}
+
+// m6: a tint chosen after the layout was replaced lands on the current theme.
+{
+  const t = setup();
+  t.click(t.q('.pb-area[data-area-id="home"] .pb-area-menu'));
+  t.menuClick('Tint…');
+  t.board.setLayout(fixture().layout); // another window's save arrives while the menu is open
+  t.menuClick('Rose');
+  await sleep(SAVE_WAIT);
+  check('m6: tint applied to the current layout and saved', t.q('.pb-area[data-area-id="home"]').dataset.tint === 'rose'
+    && t.themeOf(t.lastSaved(), 'home').tint === 'rose', t.lastSaved()?.themes);
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

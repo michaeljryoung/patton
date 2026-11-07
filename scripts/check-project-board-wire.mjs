@@ -115,12 +115,16 @@ function makePatton(state) {
       onExit: (cb) => { exitListeners.push(cb); return () => {}; },
     },
     settings: {
-      get: async () => ({ ...state.settings }),
+      get: async () => {
+        if (state.failSettings) throw new Error('settings unavailable');
+        return { ...state.settings };
+      },
       set: async (partial) => { state.saved.push(partial); },
     },
     board: {
       get: async () => { state.boardGets++; return state.payload; },
       onChanged: (cb) => { state.changedListeners.push(cb); return () => {}; },
+      onListChanged: (cb) => { state.listListeners.push(cb); return () => {}; },
     },
     session: { get: async () => state.session, set: async () => {} },
     projects: { getNames: async () => ({}), onNamesChanged: () => () => {}, resolve: async () => null, setName: async () => {} },
@@ -173,6 +177,7 @@ async function main() {
     payload: payload(true),
     boardGets: 0,
     changedListeners: [],
+    listListeners: [],
     session: null,
   };
   w.patton = makePatton(state);
@@ -296,6 +301,35 @@ async function main() {
   for (const cb of state.changedListeners) cb(layout2);
   check('onChanged layout reaches every board', board1.layouts.at(-1) === layout2 && globalThis.__boards[1].layouts.at(-1) === layout2);
 
+  // --- a project added on any board reaches every board (m2) ---
+  const listed = { ...payload(true), generation: 1 };
+  listed.projects = [...listed.projects, { path: '/tmp/proj-c', name: 'Gamma', subProjects: [] }];
+  for (const cb of state.listListeners) cb(listed);
+  check('m2: list change reaches every board', board1.payload === listed && globalThis.__boards[1].payload === listed,
+    { b1: board1.payload === listed, b2: globalThis.__boards[1].payload === listed });
+
+  // --- ⌘D on a covered tab does nothing (m3) ---
+  tm.switchToId(t1.id);
+  const coverHost = t1.element.querySelector('.tab-cover');
+  board1.button.focus();
+  const panesBefore = t1.panes.length;
+  tm.splitVertical();
+  tm.splitHorizontal();
+  await tick(30);
+  check('m3: split on a covered tab starts no shell', t1.panes.length === panesBefore, t1.panes.length);
+  check('m3: the cover stays in place and keeps focus', t1.element.querySelector('.tab-cover') === coverHost
+    && coverHost.isConnected && board1.element.contains(doc.activeElement));
+  // Any rebuild of the pane tree (a pane closing, a swap) leaves the cover
+  // attached: detaching it would blur and commit an open rename or note.
+  const removed = [];
+  const watcher = new w.MutationObserver((records) => { for (const r of records) removed.push(...r.removedNodes); });
+  watcher.observe(t1.element, { childList: true });
+  t1['renderTree']();
+  await tick(0);
+  watcher.disconnect();
+  check('m3: a pane-tree rebuild never detaches the cover', !removed.includes(coverHost)
+    && t1.element.lastElementChild === coverHost && board1.element.contains(doc.activeElement), removed.map((n) => n.className));
+
   // --- live state ---
   const r0 = board1.refreshes;
   boards.scheduleRefresh();
@@ -340,6 +374,16 @@ async function main() {
   board3.host.openProject('/tmp/proj-a');
   check('open existing: board tab discarded', await until(() => !tm.getTabs().includes(t3)));
   check('open existing: the existing tab is active', tm.getActiveTab() === opened && tm.getTabs().length === n3 - 1);
+
+  // --- a failed open reaches the board, which announces it (m5) ---
+  const t5 = await tm.userNewTab();
+  const board5 = globalThis.__boards.at(-1);
+  state.failSettings = true;
+  const outcome = await Promise.resolve(board5.host.openProject('/tmp/proj-new')).then(() => 'resolved', () => 'rejected');
+  state.failSettings = false;
+  check('m5: a failed open rejects back to the board', outcome === 'rejected', outcome);
+  check('m5: the board stays after a failed open', t5.hasCover && !board5.disposed);
+  await tm.closeById(t5.id);
 
   // --- closing a board tab disposes its board ---
   const t4 = await tm.userNewTab();

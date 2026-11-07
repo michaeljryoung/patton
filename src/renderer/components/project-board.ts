@@ -1,3 +1,4 @@
+import { keepPlacements } from '../../shared/board-placements';
 import { BOARD_TINTS, DEFAULTS, type BoardTint } from '../../shared/constants';
 import type { BoardLayout, BoardPayload, BoardProject, BoardSubProject, BoardTheme } from '../../shared/types';
 import { announce } from '../services/announcer';
@@ -17,8 +18,9 @@ import { ContextMenu } from './context-menu';
  * belongs to main; "+ Project" asks main to add a row.
  */
 export interface ProjectBoardHost {
-  /** Open or activate the project; the host then removes the board's tab. */
-  openProject(path: string): void;
+  /** Open or activate the project; the host then removes the board's tab.
+   *  Rejects when it could not open it (the board says so). */
+  openProject(path: string): Promise<void> | void;
   /** "Plain terminal", or Esc on an empty search: the host removes the board and keeps the tab as a plain shell. */
   dismiss(): void;
   /** Live state of a project folder (the host computes it with project-live-state.ts). */
@@ -102,7 +104,14 @@ export class ProjectBoard {
   private heldLayout: BoardLayout | null = null;
 
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Saves sent and not yet answered. While any is, an echoed layout is older
+   *  than ours (main answers after it echoes), so it is not taken. */
+  private savesInFlight = 0;
   private saveRetried = false;
+  /** The add count main gave with our project list; sent with every save. */
+  private generation: number;
+  /** The folder picker is open (a second click must not open another). */
+  private picking = false;
   /** Bumped on every local change, so a save's reply never overwrites a newer change. */
   private revision = 0;
   private disposed = false;
@@ -110,6 +119,7 @@ export class ProjectBoard {
   constructor(private readonly host: ProjectBoardHost, payload: BoardPayload) {
     this.payload = payload;
     this.layout = cloneLayout(payload.layout);
+    this.generation = payload.generation ?? 0;
 
     this.element = document.createElement('section');
     this.element.className = 'pboard';
@@ -210,15 +220,33 @@ export class ProjectBoard {
     return this.dragKind !== null || this.editing > 0;
   }
 
-  private adoptPayload(payload: BoardPayload): void {
-    this.payload = payload;
-    // A change of ours not yet saved is newer than the payload's layout.
-    if (!this.saveTimer) this.layout = cloneLayout(payload.layout);
+  /** A save of ours is waiting or on its way: our layout is newer than main's. */
+  private hasUnsavedLayout(): boolean {
+    return this.saveTimer !== null || this.savesInFlight > 0;
   }
 
-  /** Take another window's (or our own echoed) save, unless ours is still pending. */
+  private adoptPayload(payload: BoardPayload): void {
+    const known = new Set(this.payload.projects.map((p) => p.path));
+    this.payload = payload;
+    this.generation = Math.max(this.generation, payload.generation ?? 0);
+    if (!this.hasUnsavedLayout()) {
+      this.layout = cloneLayout(payload.layout);
+      return;
+    }
+    // A change of ours not yet saved is newer than the payload's layout, but
+    // projects new to this board take the theme main gave them, so our next
+    // save carries their placement instead of dropping it.
+    const added = payload.projects.map((p) => p.path).filter((p) => !known.has(p));
+    if (keepPlacements(this.layout, payload.layout, added) > 0) {
+      rlog('info', '[BOARD] kept the placement of a project added meanwhile', { count: added.length });
+      this.changed();
+    }
+  }
+
+  /** Take another window's (or our own echoed) save, unless one of ours is
+   *  waiting or on its way (its own answer or echo will follow). */
   private adoptLayout(layout: BoardLayout): boolean {
-    if (this.saveTimer) return false;
+    if (this.hasUnsavedLayout()) return false;
     this.layout = cloneLayout(layout);
     return true;
   }
@@ -315,8 +343,10 @@ export class ProjectBoard {
 
   private sendSave(): Promise<void> {
     const sent = this.revision;
-    return window.patton.board.setLayout(cloneLayout(this.layout)).then(
+    this.savesInFlight++;
+    return window.patton.board.setLayout(cloneLayout(this.layout), this.generation).then(
       (stored) => {
+        this.savesInFlight--;
         if (stored === null) {
           rlog('warn', '[BOARD] save refused', { retried: this.saveRetried });
           if (!this.saveRetried && !this.disposed) {
@@ -330,11 +360,12 @@ export class ProjectBoard {
         }
         this.saveRetried = false;
         // Main may have trimmed it; take its copy unless something changed since.
-        if (sent === this.revision && !this.saveTimer && !this.isBusy() && !this.disposed) {
+        if (sent === this.revision && !this.hasUnsavedLayout() && !this.isBusy() && !this.disposed) {
           this.layout = cloneLayout(stored);
         }
       },
       (err) => {
+        this.savesInFlight--;
         rlog('error', '[BOARD] save failed', String(err));
         announce("The board's arrangement could not be saved", 'assertive');
       },
@@ -609,6 +640,8 @@ export class ProjectBoard {
   }
 
   private onSearchKey(e: KeyboardEvent): void {
+    // Enter or Esc that confirms or cancels an input method's composition is the IME's.
+    if (e.isComposing || e.keyCode === 229) return;
     if (e.key === 'Escape') {
       e.preventDefault();
       e.stopPropagation();
@@ -658,12 +691,15 @@ export class ProjectBoard {
   }
 
   private openPath(path: string, name: string): void {
-    try {
-      rlog('info', '[BOARD] open', { sub: !this.projectByPath(path) });
-      this.host.openProject(path);
-    } catch (err) {
+    const failed = (err: unknown) => {
       rlog('error', '[BOARD] open failed', String(err));
       announce(`Could not open ${name}`, 'assertive');
+    };
+    rlog('info', '[BOARD] open', { sub: !this.projectByPath(path) });
+    try {
+      Promise.resolve(this.host.openProject(path)).catch(failed);
+    } catch (err) {
+      failed(err);
     }
   }
 
@@ -789,17 +825,23 @@ export class ProjectBoard {
     this.contextMenu.show(x, y, BOARD_TINTS.map((tint) => ({
       label: `${tint === theme.tint ? '✓ ' : ''}${label(tint)}`,
       action: () => {
-        theme.tint = tint;
+        // The layout may have been replaced while the menu was open: change
+        // the theme it holds now, by id.
+        const current = this.themeById(theme.id);
+        if (!current) return;
+        current.tint = tint;
         this.changed();
         this.render();
-        announce(`${theme.name} tint set to ${label(tint)}`);
+        announce(`${current.name} tint set to ${label(tint)}`);
       },
     })), returnTo, viaKeyboard);
   }
 
-  private moveTheme(theme: BoardTheme, direction: -1 | 1): void {
+  private moveTheme(menuTheme: BoardTheme, direction: -1 | 1): void {
     const themes = this.layout.themes;
-    const from = themes.indexOf(theme);
+    // By id: the layout may have been replaced while the menu was open.
+    const from = themes.findIndex((t) => t.id === menuTheme.id);
+    const theme = themes[from];
     const to = from + direction;
     if (from === -1 || to < 0 || to >= themes.length) return;
     [themes[from], themes[to]] = [themes[to], themes[from]];
@@ -1058,7 +1100,9 @@ export class ProjectBoard {
   // ── + Project ──
 
   private async pickProject(): Promise<void> {
-    if (this.isBusy()) return;
+    // One picker at a time: a double click must not open two forms.
+    if (this.isBusy() || this.picking) return;
+    this.picking = true;
     let path: string | null;
     try {
       path = await window.patton.board.pickFolder();
@@ -1066,8 +1110,14 @@ export class ProjectBoard {
       rlog('error', '[BOARD] pick failed', String(err));
       announce('Could not open the folder picker', 'assertive');
       return;
+    } finally {
+      this.picking = false;
     }
     if (!path || this.disposed) return;
+    if (this.isBusy()) {
+      rlog('info', '[BOARD] picked folder dropped', { reason: 'board busy' });
+      return;
+    }
     rlog('info', '[BOARD] picked a folder');
     this.showAddForm(path);
   }
@@ -1129,8 +1179,7 @@ export class ProjectBoard {
         // Fresher than anything held back while the form was open.
         this.heldPayload = null;
         this.heldLayout = null;
-        this.payload = payload;
-        if (!this.saveTimer) this.layout = cloneLayout(payload.layout);
+        this.adoptPayload(payload);
       }
       this.release();
     };
@@ -1155,7 +1204,17 @@ export class ProjectBoard {
       this.flushSave()
         .then(() => window.patton.board.addProject({ path, name: label, ...(themeId ? { themeId } : {}) }))
         .then((result) => {
-          if (closed || this.disposed) return;
+          if (this.disposed) return;
+          if (closed) {
+            // Cancelled while the add was on its way: the row was still
+            // written, so show it rather than drop the fresh board.
+            if (!result.error) {
+              rlog('info', '[BOARD] project added after the form closed', { themed: Boolean(themeId) });
+              this.setPayload(result);
+              announce(`Added ${label}`);
+            }
+            return;
+          }
           if (result.error) {
             rlog('warn', '[BOARD] add refused', { reason: result.error });
             error.textContent = `Could not add the project: ${result.error}.`;
