@@ -32,6 +32,10 @@ export default [
   importPlugin.flatConfigs.electron,
   importPlugin.flatConfigs.typescript,
   {
+    files: ['scripts/**/*.mjs'],
+    languageOptions: { ecmaVersion: 'latest', sourceType: 'module', globals: { ...globals.node } },
+  },
+  {
     ignores: ['node_modules/', 'dist/', '.vite/', 'out/', '.worktrees/', 'eslint.config.mjs'],
   },
 ];

@@ -1,12 +1,13 @@
 // Unit check of src/renderer/services/link-target.ts (the shared link rules).
 // Run: node scripts/check-link-target.mjs   (bundles the TS with esbuild)
 import { build } from 'esbuild';
-import { pathToFileURL, fileURLToPath } from 'node:url';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
+import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 
-const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+async function main() {
+const root = join(dirname(process.argv[1]), '..');
 const out = join(mkdtempSync(join(tmpdir(), 'link-target-')), 'link-target.mjs');
 await build({
   entryPoints: [join(root, 'src/renderer/services/link-target.ts')],
@@ -49,4 +50,24 @@ check('resolveLocalPath traversal', m.resolveLocalPath('../x', '/p') === null);
 const spans = m.urlSpans('see https://www.clearscore.com/a/b.html and /Users/me/x.ts');
 check('urlSpans covers the address', spans.length === 1 && spans[0][0] === 4 && spans[0][1] === 'see https://www.clearscore.com/a/b.html'.length);
 check('urlSpans leaves plain paths', m.urlSpans('/Users/me/x.ts:3 and src/a.ts').length === 0);
-process.exit(failed ? 1 : 0);
+
+  // The same addresses through the real provider: no file link may appear inside them.
+  const out2 = join(dirname(out), 'file-link-provider.mjs');
+  await build({
+    entryPoints: [join(root, 'src/renderer/services/file-link-provider.ts')],
+    bundle: true, format: 'esm', platform: 'node', outfile: out2, logLevel: 'silent',
+  });
+  const { FileLinkProvider } = await import(pathToFileURL(out2).href);
+  const linksIn = (text) => {
+    let res;
+    const term = { buffer: { active: { getLine: () => ({ translateToString: () => text }) } } };
+    new FileLinkProvider(term, () => '/Users/me').provideLinks(1, (l) => (res = l));
+    return (res || []).map((l) => l.text);
+  };
+  check('no file link inside https://www.clearscore.com', linksIn('open https://www.clearscore.com now').length === 0);
+  check('no file link inside https://kibot.com/subscribe.html', linksIn('https://kibot.com/subscribe.html').length === 0);
+  check('bare paths still linked', linksIn('see src/a.ts:4 and ~/n/todo.md').join('|') === 'src/a.ts:4|~/n/todo.md');
+  process.exit(failed ? 1 : 0);
+}
+
+main().catch((err) => { console.error(err); process.exit(1); });
