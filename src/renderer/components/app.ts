@@ -204,11 +204,11 @@ export class App {
     // Try to restore previous session (if enabled)
     // Restore previous session if enabled, otherwise start fresh
     const restored = settings.restoreSession !== false
-      ? await this.tabManager.restoreSession()
+      ? await this.tabManager.restoreSession(Boolean(settings.startupCommand))
       : false;
 
     if (!restored) {
-      await this.tabManager.createTab();
+      await this.tabManager.createTab(undefined, { startupCommand: Boolean(settings.startupCommand) });
 
       // Show onboarding on first run
       if (Onboarding.shouldShow()) {

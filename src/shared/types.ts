@@ -10,7 +10,18 @@ export interface PtyCreateOptions {
    *  exports PATTON_PROJECT_DIR=<validated cwd> into the shell, unless the cwd
    *  was rejected. Only a literal `true` counts; no path is ever sent. */
   projectDir?: boolean;
+  /** True only for the pane that runs the startup command (the Claude tab).
+   *  Main then exports FORCE_HYPERLINK=1, which Claude Code needs to print
+   *  OSC 8 links (it ignores TERM_PROGRAM). Other shells don't get it: tools
+   *  using `supports-hyperlinks` honour it even when piped, putting escape
+   *  bytes into logs and JSON. Only a literal `true` counts. */
+  hyperlinks?: boolean;
 }
+
+/** Outcome of a file link: open with its default app, open in the code
+ *  editor, reveal in Finder, no such file, refused by validation, or unknown
+ *  (rate-limited). */
+export type FileLinkAction = 'open' | 'editor' | 'reveal' | 'missing' | 'refused' | 'unknown';
 
 export interface HistoryEntry {
   command: string;
@@ -197,6 +208,9 @@ export interface PattonAPI {
     /** Open a file (path, optionally `:line:col`; may start with `~/`). If no
      *  such file exists and `webFallback` is an http(s) URL, open that instead. */
     openFile: (filePath: string, webFallback?: string) => Promise<void>;
+    /** What a double-click on this file link would do (main decides; see
+     *  main/link-open-policy.ts). For the hover tooltip only. */
+    linkAction: (filePath: string) => Promise<FileLinkAction>;
   };
   terminal: {
     saveOutput: (content: string, defaultName: string) => Promise<string | null>;
@@ -253,6 +267,8 @@ export interface PattonAPI {
   notify: (title: string, body: string, tabId: string) => void;
   setOpacity: (opacity: number) => void;
   openExternal: (url: string) => Promise<void>;
+  /** This Mac's host name, to tell `file://<hostname>/…` links from remote ones. */
+  getHostname: () => Promise<string>;
   moveWindowBy: (dx: number, dy: number) => void;
 }
 

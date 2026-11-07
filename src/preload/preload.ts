@@ -66,6 +66,7 @@ const api: PattonAPI = {
   },
   editor: {
     openFile: (filePath, webFallback) => ipcRenderer.invoke(IPC.APP_OPEN_IN_EDITOR, filePath, webFallback),
+    linkAction: (filePath) => ipcRenderer.invoke(IPC.APP_LINK_ACTION, filePath),
   },
   terminal: {
     saveOutput: (content, defaultName) => ipcRenderer.invoke(IPC.APP_SAVE_TERMINAL, content, defaultName),
@@ -230,6 +231,7 @@ const api: PattonAPI = {
   notify: (title, body, tabId) => ipcRenderer.send(IPC.APP_NOTIFY, title, body, tabId),
   setOpacity: (opacity) => ipcRenderer.send(IPC.APP_SET_OPACITY, opacity),
   openExternal: (url) => ipcRenderer.invoke(IPC.APP_OPEN_EXTERNAL, url),
+  getHostname: () => ipcRenderer.invoke(IPC.APP_GET_HOSTNAME),
   moveWindowBy: (dx, dy) => ipcRenderer.send(IPC.WINDOW_MOVE_BY, dx, dy),
 };
 

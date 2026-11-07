@@ -23,6 +23,7 @@ Patton implements defense-in-depth for a desktop Electron application:
 - PTY ownership validation on all IPC calls (write, resize, destroy, getProcess)
 - Shell paths validated against an allowlist of known shells
 - Environment variables filtered to an allowlist (HOME, PATH, LANG, USER, etc.)
+- `FORCE_HYPERLINK=1` (tells Claude Code to print OSC 8 links) is exported only into the pane that runs the startup command, not every shell: tools using `supports-hyperlinks` honour it even when their output is piped, so it puts OSC 8 escape bytes into logs and JSON. It is still inherited by everything that shell and Claude start (Claude's Bash-tool commands included) and stays set after Claude exits.
 - Rate limiting: sliding-window (5000/s for PTY writes, 10/s for settings changes)
 - Maximum 50 PTYs per window
 
@@ -30,7 +31,8 @@ Patton implements defense-in-depth for a desktop Electron application:
 - Content Security Policy enforced via `onHeadersReceived`
 - Navigation to external URLs is blocked
 - `window.open` is denied
-- URL validation: WebLinksAddon only opens `http://` and `https://` links
+- URL validation: web links open only `http://` and `https://`, and main opens the normalised URL (`URL.href`), the same text the OSC 8 hover shows
+- File links (bare paths, markdown links, OSC 8 `file://`) are judged in main on the resolved file (symlinks followed; `src/main/link-open-policy.ts`): the code editor CLI (argv, no shell) for text and code when one is found; the default app only for regular, non-executable files of a view-only type (text, markdown, JSON, CSV, log, images, PDF, HTML/SVG); everything else (app bundles, executables, `.command`/`.pkg`/`.dmg`/`.jar`/`.workflow`/`.mobileconfig`/`.scpt`/`.webloc`/`.fileloc`, unknown types, scripts with no editor) is only revealed in Finder. A double-click on a link never launches a program; HTML, SVG and PDF open in their default viewer (browser or PDF reader), where page or PDF script can run.
 - Paste sanitization: control characters stripped; multi-line pastes (3+ lines) ask first only when Settings → "Confirm multi-line pastes" is on (off by default since v1.13.1: dictation tools paste their text, so the dialog fired on every dictated message). With it off, a shell without bracketed paste (macOS's built-in bash 3.2) runs each pasted line as it arrives; zsh, bash 5.1+ and Claude Code hold the paste until Enter. Pastes are caught by a capture-phase listener that runs before xterm's own (which stops propagation), and the text goes in through `terminal.paste()`, keeping bracketed paste.
 - Program status (OSC 7501, the protocol Claude Code reports its state with): the only thing written back is the fixed answer to `OSC 7501 ; ?`, which holds nothing from a report. Reports are untrusted: the spec's size limits are enforced (a report over any is dropped whole), free text must be valid base64 of UTF-8 with no control character (else the report is dropped), direction overrides and invisible formatting are removed, and the text only reaches the tab's tooltip and accessible name as plain text, never markup. Any program writing to a pane can send reports, as it can a bell: the worst a spoof does is raise, park or hide that pane's own dot. Records are capped at 64 per pane, and the log records states and counts, never report text.
 

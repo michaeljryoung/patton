@@ -53,6 +53,7 @@ export const IPC = {
   PTY_GET_CWD: 'pty:get-cwd',
 
   APP_OPEN_IN_EDITOR: 'app:open-in-editor',
+  APP_LINK_ACTION: 'app:link-action',
   APP_SAVE_TERMINAL: 'app:save-terminal',
   APP_BROADCAST_INPUT: 'app:broadcast-input',
   APP_NOTIFY: 'app:notify',
@@ -67,6 +68,7 @@ export const IPC = {
   APP_SAVE_TERMINAL_MENU: 'app:save-terminal-menu',
   APP_SWITCH_TAB_BY_ID: 'app:switch-tab-by-id',
   APP_OPEN_EXTERNAL: 'app:open-external',
+  APP_GET_HOSTNAME: 'app:get-hostname',
   WINDOW_MOVE_BY: 'window:move-by',
 
   DIAGNOSTICS_SAVE_SNAPSHOT: 'diagnostics:save-snapshot',

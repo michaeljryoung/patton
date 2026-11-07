@@ -186,7 +186,9 @@ export class TabManager {
     return this.currentRenderer;
   }
 
-  async createTab(cwd?: string, opts?: { forProject?: boolean }): Promise<Tab> {
+  /** `startupCommand`: the startup command will be typed into this tab, so
+   *  its first pane's shell gets FORCE_HYPERLINK=1 (Claude's OSC 8 links). */
+  async createTab(cwd?: string, opts?: { forProject?: boolean; startupCommand?: boolean }): Promise<Tab> {
     // Only use explicitly provided CWD (e.g. session restore, reopen closed).
     // New tabs (Cmd+T / +) start at home directory.
     const tab = new Tab(cwd, opts?.forProject === true);
@@ -223,6 +225,7 @@ export class TabManager {
     if (this.currentRenderer === 'dom') {
       tab.setRenderer(this.currentRenderer);
     }
+    if (opts?.startupCommand === true) tab.markStartupPane();
 
     try {
       await tab.init();
@@ -543,14 +546,22 @@ export class TabManager {
     }
   }
 
-  async restoreSession(): Promise<boolean> {
+  /** `startupCommand`: the startup command will be typed into the restored
+   *  active tab, so its focused pane's shell gets FORCE_HYPERLINK=1. */
+  async restoreSession(startupCommand = false): Promise<boolean> {
     try {
       const session = await window.patton.session.get();
       if (!session || !session.tabs || session.tabs.length === 0) return false;
 
-      for (const tabState of session.tabs) {
+      const savedActive = Math.max(0, Math.min(session.activeTabIndex, session.tabs.length - 1));
+      let startupTab: Tab | null = null;
+      for (const [index, tabState] of session.tabs.entries()) {
         try {
           const tab = await Tab.createFromSession(tabState);
+          if (startupCommand && index === savedActive) {
+            tab.markStartupPane();
+            startupTab = tab;
+          }
 
           if (this.currentShell) tab.setShell(this.currentShell);
           tab.setHistoryManager(this.sharedHistory);
@@ -605,9 +616,13 @@ export class TabManager {
         }
       }
 
-      // Switch to the previously active tab
+      // Switch to the previously active tab (the startup command then lands
+      // in the pane that was given FORCE_HYPERLINK, even if a tab before it
+      // failed to restore and shifted the indexes).
       const activeIdx = Math.min(session.activeTabIndex, this.tabs.length - 1);
-      if (this.tabs.length > 0) {
+      if (startupTab && this.tabs.includes(startupTab)) {
+        this.switchToId(startupTab.id);
+      } else if (this.tabs.length > 0) {
         this.switchToId(this.tabs[Math.max(0, activeIdx)].id);
       }
 

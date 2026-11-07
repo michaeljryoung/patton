@@ -615,6 +615,12 @@ export class Tab {
     return this._focusedPane.searchOverlay;
   }
 
+  /** The focused pane will run the startup command: give its shell
+   *  FORCE_HYPERLINK=1. Call before init(). */
+  markStartupPane(): void {
+    this._focusedPane.enableHyperlinkEnv();
+  }
+
   async init(): Promise<void> {
     // Initialize ALL panes in parallel (each creates its own PTY)
     await Promise.all(this._panes.map(pane => pane.init()));
