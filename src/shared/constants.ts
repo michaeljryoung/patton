@@ -91,6 +91,10 @@ export function isNotificationSoundType(value: unknown): value is NotificationSo
   return typeof value === 'string' && (NOTIFICATION_SOUND_TYPES as readonly string[]).includes(value);
 }
 
+/** The window's ground before the renderer paints. Must equal --bg in main.css
+ *  (light :root, dark prefers-color-scheme block). */
+export const WINDOW_BG = { light: '#ffffff', dark: '#111214' } as const;
+
 export const DEFAULTS = {
   SHELL: '/bin/zsh',
   COLS: 80,

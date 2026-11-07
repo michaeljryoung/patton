@@ -56,9 +56,9 @@
 }
 
 .settings-header h2 {
-  font-size: 11px;
+  font-size: var(--title);
   font-weight: 700;
-  letter-spacing: 0.08em;
+  letter-spacing: var(--title-ls);
   text-transform: uppercase;
   color: var(--ink);
 }
@@ -70,7 +70,7 @@
   place-items: center;
   background: none;
   border: 1px solid var(--hairline);
-  border-radius: 2px;
+  border-radius: 0;
   font-family: var(--font-ui);
   font-size: 15px;
   color: var(--muted);
@@ -99,14 +99,6 @@
 }
 
 /* Column-style label above a field. */
-.settings-label {
-  font-size: var(--head);
-  font-weight: 400;
-  letter-spacing: var(--head-ls);
-  text-transform: uppercase;
-  color: var(--muted);
-}
-
 .settings-input {
   padding: 6px 10px;
   border: 1px solid var(--hairline);
@@ -132,9 +124,9 @@
 }
 
 .shortcuts-title {
-  font-size: var(--head);
+  font-size: var(--title);
   font-weight: 700;
-  letter-spacing: 0.08em;
+  letter-spacing: var(--title-ls);
   text-transform: uppercase;
   color: var(--ink);
   margin: 0 0 10px;
@@ -153,7 +145,7 @@
   color: var(--ink);
   background: var(--surface);
   border: 1px solid var(--hairline);
-  border-radius: 2px;
+  border-radius: 0;
   padding: 1px 6px;
   white-space: nowrap;
   text-align: center;
@@ -172,7 +164,7 @@
 
 .claude-hook-button {
   padding: 4px 12px;
-  border-radius: 2px;
+  border-radius: 0;
   font-family: var(--font-ui);
   font-size: var(--ui);
   cursor: pointer;
@@ -243,7 +235,7 @@
   inset: 0;
   background: var(--surface);
   border: 1px solid var(--hairline);
-  border-radius: 2px;
+  border-radius: 0;
   transition: background 0.2s, border-color 0.2s;
 }
 
@@ -255,7 +247,7 @@
   left: 2px;
   top: 2px;
   background: var(--muted);
-  border-radius: 1px;
+  border-radius: 0;
   transition: transform 0.2s, background 0.2s;
 }
 
@@ -369,9 +361,9 @@ select.settings-input {
 
 .paste-dialog-header {
   padding: 10px 16px;
-  font-size: 11px;
+  font-size: var(--title);
   font-weight: 700;
-  letter-spacing: 0.08em;
+  letter-spacing: var(--title-ls);
   text-transform: uppercase;
   color: var(--ink);
   background: var(--surface);
@@ -452,14 +444,18 @@ select.settings-input {
 }
 
 .confirm-dialog-title {
-  padding: 14px 16px 0;
-  font-size: 13px;
+  padding: 10px 16px;
+  font-size: var(--title);
   font-weight: 700;
+  letter-spacing: var(--title-ls);
+  text-transform: uppercase;
   color: var(--ink);
+  background: var(--surface);
+  border-bottom: 1px solid var(--hairline);
 }
 
 .confirm-dialog-message {
-  padding: 6px 16px 4px;
+  padding: 12px 16px 4px;
   font-size: var(--ui);
   line-height: 1.5;
   color: var(--muted);
@@ -576,7 +572,7 @@ select.settings-input {
   color: var(--ink);
   background: var(--surface);
   border: 1px solid var(--hairline);
-  border-radius: 2px;
+  border-radius: 0;
   padding: 0 4px;
 }
 
@@ -630,7 +626,7 @@ select.settings-input {
   appearance: none;
   width: 12px;
   height: 12px;
-  border-radius: 2px;
+  border-radius: 0;
   background: var(--inverse-bg);
   border: 1px solid var(--bg);
   cursor: pointer;

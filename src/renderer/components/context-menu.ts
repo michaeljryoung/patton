@@ -1,6 +1,8 @@
 interface ContextMenuItem {
   label: string;
   shortcut?: string;
+  /** Shown dimmed, skipped by the arrow keys, and does nothing when clicked. */
+  disabled?: boolean;
   action: () => void;
 }
 
@@ -35,7 +37,7 @@ export class ContextMenu {
 
     const keyHandler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') { this.hide(); return; }
-      const items = this.menu.querySelectorAll('.context-menu-item');
+      const items = this.menu.querySelectorAll('.context-menu-item:not(.disabled)');
       if (items.length === 0) return;
       const focused = this.menu.querySelector('.context-menu-item.focused');
       let idx = focused ? Array.from(items).indexOf(focused) : -1;
@@ -89,6 +91,10 @@ export class ContextMenu {
       el.className = 'context-menu-item';
       el.setAttribute('role', 'menuitem');
       el.setAttribute('tabindex', '-1');
+      if (item.disabled) {
+        el.classList.add('disabled');
+        el.setAttribute('aria-disabled', 'true');
+      }
 
       const label = document.createElement('span');
       label.textContent = item.label;
@@ -102,6 +108,7 @@ export class ContextMenu {
       }
 
       el.addEventListener('click', () => {
+        if (item.disabled) return;
         this.hide();
         item.action();
       });
@@ -117,7 +124,7 @@ export class ContextMenu {
     this.menu.style.top = `${Math.min(y, maxY)}px`;
 
     if (this.returnFocusTo) {
-      const first = this.menu.querySelector<HTMLElement>('.context-menu-item');
+      const first = this.menu.querySelector<HTMLElement>('.context-menu-item:not(.disabled)');
       if (first && viaKeyboard) {
         first.classList.add('focused');
         first.focus();

@@ -7,6 +7,7 @@ import { ContextMenu } from './context-menu';
 import { HistoryManager } from '../services/history-manager';
 import { FileLinkProvider } from '../services/file-link-provider';
 import { rlog } from '../services/renderer-logger';
+import { announce } from '../services/announcer';
 import { stripPasteControls } from '../services/paste-sanitize';
 import { shouldConfirmMultilinePaste } from '../services/paste-confirm';
 import { PATTON_QUOTES } from '../../shared/constants';
@@ -359,7 +360,9 @@ export class Pane {
     // Drag handle for pane swapping (visible only inside split containers via CSS)
     const dragHandle = document.createElement('div');
     dragHandle.className = 'pane-drag-handle';
+    dragHandle.setAttribute('role', 'img'); // an aria-label on a role-less div is ignored
     dragHandle.setAttribute('aria-label', 'Drag to swap pane');
+    dragHandle.title = 'Drag to swap pane';
     dragHandle.textContent = '\u2630'; // ☰ hamburger/grip icon
     this.element.appendChild(dragHandle);
     this.setupDragHandle(dragHandle);
@@ -846,6 +849,7 @@ export class Pane {
 
   private addPasteChip(dataUrl: string, width: number, height: number): void {
     const label = `${width}\u00d7${height}`;
+    announce(`Image pasted, ${label}`);
     const chip = document.createElement('div');
     chip.className = 'paste-chip';
 

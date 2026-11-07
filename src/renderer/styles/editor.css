@@ -63,9 +63,12 @@
 }
 
 /* Focus thickens the box's own rule to 2 px rather than adding a blue ring:
-   the box holds the keyboard for long stretches. */
+   the box holds the keyboard for long stretches. Both cues are full ink, so
+   they stay bright in dark mode where the hairline is softer. */
 .editor-textarea:focus-visible {
-  box-shadow: inset 0 0 0 1px var(--hairline);
+  box-shadow: inset 0 0 0 1px var(--ink);
+  outline: 1px solid var(--ink);
+  outline-offset: 1px;
 }
 
 .editor-send {
@@ -122,8 +125,8 @@
 }
 
 /* OSC 133 shell integration: command running — dim the bar */
-.editor-container.command-running {
-  opacity: 0.5;
+.editor-container.command-running .editor-textarea {
+  color: var(--muted);
 }
 .editor-container.command-running::before {
   background: var(--muted);
@@ -131,14 +134,14 @@
 
 /* Compose-first (Claude Code tabs): the box is the input while Claude runs.
    Its height is capped in JS at 40% of the pane (EditorInput getMaxHeight), so
-   the 240px cap above is lifted; and it is never dimmed, though the shell
-   counts Claude as a running command. */
+   the 240px cap above is lifted; and its text is never muted, though the
+   shell counts Claude as a running command. */
 .editor-container.compose-first {
   max-height: none;
 }
 
-.editor-container.compose-first.command-running {
-  opacity: 1;
+.editor-container.compose-first.command-running .editor-textarea {
+  color: var(--ink);
 }
 
 .editor-container.compose-first.command-running::before {
@@ -303,7 +306,7 @@
   border: 6px solid transparent;
   margin: -6px;
   background-clip: padding-box;
-  border-radius: 2px;
+  border-radius: 0;
   cursor: pointer;
 }
 
@@ -313,7 +316,3 @@
   color: var(--ink);
 }
 
-.paste-chip-remove:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: 1px;
-}

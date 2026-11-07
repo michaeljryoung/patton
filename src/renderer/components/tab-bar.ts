@@ -1,4 +1,5 @@
 import { ContextMenu } from './context-menu';
+import { announce } from '../services/announcer';
 import { DEFAULTS } from '../../shared/constants';
 import type { TabFlag } from '../../shared/types';
 
@@ -66,6 +67,8 @@ export class TabBar {
   private callbacks: TabBarCallbacks;
   private draggedId: string | null = null;
   private contextMenu = new ContextMenu();
+  /** Opens each tab element's context menu; the keyboard route to the same menu. */
+  private tabMenuOpeners = new WeakMap<HTMLElement, (x: number, y: number, viaKeyboard: boolean) => void>();
   // update() rebuilds every tab element, which would destroy an open rename
   // box mid-typing whenever any tab's title or dot changes. While a box is
   // open, the latest update is held here and applied when the box closes.
@@ -107,6 +110,14 @@ export class TabBar {
       if (tabEls.length === 0) return;
       const currentIdx = tabEls.indexOf(target);
       if (currentIdx === -1) return;
+      // Menu key / Shift+F10: the context menu is the only keyboard route to
+      // Move Left / Move Right, flags and bookmarking.
+      if (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) {
+        e.preventDefault();
+        const rect = target.getBoundingClientRect();
+        this.tabMenuOpeners.get(target)?.(rect.left + 12, rect.bottom, true);
+        return;
+      }
       let nextIdx: number | null = null;
       if (e.key === 'ArrowLeft') nextIdx = (currentIdx - 1 + tabEls.length) % tabEls.length;
       else if (e.key === 'ArrowRight') nextIdx = (currentIdx + 1) % tabEls.length;
@@ -160,6 +171,15 @@ export class TabBar {
     newBtn.title = 'New Tab (Cmd+T)';
     newBtn.addEventListener('click', () => this.callbacks.onNew());
     this.container.appendChild(newBtn);
+  }
+
+  /** The tab next to this one in the strip (-1 left, 1 right), or null at an end. */
+  private neighbourId(tabId: string, dir: -1 | 1): string | null {
+    const ids = Array.from(this.tabsContainer.querySelectorAll<HTMLElement>('.tab-bar-tab'))
+      .map((el) => el.dataset.tabId);
+    const idx = ids.indexOf(tabId);
+    if (idx === -1) return null;
+    return ids[idx + dir] ?? null;
   }
 
   update(tabs: TabHeaderInfo[]): void {
@@ -274,6 +294,8 @@ export class TabBar {
       const titleSpan = document.createElement('span');
       titleSpan.className = 'tab-bar-tab-title';
       titleSpan.textContent = tab.title;
+      // Reserves the bold (active) width in CSS so switching tabs doesn't shift the rest.
+      titleSpan.dataset.title = tab.title;
       el.appendChild(titleSpan);
 
       // Double-click to rename this one tab
@@ -289,11 +311,9 @@ export class TabBar {
       });
 
       // Right-click → set/clear the colour flag, or rename the tab's project.
-      el.addEventListener('contextmenu', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
+      const showTabMenu = (x: number, y: number, viaKeyboard: boolean): void => {
         const project = tab.project;
-        this.contextMenu.show(e.clientX, e.clientY, [
+        this.contextMenu.show(x, y, [
           ...FLAG_CHOICES.map(({ flag, label }) => ({
             // A check marks the current flag, and re-picking it clears — so the
             // menu doubles as the toggle rather than needing a separate step.
@@ -305,6 +325,19 @@ export class TabBar {
             label: 'Clear Flag',
             action: () => this.callbacks.onSetFlag(tab.id, null),
           },
+          // --- Reorder from the keyboard-reachable menu (the grip is mouse-only) ---
+          { separator: true as const },
+          ...([-1, 1] as const).map((dir) => ({
+            label: dir < 0 ? 'Move Left' : 'Move Right',
+            disabled: this.neighbourId(tab.id, dir) === null,
+            action: () => {
+              // The bar may have been rebuilt while the menu was open: look again.
+              const neighbour = this.neighbourId(tab.id, dir);
+              if (!neighbour) return;
+              this.callbacks.onReorder(tab.id, neighbour);
+              announce(`${tab.title} moved ${dir < 0 ? 'left' : 'right'}`);
+            },
+          })),
           // --- Bookmarks ---
           ...(this.callbacks.onBookmarkProject ? [
             { separator: true as const },
@@ -337,7 +370,13 @@ export class TabBar {
               },
             },
           ] : []),
-        ]);
+        ], el, viaKeyboard);
+      };
+      this.tabMenuOpeners.set(el, showTabMenu);
+      el.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        showTabMenu(e.clientX, e.clientY, false);
       });
 
       if (tabs.length > 1) {

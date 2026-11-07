@@ -579,7 +579,7 @@ export class BookmarksPanel {
     // its own background work. The tab bar's glyphs, static here.
     row.classList.toggle('has-waiting', rowState.waiting > 0);
     row.classList.toggle('has-parked', rowState.waiting === 0 && rowState.parked > 0);
-    row.title = bookmark.kind === 'project' ? (bookmark.path ?? '') : (bookmark.url ?? '');
+    row.title = `${bookmark.label}\n${bookmark.kind === 'project' ? (bookmark.path ?? '') : (bookmark.url ?? '')}`;
     if (bookmark.missing) row.setAttribute('aria-disabled', 'true');
 
     const dot = document.createElement('span');
