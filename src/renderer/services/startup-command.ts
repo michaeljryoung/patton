@@ -15,24 +15,45 @@ const PROMPT_FALLBACK_MS = 1500;
  * (no OSC 133 emitted).
  *
  * Used at launch (the first or restored active tab) and when a project
- * bookmark opens a new tab.
+ * bookmark opens a new tab. `go`: whether to send it after all, decided while
+ * the shell starts (launch sends nothing to a tab the project board covers);
+ * the prompt is watched from the start either way, so a late answer doesn't
+ * miss it.
  */
-export function runStartupCommand(tab: Tab, cmd: string): void {
+export function runStartupCommand(tab: Tab, cmd: string, go: Promise<boolean> = Promise.resolve(true)): void {
   const ptyId = tab.ptyId;
   if (!cmd || ptyId === null) return;
 
   let fired = false;
+  let shellReady: 'prompt' | 'fallback' | null = null;
+  let allowed: boolean | null = null;
   let disposePrompt: (() => void) | null = null;
-  const fire = (via: 'prompt' | 'fallback') => {
-    if (fired) return;
+  const fireIfDue = () => {
+    if (fired || shellReady === null || allowed !== true) return;
     fired = true;
-    disposePrompt?.();
     window.patton.pty.write(ptyId, cmd + '\r');
-    rlog('info', '[STARTUP] Startup command sent', { via });
+    rlog('info', '[STARTUP] Startup command sent', { via: shellReady });
+  };
+  const ready = (via: 'prompt' | 'fallback') => {
+    if (shellReady !== null) return;
+    shellReady = via;
+    disposePrompt?.();
+    fireIfDue();
   };
 
   disposePrompt = tab.focusedPane.terminalView.onPromptState((state) => {
-    if (state === 'prompt') fire('prompt');
+    if (state === 'prompt') ready('prompt');
   });
-  setTimeout(() => fire('fallback'), PROMPT_FALLBACK_MS);
+  setTimeout(() => ready('fallback'), PROMPT_FALLBACK_MS);
+  go.then(
+    (ok) => {
+      allowed = ok;
+      if (!ok) {
+        disposePrompt?.();
+        rlog('info', '[STARTUP] Startup command not sent', { reason: 'project board shown' });
+      }
+      fireIfDue();
+    },
+    () => { allowed = true; fireIfDue(); },
+  );
 }

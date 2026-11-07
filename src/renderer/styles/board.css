@@ -92,6 +92,13 @@
   background: var(--surface-hover);
 }
 
+/* "Terminal", the way out: last in the header, set apart and in ink. */
+.pboard-terminal {
+  margin-left: 8px;
+  border-color: var(--ink);
+  font-weight: 600;
+}
+
 .pboard-btn:disabled {
   color: var(--muted);
   cursor: default;

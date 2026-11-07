@@ -9,6 +9,8 @@
 // Bundles the REAL Tab, TabManager and ProjectBoards with esbuild; the board
 // component itself is replaced by a recording stub, and window.patton by a
 // stub with fake PTYs. jsdom does no layout, so only behaviour is checked.
+// The launch cases wait out the startup command's 1.5 s prompt fallback, so
+// the run takes about ten seconds.
 import { build } from 'esbuild';
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -107,7 +109,7 @@ function makePatton(state) {
   const api = {
     pty: {
       create: async () => nextPty++,
-      write: () => {},
+      write: (id, data) => { state.writes.push({ id, data }); },
       resize: () => {},
       destroy: () => {},
       getCwd: async () => '',
@@ -122,7 +124,11 @@ function makePatton(state) {
       set: async (partial) => { state.saved.push(partial); },
     },
     board: {
-      get: async () => { state.boardGets++; return state.payload; },
+      get: async () => {
+        state.boardGets++;
+        if (state.boardDelayMs) await new Promise((r) => setTimeout(r, state.boardDelayMs));
+        return state.payload;
+      },
       onChanged: (cb) => { state.changedListeners.push(cb); return () => {}; },
       onListChanged: (cb) => { state.listListeners.push(cb); return () => {}; },
     },
@@ -180,6 +186,8 @@ async function main() {
     changedListeners: [],
     listListeners: [],
     session: null,
+    writes: [],
+    boardDelayMs: 0,
   };
   w.patton = makePatton(state);
 
@@ -337,7 +345,7 @@ async function main() {
   check('tab changes refresh the tiles', await until(() => board1.refreshes > r0, 500));
   check('live state: closed project', board1.host.liveState('/tmp/proj-a').isOpen === false);
 
-  // --- dismiss ("Plain terminal") ---
+  // --- dismiss ("Terminal") ---
   tm.switchToId(t2.id);
   await tick(20);
   const board2 = globalThis.__boards[1];
@@ -347,7 +355,7 @@ async function main() {
   check('dismiss: tab stays', tm.getTabs().includes(t2));
   await until(() => t2.focusedPane.element.contains(doc.activeElement), 300);
   check('dismiss: the terminal has focus', t2.focusedPane.element.contains(doc.activeElement));
-  check('dismiss logged', logs.some((l) => l[0] === '[BOARD] removed' && l[1]?.reason === 'plain terminal'));
+  check('dismiss logged', logs.some((l) => l[0] === '[BOARD] removed' && l[1]?.reason === 'terminal'));
 
   // --- open from a tile: new tab takes the board's place, no confirm ---
   tm.switchToId(t1.id);
@@ -402,6 +410,85 @@ async function main() {
   check('settings: board toggle read as !== false', /setting-project-board'\) as HTMLInputElement\)\.checked = settings\.projectBoard !== false/.test(settingsSrc));
   check('settings: list file saved debounced', /saveAndNotify\(\{ projectListFile: [^}]+\}, true\)/.test(settingsSrc));
   check('settings: list file placeholder', settingsSrc.includes('placeholder="~/.claude/projects.md"'));
+
+  // --- the tab Patton opens at launch (App.init → startLaunchTab) ---
+  check('app.ts: launch goes through startLaunchTab', /this\.projectBoards\.startLaunchTab\(firstTab, /.test(appSrc));
+  check('app.ts: launch sends no startup command of its own', !/runStartupCommand\(/.test(appSrc));
+  const STARTUP = 'startcmd';
+  /** One launch: a fresh TabManager restores `session` (or opens a fresh tab),
+   *  then hands its active tab to startLaunchTab and waits out the fallback. */
+  async function launchCase({ session = null, settings = {}, list = true, delayMs = 0 }) {
+    state.session = session;
+    state.settings = { startupCommand: STARTUP, ...settings };
+    state.payload = payload(list);
+    state.boardDelayMs = delayMs;
+    const bar = doc.createElement('div');
+    const content = doc.createElement('div');
+    doc.body.append(bar, content);
+    const ltm = new TabManager(bar, content);
+    const lboards = new ProjectBoards(ltm, { ...projectHost, getTabs: () => ltm.getTabs(), getActiveTab: () => ltm.getActiveTab(), createTab: (c, o) => ltm.createTab(c, o) });
+    const restoredOk = session ? await ltm.restoreSession(true) : false;
+    if (!restoredOk) await ltm.createTab(undefined, { startupCommand: true });
+    const tab = ltm.getActiveTab();
+    const logFrom = logs.length;
+    let shown = null;
+    if (typeof lboards.startLaunchTab === 'function') {
+      shown = await lboards.startLaunchTab(tab, STARTUP);
+    }
+    await tick(Math.max(1700, delayMs + 300));
+    const result = {
+      shown,
+      covered: tab.hasCover,
+      sent: state.writes.filter((wr) => wr.id === tab.ptyId && wr.data === `${STARTUP}\r`).length,
+      logs: logs.slice(logFrom),
+      tab,
+      boards: lboards,
+    };
+    lboards.dispose();
+    ltm.dispose();
+    state.boardDelayMs = 0;
+    state.settings = { startupCommand: '' };
+    state.payload = payload(true);
+    state.session = null;
+    return result;
+  }
+  const skippedFor = (r, reason) => r.logs.some((l) => l[0] === '[BOARD] skipped at launch' && l[1]?.reason === reason);
+
+  const home = await launchCase({});
+  check('launch, fresh tab: board shown', home.shown === true && home.covered, { shown: home.shown, covered: home.covered });
+  check('launch, fresh tab: no startup command', home.sent === 0, home.sent);
+  check('launch, fresh tab: shown-at-launch logged', home.logs.some((l) => l[0] === '[BOARD] shown at launch'));
+  check('launch, fresh tab: titled "Projects"', home.tab.title === 'Projects', home.tab.title);
+
+  const inProject = await launchCase({ session: { tabs: [{ tree: { cwd: '/tmp/proj-r' }, focusedPaneIndex: 0 }], activeTabIndex: 0 } });
+  check('restored tab in a project folder: board shown, no startup command', inProject.covered && inProject.sent === 0,
+    { covered: inProject.covered, sent: inProject.sent });
+  check('restored tab in a project folder: shown-at-launch logged', inProject.logs.some((l) => l[0] === '[BOARD] shown at launch'));
+
+  const split = await launchCase({ session: { tabs: [{ tree: { type: 'split', direction: 'vertical', ratio: 0.5,
+    children: [{ cwd: '/tmp/proj-r' }, { cwd: '/tmp/proj-s' }] }, focusedPaneIndex: 1 }], activeTabIndex: 0 } });
+  check('restored split tab: board shown, no startup command', split.covered && split.sent === 0,
+    { covered: split.covered, sent: split.sent, panes: split.tab.panes.length });
+
+  const settingOff = await launchCase({ settings: { projectBoard: false } });
+  check('launch, setting false: startup command, no board', settingOff.sent === 1 && !settingOff.covered,
+    { sent: settingOff.sent, covered: settingOff.covered });
+  check('launch, setting false: skip logged', skippedFor(settingOff, 'setting off'));
+
+  const noList = await launchCase({ list: false });
+  check('launch, list not found: startup command, no board', noList.sent === 1 && !noList.covered,
+    { sent: noList.sent, covered: noList.covered });
+  check('launch, list not found: skip logged', skippedFor(noList, 'list file not found'));
+
+  const slow = await launchCase({ delayMs: 2500 });
+  check('launch, board too slow: startup command, no board', slow.sent === 1 && !slow.covered,
+    { sent: slow.sent, covered: slow.covered });
+  check('launch, board too slow: the late board is never put up', !slow.covered && slow.shown === false, slow.shown);
+  check('launch, board too slow: skip logged', skippedFor(slow, 'board too slow'));
+
+  const failing = await (async () => { state.failSettings = true; try { return await launchCase({}); } finally { state.failSettings = false; } })();
+  check('launch, board load fails: startup command, no board', failing.sent === 1 && !failing.covered,
+    { sent: failing.sent, covered: failing.covered });
 
   boards.dispose();
   console.info = info;

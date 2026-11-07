@@ -21,7 +21,7 @@ export interface ProjectBoardHost {
   /** Open or activate the project; the host then removes the board's tab.
    *  Rejects when it could not open it (the board says so). */
   openProject(path: string): Promise<void> | void;
-  /** "Plain terminal", or Esc on an empty search: the host removes the board and keeps the tab as a plain shell. */
+  /** "Terminal", or Esc: the host removes the board and keeps the tab as a plain shell. */
   dismiss(): void;
   /** Live state of a project folder (the host computes it with project-live-state.ts). */
   liveState(path: string): ProjectLiveState;
@@ -143,8 +143,11 @@ export class ProjectBoard {
     const addProject = this.button('+ Project', 'pboard-btn pboard-add-project', () => {
       this.pickProject().catch((err) => rlog('error', '[BOARD] pick failed', String(err)));
     });
-    const plain = this.button('Plain terminal', 'pboard-btn pboard-plain', () => this.host.dismiss());
-    head.append(title, this.countEl, this.searchInput, addTheme, addProject, plain);
+    // The way out, at the right end where a reader looks for it.
+    const terminal = this.button('Terminal', 'pboard-btn pboard-terminal', () => this.host.dismiss());
+    terminal.title = 'Close the board and use this tab as a terminal (Esc)';
+    terminal.setAttribute('aria-keyshortcuts', 'Escape');
+    head.append(title, this.countEl, this.searchInput, addTheme, addProject, terminal);
 
     this.formEl = document.createElement('div');
     this.formEl.className = 'pboard-form';
@@ -157,6 +160,7 @@ export class ProjectBoard {
 
     this.searchInput.addEventListener('input', () => this.applyFilter());
     this.searchInput.addEventListener('keydown', (e) => this.onSearchKey(e));
+    this.element.addEventListener('keydown', (e) => this.onBoardKey(e));
     this.setupDrag();
     this.render();
   }
@@ -647,19 +651,32 @@ export class ProjectBoard {
     return sub ? sub.path : null;
   }
 
-  private onSearchKey(e: KeyboardEvent): void {
-    // Enter or Esc that confirms or cancels an input method's composition is the IME's.
+  /**
+   * Esc anywhere on the board goes to the terminal in one press, search text or
+   * not. An inline edit (rename, note, theme name) cancels itself on Esc and
+   * stops it there; the + Project form is cancelled first even when focus has
+   * left it. Context menus live outside the board and close themselves.
+   */
+  private onBoardKey(e: KeyboardEvent): void {
+    if (e.key !== 'Escape' || e.defaultPrevented) return;
+    // Esc that cancels an input method's composition is the IME's.
     if (e.isComposing || e.keyCode === 229) return;
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      e.stopPropagation();
-      if (this.searchInput.value) {
-        this.searchInput.value = '';
-        this.applyFilter();
-      } else {
-        this.host.dismiss();
-      }
-    } else if (e.key === 'Enter') {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!this.formEl.hidden) {
+      this.formEl.querySelector<HTMLButtonElement>('.pboard-add-cancel')?.click();
+      this.searchInput.focus();
+      return;
+    }
+    if (this.isBusy()) return; // a drag, or an edit still open: not now
+    rlog('info', '[BOARD] Esc pressed', { search: this.searchInput.value !== '' });
+    this.host.dismiss();
+  }
+
+  private onSearchKey(e: KeyboardEvent): void {
+    // Enter that confirms an input method's composition is the IME's.
+    if (e.isComposing || e.keyCode === 229) return;
+    if (e.key === 'Enter') {
       e.preventDefault();
       const query = this.searchInput.value.trim().toLowerCase();
       const first = Array.from(this.areasEl.querySelectorAll<HTMLElement>('.pb-tile')).find(

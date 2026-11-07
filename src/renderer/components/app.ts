@@ -8,7 +8,6 @@ import { CommandPalette, type PaletteAction } from './command-palette';
 import { QuickTerminal } from './quick-terminal';
 import { NotesPanel } from './notes-panel';
 import { BookmarksPanel } from './bookmarks-panel';
-import { runStartupCommand } from '../services/startup-command';
 import { Onboarding } from './onboarding';
 import { DEFAULTS } from '../../shared/constants';
 import { setConfirmMultilinePaste } from '../services/paste-confirm';
@@ -237,12 +236,13 @@ export class App {
       }
     }
 
-    // Execute startup command in the active tab (restored or fresh).
-    // Restore only recovers tab layout + scrollback — all PTYs are fresh shells,
-    // so the startup command is always safe to run. Timing lives in the helper.
+    // The active tab (restored or fresh): an empty one gets the project board,
+    // like a new tab; any other gets the startup command. Restore only recovers
+    // tab layout + scrollback — all PTYs are fresh shells, so the startup
+    // command is always safe to run. Timing lives in startup-command.ts.
     const firstTab = this.tabManager.getActiveTab();
-    if (settings.startupCommand && firstTab) {
-      runStartupCommand(firstTab, settings.startupCommand);
+    if (firstTab) {
+      this.projectBoards.startLaunchTab(firstTab, settings.startupCommand || '').catch(console.error);
     }
     // Startup is done: bookmark clicks may open tabs now (earlier ones are ignored).
     this.bookmarksPanel.setReady();

@@ -160,7 +160,7 @@ export class SettingsPanel {
               <input type="checkbox" id="setting-project-board" />
               <span class="settings-toggle-slider"></span>
             </label>
-            <span class="settings-hint">A new tab (Cmd+T, +) opens on your projects; pick one, or Plain terminal for a shell. Needs the project list file below.</span>
+            <span class="settings-hint">A new tab (Cmd+T, +), and the first tab at launch, opens on your projects; pick one, or Terminal (Esc) for a shell. Needs the project list file below.</span>
           </div>
           <div class="settings-group">
             <label class="settings-label" for="setting-project-list-file">Project list file</label>

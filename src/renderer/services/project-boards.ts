@@ -4,6 +4,7 @@ import type { AppSettings, BoardPayload } from '../../shared/types';
 import { openProject, type OpenProjectHost } from './open-project';
 import { projectLiveState, type LiveStateSnapshot, type ProjectLiveState } from './project-live-state';
 import { rlog } from './renderer-logger';
+import { runStartupCommand } from './startup-command';
 import type { TabManager } from './tab-manager';
 
 /** Whether a new tab the user opened gets the project board, and why not. */
@@ -21,6 +22,10 @@ export function decideBoard(settings: Pick<AppSettings, 'projectBoard'> | null, 
   return { show: true, payload };
 }
 
+/** How long launch waits for the board before sending the startup command
+ *  instead (the startup command's own prompt fallback is the same 1.5 s). */
+const LAUNCH_BOARD_TIMEOUT_MS = 1500;
+
 /** The tab manager calls the board's tab-change refresh at most this often. */
 const REFRESH_DELAY_MS = 50;
 
@@ -31,10 +36,11 @@ interface MountedBoard {
 
 /**
  * Puts the project board over new tabs the user opens (⌘T, the palette's New
- * Tab, the tab bar's +) and nowhere else: restored, reopened, bookmark, split
- * and launch tabs never come through TabManager.userNewTab(). A tile opens its
+ * Tab, the tab bar's +) and over the tab Patton opens at launch
+ * (startLaunchTab), and nowhere else: reopened, bookmark and split tabs never
+ * come through TabManager.userNewTab(). A tile opens its
  * project the way a bookmark click does (open-project.ts), then the board's tab
- * goes; "Plain terminal" just lifts the board off its tab.
+ * goes; "Terminal" (or Esc) just lifts the board off its tab.
  */
 export class ProjectBoards {
   private boards = new Map<Tab, MountedBoard>();
@@ -86,6 +92,38 @@ export class ProjectBoards {
     return tab;
   }
 
+  /**
+   * The tab Patton opens at launch (fresh, or the restored active tab, wherever
+   * its shell starts) gets the board, as a new tab does, and no startup
+   * command: "Terminal" or Esc leaves a plain shell, as on ⌘T. A board that is
+   * off, unlisted, failing or slower than 1.5 s leaves the tab to the startup
+   * command as before. Resolves whether the board was shown.
+   */
+  startLaunchTab(tab: Tab, startupCommand: string): Promise<boolean> {
+    const covered = this.coverLaunchTab(tab);
+    if (startupCommand) runStartupCommand(tab, startupCommand, covered.then((shown) => !shown));
+    return covered;
+  }
+
+  private async coverLaunchTab(tab: Tab): Promise<boolean> {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const timeout = new Promise<BoardDecision>((resolve) => {
+      timer = setTimeout(() => resolve({ show: false, reason: 'board too slow' }), LAUNCH_BOARD_TIMEOUT_MS);
+    });
+    const decided = await Promise.race([this.loadDecision(), timeout]);
+    if (timer) clearTimeout(timer);
+    if (decided.show === false) {
+      rlog('info', '[BOARD] skipped at launch', { tabId: tab.id, reason: decided.reason });
+      return false;
+    }
+    if (!this.tabs.getTabs().includes(tab)) {
+      rlog('info', '[BOARD] skipped at launch', { tabId: tab.id, reason: 'tab closed before the board loaded' });
+      return false;
+    }
+    this.mount(tab, decided.payload, '[BOARD] shown at launch');
+    return true;
+  }
+
   /** Whether the tab is showing a board. */
   hasBoard(tab: Tab): boolean {
     return this.boards.has(tab);
@@ -122,7 +160,7 @@ export class ProjectBoards {
     }
   }
 
-  private mount(tab: Tab, payload: BoardPayload): void {
+  private mount(tab: Tab, payload: BoardPayload, event = '[BOARD] shown'): void {
     const host: ProjectBoardHost = {
       // The board announces a failure, so the rejection goes back to it.
       openProject: (path) => this.openFromBoard(tab, path).catch((err: unknown) => {
@@ -130,14 +168,14 @@ export class ProjectBoards {
         throw err;
       }),
       dismiss: () => {
-        if (this.forget(tab, 'plain terminal')) tab.setCover(null);
+        if (this.forget(tab, 'terminal')) tab.setCover(null);
       },
       liveState: (path) => this.liveState(path),
     };
     const board = new ProjectBoard(host, payload);
     this.boards.set(tab, { board, payload });
     tab.setCover({ element: board.element, focus: () => board.focus() });
-    rlog('info', '[BOARD] shown', {
+    rlog('info', event, {
       tabId: tab.id,
       projects: payload.projects.length,
       themes: payload.layout.themes.length,

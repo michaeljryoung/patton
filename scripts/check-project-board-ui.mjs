@@ -206,7 +206,11 @@ function setup(payload = fixture(), opts = {}) {
   const label = t.tile('beta').querySelector('.pb-tile-main').getAttribute('aria-label');
   check('tile label has name, theme and state', label === 'Beta, Work, needs you', label);
   check('tiles are focusable buttons', t.qa('.pb-tile-main').every((b) => b.tagName === 'BUTTON'));
-  check('header buttons present', ['+ Theme', '+ Project', 'Plain terminal'].every((s) => t.qa('.pboard-btn').some((b) => b.textContent === s)));
+  check('header buttons present', ['+ Theme', '+ Project', 'Terminal'].every((s) => t.qa('.pboard-btn').some((b) => b.textContent === s)));
+  check('no "Plain terminal" left', !t.el.textContent.includes('Plain terminal'));
+  const headEnd = t.q('.pboard-head').lastElementChild;
+  check('Terminal is the header\'s right end, with its key named', headEnd.textContent === 'Terminal' && headEnd.classList.contains('pboard-terminal')
+    && headEnd.getAttribute('aria-keyshortcuts') === 'Escape', headEnd.textContent);
   check('search field labelled', t.q('.pboard-search').placeholder === 'Find a project');
 
   // Ages in hours and weeks
@@ -226,7 +230,7 @@ function setup(payload = fixture(), opts = {}) {
   t.click(t.tile('alpha').querySelector('.pb-chip'));
   check('click and Enter open; missing does not; chip opens the sub-project',
     JSON.stringify(t.calls.open) === JSON.stringify([P('beta'), P('zeta'), P('alpha-wt')]), t.calls.open);
-  check('Plain terminal dismisses', (t.click(t.qa('.pboard-btn').find((b) => b.textContent === 'Plain terminal')), t.calls.dismiss === 1));
+  check('Terminal dismisses', (t.click(t.qa('.pboard-btn').find((b) => b.textContent === 'Terminal')), t.calls.dismiss === 1));
 }
 
 // ── 2. Unsorted only when needed; empty states ──
@@ -369,7 +373,7 @@ function setup(payload = fixture(), opts = {}) {
   const input2 = t.tile('delta').querySelector('.pb-note-input');
   input2.value = 'discarded';
   t.key(input2, 'Escape');
-  check('Esc cancels a note', t.tile('delta').querySelector('.pb-note')?.textContent === 'check the build');
+  check('Esc cancels a note, board stays', t.tile('delta').querySelector('.pb-note')?.textContent === 'check the build' && t.calls.dismiss === 0);
   t.contextMenu(t.tile('zeta'));
   t.menuClick('Move to…');
   t.menuClick('New theme…');
@@ -399,7 +403,7 @@ function setup(payload = fixture(), opts = {}) {
   const input2 = t.q('.pb-rename');
   input2.value = 'Nope';
   t.key(input2, 'Escape');
-  check('Esc cancels a rename', t.q('.pb-area[data-area-id="home"] .pb-area-name').textContent === 'House');
+  check('Esc cancels a rename, board stays', t.q('.pb-area[data-area-id="home"] .pb-area-name').textContent === 'House' && t.calls.dismiss === 0);
   t.click(t.q('.pb-area[data-area-id="home"] .pb-area-menu'));
   t.menuClick('Tint…');
   check('Tint menu lists eight tints and None', t.menuLabels().length === 9 && t.menuLabels().includes('None') && t.menuLabels().includes('✓ Teal'), t.menuLabels());
@@ -436,7 +440,7 @@ function setup(payload = fixture(), opts = {}) {
   check('new theme: id pattern, name, next unused tint', /^[a-z0-9-]{1,40}$/.test(theme.id) && theme.id.startsWith('theme-') && theme.name === 'Reading' && theme.tint === 'slate' && theme.projects.length === 0, theme);
   t.click(t.qa('.pboard-btn').find((b) => b.textContent === '+ Theme'));
   t.key(t.q('.pb-rename'), 'Escape');
-  check('Esc on a new theme removes it', t.qa('.pb-area').length === 5, t.areaIds());
+  check('Esc on a new theme removes it, board stays', t.qa('.pb-area').length === 5 && t.calls.dismiss === 0, t.areaIds());
 }
 
 // ── 9. Search ──
@@ -457,10 +461,17 @@ function setup(payload = fixture(), opts = {}) {
   check('search by sub-project name shows the parent', JSON.stringify(visible()) === '["alpha"]', visible());
   t.key(s, 'Enter');
   check('Enter on a sub-project match opens the sub-project', t.calls.open.at(-1) === P('alpha-wt'), t.calls.open);
+  const esc = t.key(s, 'Escape');
+  check('one Esc with search text dismisses', t.calls.dismiss === 1 && esc === false, t.calls.dismiss);
+  s.value = '';
   t.key(s, 'Escape');
-  check('Esc clears the search', s.value === '' && visible().length === 6 && t.calls.dismiss === 0);
-  t.key(s, 'Escape');
-  check('Esc on an empty search dismisses', t.calls.dismiss === 1);
+  check('Esc on an empty search dismisses', t.calls.dismiss === 2);
+  t.key(t.tile('beta').querySelector('.pb-tile-main'), 'Escape');
+  check('Esc on a tile dismisses', t.calls.dismiss === 3);
+  t.contextMenu(t.tile('beta'));
+  const overlay = t.win.document.querySelector('.context-menu-overlay.visible');
+  t.key(overlay, 'Escape');
+  check('Esc in an open context menu closes it, board stays', !t.win.document.querySelector('.context-menu-overlay.visible') && t.calls.dismiss === 3, t.calls.dismiss);
   t.board.focus();
   check('focus() focuses the search field', t.win.document.activeElement === s);
 }
@@ -523,7 +534,14 @@ function setup(payload = fixture(), opts = {}) {
   check('error shown inline in plain words; form stays', !err.hidden && err.textContent === 'Could not add the project: that folder is already in the list.' && !e.q('.pboard-form').hidden, err.textContent);
   check('refusal logged', e.logs.some(([, m]) => m.includes('[BOARD] add refused')));
   e.key(e.q('.pboard-add-name'), 'Escape');
-  check('Esc closes the form', e.q('.pboard-form').hidden);
+  check('Esc closes the form, board stays', e.q('.pboard-form').hidden && e.calls.dismiss === 0);
+  e.click(e.qa('.pboard-btn').find((b) => b.textContent === '+ Project'));
+  await sleep(10);
+  check('form open again', !e.q('.pboard-form').hidden);
+  e.key(e.q('.pboard-search'), 'Escape');
+  check('Esc outside an open form cancels the form first', e.q('.pboard-form').hidden && e.calls.dismiss === 0);
+  e.key(e.q('.pboard-search'), 'Escape');
+  check('the next Esc dismisses', e.calls.dismiss === 1);
 
   const c = setup(fixture(), { pick: null });
   c.click(c.qa('.pboard-btn').find((b) => b.textContent === '+ Project'));
