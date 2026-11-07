@@ -12,7 +12,7 @@ import fs from 'node:fs';
 import { execSync } from 'node:child_process';
 import installPrune from './scripts/install-prune.cjs';
 
-const { pruneStale, verifySignature } = installPrune;
+const { pruneAndVerify } = installPrune;
 
 // Use self-signed "Patton Dev Signing" cert for stable code identity across rebuilds.
 // Without this, ad-hoc signing (`--sign -`) generates a new identity hash every build,
@@ -116,8 +116,7 @@ const config: ForgeConfig = {
         execSync(`ditto "${appPath}" "${dest}"`, { stdio: 'inherit' });
         console.log(`\n✅ Installed to ${dest}`);
         // Neither step fails the build: the post-commit hook runs this on every commit.
-        pruneStale(appPath, dest);
-        verifySignature(dest);
+        pruneAndVerify(appPath, dest);
       }
     },
     packageAfterPrune: async (_forgeConfig, buildPath) => {

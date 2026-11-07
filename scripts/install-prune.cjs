@@ -19,6 +19,9 @@ function lstatOrNull(p) {
   try {
     return fs.lstatSync(p);
   } catch (err) {
+    // ENOTDIR (a parent is a file) is unreachable in the install flow, because
+    // ditto exits 1 on a file/directory mismatch before this runs; it stays as
+    // a cheap guard for the helper used on other trees.
     if (err.code === 'ENOENT' || err.code === 'ENOTDIR') return null;
     throw err;
   }
@@ -44,15 +47,27 @@ function findStalePaths(source, dest) {
   return stale;
 }
 
-/** Is a process running out of dest? Throws if pgrep itself fails. */
+/** Longest a matched command line is printed in a warning. */
+const MAX_MATCH_LENGTH = 200;
+
+/**
+ * Is a process running out of dest? Returns '' when none, else a short
+ * description of what matched ("pid 123 /…/Contents/MacOS/Patton …").
+ * The pattern is anchored to the start of the command line, so a process that
+ * merely mentions a path under dest in its arguments does not count.
+ * Throws if pgrep itself fails.
+ */
 function isRunningFrom(dest) {
-  const pattern = `${dest}/Contents/`.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pattern = '^' + `${dest}/Contents/`.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   try {
     // No shell: a shell's own command line would match the pattern.
-    execFileSync('pgrep', ['-f', pattern], { stdio: 'ignore' });
-    return true;
+    const out = execFileSync('pgrep', ['-lf', pattern], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+    const lines = out.split('\n').map((l) => l.trim()).filter(Boolean);
+    const shown = lines.slice(0, 3).map((l) => `pid ${l.length > MAX_MATCH_LENGTH ? `${l.slice(0, MAX_MATCH_LENGTH)}…` : l}`);
+    const more = lines.length > 3 ? ` (+${lines.length - 3} more)` : '';
+    return (shown.join('; ') || 'a process') + more;
   } catch (err) {
-    if (err.status === 1) return false; // pgrep: no match
+    if (err.status === 1) return ''; // pgrep: no match
     throw err;
   }
 }
@@ -63,24 +78,39 @@ function removeOne(full) {
   else fs.unlinkSync(full);
 }
 
+/** Files a usable build always has; a source without them is partial or missing. */
+const REQUIRED_SOURCE_FILES = ['Contents/MacOS/Patton', 'Contents/Resources/app.asar'];
+
 /**
  * Remove (or, with Patton running, only list) what dest has and source doesn't.
- * Returns { stale, removed, running }. A failing is-running check counts as
- * running, the safe side.
+ * Returns { stale, removed, failed, running, skipped }. A failing is-running
+ * check counts as running, the safe side. A source lacking requiredFiles is
+ * not pruned against (it would empty dest). A path that cannot be removed is
+ * warned about and the rest carry on; nothing here throws for those.
  */
 function pruneStale(source, dest, options = {}) {
   const isRunning = options.isRunning || isRunningFrom;
   const log = options.log || console.log;
   const warn = options.warn || console.warn;
+  const requiredFiles = options.requiredFiles || REQUIRED_SOURCE_FILES;
+
+  const missing = requiredFiles.filter((rel) => lstatOrNull(path.join(source, rel)) === null);
+  if (missing.length > 0) {
+    warn(`Skipping the stale-file prune: the new build at ${source} lacks ${missing.join(', ')}, so it cannot be trusted as the reference.`);
+    return { stale: [], removed: [], failed: [], running: false, skipped: true };
+  }
 
   const stale = findStalePaths(source, dest);
-  if (stale.length === 0) return { stale, removed: [], running: false };
+  if (stale.length === 0) return { stale, removed: [], failed: [], running: false, skipped: false };
 
   let running;
+  let matched = '';
   try {
     running = isRunning(dest);
+    if (typeof running === 'string') { matched = running; running = running !== ''; }
   } catch (err) {
     running = true;
+    matched = `the check itself failed: ${err.message}`;
     warn(`Could not tell whether Patton is running from ${dest} (${err.message}); treating it as running.`);
   }
 
@@ -88,31 +118,40 @@ function pruneStale(source, dest, options = {}) {
     warn(
       `\n⚠️  ${stale.length} path(s) in ${dest} are not in the new build, and Patton is running from it, ` +
       'so none were removed (a running app may lazily load one of them). ' +
+      (matched ? `Matched: ${matched}. ` : '') +
       'They can break the code signature. Quit Patton and rerun `npm run install-app`:',
     );
     for (const rel of stale) warn(`   ${rel}`);
-    return { stale, removed: [], running: true };
+    return { stale, removed: [], failed: [], running: true, skipped: false };
   }
 
   const removed = [];
+  const failed = [];
   for (let i = stale.length - 1; i >= 0; i--) { // children before their parents
-    removeOne(path.join(dest, stale[i]));
-    removed.push(stale[i]);
-    log(`🧹 Removed stale ${stale[i]}`);
+    try {
+      removeOne(path.join(dest, stale[i]));
+      removed.push(stale[i]);
+      log(`🧹 Removed stale ${stale[i]}`);
+    } catch (err) {
+      failed.push(stale[i]);
+      warn(`⚠️  Could not remove stale ${path.join(dest, stale[i])}: ${err.message}`);
+    }
   }
-  return { stale, removed, running: false };
+  return { stale, removed, failed, running: false, skipped: false };
+}
+
+/** The codesign arguments for verifying a bundle. */
+function codesignArgs(target) {
+  return ['--verify', '--deep', '--strict', target];
 }
 
 /** Run codesign's verify on dest. Returns true when it verifies. Never throws. */
 function verifySignature(dest, options = {}) {
   const log = options.log || console.log;
   const warn = options.warn || console.warn;
-  const run = options.run || ((target) => execFileSync(
-    'codesign', ['--verify', '--deep', '--strict', target],
-    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
-  ));
+  const exec = options.exec || execFileSync;
   try {
-    run(dest);
+    exec('codesign', codesignArgs(dest), { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
     log(`✅ codesign --verify --deep --strict passed for ${dest}`);
     return true;
   } catch (err) {
@@ -122,4 +161,23 @@ function verifySignature(dest, options = {}) {
   }
 }
 
-module.exports = { findStalePaths, isRunningFrom, pruneStale, verifySignature };
+/**
+ * What postPackage calls after the ditto: prune, then verify. Neither may fail
+ * the build (Forge does not catch hook errors), so anything either throws is
+ * reported as a warning and swallowed.
+ */
+function pruneAndVerify(source, dest, options = {}) {
+  const warn = options.warn || console.warn;
+  try {
+    pruneStale(source, dest, options);
+  } catch (err) {
+    warn(`⚠️  Stale-file prune of ${dest} failed unexpectedly: ${err && err.message ? err.message : err}`);
+  }
+  try {
+    verifySignature(dest, options);
+  } catch (err) {
+    warn(`⚠️  Signature check of ${dest} failed unexpectedly: ${err && err.message ? err.message : err}`);
+  }
+}
+
+module.exports = { findStalePaths, isRunningFrom, pruneStale, codesignArgs, verifySignature, pruneAndVerify };
