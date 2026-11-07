@@ -8,7 +8,7 @@
 _Previous goals: S43 → v1.14 (find, checkpoint, Claude's own state) and S40 (signals, image paste, bookmarks, look) reached except their live checks, which stay below._
 **Last verified:** 2026-11-07 16:40 (Session 44, run from the Claude Launcher session: P7 shipped as v1.15.0, cask checked, installed from its tag; live checks open)
 
-**Retired:** 12 finished nodes, in `docs/map-archive.md`
+**Retired:** 17 finished nodes, in `docs/map-archive.md`
 
 ```mermaid
 flowchart TD
@@ -42,14 +42,9 @@ flowchart TD
     v114_verify[live checks v1.14]:::todo
   end
   subgraph P7["Phase 7 — S44 → v1.15: project board"]
-    board_main[main: list, nesting, layout, IPC]:::done
-    board_ui[board component]:::done
-    board_newtab[new-tab wiring + settings]:::done
-    board_checks[node + jsdom suites]:::done
-    board_review[fresh review + fixes]:::done
     board_seed[seed Michael's themes]:::done
     v115_release[release + install v1.15]:::done
-    v115_verify[live checks v1.15]:::todo
+    v115_verify[live checks v1.15]:::live
   end
   subgraph P4["Phase 4 — Look"]
     look_pick[Michael picks a combination]:::done
@@ -85,14 +80,6 @@ flowchart TD
   osc8_links --> v114_release
   hover_card --> v114_release
   v114_release --> v114_verify
-  board_main --> board_ui
-  board_ui --> board_newtab
-  board_main --> board_checks
-  board_ui --> board_checks
-  board_newtab --> board_checks
-  board_checks --> board_review
-  board_main --> board_seed
-  board_review --> v115_release
   v115_release --> v115_verify
   board_seed --> v115_verify
   classDef done fill:#1a7f37,color:#fff
@@ -129,17 +116,12 @@ flowchart TD
 | `v114_release` | Each wave reviewed fresh (no open major), merged, pushed; CI release; cask checksum verified; installed from the tag | done | `ckpt_clock`, `bookmark_state`, `palette_sessions`, `osc8_links`, `hover_card` | tag `v1.14.0` (run 42383125028; cask 1.14.0, sha `b7cfa349…` matches the DMG); installed from the tag 14:48, reports 1.14.0 |
 | `v114_verify` | The live checks listed under Done when | todo | `v114_release` | — |
 | `merge_release` | Merge `feat/image-paste` and `feat/bookmarks` into main, code review, `npm run lint && npm run package`, release v1.11.0, Homebrew step green | done | `parked_state`, `wake_yellow`, `hook_install`, `paste_thumbnail`, `bookmark_open` | tag `v1.11.0` (release run 42203278111, macos-15; cask 1.11.0 pushed by CI) |
-| `board_main` | Main process: read the project list (a markdown table; path between the first backtick pair, as `cc` reads it), nest sub-projects (a folder inside a listed project, or a linked worktree whose main repo is listed), last-session time from `~/.claude/projects/<slug>`, layout file in userData, validated and rate-limited IPC, + Project appends a row inside the table (atomic write) | done | — | `src/main/project-board.ts` · `scripts/check-project-board.mjs` (132 with `CC_LAUNCHER`, 119 without) · `e696151` · `7ee8a16` · `63e3922` · `33fbd86` |
-| `board_ui` | Renderer: board component (areas grid, two-column tiles, wide tiles with sub-project chips, a tint per theme, search, + Theme / + Project / Plain terminal, area and tile menus, drag with the blue line, keyboard route, live state from the v1.14 activity) | done | `board_main` | `src/renderer/components/project-board.ts` · `src/renderer/styles/board.css` · `scripts/check-project-board-ui.mjs` (125, `JSDOM_DIR`) · `1277ffd` · `0c59110` · `9d91bdd` |
-| `board_newtab` | Shown in each new empty tab (⌘T, palette, tab bar) while the setting is on and the list file exists; never in restored, bookmark, split or launch tabs; a tile opens or activates its project through one shared `openProject` (the bookmarks panel reuses it) and the board's tab goes; Settings: board on/off, list file | done | `board_ui` | `src/renderer/services/project-boards.ts` · `src/renderer/services/open-project.ts` · `scripts/check-project-board-wire.mjs` (59) · `e32b6cd` · `938342d` · `665329f` |
-| `board_checks` | Node suite on `board_main` (parse, nesting, validation, append read back by `cc`'s parser) and jsdom suite on the real board and new-tab wiring, generic fixtures only (public repo); lint, `tsc`, `PATTON_NO_INSTALL=1` package | done | `board_main`, `board_ui`, `board_newtab` | the three scripts above all green; lint, `tsc` clean; `PATTON_NO_INSTALL=1` package, asar 16:33:58 after the last commit · `9d91bdd` |
-| `board_review` | Fresh code review of the whole feature, a fix pass, `board_checks` re-run | done | `board_checks` | review 1: 2 major + 10 minor, all fixed (`7ee8a16`, `665329f`, `0c59110`); final review: ship, 3 minor + 1 race, fixed (`63e3922`, `33fbd86`, `9d91bdd`); left: two adds whose list updates reach a board out of order (reasoned, very unlikely, untested) |
 | `board_seed` | Michael's layout file seeded from the sketch's grouping (seven themes with tints), checked by a fresh-eyes agent; lives in userData, never in the repo | done | `board_main` | userData `project-board.json` written 2026-11-07 16:34 (6 themes, 39 tiles, 7 sub-projects nested), passed the real `validateLayout` + `loadBoard`; grouping checked by a fresh-eyes agent · `src/main/project-board.ts::validateLayout` |
-| `v115_release` | ff-merge, push, CI release v1.15.x, cask sha matches the DMG, installed from the tag | done | `board_review` | tag `v1.15.0` → `9d91bdd` (run 42391977593 success); cask 1.15.0 sha `9b37f9ad…` matches the DMG; installed from the tag 16:37 (asar, CFBundleShortVersionString 1.15.0, codesign ok) |
-| `v115_verify` | Live: ⌘T shows the board with his themes; a tile dragged to another theme stays there after a relaunch; a tile click starts Claude in its project; Plain terminal leaves a plain shell | todo | `v115_release`, `board_seed` | — |
+| `v115_release` | ff-merge, push, CI release v1.15.x, cask sha matches the DMG, installed from the tag | done | `board_review` | tag `v1.15.0` → `9d91bdd` (run 42391977593 success); cask 1.15.0 sha `9b37f9ad…` matches the DMG; installed from the tag 16:37 (asar, CFBundleShortVersionString 1.15.0, codesign ok); v1.15.1 (launch tab on the board, one Esc, "Terminal") tag → `0571119`, run 42394762317, cask `015a4d8a…` matches, installed 17:11 |
+| `v115_verify` | Live: ⌘T shows the board with his themes; a tile dragged to another theme stays there after a relaunch; a tile click starts Claude in its project; Plain terminal leaves a plain shell | live | `v115_release`, `board_seed` | ⌘T board seen by Michael 2026-11-07 17:02 ("that looks great"); launch-tab board (v1.15.1), a drag, a tile click still open |
 <!-- MAP:END -->
 
-Last updated: 2026-11-07 (Session 43, v1.14.0)
+Last updated: 2026-11-07 (Session 44, v1.15.1)
 
 CLAUDE.md's `## Next Steps` section points here; this is the canonical list. Items leave only via `[x] DONE — Session N`, `[~] SUPERSEDED — <pointer>`, or `[-] DROPPED: <reason>`. Marked items linger 10 checkpoints, then sweep to `docs/session-archive.md`.
 
@@ -226,9 +208,7 @@ CLAUDE.md's `## Next Steps` section points here; this is the canonical list. Ite
 - [x] **DONE — Session 36**: **Build hook no longer kills the running app** (`9a5f13d`). `forge.config.ts` installs with `ditto` instead of `rm -rf` + `cp -R`; the old form unlinked `/Applications/Patton.app` under a live process on every commit and killed it silently (no crash dump). Cost a live session before it was found. WHY: S36 Decisions.
 - [x] **DONE — Session 36**: **Single shortcuts registry — the Settings grid, menu, palette, context menu and onboarding card are all generated** (`da88951`, new `src/shared/shortcuts.ts`). Closes the S34 URGENT item and its structural directive: a shortcut is now written down exactly once (id + label + Electron accelerator), with `acceleratorToDisplay()` deriving the ⌘⇧-style glyphs. Settings grid went 14 → 26 rows, picking up all eight drifted shortcuts (⌃⌘N Toggle Notes, ⌘⇧B, ⌘S, ⌘N, ⌘=/⌘−, ⌘⇧]/⌘⇧[, ⌘1–9) plus the two the S34 audit flagged as unknown — ⌘⇧K Reset Renderer, and Quick Terminal now showing the live configurable `globalHotkey`. Acceptance was tested, not assumed: a throwaway registry entry surfaced in both Settings and the palette with zero other edits. Every generated string was diffed against the old hand-written ones (all identical) so the change is a refactor plus the missing rows. WHY: S34 + S36 Decisions.
 - [x] **DONE — Session 36**: **Unblocked the build gate — `fast-uri` override ^3.1.2 → ^3.1.4** (`4af8d01`). Two new high advisories extended the vulnerable range to 3.1.3, outgrowing the S29 pin and failing `npm run package`'s audit gate before the build ran. Prod tree back to 0 high advisories (resolves 3.1.5).
-- [x] **DONE — Session 33**: **Instant split-pane close on ⌘W → v1.8.0** (`bede3f9`). Scoped the S31 close-confirmation to whole-tab closes; a split pane now closes with no dialog (the Cancel-defaulted dialog had turned ⌘W-then-Enter into a cancel, so panes felt uncloseable). Whole-tab + ✕/middle-click still confirm. WHY: S33 Decisions.
-- [x] **DONE — Session 33**: **Ctrl+Cmd+N notes scratchpad → v1.8.0** (`886e74b`, new `notes-panel.ts`). Persistent plain-text panel docked right of the terminal (no PTY/shell); autosaves to electron-store (`notes` key), width in localStorage. Built as a docked sidebar, not a split-tree node, to leave the terminal's pane/split/session code untouched. WHY: S33 Decisions.
-- [x] **DONE — Session 33**: **Homebrew auto-update fixed via a write-scoped SSH deploy key** (`37a8e1e`, `[no-release]`). Replaces the expired `HOMEBREW_PAT` that failed the cask step every release S28–S32. **Resolves the former "Refresh `HOMEBREW_PAT`" + "Harden the `HOMEBREW_PAT` guard" items** — least-privilege (writes only the tap repo), no expiry, and the guard now skips gracefully if the key is absent. Old `HOMEBREW_PAT` secret now unused (deletable: `gh secret delete HOMEBREW_PAT --repo michaeljryoung/patton`). WHY: S33 Decisions.
+- _Three items (`[x]` DONE — Session 33, DONE — Session 33, DONE — Session 33) swept 2026-11-07 S44 → `docs/session-archive.md`._
 - _Three items (`[x]` DONE — Session 31, DONE — Session 31; `[-]` DROPPED (S31): Install the actual DMG for a correct version…) swept 2026-11-07 S42 → `docs/session-archive.md`._
 - _Six items (`[x]` DONE — Session 30, DONE — Session 30, DONE — Session 29, DONE — Session 29, DONE — Session 29, DONE — Session 29) swept 2026-11-06 S41 → `docs/session-archive.md`._
 - _Four items (`[x]` DONE — Session 28, DONE — Session 28; `[-]` DROPPED (S28): System-level font-cache reset, DROPPED (S28): Phase 2 Canvas-renderer fallback) swept 2026-11-04 S39 → `docs/session-archive.md`._
