@@ -6,6 +6,7 @@ import { PasteDialog } from './paste-dialog';
 import { ContextMenu } from './context-menu';
 import { HistoryManager } from '../services/history-manager';
 import { FileLinkProvider } from '../services/file-link-provider';
+import { createOsc8LinkHandler } from '../services/osc8-links';
 import { rlog } from '../services/renderer-logger';
 import { stripPasteControls } from '../services/paste-sanitize';
 import { shouldConfirmMultilinePaste } from '../services/paste-confirm';
@@ -488,6 +489,12 @@ export class Pane {
       new FileLinkProvider(this.terminalView.terminal, () => this.currentCwd),
     );
     this.disposables.push(() => linkDisposable.dispose());
+
+    // OSC 8 hyperlinks a program prints (read from the option at hover time).
+    this.terminalView.terminal.options.linkHandler = createOsc8LinkHandler(
+      this.terminalView.terminal,
+      () => this.currentCwd,
+    );
 
     // Display welcome quote instantly (pre-PTY) so the tab feels responsive
     const quote = PATTON_QUOTES[Math.floor(Math.random() * PATTON_QUOTES.length)];

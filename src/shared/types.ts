@@ -246,6 +246,8 @@ export interface PattonAPI {
   notify: (title: string, body: string, tabId: string) => void;
   setOpacity: (opacity: number) => void;
   openExternal: (url: string) => Promise<void>;
+  /** This Mac's host name, to tell `file://<hostname>/…` links from remote ones. */
+  getHostname: () => Promise<string>;
   moveWindowBy: (dx: number, dy: number) => void;
 }
 

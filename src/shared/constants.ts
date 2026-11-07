@@ -67,6 +67,7 @@ export const IPC = {
   APP_SAVE_TERMINAL_MENU: 'app:save-terminal-menu',
   APP_SWITCH_TAB_BY_ID: 'app:switch-tab-by-id',
   APP_OPEN_EXTERNAL: 'app:open-external',
+  APP_GET_HOSTNAME: 'app:get-hostname',
   WINDOW_MOVE_BY: 'window:move-by',
 
   DIAGNOSTICS_SAVE_SNAPSHOT: 'diagnostics:save-snapshot',

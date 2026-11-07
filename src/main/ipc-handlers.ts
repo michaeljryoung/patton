@@ -1,7 +1,7 @@
 import { ipcMain, BrowserWindow, dialog, Notification, shell, app } from 'electron';
 import { execFile } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, unlinkSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { homedir, hostname } from 'node:os';
 import { join } from 'node:path';
 import { IPC } from '../shared/constants';
 import { PtyManager } from './pty-manager';
@@ -331,7 +331,9 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
     // `~/…` comes through unexpanded: only main knows the home directory.
     const filePath = rawPath.startsWith('~/') ? homedir() + rawPath.slice(1) : rawPath;
     // Security: validate strict path:line:col format (no shell metacharacters, no traversal)
-    if (!/^[/a-zA-Z0-9._\-@]+(?::[0-9]+(?::[0-9]+)?)?$/.test(filePath)) return;
+    // A space is allowed: OSC 8 file:// links carry decoded names like "My Doc.md",
+    // and execFile passes the path as one argument, so no shell sees it.
+    if (!/^[/a-zA-Z0-9._\-@ ]+(?::[0-9]+(?::[0-9]+)?)?$/.test(filePath)) return;
     // Security: reject directory traversal
     if (/(?:^|\/)\.\.(?:\/|$)/.test(filePath)) return;
     // Security: must start with / (absolute path required from renderer)
@@ -523,6 +525,9 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
   ipcMain.handle(IPC.APP_OPEN_EXTERNAL, (_event, url: string) => {
     openWebUrl(url);
   });
+
+  // --- Host name (tells local file:// hyperlinks from remote ones) ---
+  ipcMain.handle(IPC.APP_GET_HOSTNAME, () => hostname());
 
   // --- Renderer log forwarding ---
   // Bridges renderer-process console calls into main.log via the file logger.

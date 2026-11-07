@@ -98,3 +98,21 @@
   color: var(--ink);
   background: var(--surface-hover);
 }
+
+/* Hover target of an OSC 8 hyperlink (osc8-links.ts). */
+.osc8-tooltip {
+  position: absolute;
+  z-index: 20;
+  max-width: 60%;
+  padding: 3px 6px;
+  background: var(--inverse-bg);
+  color: var(--inverse-fg);
+  border-radius: 2px;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}

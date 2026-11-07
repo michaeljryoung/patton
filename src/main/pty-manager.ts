@@ -60,6 +60,11 @@ function getSafeEnv(shellIntegration = true, isDark?: boolean): Record<string, s
   safe.TERM = 'xterm-256color';
   safe.COLORTERM = 'truecolor';
   safe.TERM_PROGRAM = 'Patton';
+  // Tells CLI tools (Claude Code, and anything using the `supports-hyperlinks`
+  // convention) that this terminal renders OSC 8 hyperlinks. Other tools will
+  // start emitting them too; every target is judged by the same rules in
+  // renderer/services/link-target.ts, and main re-validates what it is sent.
+  safe.FORCE_HYPERLINK = '1';
 
   // Tell CLI apps about the terminal's color scheme so they choose
   // readable text colors. Prefer the renderer's knowledge (accounts for
