@@ -3,9 +3,9 @@ import { shortcutKeys } from '../../shared/shortcuts';
 import type { Bookmark } from '../../shared/types';
 import { announce } from '../services/announcer';
 import { projectName } from '../services/project-names';
+import { openProject, type OpenProjectHost } from '../services/open-project';
+import { CLOSED_STATE, projectLiveState, type ProjectLiveState } from '../services/project-live-state';
 import { rlog } from '../services/renderer-logger';
-import { runStartupCommand } from '../services/startup-command';
-import { sessionMatchesPath, sessionNeedsYou, type SessionInfo } from '../services/sessions';
 import { ConfirmDialog } from './confirm-dialog';
 import { ContextMenu } from './context-menu';
 import type { Tab } from './tab';
@@ -22,35 +22,12 @@ const ICON_HIDE =
 const ICON_PLUS =
   '<svg width="8" height="8" viewBox="0 0 8 8" aria-hidden="true"><path d="M4 0.5v7M0.5 4h7" fill="none" stroke="currentColor" stroke-width="1"/></svg>';
 
-/** What the panel needs from the window's tabs. Kept narrow so the panel
- *  doesn't reach into TabManager's internals. */
-export interface BookmarksHost {
-  getTabs(): readonly Tab[];
-  getActiveTab(): Tab | null;
-  switchToTab(id: string): void;
-  /** `forProject` tells the new tab's shell which project it was opened for
-   *  (PATTON_PROJECT_DIR), so a launcher can open that project directly;
-   *  `startupCommand` gives that shell FORCE_HYPERLINK=1 for Claude. */
-  createTab(cwd: string, opts?: { forProject?: boolean; startupCommand?: boolean }): Promise<Tab>;
-  /** Open sessions (every pane), waiting first, longest wait first. */
-  listSessions(): SessionInfo[];
-  /** Activate a tab and focus one of its panes; false if either has gone. */
-  goToSession(tabId: string, paneId: string): boolean;
-  /** Hand keyboard focus back to the active terminal pane. */
-  focusTerminal(): void;
-}
+/** What the panel needs from the window's tabs (the same as opening a
+ *  project needs). Kept narrow so the panel doesn't reach into TabManager. */
+export type BookmarksHost = OpenProjectHost;
 
 /** A project row's live state: its tab, and its sessions by state. */
-interface RowState {
-  isOpen: boolean;
-  isCurrent: boolean;
-  /** Sessions (panes) in the project, and how many wait for you or are parked. */
-  open: number;
-  waiting: number;
-  parked: number;
-}
-
-const CLOSED: RowState = { isOpen: false, isCurrent: false, open: 0, waiting: 0, parked: 0 };
+type RowState = ProjectLiveState;
 
 /** The row's second line while sessions are open: "2 open · 1 waiting". */
 function countText(state: RowState): string {
@@ -130,8 +107,6 @@ export class BookmarksPanel {
   // The row being dragged. Renders wait for the drop for the same reason as
   // renames: rebuilding the list mid-drag would remove the row being dragged.
   private dragId: string | null = null;
-  // Paths whose tab is being created, so a double-click can't open two tabs.
-  private opening = new Set<string>();
   /** The row whose menu was opened last, so a rebuild can re-aim its focus return. */
   private menuRowId: string | null = null;
   // Clicks are ignored until App.init has restored the session and run the
@@ -364,21 +339,6 @@ export class BookmarksPanel {
     }
   }
 
-  // ── Which tab belongs to a bookmark ──
-
-  /** The tab shows this project, or has a pane (focused or not) in this folder. */
-  private tabMatches(tab: Tab, path: string): boolean {
-    if (tab.project?.root === path) return true;
-    return tab.panes.some((pane) => pane.getCwd() === path);
-  }
-
-  /** The tab already showing this project — the active tab first, if it is one. */
-  private findTabFor(path: string): Tab | null {
-    const active = this.host.getActiveTab();
-    if (active && this.tabMatches(active, path)) return active;
-    return this.host.getTabs().find((t) => this.tabMatches(t, path)) ?? null;
-  }
-
   // ── Opening ──
 
   private async open(bookmark: Bookmark): Promise<void> {
@@ -396,53 +356,16 @@ export class BookmarksPanel {
       return;
     }
 
-    // A session of this project that's waiting for you comes first, the
-    // longest wait first (listSessions is already in that order).
-    const waiting = this.host.listSessions().find((s) => sessionNeedsYou(s) && sessionMatchesPath(s, path));
-    if (waiting && this.host.goToSession(waiting.tabId, waiting.paneId)) {
-      rlog('info', '[BOOKMARK] open waiting', {
-        label: bookmark.label, tabId: waiting.tabId, paneId: waiting.paneId,
-        waitedMs: waiting.awaitingSince ? Date.now() - waiting.awaitingSince : null,
-      });
-      this.host.focusTerminal();
-      this.scheduleRefresh();
-      return;
-    }
-
-    // Row state counts sessions per pane, so a click goes to one of those
-    // before anything else (the first is the best-ranked: listSessions order).
-    const session = this.host.listSessions().find((s) => sessionMatchesPath(s, path));
-    if (session && this.host.goToSession(session.tabId, session.paneId)) {
-      rlog('info', '[BOOKMARK] open', { kind: 'project', label: bookmark.label, action: 'went to existing session' });
-      this.host.focusTerminal();
-      this.scheduleRefresh();
-      return;
-    }
-
-    const existing = this.findTabFor(path);
-    if (existing) {
-      rlog('info', '[BOOKMARK] open', { kind: 'project', label: bookmark.label, action: 'activated existing tab' });
-      this.host.switchToTab(existing.id);
-      this.host.focusTerminal();
-      this.scheduleRefresh();
-      return;
-    }
-    if (this.opening.has(path)) return; // its tab is already on the way
-
-    this.opening.add(path);
+    // The open logic is shared with the project board (services/open-project.ts).
     try {
-      const settings = await window.patton.settings.get();
-      const tab = await this.host.createTab(path, { forProject: true, startupCommand: Boolean(settings.startupCommand) });
-      if (settings.startupCommand) runStartupCommand(tab, settings.startupCommand);
-      rlog('info', '[BOOKMARK] open', {
-        kind: 'project', label: bookmark.label, action: 'new tab', startupCommand: Boolean(settings.startupCommand),
-      });
-      this.host.focusTerminal();
+      const { action } = await openProject(this.host, path, '[BOOKMARK]', bookmark.label);
+      if (action !== 'went to waiting session' && action !== 'already opening') {
+        rlog('info', '[BOOKMARK] open', { kind: 'project', label: bookmark.label, action });
+      }
     } catch (err) {
       rlog('error', '[BOOKMARK] open failed', { label: bookmark.label, err: String(err) });
       announce(`Could not open ${bookmark.label}`, 'assertive');
     } finally {
-      this.opening.delete(path);
       this.scheduleRefresh();
     }
   }
@@ -479,22 +402,11 @@ export class BookmarksPanel {
   private render(): void {
     if (this.renamingId || this.dragId || !this.isOpen) return;
 
-    const tabs = this.host.getTabs();
-    const active = this.host.getActiveTab();
-    const sessions = this.host.listSessions();
+    const snapshot = { tabs: this.host.getTabs(), active: this.host.getActiveTab(), sessions: this.host.listSessions() };
     const states = new Map<string, RowState>();
     for (const bookmark of this.bookmarks) {
       const path = bookmark.kind === 'project' ? bookmark.path : undefined;
-      const mine = path ? sessions.filter((s) => sessionMatchesPath(s, path)) : [];
-      const isOpen = !!path && (mine.length > 0 || tabs.some((t) => this.tabMatches(t, path)));
-      const isCurrent = isOpen && !!path && !!active && this.tabMatches(active, path);
-      states.set(bookmark.id, {
-        isOpen,
-        isCurrent,
-        open: mine.length,
-        waiting: mine.filter((s) => sessionNeedsYou(s)).length,
-        parked: mine.filter((s) => s.state === 'parked').length,
-      });
+      states.set(bookmark.id, path ? projectLiveState(snapshot, path) : CLOSED_STATE);
     }
     const signature = JSON.stringify([this.bookmarks, [...states.entries()]]);
     if (signature === this.lastRendered) return;
@@ -540,7 +452,7 @@ export class BookmarksPanel {
       const ul = document.createElement('ul');
       ul.className = 'bookmarks-items';
       for (const bookmark of items) {
-        ul.appendChild(this.renderRow(bookmark, states.get(bookmark.id) ?? CLOSED, items.length > 1));
+        ul.appendChild(this.renderRow(bookmark, states.get(bookmark.id) ?? CLOSED_STATE, items.length > 1));
       }
       section.appendChild(ul);
       this.listEl.appendChild(section);
