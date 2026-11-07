@@ -569,14 +569,12 @@ export class App {
   }
 
   /**
-   * One font family for every terminal (tabs and the quick terminal), the
-   * compose box (via Pane) and the app's own mono text (`--font-mono`: the
-   * board, settings fields), so a change is seen everywhere at once.
+   * One font family for every terminal (tabs and the quick terminal) and the
+   * compose box (via Pane). The app's own chrome keeps its `--font-mono` token.
    */
   private applyFontFamily(family: string): void {
     this.tabManager.setFontFamily(family);
     this.quickTerminal.setFontFamily(family);
-    document.documentElement.style.setProperty('--font-mono', family);
   }
 
   private applyTheme(themeId: string): void {
@@ -593,8 +591,9 @@ export class App {
   }
 
   private applyFontSize(): void {
-    // Apply to ALL tabs, not just the active one
+    // Apply to ALL tabs, not just the active one, and to the quick terminal
     this.tabManager.setFontSize(this.fontSize);
+    this.quickTerminal.setFontSize(this.fontSize);
     // Cmd+/- held down repeats ~30/s but settings:set allows 10/s, so a refused
     // save could drop the final size: apply live, save once the zooming stops.
     if (this.fontSizeSaveTimer) clearTimeout(this.fontSizeSaveTimer);
