@@ -9,7 +9,7 @@ import { announce } from './announcer';
 import { rlog } from './renderer-logger';
 import { onProjectNamesChanged, projectName, startProjectNames } from './project-names';
 import { hoverBlocks, type HoverBlock, type HoverPaneInput } from './tab-hover';
-import type { SessionState, RendererMode, TabFlag } from '../../shared/types';
+import type { SessionState, RendererMode, TabFlag, WindowCloseInfo } from '../../shared/types';
 import { orderSessions, sessionNeedsYou, stripClaudeGlyph, type SessionInfo, type SessionStatus } from './sessions';
 import type { ITheme } from '@xterm/xterm';
 
@@ -27,6 +27,9 @@ export class TabManager {
   private activeTab: Tab | null = null;
   private tabBar: TabBar;
   private confirmDialog: ConfirmDialog;
+  /** True while a last-tab close is asking main what closing means (the
+   *  dialog isn't open yet, so a fast second ⌘W must not start another). */
+  private lastTabCloseQuerying = false;
   private contentContainer: HTMLElement;
   private disposables: (() => void)[] = [];
   private currentFontSize: number | undefined;
@@ -441,12 +444,7 @@ export class TabManager {
       // Closing the whole tab ends every shell in it — the accidental ⌘W the
       // S22/S31 guard exists for. Confirm it.
       if (this.tabs.length <= 1) {
-        // The final tab: closing it closes the window, so hand that straight
-        // to the main process's close guard WITHOUT tearing the tab down first.
-        // The guard only asks while this window's shells are alive; disposing
-        // the tab first killed them, so it asked only when the close happened
-        // to win the race (and a Cancel would have left an empty window).
-        window.close();
+        await this.closeLastTab(tab);
         return;
       }
       const ok = await this.confirmClose('tab', tab.title);
@@ -469,25 +467,92 @@ export class TabManager {
   private async confirmAndCloseTab(id: string): Promise<void> {
     const tab = this.tabs.find(t => t.id === id);
     if (!tab) return;
+    // The window's only tab: closing it closes the window (or quits), so it
+    // takes the same path and wording as ⌘W, never the "Close this tab?" one.
+    if (this.tabs.length <= 1) {
+      await this.closeLastTab(tab);
+      return;
+    }
     const ok = await this.confirmClose('tab', tab.title);
     if (!ok) return;
     if (!this.tabs.includes(tab)) return; // disposed while dialog was open
     await this.closeById(id);
   }
 
+  /**
+   * Close the window's last tab, which closes the window (and quits Patton
+   * when it is the only one). Asks in the app, like any other tab, so ⌘W
+   * twice or ⌘W then Enter goes through (Michael: ⌘W twice "should shut
+   * patton"). On confirm it tells main's close guard this window's close is
+   * already confirmed, then calls window.close() WITHOUT tearing the tab down
+   * first: the guard still saves state and ends the shells, and the S37 rule
+   * holds (a guard that finds the shells already dead can't ask). If main
+   * can't answer, or the window has no live shells, it calls window.close()
+   * straight away as before, and the native guard decides.
+   */
+  private async closeLastTab(tab: Tab): Promise<void> {
+    if (this.lastTabCloseQuerying) return;
+    this.lastTabCloseQuerying = true;
+    let info: WindowCloseInfo | null = null;
+    try {
+      info = (await window.patton.closeGuard.info()) ?? null;
+    } catch {
+      info = null;
+    } finally {
+      this.lastTabCloseQuerying = false;
+    }
+    if (!info || info.liveShells <= 0) {
+      rlog('info', '[CLOSE] last tab closed without the app dialog', { reason: info ? 'no-live-shells' : 'no-close-info' });
+      window.close();
+      return;
+    }
+    const ok = await this.confirmClose('last-tab', tab.title, info.isLastWindow);
+    if (!ok) return;
+    let preconfirmed = false;
+    try {
+      preconfirmed = (await window.patton.closeGuard.preconfirm()) === true;
+    } catch {
+      preconfirmed = false;
+    }
+    // Not recorded (refused or failed): main's native box asks instead.
+    rlog('info', '[CLOSE] window close handed to main', { preconfirmed });
+    window.close();
+  }
+
   /** Shared "are you sure you want to close this?" prompt for user-initiated
-   *  closes. Not used by automatic closes (PTY exit), which must not prompt. */
-  private async confirmClose(kind: 'tab' | 'pane', title: string): Promise<boolean> {
+   *  closes. Not used by automatic closes (PTY exit), which must not prompt.
+   *  'last-tab' closes the window: `isLastWindow` says whether that quits. */
+  private async confirmClose(kind: 'tab' | 'pane' | 'last-tab', title: string, isLastWindow = false): Promise<boolean> {
     const name = title?.trim();
-    const subject = name ? `“${name}”` : `this ${kind}`;
+    const subject = name ? `“${name}”` : (kind === 'pane' ? 'this pane' : 'this tab');
     // Close is focused (Enter closes) and ⌘W again confirms: Michael's
     // "Command+W, press it twice, and it will close immediately".
     const defaultFocus = 'confirm';
-    rlog('info', '[CLOSE] confirm shown', { kind, defaultFocus });
+    let heading: string;
+    let message: string;
+    let confirmLabel: string;
+    if (kind === 'last-tab' && isLastWindow) {
+      heading = 'Quit Patton?';
+      message = `${subject} is the last tab, so closing it quits Patton and ends every shell in this window, and any process running inside them.`;
+      confirmLabel = 'Quit';
+    } else if (kind === 'last-tab') {
+      heading = 'Close this window?';
+      message = `${subject} is this window's last tab, so closing it closes the window and ends every shell in it. Your other windows stay open.`;
+      confirmLabel = 'Close Window';
+    } else if (kind === 'tab') {
+      heading = 'Close this tab?';
+      message = `Closing ${subject} ends the shell and any process running inside it.`;
+      confirmLabel = 'Close Tab';
+    } else {
+      heading = 'Close this pane?';
+      message = `Closing ${subject} ends the shell and any process running inside it.`;
+      confirmLabel = 'Close Pane';
+    }
+    rlog('info', '[CLOSE] confirm shown', kind === 'last-tab' ? { kind, defaultFocus, isLastWindow } : { kind, defaultFocus });
     const ok = await this.confirmDialog.confirm({
-      title: kind === 'tab' ? 'Close this tab?' : 'Close this pane?',
-      message: `Closing ${subject} ends the shell and any process running inside it.`,
-      confirmLabel: kind === 'tab' ? 'Close Tab' : 'Close Pane',
+      title: heading,
+      message: message.charAt(0).toUpperCase() + message.slice(1),
+      confirmLabel,
       cancelLabel: 'Cancel',
       defaultFocus,
       shortcutConfirms: true,

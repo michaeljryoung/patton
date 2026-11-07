@@ -1,6 +1,10 @@
 // Headless check of the close-tab confirmation (S45): the tab-close dialog opens
 // with "Close Tab" focused, Enter confirms, a second ⌘W confirms, Esc cancels,
 // and other ConfirmDialog users (bookmarks, project board) keep Cancel focused.
+// The last tab (S45, v1.16.1) gets the same dialog worded "Quit Patton?" (one
+// window) or "Close this window?" (several), and on confirm pre-confirms the
+// close with main (window.patton.closeGuard) before window.close(), never
+// tearing the tab down first. Main's side: scripts/check-close-guard.mjs.
 // Drives the REAL ConfirmDialog and the REAL TabManager.closeActivePane — the
 // method app.ts's onCloseTab (the ⌘W menu accelerator's IPC) calls — in jsdom.
 // Run: JSDOM_DIR=<a folder whose node_modules has jsdom> node scripts/check-close-confirm.mjs
@@ -157,15 +161,157 @@ const lastLogs = () => logs.map((a) => a.join(' ')).filter((l) => l.includes('[C
   await p;
 }
 
-// ── 5. Last tab keeps the window.close() path, no dialog ──
+// ── 5. Last tab: the in-app dialog says what closing really does ──
+// window.patton.closeGuard answers as main would; every step is recorded in
+// order, so "pre-confirm before window.close(), tab never disposed" is checked.
+const events = [];
+let closeInfo = { isLastWindow: true, liveShells: 2 };
+let infoDelayMs = 0;
+let preconfirmReply = true;
 {
+  const base = w.patton;
+  const closeGuard = {
+    info: async () => {
+      events.push('info');
+      if (infoDelayMs) await new Promise((r) => setTimeout(r, infoDelayMs));
+      if (closeInfo instanceof Error) throw closeInfo;
+      return closeInfo;
+    },
+    preconfirm: async () => { events.push('preconfirm'); return preconfirmReply; },
+  };
+  w.patton = new Proxy({}, { get: (_t, k) => (k === 'closeGuard' ? closeGuard : base[k]) });
+  w.close = () => { events.push('window.close'); };
+}
+function lastTab() {
+  events.length = 0;
+  logs.length = 0;
   const tm = manager(1);
+  tm.tabs[0].dispose = () => events.push('dispose');
+  tm.closeById = async (id) => { events.push('closeById:' + id); };
+  return tm;
+}
+const dialogText = (sel) => w.document.querySelector(`.confirm-dialog-overlay.visible ${sel}`)?.textContent ?? '';
+const torn = () => events.some((e) => e === 'dispose' || e.startsWith('closeById'));
+
+// 5a. Only window: "Quit Patton?", Quit focused, ⌘W twice quits
+{
+  closeInfo = { isLastWindow: true, liveShells: 2 };
+  const tm = lastTab();
+  const p = tm.closeActivePane();
+  await tick();
+  check('last tab: in-app dialog opens', visible());
+  check('last tab, one window: title Quit Patton?', dialogText('.confirm-dialog-title') === 'Quit Patton?', dialogText('.confirm-dialog-title'));
+  check('last tab, one window: Quit is focused', focusedClass() === 'confirm-dialog-confirm' && w.document.activeElement.textContent === 'Quit', w.document.activeElement.textContent);
+  const msg = dialogText('.confirm-dialog-message');
+  check('last tab, one window: message names the tab and says it quits and ends every shell',
+    msg.includes('“tab0”') && msg.includes('quits Patton') && msg.includes('every shell in this window'), msg);
+  check('last tab: nothing sent and nothing closed while the dialog is up', events.join() === 'info', events);
+  const l = lastLogs();
+  check('[CLOSE] confirm shown logged with kind last-tab, isLastWindow true',
+    l.some((x) => x.includes('confirm shown') && x.includes('"kind":"last-tab"') && x.includes('"isLastWindow":true')), l);
+  const second = tm.closeActivePane(); // the second ⌘W
+  await Promise.all([p, second]);
+  check('last tab, ⌘W twice: pre-confirm sent, then window.close()', events.join() === 'info,preconfirm,window.close', events);
+  check('last tab, ⌘W twice: tab never torn down before window.close()', !torn(), events);
+  check('last tab, ⌘W twice: answer cmd-w', tm.confirmDialog.lastAnswer === 'cmd-w');
+  check('last tab: answer and hand-off logged',
+    lastLogs().some((x) => x.includes('answered') && x.includes('"kind":"last-tab"') && x.includes('cmd-w'))
+    && lastLogs().some((x) => x.includes('window close handed to main') && x.includes('"preconfirmed":true')), lastLogs());
+}
+
+// 5b. Enter confirms too
+{
+  const tm = lastTab();
+  const p = tm.closeActivePane();
+  await tick();
+  key(w.document.activeElement, 'Enter');
+  await p;
+  check('last tab, Enter: pre-confirm then window.close(), no teardown', events.join() === 'info,preconfirm,window.close', events);
+}
+
+// 5c. Several windows: "Close this window?", and Esc cancels sending nothing
+{
+  closeInfo = { isLastWindow: false, liveShells: 1 };
+  const tm = lastTab();
+  const p = tm.closeActivePane();
+  await tick();
+  check('last tab, several windows: title Close this window?', dialogText('.confirm-dialog-title') === 'Close this window?', dialogText('.confirm-dialog-title'));
+  check('last tab, several windows: Close Window focused', w.document.activeElement.textContent === 'Close Window', w.document.activeElement.textContent);
+  check('last tab, several windows: says other windows stay open', dialogText('.confirm-dialog-message').includes('other windows stay open'), dialogText('.confirm-dialog-message'));
+  check('[CLOSE] confirm shown logged with isLastWindow false', lastLogs().some((x) => x.includes('confirm shown') && x.includes('"isLastWindow":false')), lastLogs());
+  key(w.document.activeElement, 'Escape');
+  await p;
+  check('last tab, Esc: nothing sent, window kept, tab kept', events.join() === 'info' && !visible() && !torn(), events);
+}
+
+// 5d. Cancel button cancels, sends nothing
+{
+  closeInfo = { isLastWindow: true, liveShells: 1 };
+  const tm = lastTab();
+  const p = tm.closeActivePane();
+  await tick();
+  w.document.querySelector('.confirm-dialog-overlay.visible .confirm-dialog-cancel').click();
+  await p;
+  check('last tab, Cancel: nothing sent, nothing closed', events.join() === 'info' && !visible(), events);
+}
+
+// 5e. ✕ on the only tab takes the same path (not "Close this tab?")
+{
+  const tm = lastTab();
+  const p = tm.confirmAndCloseTab('tab0');
+  await tick();
+  check('✕ on the last tab: Quit Patton? dialog', dialogText('.confirm-dialog-title') === 'Quit Patton?', dialogText('.confirm-dialog-title'));
+  tm.confirmDialog.confirmByShortcut();
+  await p;
+  check('✕ on the last tab: pre-confirm then window.close(), no teardown', events.join() === 'info,preconfirm,window.close', events);
+}
+
+// 5f. No live shells: no dialog, straight to window.close() (as before)
+{
+  closeInfo = { isLastWindow: true, liveShells: 0 };
+  const tm = lastTab();
   await tm.closeActivePane();
-  check('last tab: no Patton dialog', !visible());
-  check('last tab: window.close() reached (main close guard)', w.__windowClosed === 1, w.__windowClosed);
-  check('last tab: tab not torn down first', tm.closed.length === 0);
+  check('last tab, no live shells: no dialog, window.close() straight away', !visible() && events.join() === 'info,window.close', events);
+}
+
+// 5g. Main can't answer: window.close() and the native guard decides
+{
+  closeInfo = new Error('rate limited');
+  let tm = lastTab();
   await tm.closeActivePane();
-  check('last tab, ⌘W again: still only window.close()', w.__windowClosed === 2 && !visible());
+  check('close info fails: no dialog, window.close() (native guard asks)', !visible() && events.join() === 'info,window.close', events);
+  closeInfo = null;
+  tm = lastTab();
+  await tm.closeActivePane();
+  check('close info null: no dialog, window.close()', !visible() && events.join() === 'info,window.close', events);
+}
+
+// 5h. Pre-confirm refused: still window.close(), logged as not pre-confirmed
+{
+  closeInfo = { isLastWindow: true, liveShells: 1 };
+  preconfirmReply = false;
+  const tm = lastTab();
+  const p = tm.closeActivePane();
+  await tick();
+  tm.closeActivePane();
+  await p;
+  check('pre-confirm refused: window.close() still called', events.join() === 'info,preconfirm,window.close', events);
+  check('pre-confirm refused: logged preconfirmed false', lastLogs().some((x) => x.includes('"preconfirmed":false')), lastLogs());
+  preconfirmReply = true;
+}
+
+// 5i. A second ⌘W while main is still answering doesn't open a second query
+{
+  infoDelayMs = 20;
+  const tm = lastTab();
+  const p = tm.closeActivePane();
+  const early = tm.closeActivePane();
+  await early;
+  await new Promise((r) => setTimeout(r, 40));
+  check('fast double ⌘W: one query, one dialog', events.filter((e) => e === 'info').length === 1 && visible(), events);
+  tm.confirmDialog.confirmByShortcut();
+  await p;
+  infoDelayMs = 0;
 }
 
 // ── 6. Bookmarks / board style: default options, Cancel focused, Enter cancels ──
