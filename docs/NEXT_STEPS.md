@@ -43,10 +43,12 @@ flowchart TD
     font_fix[SF Mono that draws + honest font list]:::done
     claude_button[board 'Claude' button]:::done
     close_confirm[⌘W twice closes a tab]:::done
-    s45_release[merge, review, release]:::live
-    forge8[Forge 8 upgrade]:::todo
-    devdeps[dependency security pass]:::todo
-    forge8_launch[launch the Forge 8 build once]:::todo
+    last_tab_quit[⌘W twice on the last tab quits]:::done
+    s45b_release[release Forge 8 + deps + last-tab quit]:::live
+    s45_release[merge, review, release]:::done
+    forge8[Forge 8 upgrade]:::done
+    devdeps[dependency security pass]:::done
+    forge8_launch[launch the Forge 8 build once]:::done
     s45_install[install on Michael's word]:::todo
   end
   subgraph P5["Phase 5 — Typing and release"]
@@ -74,6 +76,10 @@ flowchart TD
   font_fix --> s45_release
   claude_button --> s45_release
   close_confirm --> s45_release
+  s45_release --> last_tab_quit
+  last_tab_quit --> s45b_release
+  forge8_launch --> s45b_release
+  s45b_release --> s45_install
   forge8 --> devdeps
   devdeps --> forge8_launch
   s45_release --> forge8_launch
@@ -110,10 +116,12 @@ flowchart TD
 | `font_fix` | Settings → Font Family changes the font: SF Mono's faces read from Terminal.app's own copy in main (fixed paths, never bundled), registered as a FontFace before any terminal opens; the list shows only fonts that draw on this Mac; `[FONT]` logs; quick terminal keeps its startup font, size and scrollback | done | — | cause (S45): a hidden-Electron probe showed `'SF Mono'` and `'Fira Code'` draw Menlo in Patton's Chromium, and a FontFace from `SF-Mono-Regular.otf` makes SF Mono draw. Branch `font-fix` `878e2d7` `3ea4c02`: `check-fonts.cjs` 23 pass, each fix reverted once; review: 0 major, 5 minor, all fixed (`00b7abf` `1e76cc6` `f947fd5` `74d25c6`), 4 of 8 nits skipped with reasons; `check-fonts.cjs` 52 pass, seven fixes each reverted once and caught |
 | `claude_button` | "Claude" rightmost in the board header: removes the board like Terminal, then types `claude` + Enter (never the startup command `cc`); one send per click; `[BOARD] claude clicked` | done | — | branch `claude-button` `3b55dd6`; UI suite 149 → 160, wire 106 → 121, 0 fails, ten deliberate breaks each caught; asar has "Start a plain Claude Code session"; review 2 major (readiness by clock, no `FORCE_HYPERLINK`) + 4 minor fixed `3a3e4d7`; final review of the combined branch: ship, 0 major, 3 minor (first pane's early prompt, csh/tcsh prefix, pasted input) fixed `072ab60`, with `pty:get-shell` IPC; board 132, UI 161, wire 155 |
 | `close_confirm` | Tab and pane close confirmations open with Close focused and a second ⌘W confirms; every other confirm keeps Cancel focused | done | — | Michael 2026-11-07: "When you press Command+W on this tab, it should select 'Close Tab.' I can do Command+W, press it twice, and it will close immediately." `8f372b8` `aa6e487`; `check-close-confirm.mjs` 29 pass; last tab unchanged: ⌘W there still goes to main's native quit warning (Cancel focused), so ⌘W twice never quits Patton |
-| `s45_release` | All three branches merged to main with no-install builds, pushed, CI release; cask sha matches the DMG | live | `font_fix`, `claude_button`, `close_confirm` | combined tip `aa6e487`: lint, tsc, board 132, UI 161, wire 155, close 29, fonts 52, link policy 116, link target 43; no-install asar 19:46, /Applications still 17:59 |
-| `forge8` | Forge 7.11.2 → 8.0.1, Vite 5 → 8, CI Node 20 → 22; package identical in fuses, natives, Info.plist, signing, helpers, Resources | todo | — | branch `forge8` `a21618b` `100f33c`: lint, tsc, all five suites same counts; plain `electron-forge package` works on Node 26; asar 21% smaller (duplicates removed); entry files renamed `main.cjs`/`preload.cjs`, never launched; CI on Node 22 untested; local DMG needs Node 24 (as before) |
-| `devdeps` | `npm audit` cleared without `--force`, respecting `min-release-age`; Electron security patch if one is old enough; prod gate stays 0 | todo | `forge8` | before: 57 advisories (1 critical, 41 high), about 35 cleared by Forge 8; branch `devdeps` (running) |
-| `forge8_launch` | The Forge 8 + dependency build starts and runs a tab before it merges: launched once, isolated from Michael's settings and sessions (Patton has no single-instance lock, so a second copy would share userData), or installed at a relaunch he chooses with the last release kept to roll back to | todo | `devdeps`, `s45_release` | — |
+| `last_tab_quit` | ⌘W on the last tab opens the in-app dialog ("Quit Patton?", or "Close this window?" with other windows open), Quit focused; a second ⌘W or Enter confirms; a one-shot pre-confirmation (own window, 5 s) lets main's guard skip its native box once; ⌘Q, the red button and Window → Close keep the native guard | done | `s45_release` | Michael 2026-11-07: "it should shut patton". Branch `last-tab-quit` `ba019b0` `fed814e`: close-confirm 50, close-guard 24, 12 reverts caught; review 0 major, 4 minor, all fixed (`2be9e1f` `0f50da6`): close-confirm 68, close-guard 24 (its TTL-boundary check flaked 2 in 12 on a fractional fake clock; whole-ms clock `ecb7b70`, 30 of 30). Supersedes S37's last-tab path (native guard only) |
+| `s45b_release` | Forge 8, the dependency pass and the last-tab quit released together after one full check run on the combined tree; CI's first run on Node 22 green; cask sha matches the DMG | live | `last_tab_quit`, `forge8_launch` | final tree `ecb7b70` on main (Forge 8.0.1, Electron 44.9.3; main's node_modules rebuilt with `npm ci`): lint, tsc, board 132, UI 161, wire 155, close 68, guard 24, fonts 52, link 116/43, prod audit 0; no-install asar 20:12. Before the minor fixes: lint, tsc, board 132, UI 161, wire 155, close 50, guard 24, fonts 52, link 116/43, prod audit 0; asar 19:58 |
+| `s45_release` | All three branches merged to main with no-install builds, pushed, CI release; cask sha matches the DMG | done | `font_fix`, `claude_button`, `close_confirm` | **v1.16.0** (tag → `6bcd319`, run 42407928968 success; cask 1.16.0 sha `e8f721f2…` matches the DMG). Combined tip `aa6e487`: lint, tsc, board 132, UI 161, wire 155, close 29, fonts 52, link policy 116, link target 43; no-install asar 19:46, /Applications still 17:59 |
+| `forge8` | Forge 7.11.2 → 8.0.1, Vite 5 → 8, CI Node 20 → 22; package identical in fuses, natives, Info.plist, signing, helpers, Resources | done | — | branch `forge8` `a21618b` `100f33c`: lint, tsc, all five suites same counts; plain `electron-forge package` works on Node 26; asar 21% smaller (duplicates removed); entry files renamed `main.cjs`/`preload.cjs`, never launched; CI on Node 22 untested; local DMG needs Node 24 (as before) |
+| `devdeps` | `npm audit` cleared without `--force`, respecting `min-release-age`; Electron security patch if one is old enough; prod gate stays 0 | done | `forge8` | before: 57 advisories (1 critical, 41 high); after Forge 8 38, after this pass 28 (4 high, 24 moderate), prod gate 0. Electron 44.7.0 → 44.9.3 fixes GHSA-jr5w-w6x2-84p9 (high); eslint 9.39.5, typescript-eslint 8.72.0, `npm audit fix`. Left: glob and minimatch (moderate, fixed majors installable 10 Nov, blocked by `@electron/asar` / typescript-eslint ranges), image-size (high, build-time only under appdmg). Branch `devdeps` rebased onto v1.16.0 (`a39cb17`): lint, tsc, board 132, UI 161, wire 155, close 29, fonts 52, link policy 116; no-install asar 19:49 |
+| `forge8_launch` | The Forge 8 + dependency build starts and runs a tab before it merges: launched once, isolated from Michael's settings and sessions (Patton has no single-instance lock, so a second copy would share userData), or installed at a relaunch he chooses with the last release kept to roll back to | done | `devdeps`, `s45_release` | 2026-11-07 19:55, with Michael's OK ("1 ok"): the `devdeps` tree built with productName "Patton Test" (own userData, so his sessions and layout untouched) and run from `out/`: `Patton main process started (v1.16.0+4, electron 44.9.3, node 24.22.0)`, `[FONT] SF Mono found` → renderer `registered added:4` (so `preload.cjs` and the IPC work), `[BOARD] shown at launch` with 40 projects; no error lines; killed after 4 s, test userData moved to the Trash. Not exercised: a typed command in a tab |
 | `s45_install` | /Applications gets the new build only on Michael's word, while he is ready to quit and relaunch | todo | `s45_release`, `forge8_launch` | Michael 2026-11-07: "make sure our existing patton sessions dont crash so wait if a risk" |
 <!-- MAP:END -->
 
