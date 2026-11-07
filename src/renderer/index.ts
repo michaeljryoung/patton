@@ -4,6 +4,7 @@ import './styles/tabs.css';
 import './styles/terminal.css';
 import './styles/editor.css';
 import './styles/settings.css';
+import './styles/board.css';
 
 import { App } from './components/app';
 
