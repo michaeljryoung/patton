@@ -84,7 +84,7 @@
   place-items: center;
   background: none;
   border: 1px solid var(--hairline);
-  border-radius: 2px;
+  border-radius: 0;
   font-family: var(--font-ui);
   font-size: 13px;
   color: var(--muted);

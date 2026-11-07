@@ -303,7 +303,7 @@
   border: 6px solid transparent;
   margin: -6px;
   background-clip: padding-box;
-  border-radius: 2px;
+  border-radius: 0;
   cursor: pointer;
 }
 

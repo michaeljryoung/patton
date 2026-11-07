@@ -244,7 +244,7 @@
   margin: -6px;
   background-clip: padding-box;
   line-height: 1;
-  border-radius: 2px;
+  border-radius: 0;
   transition: background 0.12s, color 0.12s;
   -webkit-app-region: no-drag;
   opacity: 0;
