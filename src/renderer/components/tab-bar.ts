@@ -1,6 +1,7 @@
 import { ContextMenu } from './context-menu';
 import { DEFAULTS } from '../../shared/constants';
 import type { TabFlag } from '../../shared/types';
+import type { CheckpointView } from '../services/checkpoint-clock';
 
 export interface TabBarCallbacks {
   onSelect: (id: string) => void;
@@ -12,6 +13,8 @@ export interface TabBarCallbacks {
   onRenameProject: (id: string, name: string) => void;
   onSetFlag: (id: string, flag: TabFlag | null) => void;
   onBookmarkProject?: (id: string) => void; // bookmarks sidebar
+  /** The checkpoint clock was clicked: run /checkpoint in the focused pane. */
+  onCheckpoint?: () => void;
 }
 
 interface TabHeaderInfo {
@@ -63,6 +66,8 @@ const FLAG_CHOICES: { flag: TabFlag; label: string }[] = [
 export class TabBar {
   private container: HTMLElement;
   private tabsContainer: HTMLElement;
+  private checkpointBtn: HTMLButtonElement;
+  private checkpointBlocked = true;
   private callbacks: TabBarCallbacks;
   private draggedId: string | null = null;
   private contextMenu = new ContextMenu();
@@ -160,6 +165,19 @@ export class TabBar {
     newBtn.title = 'New Tab (Cmd+T)';
     newBtn.addEventListener('click', () => this.callbacks.onNew());
     this.container.appendChild(newBtn);
+
+    // Checkpoint clock, pinned at the strip's right end outside the scrolling
+    // tabs: context used since the focused Claude session's last /checkpoint.
+    // Hidden until setCheckpoint() has a Claude pane to show.
+    this.checkpointBtn = document.createElement('button');
+    this.checkpointBtn.type = 'button';
+    this.checkpointBtn.className = 'tab-bar-checkpoint';
+    this.checkpointBtn.hidden = true;
+    this.checkpointBtn.addEventListener('click', () => {
+      if (this.checkpointBlocked) return;
+      this.callbacks.onCheckpoint?.();
+    });
+    this.container.appendChild(this.checkpointBtn);
   }
 
   update(tabs: TabHeaderInfo[]): void {
@@ -473,6 +491,20 @@ export class TabBar {
    *  pending (a commit that renamed something has usually rebuilt the bar already). */
   private applyHeldUpdate(): void {
     if (this.heldUpdate) this.update(this.heldUpdate);
+  }
+
+  /** Show the checkpoint clock for the focused pane, or hide it (null). */
+  setCheckpoint(view: CheckpointView | null): void {
+    const btn = this.checkpointBtn;
+    btn.hidden = view === null;
+    this.checkpointBlocked = view === null || view.blocked;
+    if (!view) return;
+    if (btn.textContent !== view.text) btn.textContent = view.text;
+    btn.classList.toggle('due', view.due);
+    btn.classList.toggle('blocked', view.blocked);
+    btn.setAttribute('aria-disabled', String(view.blocked));
+    btn.setAttribute('aria-label', view.label);
+    btn.title = view.label;
   }
 
   dispose(): void {

@@ -91,6 +91,8 @@ export const SHORTCUTS: Shortcut[] = [
   // Session-only override of the compose-first setting for the active tab. No
   // key: it's an escape hatch, reached from the palette.
   { id: 'toggle-compose-first', label: 'Compose-first: toggle for this tab', palette: true },
+  // The tab strip's checkpoint clock does the same on a click; no key of its own.
+  { id: 'checkpoint-session', label: 'Checkpoint this session', palette: true },
   { id: 'history-search', label: 'History Search', accelerator: 'Control+R', rendererOnly: true, palette: true },
   { id: 'broadcast', label: 'Broadcast Input', accelerator: 'CmdOrCtrl+Shift+B', palette: true },
   {

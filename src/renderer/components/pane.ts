@@ -1,4 +1,4 @@
-import { TerminalView } from './terminal-view';
+import { TerminalView, type ContextReading } from './terminal-view';
 import { EditorInput, DEFAULT_COMPOSE_PLACEHOLDER } from './editor-input';
 import { SearchOverlay } from './search-overlay';
 import { HistorySearch } from './history-search';
@@ -11,6 +11,7 @@ import { stripPasteControls } from '../services/paste-sanitize';
 import { shouldConfirmMultilinePaste } from '../services/paste-confirm';
 import { PATTON_QUOTES } from '../../shared/constants';
 import { shortcutKeys } from '../../shared/shortcuts';
+import type { CheckpointSource } from '../services/checkpoint-clock';
 
 import type { ITheme } from '@xterm/xterm';
 import type { TabFlag } from '../../shared/types';
@@ -35,6 +36,9 @@ export interface PaneCallbacks {
   /** Claude Code ended its turn but is waiting on its own background tasks or
    *  timers (info), or no longer is (null). Not a "needs you" event. */
   onParked?: (pane: Pane, info: ParkedInfo | null) => void;
+  /** What the checkpoint clock shows for this pane changed (Claude started or
+   *  stopped running or working, or the Stop hook sent a context reading). */
+  onCheckpointChange?: (pane: Pane) => void;
   /** An automatic tab flag from the pane's title (`WAKE` → yellow), or null to drop it. */
   onAutoFlag?: (pane: Pane, flag: TabFlag | null) => void;
   onBroadcastWrite?: (data: string) => void;
@@ -98,6 +102,13 @@ export class Pane {
   // last prompt: Claude Code is running in this pane, so image pastes go to it
   // as Ctrl+V (it reads the clipboard itself) instead of as a file path.
   private claudeActive = false;
+  // The checkpoint clock's reading for this Claude session (Stop hook, OSC 777
+  // `ctx=…;since=…[;cpt=…]`); null until the first one, and cleared when
+  // Claude stops running here. See services/checkpoint-clock.ts.
+  private ctxTokens: number | null = null;
+  private sinceTokens: number | null = null;
+  private checkpointAt: number | null = null;
+  private lastCheckpointKey = '';
   private disposed = false;
 
   // --- Compose-first (Claude Code tabs) ---
@@ -205,6 +216,14 @@ export class Pane {
     // integration off, never sends the OSC 133 prompt that would clear this).
     this.claudeActive = Pane.CLAUDE_WORKING.test(title) || Pane.CLAUDE_STOPPED.test(title);
     this.syncComposeFirst('title');
+    try {
+      this.trackClaudeWorking(title);
+    } finally {
+      this.notifyCheckpoint();
+    }
+  }
+
+  private trackClaudeWorking(title: string): void {
     if (Pane.CLAUDE_WORKING.test(title)) {
       this.cancelClaudeStop(); // the ✳ was only a flash between turns
       if (this.claudeWorking) return;
@@ -277,6 +296,59 @@ export class Pane {
     // Already off the spinner (✳, or no Claude title at all): settle now.
     // While working, the ✳ transition arms the settle.
     if (!this.claudeWorking) this.armClaudeStop(Pane.CLAUDE_STOP_SETTLE_MS);
+  }
+
+  /** The Stop hook's context reading for the checkpoint clock. Never touches
+   *  the dot: a verdict, if any, went through handleHookStop. */
+  private handleContextReading(context: ContextReading): void {
+    this.ctxTokens = context.ctxTokens;
+    this.sinceTokens = context.sinceTokens;
+    this.checkpointAt = context.checkpointAt;
+    rlog('info', '[CKPT] ctx', {
+      pane: this.id, ctx: context.ctxTokens, since: context.sinceTokens, cpt: context.checkpointAt,
+    });
+    this.notifyCheckpoint();
+  }
+
+  /** Tell the tab when what the checkpoint clock shows has changed. A pane
+   *  no longer running Claude forgets its reading first, so the next session
+   *  starts at "✓ —". */
+  private notifyCheckpoint(): void {
+    if (!this.claudeActive) {
+      this.ctxTokens = null;
+      this.sinceTokens = null;
+      this.checkpointAt = null;
+    }
+    const key = [this.claudeActive, this.claudeWorking, this.ctxTokens, this.sinceTokens, this.checkpointAt].join('|');
+    if (key === this.lastCheckpointKey) return;
+    this.lastCheckpointKey = key;
+    this.callbacks.onCheckpointChange?.(this);
+  }
+
+  /** What the checkpoint clock needs from this pane. */
+  get checkpointSource(): CheckpointSource {
+    return {
+      claudeActive: this.claudeActive,
+      claudeWorking: this.claudeWorking,
+      ctxTokens: this.ctxTokens,
+      sinceTokens: this.sinceTokens,
+      checkpointAt: this.checkpointAt,
+    };
+  }
+
+  /** Type `/checkpoint` and Enter into this pane's Claude session, through the
+   *  compose box's submit path (control characters stripped, no paste dialog,
+   *  never broadcast). Only while Claude runs here and has stopped. */
+  runCheckpoint(): boolean {
+    if (!this.claudeActive || this.claudeWorking || this.ptyId === null) {
+      rlog('info', '[CKPT] run skipped', {
+        pane: this.id, claude: this.claudeActive, working: this.claudeWorking,
+      });
+      return false;
+    }
+    rlog('info', '[CKPT] run', { pane: this.id });
+    this.queueSubmit('/checkpoint', false);
+    return true;
   }
 
   /** Remove and return the stored verdict, stopping its expiry timer. */
@@ -565,6 +637,7 @@ export class Pane {
     this.disposables.push(
       this.terminalView.onPattonState((state) => {
         if (state.kind === 'stop') this.handleHookStop(state.tasks, state.crons);
+        if (state.context) this.handleContextReading(state.context);
       }),
     );
     this.disposables.push(() => {
@@ -702,6 +775,7 @@ export class Pane {
         if (state === 'prompt') {
           this.claudeWorking = false;
           this.claudeActive = false;
+          this.notifyCheckpoint();
           this.syncComposeFirst('shell-prompt');
           this.cancelClaudeStop();
           if (this.takeVerdict()) rlog('info', '[DOT] Hook verdict dropped: shell prompt', { pane: this.id });
@@ -719,9 +793,19 @@ export class Pane {
 
   private handleSubmit(command: string): void {
     if (this.ptyId === null) return;
+    command = this.queueSubmit(command, true);
+    if (command.trim()) {
+      this.historyManager.add(command);
+    }
+    this.historyManager.resetCursor();
+  }
 
+  /** Write one submitted line (then Enter) to the pty: the compose box's
+   *  route, shared with the checkpoint clock. Returns the line as sent. */
+  private queueSubmit(command: string, allowBroadcast: boolean): string {
     // Broadcast mode: also write to all other panes in the tab
-    const broadcast = this.callbacks.onBroadcastWrite;
+    const broadcast = allowBroadcast ? this.callbacks.onBroadcastWrite : undefined;
+    const broadcastPaste = allowBroadcast ? this.callbacks.onBroadcastPaste : undefined;
 
     // Never send the box's text with its own control characters: an ESC[201~
     // inside it would end the bracketed paste early (see paste-sanitize.ts).
@@ -747,7 +831,7 @@ export class Pane {
       this.terminalView.terminal.scrollToBottom();
       if (route === 'paste') {
         this.terminalView.terminal.paste(command);
-        this.callbacks.onBroadcastPaste?.(command);
+        broadcastPaste?.(command);
         // The Enter waits longer than a typed line's so Claude Code has taken
         // in the whole paste first: 60 ms is meant to clear its paste debounce
         // (a margin chosen by reading, not yet measured live).
@@ -774,11 +858,7 @@ export class Pane {
         resolve();
       }
     }));
-
-    if (command.trim()) {
-      this.historyManager.add(command);
-    }
-    this.historyManager.resetCursor();
+    return command;
   }
 
   private handleInterrupt(): void {

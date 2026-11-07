@@ -216,6 +216,14 @@
   color: var(--ink);
 }
 
+/* A number field inside a sentence ("after [20]% of…"). */
+.settings-input.settings-input-inline {
+  width: 56px;
+  padding: 2px 6px;
+  margin: 0 4px;
+  font-variant-numeric: tabular-nums;
+}
+
 .settings-hint {
   width: 100%;
   font-size: 11px;

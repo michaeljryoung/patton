@@ -40,6 +40,12 @@
    * fills alone fall under 3:1 (amber 1.87, green 2.34, red 2.97 on --surface);
    * the edge is 4.22:1. Dark mode passes without it (Michael, S43: "ok do it"). */
   --dot-edge: #747579;
+  /* Amber as text (the checkpoint clock once it is due). --amber itself is
+   * 1.87:1 on --surface, so light mode darkens it in the same hue: #925d07 is
+   * 5.08:1 on --surface #f4f5f7, 5.54:1 on --bg #ffffff, 4.77:1 on
+   * --surface-hover #eceef2. Dark keeps --amber: 8.62:1 on #17191d, 9.18:1 on
+   * #111214, 7.81:1 on #1f2228. */
+  --amber-text: #925d07;
 
   /* Type and density (the mock's compact scale) */
   --font-mono: 'SF Mono', 'Menlo', 'Monaco', 'Courier New', monospace;
@@ -66,6 +72,7 @@
     --error-text: #ff7a87;
     --scrim: rgba(0, 0, 0, 0.55);
     --dot-edge: transparent;
+    --amber-text: var(--amber);
     color-scheme: dark;
   }
 }

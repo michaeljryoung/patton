@@ -91,6 +91,7 @@ const defaults: StoreSchema = {
     renderer: DEFAULTS.RENDERER,
     composeFirst: DEFAULTS.COMPOSE_FIRST,
     confirmMultilinePaste: DEFAULTS.CONFIRM_MULTILINE_PASTE,
+    checkpointNudgePct: DEFAULTS.CHECKPOINT_NUDGE_PCT,
   },
   windowState: {
     width: 900,
@@ -245,6 +246,13 @@ export function setSettings(partial: Partial<AppSettings>): void {
 
   if (partial.confirmMultilinePaste !== undefined) {
     validated.confirmMultilinePaste = !!partial.confirmMultilinePaste;
+  }
+
+  if (partial.checkpointNudgePct !== undefined) {
+    const n = Number(partial.checkpointNudgePct);
+    if (Number.isInteger(n) && n >= DEFAULTS.CHECKPOINT_NUDGE_PCT_MIN && n <= DEFAULTS.CHECKPOINT_NUDGE_PCT_MAX) {
+      validated.checkpointNudgePct = n;
+    }
   }
 
   if (partial.globalHotkey !== undefined) {

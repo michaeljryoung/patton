@@ -91,13 +91,35 @@ function tryGetGpuInfo(): string {
 
 export type PromptState = 'prompt' | 'command' | 'idle';
 
-/** A Claude Code Stop hook verdict (OSC 777 `patton;stop;…`): how many
- *  background tasks are still in flight and how many timers are scheduled
- *  when its turn ended. Both zero means it really stopped. */
-export interface PattonState {
-  kind: 'stop';
-  tasks: number;
-  crons: number;
+/** The Stop hook's context reading (`ctx=…;since=…[;cpt=…]`): tokens of the
+ *  session's latest request, tokens added since the end of its last
+ *  /checkpoint turn, and when that checkpoint was asked for (Unix seconds,
+ *  null without one). */
+export interface ContextReading {
+  ctxTokens: number;
+  sinceTokens: number;
+  checkpointAt: number | null;
+}
+
+/** Patton's own OSC 777 messages from its Claude Code Stop hook:
+ *  - `stop`: the verdict, i.e. how many background tasks are still in flight
+ *    and how many timers are scheduled when the turn ended (both zero means it
+ *    really stopped), plus the context reading when the hook could take one;
+ *  - `ctx`: the context reading alone, sent when Claude Code gave the hook no
+ *    task fields, so it never counts as a verdict. */
+export type PattonState =
+  | { kind: 'stop'; tasks: number; crons: number; context: ContextReading | null }
+  | { kind: 'ctx'; context: ContextReading };
+
+// `;ctx=C;since=S[;cpt=T]`, the tail both messages share. Token counts are
+// capped at nine digits, the timestamp at twelve.
+const CTX_FIELDS = ';ctx=(\\d{1,9});since=(\\d{1,9})(?:;cpt=(\\d{1,12}))?';
+const STOP_RE = new RegExp(`^patton;stop;tasks=(\\d{1,4});crons=(\\d{1,4})(?:${CTX_FIELDS})?$`);
+const CTX_RE = new RegExp(`^patton;ctx${CTX_FIELDS}$`);
+
+function contextFrom(ctx: string | undefined, since: string | undefined, cpt: string | undefined): ContextReading | null {
+  if (ctx === undefined || since === undefined) return null;
+  return { ctxTokens: Number(ctx), sinceTokens: Number(since), checkpointAt: cpt === undefined ? null : Number(cpt) };
 }
 
 export class TerminalView {
@@ -295,15 +317,26 @@ export class TerminalView {
     //    "needs you".
     //  - `notify;title;body` (rxvt/urxvt convention) is a notification, the
     //    same as a free-text OSC 9.
+    //  - `patton;ctx;ctx=C;since=S[;cpt=T]` is the same hook's context reading
+    //    for the checkpoint clock, sent alone when the hook has no verdict
+    //    (the stop message carries the same fields when it does).
     // Anything else is ignored but consumed.
     // Trust: any program writing to this pane can send these, as it can a
     // bell. Accepted on the same terms: the worst a spoof does is raise or
-    // hide this pane's own dot. Counts are capped at four digits.
+    // hide this pane's own dot or misstate its checkpoint clock. Counts are
+    // capped at four digits.
     this.terminal.parser.registerOscHandler(777, (data) => {
-      const stop = /^patton;stop;tasks=(\d{1,4});crons=(\d{1,4})$/.exec(data);
+      const stop = STOP_RE.exec(data);
+      const ctx = stop ? null : CTX_RE.exec(data);
       if (stop) {
-        const state: PattonState = { kind: 'stop', tasks: Number(stop[1]), crons: Number(stop[2]) };
+        const state: PattonState = {
+          kind: 'stop', tasks: Number(stop[1]), crons: Number(stop[2]),
+          context: contextFrom(stop[3], stop[4], stop[5]),
+        };
         for (const cb of this.pattonStateListeners) cb(state);
+      } else if (ctx) {
+        const context = contextFrom(ctx[1], ctx[2], ctx[3]);
+        if (context) for (const cb of this.pattonStateListeners) cb({ kind: 'ctx', context });
       } else if (data.startsWith('notify;')) {
         for (const cb of this.osc9Listeners) cb();
       }
@@ -671,7 +704,7 @@ export class TerminalView {
     return () => disposable.dispose();
   }
 
-  /** Patton's own OSC 777 messages (currently only the Claude Code Stop hook's verdict). */
+  /** Patton's own OSC 777 messages (the Claude Code Stop hook's verdict and context reading). */
   onPattonState(callback: (state: PattonState) => void): () => void {
     this.pattonStateListeners.push(callback);
     return () => {

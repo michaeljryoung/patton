@@ -115,6 +115,11 @@ export const DEFAULTS = {
   // Multi-line paste confirmation: off since Michael's dictation (pasted text)
   // tripped it on every message (2026-11-06).
   CONFIRM_MULTILINE_PASTE: false,
+  // Checkpoint clock (tab strip): amber at this % of the context window used
+  // since the session's last /checkpoint, and the setting's allowed range.
+  CHECKPOINT_NUDGE_PCT: 20,
+  CHECKPOINT_NUDGE_PCT_MIN: 1,
+  CHECKPOINT_NUDGE_PCT_MAX: 100,
   MAX_PANES_PER_TAB: 5,
   // Notes scratchpad: max stored characters (a generous ~1 MB cap so a runaway
   // paste can't bloat the encrypted config file) and the panel's default width.
