@@ -73,19 +73,17 @@ function planFileLink(rawPath: unknown): FileLinkPlan {
   const parsed = parseLinkPath(expanded);
   if (!parsed) return { kind: 'refused', reason: 'path failed validation' };
   let real: string;
-  let isFile: boolean;
-  let mode: number;
+  let facts: { isFile: boolean; mode: number };
   try {
     real = realpathSync(parsed.path);
     const st = statSync(real);
-    isFile = st.isFile();
-    mode = st.mode;
+    facts = { isFile: st.isFile(), mode: st.mode };
   } catch {
     return { kind: 'missing', path: parsed.path };
   }
   const editor = findEditor();
   const ext = extensionOf(real);
-  const decision = decideFileOpen({ ext, isFile, mode, editorAvailable: editor !== null });
+  const decision = decideFileOpen({ ext, ...facts, editorAvailable: editor !== null });
   return { kind: 'file', real, suffix: parsed.suffix, ext, decision, editor };
 }
 
@@ -106,26 +104,31 @@ function carryOut(plan: Extract<FileLinkPlan, { kind: 'file' }>): void {
     reveal(real, ext, decision.reason);
     return;
   }
-  if (decision.action === 'open' || editor === null) {
+  if (decision.action === 'open') {
     openWithDefaultApp(real);
+    return;
+  }
+  // decision.action is 'editor' here; with no editor found, reveal (never open).
+  if (editor === null) {
+    reveal(real, ext, 'no editor found');
     return;
   }
   // execFile passes the path as one argv entry; no shell sees it. The path
   // starts with "/", so it can't be read as an option.
   execFile(editor, ['--goto', real + suffix], { timeout: 5000 }, (err) => {
     if (!err) return;
-    // The editor failed: decide again as if there were none (code files are
-    // then revealed, never handed to their default app).
-    const fallback = decideFileOpen({ ext, isFile: true, mode: statModeOrExec(real), editorAvailable: false });
+    // The editor failed: decide again as if there were none, on the file as it
+    // is now (code files are then revealed, never handed to their default app).
+    // A file that can't be read any more is revealed.
+    let fallback: OpenDecision = { action: 'reveal', reason: 'editor failed and file unreadable' };
+    try {
+      const st = statSync(real);
+      fallback = decideFileOpen({ ext, isFile: st.isFile(), mode: st.mode, editorAvailable: false });
+    } catch { /* keep the reveal */ }
     console.warn('[LINK] editor failed', { error: err.message, fallback: fallback.action });
     if (fallback.action === 'open') openWithDefaultApp(real);
     else reveal(real, ext, fallback.action === 'reveal' ? fallback.reason : 'editor failed');
   });
-}
-
-/** Current mode bits, or "executable" if the file can't be read (fail safe). */
-function statModeOrExec(path: string): number {
-  try { return statSync(path).mode; } catch { return 0o755; }
 }
 
 // --- Security: Helper to validate PTY ownership ---
