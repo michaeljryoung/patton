@@ -292,13 +292,17 @@
 }
 
 .paste-chip-remove {
-  border: none;
   background: transparent;
   color: var(--muted);
   font-family: var(--font-ui);
   font-size: 13px;
   line-height: 1;
   padding: 0 3px;
+  /* Hit area ~26 x 25 px (was ~14 x 13), drawn size unchanged: transparent
+     border plus an equal negative margin; fills stop at the padding box. */
+  border: 6px solid transparent;
+  margin: -6px;
+  background-clip: padding-box;
   border-radius: 2px;
   cursor: pointer;
 }
