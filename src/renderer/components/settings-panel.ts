@@ -268,12 +268,15 @@ export class SettingsPanel {
 
     const opacityInput = this.overlay.querySelector('#setting-opacity') as HTMLInputElement;
     const opacityValue = this.overlay.querySelector('#setting-opacity-value') as HTMLSpanElement;
+    // Live preview on every input event; save only on release, because
+    // settings:set allows 10/s and a fast drag's final value would be refused.
     listen(opacityInput, 'input', () => {
       const pct = parseInt(opacityInput.value, 10);
       opacityValue.textContent = `${pct}%`;
-      const opacity = pct / 100;
-      window.patton.setOpacity(opacity);
-      this.saveAndNotify({ opacity });
+      window.patton.setOpacity(pct / 100);
+    });
+    listen(opacityInput, 'change', () => {
+      this.saveAndNotify({ opacity: parseInt(opacityInput.value, 10) / 100 });
     });
 
     const startupCommandInput = this.overlay.querySelector('#setting-startup-command') as HTMLInputElement;

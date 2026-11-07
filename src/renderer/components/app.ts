@@ -24,6 +24,7 @@ export class App {
   private bookmarksPanel: BookmarksPanel;
   private notificationSound: NotificationSound;
   private fontSize: number = DEFAULTS.FONT_SIZE;
+  private fontSizeSaveTimer: ReturnType<typeof setTimeout> | null = null;
   private disposables: (() => void)[] = [];
 
   constructor() {
@@ -536,7 +537,13 @@ export class App {
   private applyFontSize(): void {
     // Apply to ALL tabs, not just the active one
     this.tabManager.setFontSize(this.fontSize);
-    window.patton.settings.set({ fontSize: this.fontSize }).catch(console.error);
+    // Cmd+/- held down repeats ~30/s but settings:set allows 10/s, so a refused
+    // save could drop the final size: apply live, save once the zooming stops.
+    if (this.fontSizeSaveTimer) clearTimeout(this.fontSizeSaveTimer);
+    this.fontSizeSaveTimer = setTimeout(() => {
+      this.fontSizeSaveTimer = null;
+      window.patton.settings.set({ fontSize: this.fontSize }).catch(console.error);
+    }, 250);
   }
 
   private registerSettingsShortcut(): void {
