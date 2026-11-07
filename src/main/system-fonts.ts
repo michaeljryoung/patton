@@ -27,7 +27,7 @@ const SF_MONO_FACES: readonly { file: string; weight: string; style: SystemFontF
 /** A font file larger than this is not a font we expect; skip it. */
 const MAX_FONT_BYTES = 4 * 1024 * 1024;
 
-/** Reads SF Mono's four faces from the first directory that has them. Never throws. */
+/** Reads SF Mono's four faces from the first directory whose Regular face reads. Never throws. */
 export function findSfMono(dirs: readonly string[] = SF_MONO_DIRS): SystemFontFamily | null {
   for (const dir of dirs) {
     if (!existsSync(join(dir, SF_MONO_FACES[0].file))) continue;
@@ -36,7 +36,12 @@ export function findSfMono(dirs: readonly string[] = SF_MONO_DIRS): SystemFontFa
       const path = join(dir, face.file);
       try {
         if (!existsSync(path)) continue;
-        const size = statSync(path).size;
+        const st = statSync(path);
+        if (!st.isFile()) {
+          console.warn('[FONT] skipped, not a regular file', { path });
+          continue;
+        }
+        const size = st.size;
         if (size > MAX_FONT_BYTES) {
           console.warn('[FONT] skipped, too large', { path, size });
           continue;
@@ -46,14 +51,19 @@ export function findSfMono(dirs: readonly string[] = SF_MONO_DIRS): SystemFontFa
         console.warn('[FONT] could not read', { path, error: String(err) });
       }
     }
-    if (faces.length > 0) {
-      console.info('[FONT] SF Mono found', {
-        dir,
-        faces: faces.map(f => `${f.weight}/${f.style}`),
-        bytes: faces.reduce((n, f) => n + f.data.byteLength, 0),
-      });
-      return { family: 'SF Mono', dir, faces };
+    // Without the Regular face CSS answers every normal-weight request with
+    // the nearest weight, the Bold one, and all text draws bold: offer the
+    // family only when its Regular face was read.
+    if (!faces.some(f => f.weight === '400' && f.style === 'normal')) {
+      console.warn('[FONT] SF Mono skipped, its Regular face could not be read', { dir, read: faces.length });
+      continue;
     }
+    console.info('[FONT] SF Mono found', {
+      dir,
+      faces: faces.map(f => `${f.weight}/${f.style}`),
+      bytes: faces.reduce((n, f) => n + f.data.byteLength, 0),
+    });
+    return { family: 'SF Mono', dir, faces };
   }
   console.info('[FONT] SF Mono not on this Mac', { searched: dirs });
   return null;
