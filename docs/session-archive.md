@@ -532,3 +532,41 @@ _Earlier entries archived → `docs/session-archive.md` (latest trim 2026-11-07,
 - **v1.13.0 released** (run 42225415151; cask 1.13.0, sha `2d0fe426…` matches the DMG); notes `4ff78cc`, `819ea13`. **Not installed** — Michael: "we'll update in a later session in terminal so this doesnt all break". Size pass: D2, D7 and six gotchas to the archive (the two throttling entries merged into one).
 
 _Earlier entries archived → `docs/session-archive.md` (latest trim 2026-11-07, S44)._
+
+## Decisions (S44-slim trim 2026-11-07)
+
+- **2026-11-06 (S40) — Ambient Claude tasks don't park a tab.** `dream`, `auto_mode_scan` and `local_memory_import` never wake the session (inferred from their kill paths, not verified), so counting them would leave a tab parked while Claude waits for Michael; erring toward alerting is the safer failure.
+
+## Key Files moved (S44 slimming, 2026-11-07)
+
+- `docs/mocks/look-directions.html` — five look directions (published artifact), all rejected S40; the chosen look came from the mixer `docs/mocks/patton-mixer.html`.
+- `~/.claude/plans/see-this-screenshot-that-smooth-cake.md` — session-25 plan: atlas-eviction diagnosis, Phase 1 (periodic flush + Cmd+Shift+K + Capture Renderer State), and Phase 2 escalation (Canvas renderer fallback) if Phase 1 recurrence within the flush window.
+- `~/Library/Application Support/Patton/logs/render-snapshots/<timestamp>-<reason>.json` — diagnostic snapshots written by S25's `captureSnapshot()`. Auto-fires on `resetRenderer()`; manually triggered via "Capture Renderer State" palette command. Schema: `RenderSnapshot` in `src/shared/types.ts`. Last 50 kept, rate-limited 5/s. If we ever ship logs upstream for an xterm.js bug report, these are the artefact to attach.
+- `~/.claude/plans/see-the-screenshot-saved-glowing-kahn.md` — session-24 plan covering the render-corruption defensive hardening (A1–A4) and unified double-click links (B1–B4). Minimal-change rationales noted throughout.
+- `~/.claude/plans/see-the-screenshot-saved-glowing-kahn-findings-render.md` — session-24 WebGL-atlas hypotheses ranked by confidence (atlas stale after theme swap > atlas stale after undetected context loss > `minimumContrastRatio` interaction), with instrumented tests to discriminate. Pick this up if the garbled-glyph state recurs and we still can't reproduce.
+- `~/.claude/plans/see-the-screenshot-saved-glowing-kahn-findings-links.md` — session-24 full audit of Patton's link/URL/file-path handling surface: addon inventory, IPC channels, security-validation rules, regex semantics, and a concrete sketch of OSC 8 + context-menu + `editorCommand` deferred work.
+- `~/.claude/plans/enchanted-sauteeing-moonbeam.md` — session-23 read-only input-path audit. Documents why Enter-not-working at Claude Code's `/mcp` auth prompt is not a Patton code-path issue, plus the Ctrl+C / letter-key discriminator and the keystroke-tracer fallback if it recurs.
+- `~/.claude/plans/cached-strolling-dawn.md` — session-22 plan covering both the quit-confirmation fix and the dot-indicator rewire (three signal paths + polish). Useful if the feature needs to be re-analysed.
+- `analysis/reasoning-modes/REPORT.md` (gitignored) — session-20 triangulated synthesis of 10 epistemic reasoning modes + UI/UX audit. 5 Kernel findings, 11 Supported, 10 Hypotheses, 2 Disputed. Individual mode reports under `analysis/reasoning-modes/reports/`. Run `/reasoning` again to refresh.
+- `~/.claude/plans/image-1-my-interfaces-keep-tender-harp.md` — the original crash-hardening plan that kicked off session 20.
+
+## Archive pointers moved from CLAUDE.md (S44 slimming, 2026-11-07)
+
+Decisions:
+
+_S33–S34 Decisions (4: close-confirm scoped to whole-tab closes, notes pane as a docked sidebar, Homebrew deploy key over a refreshed PAT, shortcuts fix must be structural) archived 2026-10-11 S37 trim → `docs/session-archive.md`._
+_S28 Decisions (4: shipped-v1.4.0-accepting-red-cask-step, Phase-2-Canvas-DROPPED, font-cache-reset-DROPPED, no-release.yml-hardening) and S30 Decisions (2: DOM-as-default, hand-fixed-tap-not-token) archived 2026-08-01 S36 trim → `docs/session-archive.md`._
+_S31 Decisions (4: recovered-crashed-session-rather-than-redoing, confirm-on-close-covers-tab+pane [partially superseded S33], re-ran-CI-on-flaky-DMG-rather-than-hardening, reinstalled-from-canonical-DMG [superseded S36 ditto]) archived 2026-08-01 S36 trim → `docs/session-archive.md`._
+_S29 Decisions (4 entries: renderer-choice-not-more-flushing, `fast-uri` via `overrides` not `audit fix --force`, `macOptionClickForcesSelection` real-gap-fix, shipped-as-one-release-after-live-validation) archived 2026-07-07 S33 trim → `docs/session-archive.md`._
+_S25–S27 Decisions (14 entries: backgroundThrottling root-cause fix, dual visibilitychange+focus listeners, auto-reload-on-flush-error, IPC log forwarding over console-patching, hasFocus-not-hidden gating, periodic flush 10→2min, single bundled commit; S26 pre-S25-binary-recurrence-not-a-Phase-2-trigger + diagnostic-only checkpoint; S25 periodic clearTextureAtlas, pre-flush auto-snapshot, defer-Phase-2, single 155-LOC commit, S24-watching-brief-superseded) archived 2026-06-08 S30 trim → `docs/session-archive.md`._
+_S24 Decisions (7 entries: defensive-hardening-over-repro, unified double-click links, `event.detail===2` gate, VS Code app-bundle resolution, `shell.openPath` fallback, user-triggered Reset Renderer, synchronous theme-swap atlas reload) archived 2026-05-31 S28 trim → `docs/session-archive.md`._
+_S20–S23 Decisions (21 entries: Enter audit, dot signal paths, quit-confirm surfaces, file-logger eager-create, safeStorage rewrite, CommandDoneCoordinator, crash circuit breaker, autosave cadence, startup-command timing, shell allowlist consolidation, crashpad config, ZDOTDIR/rcfile shell-integration, kitty Shift+Enter, COLORFGBG + OSC 10/11, minimumContrastRatio 4.5) archived 2026-05-07 S27 trim → `docs/session-archive.md`._
+
+Gotchas:
+
+- _Gotcha "xterm WebGL atlas eviction = the garbled-glyphs root cause (saturation- and focus-driven)" archived 2026-08-01 S36 trim → `docs/session-archive.md` — moot now DOM is the default renderer; only reachable by a WebGL opt-in user._
+- _Gotcha "garbled-glyph symptom is not always a Patton bug — reproduces in iTerm2; discriminate via Apple Terminal.app; `atsutil databases -remove` resets CoreText cache" (S27) archived 2026-07-07 S33 trim → `docs/session-archive.md` (render saga closed, DOM is default)._
+- _Gotchas "`setCustomTheme()` runs before `mount()` — guard `if (this.webglAddon)`" and "CI's Build DMG can fail on a flaky `hdiutil detach` — just re-run (tag/release steps are gated behind it, so no release publishes)" archived 2026-08-01 S36 trim → `docs/session-archive.md`._
+- _Gotchas "`clearTextureAtlas()` is on Terminal, not WebglAddon" and "WebGL glyph atlas is keyed by color" (WebGL-only; DOM is the default) archived 2026-10-11 S37 trim → `docs/session-archive.md`._
+_Older Gotchas (16 entries: createWriteStream lazy-create, window.reload PTY leak, beforeunload race, wrapper .zshenv readonly, safeStorage timing, electron-store decrypt probe, onContextLoss runtime fire, dead IPC accumulation, shell validation drift, stty -echo timing, idle-detection duration guard, kitty Shift+Enter intercept, COLORFGBG + OSC 10/11 query response, tabBar.update() DOM rebuild race, ANSI light-theme contrast, dot-test inactive-tab gate, Claude Code "·" title prefix, Enter-in-/mcp app-side discriminator) archived 2026-05-07 S27 trim → `docs/session-archive.md`._
+_Older entries archived → `docs/session-archive.md` (latest move 2026-11-07, S43)._

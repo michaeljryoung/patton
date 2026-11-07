@@ -3,7 +3,7 @@
 Always-passthrough terminal with a floating compose panel for drafting multi-line input.
 
 ## Tech Stack
-- **Electron** (v40) with Vite + TypeScript via Electron Forge
+- **Electron** (v44) with Vite + TypeScript via Electron Forge (v7)
 - **xterm.js** v6 (`@xterm/xterm`) — terminal rendering (WebGL addon)
 - **node-pty** — PTY spawning in main process
 - **electron-store** — persistent settings + history
@@ -12,28 +12,36 @@ Always-passthrough terminal with a floating compose panel for drafting multi-lin
 
 ```
 src/
-├── main/           # Electron main process (PTY, IPC, menus, settings store)
+├── main/           # Electron main process (PTY, IPC, menus, settings store, bookmarks,
+│                   #   project board, link-open policy, Claude Code hook installer, logger)
 ├── preload/        # contextBridge API (type-safe IPC bridge)
 ├── renderer/       # UI components, services, styles
-│   ├── components/ # Tab, Terminal, Compose Panel, Settings, Command Palette, etc.
-│   ├── services/   # Tab manager, history, keybindings
+│   ├── components/ # Tab, pane, terminal view, editor input, settings, command palette,
+│   │               #   bookmarks panel, project board, tab hover card, etc.
+│   ├── services/   # Tab manager, history, keybindings, program status (OSC 7501),
+│   │               #   file/OSC 8 links, sessions, project boards, renderer logger
 │   └── styles/     # CSS with design tokens + auto dark/light mode
-├── shared/         # IPC channel constants + shared TypeScript types
-└── resources/      # Shell integration scripts (zsh, bash)
+└── shared/         # IPC channel constants, shared TypeScript types, shortcuts
+resources/          # Shell integration scripts (zsh, bash) and the Claude Code Stop hook
+scripts/            # forge-package.sh, release, health, check-*.mjs suites
 ```
 
 ## Commands
 - `npm start` — dev mode with hot reload
-- `npm run package` — build distributable
+- `npm run package` — prod-dependency audit, then build through `scripts/forge-package.sh`, which installs over `/Applications/Patton.app` (`PATTON_NO_INSTALL=1` builds without installing)
+- `npm run install-app` — the same build and install, without the audit
 - `npm run make` — create DMG installer
-- `npm run lint` — ESLint
+- `npm run lint` — ESLint; `npx tsc --noEmit` — type check
+- `npm run audit` — the prod-dependency CVE gate on its own
+- `npm run health` — `scripts/patton-health.sh` diagnostics
 - `npm run release [-- patch|minor|major]` — manual release (CI handles this automatically)
 
 ## Verifiers
 
 ```bash
-npm run lint && npm run package
+npm run lint && npx tsc --noEmit && PATTON_NO_INSTALL=1 npm run package
 ```
+A build is proven by the asar's mtime, not the exit code (Gotchas: Node 26 and Forge).
 
 ## Key Conventions
 - All colors use CSS variables (`:root` + `@media prefers-color-scheme`)
@@ -82,17 +90,8 @@ _Earlier entries archived → `docs/session-archive.md` (latest trim 2026-11-07,
 - **2026-11-07 (S43) — A turn ending with only a scheduled wake-up parks (ring).** S40 counted crons as the session's own background work; the 7501 path keeps that, using the hook's recent `crons>0`.
 - **2026-11-06 (S40) — Claude Code state comes from its Stop hook, not from reading the screen.** Hooks are documented for exactly this distinction and the sequence is emitted by Claude Code itself; scraping the task footer would break on every Claude update (and the footer can show stale rows). OSC 777 is the channel because Patton already treats any OSC 9 body as "needs you".
 - **2026-11-06 (S40) — Parked is a hollow ring, yellow is only the `wake` tab.** Michael's answer to a colour scheme was "I don't understand this at all", so the simplest reading shipped: yellow means his `wake` command is running there; the ring means "waiting on its own background work, not on you".
-- **2026-11-06 (S40) — Ambient Claude tasks don't park a tab.** `dream`, `auto_mode_scan` and `local_memory_import` never wake the session (inferred from their kill paths, not verified), so counting them would leave a tab parked while Claude waits for Michael; erring toward alerting is the safer failure.
-_S33–S34 Decisions (4: close-confirm scoped to whole-tab closes, notes pane as a docked sidebar, Homebrew deploy key over a refreshed PAT, shortcuts fix must be structural) archived 2026-10-11 S37 trim → `docs/session-archive.md`._
-_S28 Decisions (4: shipped-v1.4.0-accepting-red-cask-step, Phase-2-Canvas-DROPPED, font-cache-reset-DROPPED, no-release.yml-hardening) and S30 Decisions (2: DOM-as-default, hand-fixed-tap-not-token) archived 2026-08-01 S36 trim → `docs/session-archive.md`._
-_S31 Decisions (4: recovered-crashed-session-rather-than-redoing, confirm-on-close-covers-tab+pane [partially superseded S33], re-ran-CI-on-flaky-DMG-rather-than-hardening, reinstalled-from-canonical-DMG [superseded S36 ditto]) archived 2026-08-01 S36 trim → `docs/session-archive.md`._
-_S29 Decisions (4 entries: renderer-choice-not-more-flushing, `fast-uri` via `overrides` not `audit fix --force`, `macOptionClickForcesSelection` real-gap-fix, shipped-as-one-release-after-live-validation) archived 2026-07-07 S33 trim → `docs/session-archive.md`._
 
-_S25–S27 Decisions (14 entries: backgroundThrottling root-cause fix, dual visibilitychange+focus listeners, auto-reload-on-flush-error, IPC log forwarding over console-patching, hasFocus-not-hidden gating, periodic flush 10→2min, single bundled commit; S26 pre-S25-binary-recurrence-not-a-Phase-2-trigger + diagnostic-only checkpoint; S25 periodic clearTextureAtlas, pre-flush auto-snapshot, defer-Phase-2, single 155-LOC commit, S24-watching-brief-superseded) archived 2026-06-08 S30 trim → `docs/session-archive.md`._
-_S24 Decisions (7 entries: defensive-hardening-over-repro, unified double-click links, `event.detail===2` gate, VS Code app-bundle resolution, `shell.openPath` fallback, user-triggered Reset Renderer, synchronous theme-swap atlas reload) archived 2026-05-31 S28 trim → `docs/session-archive.md`._
-_S20–S23 Decisions (21 entries: Enter audit, dot signal paths, quit-confirm surfaces, file-logger eager-create, safeStorage rewrite, CommandDoneCoordinator, crash circuit breaker, autosave cadence, startup-command timing, shell allowlist consolidation, crashpad config, ZDOTDIR/rcfile shell-integration, kitty Shift+Enter, COLORFGBG + OSC 10/11, minimumContrastRatio 4.5) archived 2026-05-07 S27 trim → `docs/session-archive.md`._
-
-_Older entries archived → `docs/session-archive.md` (latest move 2026-11-07, S44)._
+_Older Decisions archived → `docs/session-archive.md` (latest move 2026-11-07, S44 slimming; the index of earlier trims is under its "Archive pointers moved from CLAUDE.md" heading)._
 
 ## Gotchas
 - **One builder agent can't hold a ~5,000-line feature** (S44). The first board builder stopped at its context limit after the main module. What worked: split by file ownership, write the shared interface and who owns which files into both briefs, use parallel worktrees, then merge. The two halves met without a fix.
@@ -106,48 +105,34 @@ _Older entries archived → `docs/session-archive.md` (latest move 2026-11-07, S
 - **electron-store fills `defaults` only at the top level** (S42). Patton's settings are one nested object, so a field added later is absent from every saved file: read it as `=== true` (off by default) or `!== false` (on by default), never bare.
 - **A new per-pane setting must be applied in `Tab.createPaneInstance`, not only to existing panes** (S40). Until `8af2355`, `Tab.setFont/Scrollback/Theme/Renderer/CopyOnSelect` looped over `_panes`, so a split pane got none of them — on the default DOM renderer a split silently ran WebGL. The review of compose-first found it; keep the values on `Tab` and apply them at pane creation.
 - **Under Node 26 `electron-forge package` exits 0 without packaging** (S40). `extract-zip` 2.0.1 opens the first entry of the Electron zip and the event loop drains; Forge prints no error, `out/` stays empty, the postPackage hook never runs, and `/Applications/Patton.app` keeps the previous build (it was the 3 Nov build until 6 Nov). Always build through `scripts/forge-package.sh`; a build is proven only by `ls -l /Applications/Patton.app/Contents/Resources/app.asar` being newer than the commit. The post-commit hook writes its output to `.git/post-commit-build.log`.
-- **xterm.js swallows paste events** (S40). Its textarea/`.xterm` paste listener calls `stopPropagation()`, so a bubble-phase `paste` handler on an ancestor never fires for terminal pastes — Patton's sanitise-and-confirm path had been dead since it was written. Use a capture-phase listener and hand text to `terminal.paste()` (keeps bracketed paste), never `pty.write`.
 - **A Stop-hook verdict can land while the title still shows ◐** (S40). Claude Code emits each hook's `terminalSequence` as that hook finishes, and Michael's `closing-block-gate.py` can `block` the stop so the turn continues. `pane.ts` therefore stores the verdict and applies it only after ✳ has held 1.5 s; a verdict expires after 40 s (S42: ✳ appears only after every Stop hook ends, and `source-critic.py` makes that 4.5–31 s, so the original 10 s let stops fall through to the title path and go green while background work ran; longer would widen the window where a blocked stop's stale verdict parks a pane that then stops at a question or dialog); a parked pane never fires from the title path. `grep '\[DOT\]' main.log` shows stored/applied (with `afterMs`)/expired.
 - **Claude Code's `terminalSequence` allowlist is OSC 0/1/2/9/99/777 + BEL** (S40). Anything else makes the field silently ignored. Patton's channel is `OSC 777;patton;…`; `OSC 777;notify;title;body` counts as attention like OSC 9.
-- **npm 12 skips every dependency's install scripts unless `package.json` approves it** (S39). The install still "succeeds", with a warning, and the build fails later (node-pty unbuilt). After adding or bumping a native dependency, run `npm approve-scripts --allow-scripts-pending` and approve with `npm install-scripts approve <pkg> --allow-scripts-pin=false`. CI's npm (11) ignores the field.
 - **Never tear a tab down before `window.close()`** (S37). The main close guard asks only while the window's PTYs are alive; disposing the last tab first made the prompt depend on an IPC race (Electron 44 lost it, so ⌘W quit silently). Any close path that should confirm must reach the guard with its shells still running.
-- **Electron 42+ changes that bite** (S37). `npm install` no longer downloads the binary (`npm start` fetches it on first run; `npx install-electron --no` does it by hand); macOS notifications go through UNNotification and need a code-signed app — refusals log `[NOTIFY] Notification not shown`; Electron 44 needs macOS 13+.
 - **The release workflow reads only the head commit's whole message for the no-release marker** (S37). A trailing docs commit carrying it, or a commit body that merely quotes it, skips the release for the entire push. Keep a code commit on top, or end with a marker-free `release:` commit.
 - **`npm run package` can be blocked by a prod-dependency CVE, not a code error** (S29). The script is `npm audit --omit=dev --audit-level=high && electron-forge package` — one high-severity *production* advisory fails the gate before the build runs (S29: `fast-uri`). Diagnose with `npm audit --omit=dev --audit-level=high`; fix transitive vulns with a `package.json` `overrides` pin, not `audit fix --force`. Dev-only vulns don't count against this gate.
 - **Renderer `console.*` calls don't reach `main.log` unless they go through `rlog()`** (S27). `src/main/logger.ts` only tees the main-process console. Any new `[RENDER]` or other diagnostic line you want in the file log MUST use `rlog()` from `src/renderer/services/renderer-logger.ts` — `console.info` alone reaches DevTools only and is invisible to packaged-app launches. This is exactly the gap that made S25's "is the periodic timer firing?" question unanswerable for ~10 days. `rlog()` keeps the DevTools console output too, so it's a strict superset of `console.*` for diagnostic purposes.
 
-- _Gotcha "xterm WebGL atlas eviction = the garbled-glyphs root cause (saturation- and focus-driven)" archived 2026-08-01 S36 trim → `docs/session-archive.md` — moot now DOM is the default renderer; only reachable by a WebGL opt-in user._
-
-- _Gotcha "garbled-glyph symptom is not always a Patton bug — reproduces in iTerm2; discriminate via Apple Terminal.app; `atsutil databases -remove` resets CoreText cache" (S27) archived 2026-07-07 S33 trim → `docs/session-archive.md` (render saga closed, DOM is default)._
-- _Gotchas "`setCustomTheme()` runs before `mount()` — guard `if (this.webglAddon)`" and "CI's Build DMG can fail on a flaky `hdiutil detach` — just re-run (tag/release steps are gated behind it, so no release publishes)" archived 2026-08-01 S36 trim → `docs/session-archive.md`._
-- **Homebrew tap auto-updates via a write-scoped SSH deploy key** (S33). `release.yml`'s `Update Homebrew cask` step regenerates `Casks/patton.rb` in `michaeljryoung/homebrew-patton` from a template — edit the template, not the tap (it also carries `depends_on macos`) — and pushes over SSH with the `HOMEBREW_DEPLOY_KEY` secret. Manual fallback: edit `version` + `sha256` and push, verifying the sha first (`curl -sL <dmg-url> | shasum -a 256`; a wrong hash breaks every `brew install`). Key rotation → `docs/session-archive.md`. **If the step fails with `Permission denied (publickey)`, the tap has lost its key:** `gh api repos/michaeljryoung/homebrew-patton/keys` lists none. It happened between the 12 Oct and 3 Nov releases (cause not found), so v1.10.4 missed the tap. Replaced 4 Nov: a new ed25519 write key on the tap ("Patton release workflow (write, 2026-11-04)") and its private half in the `HOMEBREW_DEPLOY_KEY` secret, proved by pushing the 1.10.4 cask with it; no copy is kept on the Mac. Don't re-run a failed release to fix the cask: "Compute next version" bumps again and cuts a duplicate release.
-- _Gotchas "`clearTextureAtlas()` is on Terminal, not WebglAddon" and "WebGL glyph atlas is keyed by color" (WebGL-only; DOM is the default) archived 2026-10-11 S37 trim → `docs/session-archive.md`._
+- **Homebrew tap or cask trouble** (the release's `Update Homebrew cask` step fails, `Permission denied (publickey)`, a cask to fix by hand, a key to rotate) → read `docs/reference/homebrew-tap.md` first. Never re-run a failed release to fix the cask: it cuts a duplicate release.
 - **macOS does NOT hot-swap a replaced `.app` bundle.** After `npm run package` reinstalls to `/Applications/Patton.app`, the running Patton process is still the OLD binary. ⌘Q + relaunch required to pick up new code. Detection recipe: `ls -lt /Applications/Patton.app/Contents/Resources/app.asar` (asar mtime) vs `ps -o lstart= -p $(pgrep -f Patton.app | head -1)` (process start). If process start < asar mtime, the running build is stale. S26 (2026-04-27 evening) hit this exactly. Second confirmation channel: grep `main.log` for the post-fix log signature.
 - **Packaged asar minifies identifier names but preserves literal values.** Verifying a shipped change: don't grep for original variable names (`event.detail !== 2` minifies to `a.detail!==2`). Grep for literal string constants (`'Reset Renderer'`, regex source strings) — those survive minification. To read one file out of the asar, run `npx asar extract-file` from a scratch folder: it writes the file's basename into the current directory, so run from the repo root, extracting `node_modules/<pkg>/package.json` overwrites Patton's own `package.json` (S43: it did, and the post-commit build that was reading it failed).
 - **OSC 133 `'prompt'` is not "awaiting input".** Fires on every prompt redraw — shell startup, session restore, SIGWINCH, `clear`, async-prompt refreshes (Starship, Powerlevel10k). Use `pane.ts fireCommandDone()` for the meaningful-transition signal.
-- **xterm.js `attachCustomKeyEventHandler` fires for BOTH `keydown` AND `keypress`.** Returning `false` only on `keydown` still lets `keypress` through, causing xterm to send `\r`. Must return `false` for both event types.
 
-_Older Gotchas (16 entries: createWriteStream lazy-create, window.reload PTY leak, beforeunload race, wrapper .zshenv readonly, safeStorage timing, electron-store decrypt probe, onContextLoss runtime fire, dead IPC accumulation, shell validation drift, stty -echo timing, idle-detection duration guard, kitty Shift+Enter intercept, COLORFGBG + OSC 10/11 query response, tabBar.update() DOM rebuild race, ANSI light-theme contrast, dot-test inactive-tab gate, Claude Code "·" title prefix, Enter-in-/mcp app-side discriminator) archived 2026-05-07 S27 trim → `docs/session-archive.md`._
+_Older Gotchas archived → `docs/session-archive.md` (latest move 2026-11-07, S44 slimming; the index of earlier trims is under its "Archive pointers moved from CLAUDE.md" heading)._
 
-_Older entries archived → `docs/session-archive.md` (latest move 2026-11-07, S43)._
+## Reference docs
+Topic files, read only when the task needs them (moved word for word from Gotchas, S44 slimming):
+- `docs/reference/homebrew-tap.md` — the cask template, the tap's deploy key, the manual fallback. Read when the release's Homebrew step fails or a cask needs fixing.
+- `docs/reference/xterm-internals.md` — xterm.js swallowing paste events and firing the key handler twice. Read before touching paste, key handling or any listener on the terminal's DOM.
+- `docs/reference/upgrades.md` — npm 12's install-script approval and Electron 42+ changes. Read before adding or bumping a dependency (native ones above all) or upgrading npm or Electron.
 
 ## Key Files
 - `resources/claude-code-stop-hook.sh` + `scripts/probe-stop-hook.sh` — the Claude Code Stop hook (protocol in its header) and its synthetic-stdin probe; `src/main/claude-hook.ts` installs it (bundle with esbuild + a driver to run the real installer headlessly, as S40 did).
 - `scripts/forge-package.sh` — the only way to build on this Mac while Node 26 is default.
 - `src/renderer/components/bookmarks-panel.ts`, `src/main/bookmarks.ts` — bookmarks sidebar; `src/main/clipboard-image.ts` — image paste; `src/renderer/services/startup-command.ts` — startup command shared by app start and bookmark open.
-- `docs/mocks/look-directions.html` — five look directions (published artifact), all rejected S40; the chosen look came from the mixer `docs/mocks/patton-mixer.html`.
-- `~/.claude/plans/see-this-screenshot-that-smooth-cake.md` — session-25 plan: atlas-eviction diagnosis, Phase 1 (periodic flush + Cmd+Shift+K + Capture Renderer State), and Phase 2 escalation (Canvas renderer fallback) if Phase 1 recurrence within the flush window.
-- `~/Library/Application Support/Patton/logs/render-snapshots/<timestamp>-<reason>.json` — diagnostic snapshots written by S25's `captureSnapshot()`. Auto-fires on `resetRenderer()`; manually triggered via "Capture Renderer State" palette command. Schema: `RenderSnapshot` in `src/shared/types.ts`. Last 50 kept, rate-limited 5/s. If we ever ship logs upstream for an xterm.js bug report, these are the artefact to attach.
-- `~/.claude/plans/see-the-screenshot-saved-glowing-kahn.md` — session-24 plan covering the render-corruption defensive hardening (A1–A4) and unified double-click links (B1–B4). Minimal-change rationales noted throughout.
-- `~/.claude/plans/see-the-screenshot-saved-glowing-kahn-findings-render.md` — session-24 WebGL-atlas hypotheses ranked by confidence (atlas stale after theme swap > atlas stale after undetected context loss > `minimumContrastRatio` interaction), with instrumented tests to discriminate. Pick this up if the garbled-glyph state recurs and we still can't reproduce.
-- `~/.claude/plans/see-the-screenshot-saved-glowing-kahn-findings-links.md` — session-24 full audit of Patton's link/URL/file-path handling surface: addon inventory, IPC channels, security-validation rules, regex semantics, and a concrete sketch of OSC 8 + context-menu + `editorCommand` deferred work.
+_Session 20–25 plan files, the S25 render-snapshot notes, the S20 reasoning report and the rejected S40 look mocks moved → `docs/session-archive.md` (S44 slimming)._
 - `src/renderer/services/file-link-provider.ts` — MD link + bare path regex, `event.detail === 2` gate, shared `pushLink()` with security rules (traversal rejection, cwd-relative resolution). OSC 8 links landed S43 (`services/osc8-links.ts`, `link-target.ts`); every file link's open/editor/reveal decision is made in main by `src/main/link-open-policy.ts`.
 - v1.15 (S44), project board: `src/main/project-board.ts` (list parse matching `cc`, nesting, layout file, add-row checks), `src/renderer/components/project-board.ts` + `styles/board.css`, `src/renderer/services/project-boards.ts` (which tabs get a board), `open-project.ts` and `project-live-state.ts` (shared with the bookmarks panel). Checks: `node scripts/check-project-board.mjs` (set `CC_LAUNCHER` to the launcher script for the round trip), `JSDOM_DIR=<folder with jsdom ≥ 30> node scripts/check-project-board-ui.mjs` and `…-wire.mjs`; jsdom lives outside the repo.
 - v1.14 (S43): `src/renderer/services/program-status.ts` (OSC 7501 parser, per-pane records), `pane-activity.ts` + `tab-hover.ts` + `components/tab-hover-card.ts` (hover card and the one activity ranking the dot, palette and bookmarks share), `sessions.ts` + `session-palette.ts` (`listSessions`, palette entries), `patton-osc.ts` (OSC 777 parse incl. `ctx/since/cpt`), `shown-text.ts` (one cleaner for program-supplied text), `scripts/check-link-open-policy.mjs` (drives the real link handler with recorders).
-- `~/.claude/plans/enchanted-sauteeing-moonbeam.md` — session-23 read-only input-path audit. Documents why Enter-not-working at Claude Code's `/mcp` auth prompt is not a Patton code-path issue, plus the Ctrl+C / letter-key discriminator and the keystroke-tracer fallback if it recurs.
-- `~/.claude/plans/cached-strolling-dawn.md` — session-22 plan covering both the quit-confirmation fix and the dot-indicator rewire (three signal paths + polish). Useful if the feature needs to be re-analysed.
-- `analysis/reasoning-modes/REPORT.md` (gitignored) — session-20 triangulated synthesis of 10 epistemic reasoning modes + UI/UX audit. 5 Kernel findings, 11 Supported, 10 Hypotheses, 2 Disputed. Individual mode reports under `analysis/reasoning-modes/reports/`. Run `/reasoning` again to refresh.
-- `~/.claude/plans/image-1-my-interfaces-keep-tender-harp.md` — the original crash-hardening plan that kicked off session 20.
 - `src/renderer/services/focus-trap.ts` — reusable modal focus trap. Import as `trapFocus(container)` → returns release fn.
 - `src/renderer/services/announcer.ts` — global aria-live regions. Import as `announce(msg, 'polite' | 'assertive')`.
 - `src/main/logger.ts` — file logger that tees `console.*` to `~/Library/Application Support/Patton/logs/main.log`. Called once from `main.ts` via `installFileLogger()`.
