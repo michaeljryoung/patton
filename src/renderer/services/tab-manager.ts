@@ -7,6 +7,7 @@ import { DEFAULTS } from '../../shared/constants';
 import { announce } from './announcer';
 import { onProjectNamesChanged, projectName, startProjectNames } from './project-names';
 import type { SessionState, RendererMode, TabFlag } from '../../shared/types';
+import { orderSessions, stripClaudeGlyph, type SessionInfo, type SessionStatus } from './sessions';
 import type { ITheme } from '@xterm/xterm';
 
 interface ClosedPaneState {
@@ -426,6 +427,53 @@ export class TabManager {
   /** Every tab in this window, in tab-bar order (the bookmarks sidebar reads it). */
   getTabs(): readonly Tab[] {
     return this.tabs;
+  }
+
+  /**
+   * Every pane of every tab as a session, waiting first (longest wait first),
+   * then parked, then the rest in tab order. The palette and the bookmarks
+   * sidebar both read this.
+   */
+  listSessions(): SessionInfo[] {
+    const sessions: SessionInfo[] = [];
+    this.tabs.forEach((tab, index) => {
+      for (const pane of tab.panes) {
+        const project = tab.paneProject(pane);
+        const awaitingSince = tab.awaitingSince(pane);
+        const claude = pane.claudeState;
+        let state: SessionStatus;
+        if (awaitingSince !== null) state = 'waiting';
+        else if (tab.isPaneParked(pane)) state = 'parked';
+        else if (claude === 'working') state = 'working';
+        else if (claude === 'stopped') state = 'idle';
+        else state = 'shell';
+        sessions.push({
+          tabId: tab.id,
+          paneId: pane.id,
+          tabIndex: index + 1,
+          paneCount: tab.panes.length,
+          project,
+          projectName: project ? projectName(project) : null,
+          worktree: project?.worktree ?? null,
+          cwd: pane.getCwd(),
+          tabTitle: tab.title,
+          paneTitle: stripClaudeGlyph(pane.title),
+          state,
+          awaitingSince,
+          current: tab === this.activeTab && pane === tab.focusedPane,
+        });
+      }
+    });
+    return orderSessions(sessions);
+  }
+
+  /** Activate a tab and focus one of its panes. False if either has gone. */
+  goToSession(tabId: string, paneId: string): boolean {
+    const tab = this.tabs.find((t) => t.id === tabId);
+    if (!tab || !tab.panes.some((p) => p.id === paneId)) return false;
+    this.switchToId(tabId);
+    tab.focusPaneById(paneId);
+    return true;
   }
 
   getTabCount(): number {

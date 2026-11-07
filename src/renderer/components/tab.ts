@@ -19,6 +19,21 @@ import { DEFAULTS } from '../../shared/constants';
 
 let tabIdCounter = 0;
 
+/** Wait before retrying a project lookup main refused (its 100/s cap at restore). */
+const PROJECT_RETRY_MS = 1500;
+
+/** Same project and same worktree of it. */
+function sameProject(a: ProjectInfo | null, b: ProjectInfo | null): boolean {
+  return a?.root === b?.root && a?.worktree?.path === b?.worktree?.path;
+}
+
+/** A project's tab title: its name, plus the worktree for a linked worktree
+ *  ("patton ⎇ feat-x"). */
+export function projectTitle(project: ProjectInfo): string {
+  const name = projectName(project);
+  return project.worktree ? `${name} \u2387 ${project.worktree.name}` : name;
+}
+
 export class Tab {
   readonly id: string;
   readonly element: HTMLElement;
@@ -38,8 +53,12 @@ export class Tab {
   // for this one tab outranks both. See refreshTitle().
   private _project: ProjectInfo | null = null;
   // Bumped on every lookup so a slow answer for a folder the pane has already
-  // left can't overwrite a newer one.
+  // left can't overwrite a newer one; each pane remembers its latest lookup.
   private _projectLookup = 0;
+  private _paneLookups = new Map<Pane, number>();
+  // Every pane's project (the focused one's is also _project), so the palette
+  // and the bookmarks sidebar can place each pane of a split on its own.
+  private _paneProjects = new Map<Pane, ProjectInfo | null>();
   private _broadcastInput = false;
   // Compose-first in Claude Code tabs: the Settings value, and this tab's
   // session-only override from the palette (null = follow the setting).
@@ -66,8 +85,9 @@ export class Tab {
   // notification) while this tab was inactive; the green dot shows while any
   // do. Tracked per pane so one pane resuming work can't clear a dot another
   // pane raised. Emptied when the tab becomes active; a pane leaves the set
-  // when it starts working again or closes.
-  private _panesNeedingYou = new Set<Pane>();
+  // when it starts working again or closes. The value is when it started
+  // waiting (ms), so the palette and sidebar can go to the longest wait first.
+  private _panesNeedingYou = new Map<Pane, number>();
   // User-set colour flag (right-click a tab → Flag). Unlike the green dot this
   // is never touched by shell activity or by activating the tab — only the user
   // sets or clears it. See TabFlag in shared/types.ts.
@@ -116,9 +136,7 @@ export class Tab {
       onTitleChange: (p) => {
         if (p === this._focusedPane) this.refreshTitle();
       },
-      onCwdChange: (p) => {
-        if (p === this._focusedPane) this.lookUpProject();
-      },
+      onCwdChange: (p) => this.lookUpProject(p),
       onCommandDone: () => {
         // The pane needs the user: Claude stopped working, a shell command
         // finished, a bell or an OSC 9 notification. pane.ts filters and
@@ -174,18 +192,43 @@ export class Tab {
 
   private raiseAwaitingInput(pane: Pane): void {
     if (this._isActive || this._panesNeedingYou.has(pane)) return;
-    const wasShowing = this._panesNeedingYou.size > 0;
-    this._panesNeedingYou.add(pane);
-    if (!wasShowing) this.onTitleChanged?.();
+    this._panesNeedingYou.set(pane, Date.now());
+    // Every pane, not only the first: the tab's dot changes once, but the
+    // sidebar's count follows each waiting pane.
+    this.onTitleChanged?.();
   }
 
   private clearAwaitingInput(pane: Pane): void {
     if (!this._panesNeedingYou.delete(pane)) return;
-    if (this._panesNeedingYou.size === 0) this.onTitleChanged?.();
+    this.onTitleChanged?.();
   }
 
   get awaitingInput(): boolean {
     return this._panesNeedingYou.size > 0;
+  }
+
+  /** When this pane started waiting for the user (ms), or null if it isn't. */
+  awaitingSince(pane: Pane): number | null {
+    return this._panesNeedingYou.get(pane) ?? null;
+  }
+
+  /** Whether this pane's Claude Code session is parked on its own background work. */
+  isPaneParked(pane: Pane): boolean {
+    return this._parkedPanes.has(pane);
+  }
+
+  /** The project this pane's folder belongs to, once looked up. */
+  paneProject(pane: Pane): ProjectInfo | null {
+    return this._paneProjects.get(pane) ?? (pane === this._focusedPane ? this._project : null);
+  }
+
+  /** Focus one of this tab's panes by id (palette, bookmarks). False if it's gone. */
+  focusPaneById(paneId: string): boolean {
+    const pane = this._panes.find((p) => p.id === paneId);
+    if (!pane) return false;
+    this.setFocusedPane(pane);
+    requestAnimationFrame(() => pane.focus());
+    return true;
   }
 
   private setPaneParked(pane: Pane, info: ParkedInfo | null): void {
@@ -254,28 +297,41 @@ export class Tab {
     this.refreshTitle();
   }
 
-  /** Find out which project the focused pane's folder belongs to. */
-  private lookUpProject(): void {
+  /** Find out which project a pane's folder belongs to (the focused pane's
+   *  names the tab). `retry`: one more try after a refused lookup. */
+  private lookUpProject(pane: Pane = this._focusedPane, retry = true): void {
     const lookup = ++this._projectLookup;
-    const cwd = this._focusedPane.getCwd();
+    this._paneLookups.set(pane, lookup);
+    const cwd = pane.getCwd();
     if (!cwd) {
       // Not known yet — don't keep showing another pane's project. The pane
       // reports its folder once its first poll lands.
-      this.setProject(null);
+      this._paneProjects.delete(pane);
+      if (pane === this._focusedPane) this.setProject(null);
       return;
     }
     window.patton.projects.resolve(cwd)
       .then((project) => {
-        if (lookup !== this._projectLookup) return; // superseded by a newer lookup
-        this.setProject(project);
+        if (this._paneLookups.get(pane) !== lookup) return; // superseded by a newer lookup
+        const before = this._paneProjects.get(pane);
+        this._paneProjects.set(pane, project);
+        if (pane === this._focusedPane) this.setProject(project);
+        else if (!sameProject(before ?? null, project)) this.onTitleChanged?.();
       })
       // Main couldn't check (rate limit, bad path): keep the current name
-      // rather than treating it as "not in a project".
-      .catch((err) => rlog('warn', '[PROJECTS] Project lookup failed', err));
+      // rather than treating it as "not in a project", and try once more.
+      .catch((err) => {
+        rlog('warn', '[PROJECTS] Project lookup failed', err);
+        if (retry) {
+          setTimeout(() => {
+            if (this._paneLookups.get(pane) === lookup && this._panes.includes(pane)) this.lookUpProject(pane, false);
+          }, PROJECT_RETRY_MS);
+        }
+      });
   }
 
   private setProject(project: ProjectInfo | null): void {
-    if (project?.root === this._project?.root) return;
+    if (sameProject(project, this._project)) return;
     this._project = project;
     const titleChanged = this.refreshTitle();
     // Even when the title stays put (e.g. the user named this tab), the tab
@@ -291,7 +347,7 @@ export class Tab {
   /** What the tab is called when the user hasn't named it: its project's name,
    *  else the title the program in the focused pane set. */
   get autoTitle(): string {
-    return this._project ? projectName(this._project) : this._focusedPane.title;
+    return this._project ? projectTitle(this._project) : this._focusedPane.title;
   }
 
   /** Recompute the displayed title — after a title, folder or project-name
@@ -422,6 +478,8 @@ export class Tab {
     const idx = this._panes.indexOf(pane);
     if (idx !== -1) this._panes.splice(idx, 1);
     this.clearAwaitingInput(pane); // a closed pane can't still need you
+    this._paneProjects.delete(pane);
+    this._paneLookups.delete(pane);
     this.setPaneParked(pane, null);
     this.setPaneAutoFlag(pane, null);
     pane.dispose();

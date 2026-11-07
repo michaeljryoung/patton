@@ -1261,6 +1261,12 @@ export class Pane {
     return this.currentCwd;
   }
 
+  /** Claude Code in this pane, from its title glyph: working (◐◑), stopped (✳), or not running (null). */
+  get claudeState(): 'working' | 'stopped' | null {
+    if (!this.claudeActive) return null;
+    return this.claudeWorking ? 'working' : 'stopped';
+  }
+
   clear(): void {
     this.terminalView.clear();
   }
