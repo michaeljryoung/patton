@@ -131,6 +131,7 @@ export class Pane {
   private shellStartedAt = 0;
   private shellSawSignal = false;
   private shellSawFirstPrompt = false;
+  private startedShell = '';
   private lastCwdCheckMs = 0;
   private static readonly CWD_POLL_MS = 2000;
   private static readonly CWD_SAFETY_NET_MS = 30_000;
@@ -901,6 +902,22 @@ export class Pane {
     this.hyperlinkEnv = true;
   }
 
+  /** The shell this pane runs, as main started it ('' until main has said,
+   *  then the shell the app asked for, if any). A tab's first pane is built
+   *  before the app's shell setting reaches it, so it asks main, which falls
+   *  back to $SHELL. */
+  get shellPath(): string {
+    return this.startedShell || this.callbacks.shell || '';
+  }
+
+  /** Run `cb` when this pane is disposed (closed). Returns a remover. */
+  onDispose(cb: () => void): () => void {
+    this.disposables.push(cb);
+    return () => {
+      this.disposables = this.disposables.filter((d) => d !== cb);
+    };
+  }
+
   /**
    * How far this pane's shell has got, from the moment its PTY was created:
    * when that was, whether it has sent any OSC 133 mark (it has shell
@@ -950,6 +967,18 @@ export class Pane {
     const quote = PATTON_QUOTES[Math.floor(Math.random() * PATTON_QUOTES.length)];
     this.terminalView.write(`\r\n  \x1b[1m"\x1b[3m${quote}\x1b[0m\x1b[1m"\x1b[0m\r\n  \x1b[2m— General George S. Patton\x1b[0m\r\n\r\n`);
 
+    // Track the shell's progress from before its PTY exists. A first OSC 133
+    // mark can be parsed while init() awaits the history load below (a tab's
+    // first pane has no shared history manager yet), long before the listener
+    // that drives the compose bar is registered; shellProgress must not miss it.
+    this.disposables.push(
+      this.terminalView.onPromptState((state) => {
+        this.shellIntegrated = true;
+        this.shellSawSignal = true;
+        if (state === 'idle') this.shellSawFirstPrompt = true;
+      }),
+    );
+
     // Create PTY (shell path passed down from App to avoid per-pane IPC)
     const dims = this.terminalView.getDimensions();
     const shellPath = this.callbacks.shell;
@@ -964,7 +993,11 @@ export class Pane {
         isDark: this.terminalView.isDarkBackground(),
       });
       this.terminalView.setPtyId(this.ptyId);
-      this.shellStartedAt = Date.now();
+      this.shellStartedAt = performance.now();
+      const createdId = this.ptyId;
+      window.patton.pty.getShell(createdId).then((shell) => {
+        if (this.ptyId === createdId) this.startedShell = shell;
+      }).catch((err: unknown) => rlog('warn', '[PTY] could not read the shell', { ptyId: createdId, error: String(err) }));
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.terminalView.write(`\r\n\x1b[31mFailed to create terminal: ${msg}\x1b[0m\r\n`);
@@ -1161,9 +1194,6 @@ export class Pane {
         // A shell's folder can only change at a prompt, and every prompt sends
         // OSC 133 D ('idle') first — including the first one — so re-read it
         // now: a `cd` renames the tab instantly instead of on the next poll.
-        this.shellIntegrated = true;
-        this.shellSawSignal = true;
-        if (state === 'idle') this.shellSawFirstPrompt = true;
         if (state === 'idle') this.refreshCwd();
         // The shell is back at its prompt, so Claude isn't running here any
         // more — even if it quit mid-work and left a ◐ title behind. Without

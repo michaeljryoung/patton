@@ -9,6 +9,7 @@ const api: PattonAPI = {
     resize: (id, cols, rows) => ipcRenderer.send(IPC.PTY_RESIZE, id, cols, rows),
     destroy: (id) => ipcRenderer.send(IPC.PTY_DESTROY, id),
     getProcess: (id) => ipcRenderer.invoke(IPC.PTY_GET_PROCESS, id),
+    getShell: (id) => ipcRenderer.invoke(IPC.PTY_GET_SHELL, id),
     getCwd: (id) => ipcRenderer.invoke(IPC.PTY_GET_CWD, id),
     onData: (callback) => {
       const listener = (_event: Electron.IpcRendererEvent, id: number, data: string) => callback(id, data);

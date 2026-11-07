@@ -87,6 +87,16 @@ export function runStartupCommand(
 }
 
 /**
+ * Whether terminal data is the user's input. The terminal also answers the
+ * shell's queries (cursor position, device attributes, colours) through the
+ * same data event; those are escape sequences, whereas typed and dictated
+ * text is plain and a bracketed paste opens with ESC [ 200 ~.
+ */
+export function isUserInput(data: string): boolean {
+  return !data.startsWith('\x1b') || data.startsWith('\x1b[200~');
+}
+
+/**
  * Type `cmd` into a tab's shell as soon as the shell is really ready, for a
  * click that comes at any time after the tab was created (the project board's
  * Claude button). The shell's progress is recorded by its pane from the moment
@@ -97,14 +107,17 @@ export function runStartupCommand(
  *  - a shell that sends no OSC 133 at all gets it PROMPT_FALLBACK_MS after its
  *    PTY was created, one that sends marks but never a first prompt
  *    SLOW_SHELL_MS after (both logged as fallbacks).
- * Keys typed in the pane while it waits would end up glued onto the command,
- * so the first key cancels the send instead (`opts.onTyped` tells the caller).
+ * Input typed in the pane while it waits would end up glued onto the command,
+ * so the first key, paste, dictation or IME text cancels the send instead
+ * (`opts.onTyped` tells the caller); the terminal's own replies to the shell's
+ * queries do not. A pane closed meanwhile drops the send. `opts.onDone` runs
+ * once when the send is over, however it ended.
  * Returns null when nothing was armed (no PTY), else a handle that cancels.
  */
 export function typeWhenShellReady(
   tab: Tab,
   cmd: string,
-  opts: { label: string; onTyped?: () => void },
+  opts: { label: string; onTyped?: () => void; onDone?: () => void },
 ): PendingSend | null {
   const ptyId = tab.ptyId;
   if (!cmd || ptyId === null) return null;
@@ -113,18 +126,22 @@ export function typeWhenShellReady(
     rlog('info', `[STARTUP] ${opts.label} ${what}`, { tabId: tab.id, ptyId, ...extra });
 
   let done = false;
+  let finished = false;
   const disposers: (() => void)[] = [];
   const timers: ReturnType<typeof setTimeout>[] = [];
   const finish = () => {
     done = true;
+    if (finished) return;
+    finished = true;
     for (const d of disposers) d();
     for (const t of timers) clearTimeout(t);
+    opts.onDone?.();
   };
   const send = (via: string) => {
     if (done) return;
     finish();
     window.patton.pty.write(ptyId, cmd + '\r');
-    log('sent', { via, sinceShellStartMs: Date.now() - pane.shellProgress.startedAt });
+    log('sent', { via, sinceShellStartMs: Math.round(performance.now() - pane.shellProgress.startedAt) });
   };
 
   if (pane.shellProgress.sawFirstPrompt) {
@@ -134,19 +151,30 @@ export function typeWhenShellReady(
   disposers.push(pane.terminalView.onPromptState((state) => {
     if (state === 'idle') send('first prompt');
   }));
-  const keys = pane.terminalView.terminal.onKey(() => {
+  const typed = () => {
     if (done) return;
     finish();
-    log('not sent', { reason: 'keys typed while waiting for the shell' });
+    log('not sent', { reason: 'input typed while waiting for the shell' });
     opts.onTyped?.();
-  });
+  };
+  const keys = pane.terminalView.terminal.onKey(typed);
   disposers.push(() => keys.dispose());
+  // Paste, dictation and IME text reach the PTY as terminal data, not as keys.
+  const input = pane.terminalView.onTerminalData((data) => {
+    if (isUserInput(data)) typed();
+  });
+  if (input) disposers.push(input);
+  disposers.push(pane.onDispose(() => {
+    if (done) return;
+    finish();
+    log('not sent', { reason: 'pane closed while waiting for the shell' });
+  }));
   const startedAt = pane.shellProgress.startedAt;
   timers.push(
     setTimeout(() => {
       if (!pane.shellProgress.sawSignal) send('fallback: no shell integration');
-    }, Math.max(0, startedAt + PROMPT_FALLBACK_MS - Date.now())),
-    setTimeout(() => send('fallback: slow shell'), Math.max(0, startedAt + SLOW_SHELL_MS - Date.now())),
+    }, Math.max(0, startedAt + PROMPT_FALLBACK_MS - performance.now())),
+    setTimeout(() => send('fallback: slow shell'), Math.max(0, startedAt + SLOW_SHELL_MS - performance.now())),
   );
   return { cancel: finish };
 }

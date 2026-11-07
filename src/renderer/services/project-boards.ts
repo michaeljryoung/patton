@@ -41,6 +41,21 @@ const REFRESH_DELAY_MS = 50;
  */
 export const PLAIN_CLAUDE_COMMAND = 'FORCE_HYPERLINK=1 claude';
 
+/** Shells where `VAR=1 cmd` is not valid syntax (csh family). `env VAR=1` would
+ *  work there but skips shell aliases, and `claude` is an alias for some users. */
+const NO_INLINE_ENV_SHELLS = new Set(['csh', 'tcsh']);
+
+/**
+ * The line the Claude button types for a pane's shell (its path, '' when the
+ * app named none, which counts as sh-family: Patton's default is zsh). csh and
+ * tcsh get plain `claude`, without the hyperlink variable.
+ */
+export function claudeCommandFor(shellPath: string): { command: string; hyperlinks: boolean } {
+  const name = shellPath.split('/').pop() ?? '';
+  if (NO_INLINE_ENV_SHELLS.has(name)) return { command: 'claude', hyperlinks: false };
+  return { command: PLAIN_CLAUDE_COMMAND, hyperlinks: true };
+}
+
 interface MountedBoard {
   board: ProjectBoard;
   payload: BoardPayload;
@@ -250,10 +265,21 @@ export class ProjectBoards {
       return;
     }
     tab.setCover(null);
-    const pending = typeWhenShellReady(tab, PLAIN_CLAUDE_COMMAND, {
+    const shellPath = tab.focusedPane.shellPath;
+    const { command, hyperlinks } = claudeCommandFor(shellPath);
+    if (!hyperlinks) {
+      rlog('info', '[BOARD] claude typed without FORCE_HYPERLINK=1', { tabId: tab.id, shell: shellPath, reason: 'csh-family shell cannot set a variable inline' });
+    }
+    // onDone can run before typeWhenShellReady returns (a shell already at its prompt).
+    let over = false;
+    const pending = typeWhenShellReady(tab, command, {
       label: 'Plain claude',
-      onTyped: () => {
+      // The send is over however it ended (sent, typed over, pane or tab closed).
+      onDone: () => {
+        over = true;
         this.claudePending.delete(tab);
+      },
+      onTyped: () => {
         announce('Claude not started: you typed first', 'assertive');
       },
     });
@@ -262,7 +288,7 @@ export class ProjectBoards {
       announce('Claude could not start: this tab has no terminal', 'assertive');
       return;
     }
-    this.claudePending.set(tab, pending);
+    if (!over) this.claudePending.set(tab, pending);
     rlog('info', '[BOARD] claude started', { tabId: tab.id });
     announce('Starting Claude', 'polite');
   }

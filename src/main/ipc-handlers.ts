@@ -232,6 +232,23 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
     return ptyManager.getProcessName(id);
   });
 
+  // The shell a PTY really runs: the renderer asks for what it wants, but
+  // main may fall back to $SHELL, and the Claude button types csh-family
+  // shells a different line.
+  ipcMain.handle(IPC.PTY_GET_SHELL, (event, id: number) => {
+    if (typeof id !== 'number' || !Number.isFinite(id)) {
+      console.warn('[SECURITY] PTY_GET_SHELL type validation failed', { id });
+      return '';
+    }
+    try {
+      requireOwnership(ptyManager, event, id);
+    } catch {
+      console.warn('[SECURITY] PTY ownership check failed', { channel: IPC.PTY_GET_SHELL, id });
+      return '';
+    }
+    return ptyManager.getShell(id);
+  });
+
   ipcMain.handle(IPC.HISTORY_GET, () => {
     return store.getHistory();
   });

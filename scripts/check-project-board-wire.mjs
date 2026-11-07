@@ -71,7 +71,8 @@ export class ProjectBoard {
 
 const ENTRY = `
 export { TabManager } from './services/tab-manager';
-export { ProjectBoards, decideBoard } from './services/project-boards';
+export { ProjectBoards, decideBoard, claudeCommandFor } from './services/project-boards';
+export { isUserInput } from './services/startup-command';
 export { wakeCommandOf } from './services/board-wake';
 export { COVERED_TAB_TITLE } from './components/tab';
 `;
@@ -110,11 +111,13 @@ function makePatton(state) {
   const exitListeners = [];
   const api = {
     pty: {
-      create: async (opts) => { if (state.failCreate) throw new Error('no pty'); const id = nextPty++; state.creates.push({ id, opts }); return id; },
+      create: async (opts) => { if (state.failCreate) throw new Error('no pty'); const id = nextPty++; state.creates.push({ id, opts }); state.afterCreate?.(id); return id; },
       write: (id, data) => { state.writes.push({ id, data }); },
       resize: () => {},
       destroy: () => {},
       getCwd: async () => '',
+      // Main's answer: the shell asked for, else $SHELL (state.envShell).
+      getShell: async (id) => state.creates.find((c) => c.id === id)?.opts?.shell || state.envShell || '/bin/zsh',
       // Output for a PTY reaches its pane's terminal (see emit in main()).
       onData: (cb) => { state.dataListeners.push(cb); return () => {}; },
       onExit: (cb) => { exitListeners.push(cb); return () => {}; },
@@ -137,7 +140,7 @@ function makePatton(state) {
     },
     session: { get: async () => state.session, set: async () => {} },
     projects: { getNames: async () => ({}), onNamesChanged: () => () => {}, resolve: async () => null, setName: async () => {} },
-    history: { get: async () => [], add: () => {}, clear: () => {} },
+    history: { get: async () => { if (state.historyDelayMs) await new Promise((r) => setTimeout(r, state.historyDelayMs)); return []; }, add: () => {}, clear: () => {} },
     log: { send: () => {} },
   };
   return new Proxy(api, { get: (t, prop) => (prop in t ? t[prop] : loose) });
@@ -205,7 +208,7 @@ async function main() {
     else info(...args);
   };
 
-  const { TabManager, ProjectBoards, decideBoard, COVERED_TAB_TITLE, wakeCommandOf } = (await import(out)).default ?? (await import(out));
+  const { TabManager, ProjectBoards, decideBoard, claudeCommandFor, isUserInput, COVERED_TAB_TITLE, wakeCommandOf } = (await import(out)).default ?? (await import(out));
 
   // --- decideBoard, the rule on its own ---
   check('rule: shows when the setting is absent (on by default)', decideBoard({}, payload(true)).show === true);
@@ -693,6 +696,90 @@ async function main() {
   boardF.host.startClaude();
   check('claude: no PTY, no "started" log (m1)', cf.ptyId === null && logs.slice(logF).every((l) => l[0] !== '[BOARD] claude started'), [cf.ptyId, logs.slice(logF)]);
   check('claude: no PTY, the user is told', await until(() => live('assertive').includes('could not start'), 500), live('assertive'));
+
+  // Final review 1: a tab's first pane loads history before its prompt listener used to exist,
+  // so a first prompt parsed during that await was missed (the click then waited for the 10 s fallback).
+  state.historyDelayMs = 80;
+  state.afterCreate = (id) => setTimeout(() => firstPrompt(id), 10);
+  const ch = await tm.userNewTab();
+  state.historyDelayMs = 0;
+  state.afterCreate = null;
+  check('claude: a first prompt parsed during the history load is recorded', ch.focusedPane.shellProgress.sawFirstPrompt === true, ch.focusedPane.shellProgress);
+  const boardH = globalThis.__boards.at(-1);
+  const writesH = state.writes.length;
+  const tH = Date.now();
+  boardH.host.startClaude();
+  check('claude: ...so the click types at once, not after the fallback', await until(() => sentTo(ch.ptyId, CLAUDE, writesH) === 1, 800) && Date.now() - tH < 300, Date.now() - tH);
+
+  // Final review 2: csh and tcsh cannot take VAR=1 cmd; env would skip the claude alias.
+  check('claude command: sh-family shells keep FORCE_HYPERLINK=1', ['/bin/zsh', '/bin/bash', '/opt/homebrew/bin/fish', '/bin/sh', ''].every((sh) => claudeCommandFor(sh).command === 'FORCE_HYPERLINK=1 claude'));
+  check('claude command: csh and tcsh get plain claude', claudeCommandFor('/bin/csh').command === 'claude' && claudeCommandFor('/bin/tcsh').command === 'claude');
+  // The app names no shell for a tab's first pane (Tab builds it before setShell), so main falls back to $SHELL.
+  state.envShell = '/bin/tcsh';
+  const cc = await tm.userNewTab();
+  state.envShell = undefined;
+  check('claude in tcsh: the first pane learns its real shell from main', cc.focusedPane.shellPath === '/bin/tcsh', cc.focusedPane.shellPath);
+  const boardCsh = globalThis.__boards.at(-1);
+  const writesCsh = state.writes.length;
+  const logCsh = logs.length;
+  boardCsh.host.startClaude();
+  firstPrompt(cc.ptyId);
+  check('claude in tcsh: typed as plain claude', await until(() => sentTo(cc.ptyId, 'claude\r', writesCsh) === 1, 800), state.writes.slice(writesCsh));
+  check('claude in tcsh: no FORCE_HYPERLINK in anything typed', !state.writes.slice(writesCsh).some((wr) => wr.data.includes('FORCE_HYPERLINK')));
+  check('claude in tcsh: the missing prefix is logged', logs.slice(logCsh).some((l) => l[0] === '[BOARD] claude typed without FORCE_HYPERLINK=1' && l[1]?.tabId === cc.id));
+
+  // Final review 3: paste, dictation and IME text reach the PTY as terminal data, not keys.
+  check('input filter: typed, dictated and bracketed-paste data count; terminal replies do not',
+    isUserInput('x') && isUserInput('hello world') && isUserInput('\r') && isUserInput('\x1b[200~pasted\x1b[201~')
+    && !isUserInput('\x1b[1;1R') && !isUserInput('\x1b[?1;2c') && !isUserInput('\x1b]11;rgb:0000/0000/0000\x1b\\'));
+  const cp1 = await tm.userNewTab();
+  const boardP1 = globalThis.__boards.at(-1);
+  const writesP1 = state.writes.length;
+  boardP1.host.startClaude();
+  cp1.focusedPane.terminalView.terminal.paste('hello');
+  firstPrompt(cp1.ptyId);
+  await tick(100);
+  check('claude: a paste while the shell loads cancels the send', sentTo(cp1.ptyId, CLAUDE, writesP1) === 0 && !state.writes.slice(writesP1).some((wr) => wr.data.includes('claude')), state.writes.slice(writesP1));
+  check('claude: ...and is announced', live('assertive').includes('Claude not started'));
+  const cp2 = await tm.userNewTab();
+  const boardP2 = globalThis.__boards.at(-1);
+  const writesP2 = state.writes.length;
+  boardP2.host.startClaude();
+  cp2.focusedPane.terminalView.terminal.input('dictated words', true);
+  firstPrompt(cp2.ptyId);
+  await tick(100);
+  check('claude: dictated or IME text while the shell loads cancels the send', sentTo(cp2.ptyId, CLAUDE, writesP2) === 0, state.writes.slice(writesP2));
+  const cp3 = await tm.userNewTab();
+  const boardP3 = globalThis.__boards.at(-1);
+  const writesP3 = state.writes.length;
+  boardP3.host.startClaude();
+  emit(cp3.ptyId, '\x1b[6n'); // the shell asks for the cursor position; the terminal answers through the same data event
+  await tick(50);
+  check('claude: the terminal\'s own reply to the shell does not cancel', state.writes.slice(writesP3).some((wr) => wr.id === cp3.ptyId && /^\[\d+;\d+R$/.test(wr.data.slice(1)) && wr.data[0] === '\x1b'), state.writes.slice(writesP3));
+  firstPrompt(cp3.ptyId);
+  check('claude: ...so it is still typed at the first prompt', await until(() => sentTo(cp3.ptyId, CLAUDE, writesP3) === 1, 800), state.writes.slice(writesP3));
+
+  // Final review 4: timers use performance.now(); the pending entry goes when the send ends or its pane closes.
+  check('claude: the shell clock is performance.now(), not Date.now()', cp3.focusedPane.shellProgress.startedAt < 1e11, cp3.focusedPane.shellProgress.startedAt);
+  check('pending: cleared once the send finished', !boards.claudePending.has(cp3) && !boards.claudePending.has(ct) && !boards.claudePending.has(ch));
+  check('pending: cleared when the user typed over it', !boards.claudePending.has(cp1) && !boards.claudePending.has(cp2));
+  // A covered tab cannot split, so split a plain tab and put a board over it.
+  const cq = await tm.createTab();
+  tm.switchToId(cq.id);
+  tm.splitVertical();
+  await until(() => cq.panes.length === 2);
+  boards.mount(cq, state.payload);
+  const boardQ = globalThis.__boards.at(-1);
+  boardQ.host.startClaude();
+  const paneQ = cq.focusedPane;
+  const pidQ = cq.ptyId;
+  const writesQ = state.writes.length;
+  check('pending: held while its pane waits', boards.claudePending.has(cq));
+  cq.closePane(paneQ);
+  check('pending: cleared when its pane closes', !boards.claudePending.has(cq) && cq.panes.length === 1);
+  firstPrompt(pidQ);
+  await tick(1700);
+  check('claude: a pane closed during the wait gets no write', state.writes.slice(writesQ).every((wr) => wr.id !== pidQ), state.writes.slice(writesQ));
 
   // A tab closed before the click: nothing to type into, nothing thrown.
   const cg = await tm.userNewTab();

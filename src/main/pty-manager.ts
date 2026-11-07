@@ -140,6 +140,8 @@ interface PtyInstance {
   buffer: string;
   flushTimer: ReturnType<typeof setTimeout> | null;
   window: BrowserWindow;
+  /** The shell path actually started (validated), not the one asked for. */
+  shell: string;
 }
 
 export class PtyManager {
@@ -223,6 +225,7 @@ export class PtyManager {
       buffer: '',
       flushTimer: null,
       window,
+      shell,
     };
 
     this.instances.set(id, instance);
@@ -344,6 +347,11 @@ export class PtyManager {
         // Process already dead or permission error — cleanup already done above
       }
     }
+  }
+
+  /** The shell path this PTY was started with ('' for an unknown id). */
+  getShell(id: number): string {
+    return this.instances.get(id)?.shell ?? '';
   }
 
   getProcessName(id: number): string {
