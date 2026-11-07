@@ -9,8 +9,9 @@
 // Bundles the REAL Tab, TabManager and ProjectBoards with esbuild; the board
 // component itself is replaced by a recording stub, and window.patton by a
 // stub with fake PTYs. jsdom does no layout, so only behaviour is checked.
-// The launch cases wait out the startup command's 1.5 s prompt fallback, so
-// the run takes about ten seconds.
+// The launch cases wait out the startup command's 1.5 s prompt fallback and
+// the Claude button's 10 s slow-shell fallback, so the run takes about
+// fifteen seconds.
 import { build } from 'esbuild';
 import { mkdtempSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -109,7 +110,7 @@ function makePatton(state) {
   const exitListeners = [];
   const api = {
     pty: {
-      create: async (opts) => { const id = nextPty++; state.creates.push({ id, opts }); return id; },
+      create: async (opts) => { if (state.failCreate) throw new Error('no pty'); const id = nextPty++; state.creates.push({ id, opts }); return id; },
       write: (id, data) => { state.writes.push({ id, data }); },
       resize: () => {},
       destroy: () => {},
@@ -580,7 +581,24 @@ async function main() {
 
   // --- the Claude button (host side; the button itself: check-project-board-ui.mjs) ---
   // The startup command is a project picker here ('cc'): it must never be typed.
+  // The typed line sets FORCE_HYPERLINK=1 for Claude alone (M2: a board tab is created without it).
   state.settings = { startupCommand: 'cc' };
+  const CLAUDE = 'FORCE_HYPERLINK=1 claude\r';
+  // A real zsh marks the early prompt (A) at .zshenv time, then D and A at its first real prompt.
+  const earlyMark = (id) => emit(id, '\x1b]133;A\x07');
+  const firstPrompt = (id) => emit(id, '\x1b]133;D;0\x07\x1b]133;A\x07');
+  const sentTo = (id, data, from) => state.writes.slice(from).filter((wr) => wr.id === id && wr.data === data).length;
+  const live = (cls) => [...doc.querySelectorAll(`[aria-live="${cls}"]`)].map((el) => el.textContent).join('|');
+
+  // A slow shell (marks sent, first prompt never): the bounded fallback types it after SLOW_SHELL_MS
+  // from the PTY's creation. Started now, checked at the end so the wait overlaps the other cases.
+  const cs = await tm.userNewTab();
+  const boardS = globalThis.__boards.at(-1);
+  const tSlow = Date.now();
+  const writesS = state.writes.length;
+  earlyMark(cs.ptyId);
+  boardS.host.startClaude();
+
   const ct = await tm.userNewTab();
   const boardC = globalThis.__boards.at(-1);
   const writesC = state.writes.length;
@@ -590,30 +608,91 @@ async function main() {
   boardC.host.startClaude();
   boardC.host.startClaude(); // a double click: the second finds no board
   check('claude click: the board is removed like Terminal', boardC.disposed && !ct.hasCover && !boards.hasBoard(ct));
-  check('claude click: nothing typed before the shell is ready', sentC('claude\r') === 0, sentC('claude\r'));
-  emit(ct.ptyId, '\x1b]133;A\x07');
-  check('claude click: "claude" + Enter typed once the prompt shows', await until(() => sentC('claude\r') === 1, 1000), sentC('claude\r'));
-  await tick(1700); // past the 1.5 s fallback of the first send
-  check('claude click: a double click typed it once, not twice', sentC('claude\r') === 1, sentC('claude\r'));
+  check('claude click: nothing typed before the shell is ready', sentC(CLAUDE) === 0, sentC(CLAUDE));
+  check('claude click: announced as starting (m3)', await until(() => live('polite').includes('Starting Claude'), 500), live('polite'));
+  earlyMark(ct.ptyId);
+  await tick(100);
+  check('claude click: zsh\'s early prompt mark (.zshenv) is not "ready"', sentC(CLAUDE) === 0, sentC(CLAUDE));
+  firstPrompt(ct.ptyId);
+  check('claude click: typed at the shell\'s first prompt, once', await until(() => sentC(CLAUDE) === 1, 1000), sentC(CLAUDE));
+  await tick(1700); // past the 1.5 s no-integration fallback
+  check('claude click: a double click typed it once, not twice', sentC(CLAUDE) === 1, sentC(CLAUDE));
   check('claude click: typed into this tab only', state.writes.slice(writesC).every((wr) => wr.id === ct.ptyId));
   check('claude click: the startup command (cc) is never typed', sentC('cc\r') === 0 && !state.writes.slice(writesC).some((wr) => wr.data.includes('cc')));
+  check('claude click: the line sets FORCE_HYPERLINK=1 for claude only (M2)', /^FORCE_HYPERLINK=1 claude\r$/.test(state.writes.slice(writesC)[0]?.data ?? ''));
+  const claudeCreate = state.creates.find((c) => c.id === ct.ptyId);
+  check('claude: the tab\'s shell has no FORCE_HYPERLINK of its own (other tabs unchanged)', claudeCreate && !claudeCreate.opts?.hyperlinks, claudeCreate?.opts);
   const claudeLogs = logs.slice(logC).filter((l) => l[0].startsWith('[BOARD] claude'));
   check('claude click: logged with the tab id', claudeLogs.some((l) => l[0] === '[BOARD] claude clicked' && l[1]?.tabId === ct.id));
   check('claude click: the second click is logged as ignored', claudeLogs.some((l) => l[0] === '[BOARD] claude ignored'));
   check('claude click: the start is logged', claudeLogs.some((l) => l[0] === '[BOARD] claude started' && l[1]?.tabId === ct.id));
   check('claude click: no new tab, the tab stays', tm.getTabs().includes(ct));
-  const claudeCreate = state.creates.find((c) => c.id === ct.ptyId);
   check('claude: the tab is at home (no folder, not a project tab)', claudeCreate && !claudeCreate.opts?.cwd && !claudeCreate.opts?.projectDir, claudeCreate?.opts);
 
-  // A shell that has been up a while and gave no prompt signal: it is sent without waiting out another 1.5 s.
+  // M1-A: a shell that showed its prompt long ago gets the line at once, not after a clock.
+  const ca = await tm.userNewTab();
+  const boardA = globalThis.__boards.at(-1);
+  const writesA = state.writes.length;
+  firstPrompt(ca.ptyId);
+  await tick(700);
+  const tA = Date.now();
+  boardA.host.startClaude();
+  const aSent = await until(() => sentTo(ca.ptyId, CLAUDE, writesA) === 1, 1000);
+  check('claude early click on a ready shell: typed at once', aSent && Date.now() - tA < 100, Date.now() - tA);
+
+  // M1-A2: keys typed between the click and the send must not be glued onto the command.
+  const ck = await tm.userNewTab();
+  const boardK = globalThis.__boards.at(-1);
+  const writesK = state.writes.length;
+  boardK.host.startClaude();
+  const kInput = ck.focusedPane.element.querySelector('textarea');
+  kInput.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'f', code: 'KeyF', keyCode: 70, bubbles: true }));
+  firstPrompt(ck.ptyId);
+  await tick(100);
+  check('claude: a key typed while the shell loads cancels the send (nothing glued)', sentTo(ck.ptyId, CLAUDE, writesK) === 0 && !state.writes.slice(writesK).some((wr) => wr.data.includes('claude')), state.writes.slice(writesK));
+  check('claude: the cancel is announced', live('assertive').includes('Claude not started'), live('assertive'));
+
+  // A shell with no shell integration at all (fish, say): typed PROMPT_FALLBACK_MS after the PTY was created.
   const cl = await tm.userNewTab();
   const boardL = globalThis.__boards.at(-1);
   const writesL = state.writes.length;
   await tick(1600);
   const tL = Date.now();
   boardL.host.startClaude();
-  const lateSent = await until(() => state.writes.slice(writesL).some((wr) => wr.id === cl.ptyId && wr.data === 'claude\r'), 1000);
-  check('claude late click: sent at once by the fallback, no further wait', lateSent && Date.now() - tL < 400, Date.now() - tL);
+  const lateSent = await until(() => sentTo(cl.ptyId, CLAUDE, writesL) === 1, 1000);
+  check('claude late click, no shell integration: sent at once by the fallback', lateSent && Date.now() - tL < 400, Date.now() - tL);
+
+  // The launch tab: its shell is up before the board decision; the click still types at once.
+  state.settings = { startupCommand: 'cc' };
+  const lt = await tm.createTab(undefined, { startupCommand: true });
+  const writesT = state.writes.length;
+  firstPrompt(lt.ptyId);
+  await tick(50);
+  const shown = await boards.startLaunchTab(lt, 'cc');
+  const boardT = globalThis.__boards.at(-1);
+  check('claude launch tab: the board covers it', shown && lt.hasCover);
+  boardT.host.startClaude();
+  check('claude launch tab: typed at once, cc never typed', await until(() => sentTo(lt.ptyId, CLAUDE, writesT) === 1, 500) && sentTo(lt.ptyId, 'cc\r', writesT) === 0, state.writes.slice(writesT));
+
+  // m2: a tab closed while the send waits gets nothing written to its dead PTY.
+  const cx = await tm.userNewTab();
+  const boardX = globalThis.__boards.at(-1);
+  const writesX = state.writes.length;
+  boardX.host.startClaude();
+  await tm.closeById(cx.id);
+  firstPrompt(cx.ptyId);
+  await tick(1700);
+  check('claude: a tab closed during the wait gets no write (m2)', state.writes.slice(writesX).every((wr) => wr.id !== cx.ptyId), state.writes.slice(writesX));
+
+  // m1: a tab whose PTY could not be created is not "started".
+  state.failCreate = true;
+  const cf = await tm.userNewTab();
+  state.failCreate = false;
+  const boardF = globalThis.__boards.at(-1);
+  const logF = logs.length;
+  boardF.host.startClaude();
+  check('claude: no PTY, no "started" log (m1)', cf.ptyId === null && logs.slice(logF).every((l) => l[0] !== '[BOARD] claude started'), [cf.ptyId, logs.slice(logF)]);
+  check('claude: no PTY, the user is told', await until(() => live('assertive').includes('could not start'), 500), live('assertive'));
 
   // A tab closed before the click: nothing to type into, nothing thrown.
   const cg = await tm.userNewTab();
@@ -623,7 +702,11 @@ async function main() {
   boardG.host.startClaude();
   check('claude: a click on a closed tab\'s board does nothing', logs.slice(logG).every((l) => l[0] !== '[BOARD] claude started'));
   const hostSrc = readFileSync(join(root, 'src', 'renderer', 'services', 'project-boards.ts'), 'utf8');
-  check('claude: the host types the literal claude', /PLAIN_CLAUDE_COMMAND = 'claude'/.test(hostSrc));
+  check('claude: the host types FORCE_HYPERLINK=1 claude', /PLAIN_CLAUDE_COMMAND = 'FORCE_HYPERLINK=1 claude'/.test(hostSrc));
+
+  // The slow shell from the top: marks but no first prompt, typed at SLOW_SHELL_MS after its PTY was created.
+  check('claude slow shell: not typed while marks came but no first prompt', sentTo(cs.ptyId, CLAUDE, writesS) === 0 || Date.now() - tSlow >= 10000);
+  check('claude slow shell: typed by the bounded fallback, ~10 s after creation', await until(() => sentTo(cs.ptyId, CLAUDE, writesS) === 1, 12000) && Date.now() - tSlow >= 9500, Date.now() - tSlow);
   await tm.closeById(ct.id);
   await tm.closeById(cl.id);
   state.settings = { startupCommand: '' };

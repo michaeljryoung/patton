@@ -126,6 +126,11 @@ export class Pane {
   // Set by the first OSC 133 event: this pane's shell reports every prompt,
   // so the cwd can be re-read on prompts instead of polled.
   private shellIntegrated = false;
+  // What this pane's shell has shown since its PTY was created, kept because
+  // an OSC 133 event is not replayed to a late listener (see shellProgress).
+  private shellStartedAt = 0;
+  private shellSawSignal = false;
+  private shellSawFirstPrompt = false;
   private lastCwdCheckMs = 0;
   private static readonly CWD_POLL_MS = 2000;
   private static readonly CWD_SAFETY_NET_MS = 30_000;
@@ -896,6 +901,17 @@ export class Pane {
     this.hyperlinkEnv = true;
   }
 
+  /**
+   * How far this pane's shell has got, from the moment its PTY was created:
+   * when that was, whether it has sent any OSC 133 mark (it has shell
+   * integration), and whether it has shown its first real prompt. zsh marks a
+   * prompt at .zshenv time, long before .zshrc is done, so only the first
+   * `D` (every prompt sends D then A) means the shell is ready for input.
+   */
+  get shellProgress(): { startedAt: number; sawSignal: boolean; sawFirstPrompt: boolean } {
+    return { startedAt: this.shellStartedAt, sawSignal: this.shellSawSignal, sawFirstPrompt: this.shellSawFirstPrompt };
+  }
+
   async init(): Promise<void> {
     // Mount terminal
     this.terminalView.mount();
@@ -948,6 +964,7 @@ export class Pane {
         isDark: this.terminalView.isDarkBackground(),
       });
       this.terminalView.setPtyId(this.ptyId);
+      this.shellStartedAt = Date.now();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.terminalView.write(`\r\n\x1b[31mFailed to create terminal: ${msg}\x1b[0m\r\n`);
@@ -1145,6 +1162,8 @@ export class Pane {
         // OSC 133 D ('idle') first — including the first one — so re-read it
         // now: a `cd` renames the tab instantly instead of on the next poll.
         this.shellIntegrated = true;
+        this.shellSawSignal = true;
+        if (state === 'idle') this.shellSawFirstPrompt = true;
         if (state === 'idle') this.refreshCwd();
         // The shell is back at its prompt, so Claude isn't running here any
         // more — even if it quit mid-work and left a ◐ title behind. Without

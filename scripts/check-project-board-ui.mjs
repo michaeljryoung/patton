@@ -803,6 +803,8 @@ const submit = (t) => t.q('.pboard-add').dispatchEvent(new t.win.Event('submit',
   check('claude css: a hover state that keeps the text readable', hover.includes('var(--accent)') && !hover.includes('color:'), hover);
   const colours = [...(rule + hover).matchAll(/(#[0-9a-fA-F]{3,8}|rgba?\()/g)];
   check('claude css: existing variables only, no literal colours (light and dark follow)', colours.length === 0, colours.map((m) => m[0]));
+  const headRule = css.match(/\.pboard-head \{([^}]*)\}/)?.[1] ?? '';
+  check('claude css: the header wraps in a narrow window, so Claude is never pushed off the edge (n3)', /flex-wrap:\s*wrap/.test(headRule), headRule);
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

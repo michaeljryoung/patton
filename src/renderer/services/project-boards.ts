@@ -1,11 +1,12 @@
 import { ProjectBoard, type ProjectBoardHost } from '../components/project-board';
 import type { Tab } from '../components/tab';
 import type { AppSettings, BoardPayload } from '../../shared/types';
+import { announce } from './announcer';
 import { findWakePane, wakeCommandOf } from './board-wake';
 import { openProject, type OpenProjectHost } from './open-project';
 import { projectLiveState, type LiveStateSnapshot, type ProjectLiveState } from './project-live-state';
 import { rlog } from './renderer-logger';
-import { PROMPT_FALLBACK_MS, runStartupCommand } from './startup-command';
+import { PROMPT_FALLBACK_MS, runStartupCommand, typeWhenShellReady, type PendingSend } from './startup-command';
 import type { TabManager } from './tab-manager';
 
 /** Whether a new tab the user opened gets the project board, and why not. */
@@ -24,14 +25,21 @@ export function decideBoard(settings: Pick<AppSettings, 'projectBoard'> | null, 
 }
 
 /** How long launch waits for the board before sending the startup command
- *  instead (the startup command's own prompt fallback is the same 1.5 s). */
-const LAUNCH_BOARD_TIMEOUT_MS = 1500;
+ *  instead (the startup command's own prompt fallback). */
+const LAUNCH_BOARD_TIMEOUT_MS = PROMPT_FALLBACK_MS;
 
 /** The tab manager calls the board's tab-change refresh at most this often. */
 const REFRESH_DELAY_MS = 50;
 
-/** What the Claude button types: plain `claude`, whatever the startup command is. */
-export const PLAIN_CLAUDE_COMMAND = 'claude';
+/**
+ * What the Claude button types: plain `claude`, whatever the startup command
+ * is. FORCE_HYPERLINK=1 is what the startup-command pane gets in its
+ * environment (pty-manager.ts) so that Claude prints OSC 8 links; a board tab
+ * is created before anyone knows it will run Claude, and exporting it into
+ * every ⌘T shell is what SECURITY.md rules out, so it is set for this one
+ * command only.
+ */
+export const PLAIN_CLAUDE_COMMAND = 'FORCE_HYPERLINK=1 claude';
 
 interface MountedBoard {
   board: ProjectBoard;
@@ -45,7 +53,8 @@ interface MountedBoard {
  * come through TabManager.userNewTab(). A tile opens its
  * project the way a bookmark click does (open-project.ts), then the board's tab
  * goes; "Terminal" (or Esc) just lifts the board off its tab; "Wake" starts the
- * configured command in a new tab behind the board (see wake()).
+ * configured command in a new tab behind the board (see wake()); "Claude" lifts
+ * the board and types `claude` into the tab's shell (see startClaude()).
  */
 export class ProjectBoards {
   private boards = new Map<Tab, MountedBoard>();
@@ -58,6 +67,8 @@ export class ProjectBoards {
   private wakeCommand = wakeCommandOf(null);
   // A Wake click is opening its tab: a second click waits for it.
   private wakeStarting = false;
+  // Claude sends waiting for their tab's shell, cancelled when the tab closes.
+  private claudePending = new Map<Tab, PendingSend>();
 
   constructor(
     private readonly tabs: TabManager,
@@ -66,7 +77,11 @@ export class ProjectBoards {
     tabs.setUserNewTabHandler(() => this.openNewTab());
     this.disposables.push(
       () => tabs.setUserNewTabHandler(null),
-      tabs.onTabClosed((tab) => this.forget(tab, 'tab closed')),
+      tabs.onTabClosed((tab) => {
+        this.claudePending.get(tab)?.cancel();
+        this.claudePending.delete(tab);
+        this.forget(tab, 'tab closed');
+      }),
       window.patton.board.onChanged((layout) => {
         for (const mounted of this.boards.values()) {
           mounted.payload = { ...mounted.payload, layout };
@@ -88,7 +103,6 @@ export class ProjectBoards {
    *  The settings and the board are read while the tab's shell starts. */
   async openNewTab(): Promise<Tab> {
     const decision = this.loadDecision();
-    const shellStartedAt = Date.now();
     const tab = await this.tabs.createTab();
     const decided = await decision;
     if (decided.show === false) {
@@ -99,7 +113,7 @@ export class ProjectBoards {
       rlog('info', '[BOARD] skipped', { tabId: tab.id, reason: 'tab closed before the board loaded' });
       return tab;
     }
-    this.mount(tab, decided.payload, '[BOARD] shown', shellStartedAt);
+    this.mount(tab, decided.payload, '[BOARD] shown');
     return tab;
   }
 
@@ -111,12 +125,12 @@ export class ProjectBoards {
    * command as before. Resolves whether the board was shown.
    */
   startLaunchTab(tab: Tab, startupCommand: string): Promise<boolean> {
-    const covered = this.coverLaunchTab(tab, Date.now());
+    const covered = this.coverLaunchTab(tab);
     if (startupCommand) runStartupCommand(tab, startupCommand, covered.then((shown) => !shown));
     return covered;
   }
 
-  private async coverLaunchTab(tab: Tab, shellStartedAt: number): Promise<boolean> {
+  private async coverLaunchTab(tab: Tab): Promise<boolean> {
     let timer: ReturnType<typeof setTimeout> | null = null;
     const timeout = new Promise<BoardDecision>((resolve) => {
       timer = setTimeout(() => resolve({ show: false, reason: 'board too slow' }), LAUNCH_BOARD_TIMEOUT_MS);
@@ -131,7 +145,7 @@ export class ProjectBoards {
       rlog('info', '[BOARD] skipped at launch', { tabId: tab.id, reason: 'tab closed before the board loaded' });
       return false;
     }
-    this.mount(tab, decided.payload, '[BOARD] shown at launch', shellStartedAt);
+    this.mount(tab, decided.payload, '[BOARD] shown at launch');
     return true;
   }
 
@@ -182,7 +196,7 @@ export class ProjectBoards {
     }
   }
 
-  private mount(tab: Tab, payload: BoardPayload, event = '[BOARD] shown', shellStartedAt = Date.now()): void {
+  private mount(tab: Tab, payload: BoardPayload, event = '[BOARD] shown'): void {
     const host: ProjectBoardHost = {
       // The board announces a failure, so the rejection goes back to it.
       openProject: (path) => this.openFromBoard(tab, path).catch((err: unknown) => {
@@ -194,7 +208,7 @@ export class ProjectBoards {
       },
       liveState: (path) => this.liveState(path),
       wakeState: () => ({ command: this.wakeCommand, awake: findWakePane(this.tabs.getTabs()) !== null }),
-      startClaude: () => this.startClaude(tab, shellStartedAt),
+      startClaude: () => this.startClaude(tab),
       wake: () => {
         this.wake(tab).catch((err: unknown) => rlog('error', '[BOARD] wake failed', { tabId: tab.id, error: String(err) }));
       },
@@ -224,20 +238,33 @@ export class ProjectBoards {
    * a plain `claude` into this tab's shell (never the startup command, which is
    * a project picker for some users): the folder is wherever the shell is, home
    * for a new tab. The board is gone after the first click, so a second click
-   * (or a double click) finds nothing to do.
+   * (or a double click) finds nothing to do. A shell that has shown its first
+   * prompt gets the command at once; one still loading, at its first prompt
+   * (typeWhenShellReady), and keys typed meanwhile cancel the send rather than
+   * get glued onto `claude`.
    */
-  private startClaude(tab: Tab, shellStartedAt: number): void {
+  private startClaude(tab: Tab): void {
     rlog('info', '[BOARD] claude clicked', { tabId: tab.id });
     if (!this.forget(tab, 'claude')) {
       rlog('info', '[BOARD] claude ignored', { tabId: tab.id, reason: 'board already gone' });
       return;
     }
     tab.setCover(null);
-    // The shell has had this long to start; a prompt it showed earlier is not
-    // replayed, so only what is left of the usual wait remains.
-    const fallbackMs = PROMPT_FALLBACK_MS - (Date.now() - shellStartedAt);
-    runStartupCommand(tab, PLAIN_CLAUDE_COMMAND, Promise.resolve(true), { label: 'Plain claude', fallbackMs });
-    rlog('info', '[BOARD] claude started', { tabId: tab.id, waitMs: Math.max(0, fallbackMs) });
+    const pending = typeWhenShellReady(tab, PLAIN_CLAUDE_COMMAND, {
+      label: 'Plain claude',
+      onTyped: () => {
+        this.claudePending.delete(tab);
+        announce('Claude not started: you typed first', 'assertive');
+      },
+    });
+    if (!pending) {
+      rlog('warn', '[BOARD] claude not started', { tabId: tab.id, reason: 'no terminal in this tab' });
+      announce('Claude could not start: this tab has no terminal', 'assertive');
+      return;
+    }
+    this.claudePending.set(tab, pending);
+    rlog('info', '[BOARD] claude started', { tabId: tab.id });
+    announce('Starting Claude', 'polite');
   }
 
   private async openFromBoard(boardTab: Tab, path: string): Promise<void> {
