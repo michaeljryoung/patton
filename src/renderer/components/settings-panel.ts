@@ -9,6 +9,12 @@ export class SettingsPanel {
   private visible = false;
   private onSettingsChanged: (settings: Partial<AppSettings>) => void;
   private cachedSettings: AppSettings | null = null;
+  // Number inputs fire `change` per arrow step, and main drops settings:set
+  // past 10/s without a word: their saves wait for a 300 ms pause (the live
+  // update stays immediate) and go as one, flushed when the panel closes.
+  private pendingSave: Partial<AppSettings> = {};
+  private pendingSaveTimer: ReturnType<typeof setTimeout> | null = null;
+  private static readonly SAVE_DEBOUNCE_MS = 300;
   private disposables: (() => void)[] = [];
   private releaseFocusTrap: (() => void) | null = null;
   /** Global hotkey the shortcuts grid was last rendered with, so re-opening the
@@ -215,7 +221,7 @@ export class SettingsPanel {
     listen(fontSizeInput, 'change', () => {
       const val = parseInt(fontSizeInput.value, 10);
       if (val >= DEFAULTS.FONT_SIZE_MIN && val <= DEFAULTS.FONT_SIZE_MAX) {
-        this.saveAndNotify({ fontSize: val });
+        this.saveAndNotify({ fontSize: val }, true);
       }
     });
 
@@ -231,7 +237,7 @@ export class SettingsPanel {
     listen(scrollbackInput, 'change', () => {
       const val = parseInt(scrollbackInput.value, 10);
       if (val >= 100 && val <= 100000) {
-        this.saveAndNotify({ scrollback: val });
+        this.saveAndNotify({ scrollback: val }, true);
       }
     });
 
@@ -265,7 +271,7 @@ export class SettingsPanel {
     listen(checkpointNudgeInput, 'change', () => {
       const val = Number(checkpointNudgeInput.value);
       if (Number.isInteger(val) && val >= DEFAULTS.CHECKPOINT_NUDGE_PCT_MIN && val <= DEFAULTS.CHECKPOINT_NUDGE_PCT_MAX) {
-        this.saveAndNotify({ checkpointNudgePct: val });
+        this.saveAndNotify({ checkpointNudgePct: val }, true);
       }
     });
 
@@ -347,12 +353,30 @@ export class SettingsPanel {
     );
   }
 
-  private saveAndNotify(settings: Partial<AppSettings>): void {
-    window.patton.settings.set(settings).catch(console.error);
+  private saveAndNotify(settings: Partial<AppSettings>, debounceSave = false): void {
+    if (debounceSave) {
+      Object.assign(this.pendingSave, settings);
+      if (this.pendingSaveTimer) clearTimeout(this.pendingSaveTimer);
+      this.pendingSaveTimer = setTimeout(() => this.flushPendingSave(), SettingsPanel.SAVE_DEBOUNCE_MS);
+    } else {
+      window.patton.settings.set(settings).catch(console.error);
+    }
     if (this.cachedSettings) {
       Object.assign(this.cachedSettings, settings);
     }
     this.onSettingsChanged(settings);
+  }
+
+  /** Persist the waiting number-input saves (the last value of each) now. */
+  private flushPendingSave(): void {
+    if (this.pendingSaveTimer) {
+      clearTimeout(this.pendingSaveTimer);
+      this.pendingSaveTimer = null;
+    }
+    if (Object.keys(this.pendingSave).length === 0) return;
+    const settings = this.pendingSave;
+    this.pendingSave = {};
+    window.patton.settings.set(settings).catch(console.error);
   }
 
   /** Keep cached settings in sync when a value is changed outside the panel
@@ -417,6 +441,7 @@ export class SettingsPanel {
   }
 
   hide(): void {
+    this.flushPendingSave();
     this.visible = false;
     this.overlay.classList.remove('visible');
     this.releaseFocusTrap?.();
@@ -480,6 +505,7 @@ export class SettingsPanel {
   // --- end Claude Code Stop hook ---
 
   dispose(): void {
+    this.flushPendingSave();
     for (const d of this.disposables) d();
     this.overlay.remove();
   }

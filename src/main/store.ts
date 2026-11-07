@@ -254,8 +254,9 @@ export function setSettings(partial: Partial<AppSettings>): void {
   }
 
   if (partial.checkpointNudgePct !== undefined) {
-    const n = Number(partial.checkpointNudgePct);
-    if (Number.isInteger(n) && n >= DEFAULTS.CHECKPOINT_NUDGE_PCT_MIN && n <= DEFAULTS.CHECKPOINT_NUDGE_PCT_MAX) {
+    // A number only: Number(true) would pass as 1.
+    const n = partial.checkpointNudgePct;
+    if (typeof n === 'number' && Number.isInteger(n) && n >= DEFAULTS.CHECKPOINT_NUDGE_PCT_MIN && n <= DEFAULTS.CHECKPOINT_NUDGE_PCT_MAX) {
       validated.checkpointNudgePct = n;
     }
   }
