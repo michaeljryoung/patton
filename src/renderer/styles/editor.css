@@ -313,7 +313,3 @@
   color: var(--ink);
 }
 
-.paste-chip-remove:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: 1px;
-}

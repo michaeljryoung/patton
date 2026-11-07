@@ -99,14 +99,6 @@
 }
 
 /* Column-style label above a field. */
-.settings-label {
-  font-size: var(--head);
-  font-weight: 400;
-  letter-spacing: var(--head-ls);
-  text-transform: uppercase;
-  color: var(--muted);
-}
-
 .settings-input {
   padding: 6px 10px;
   border: 1px solid var(--hairline);

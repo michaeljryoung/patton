@@ -110,7 +110,8 @@ html, body {
 /* Shared head type: uppercase, tracked, muted (section heads, column labels). */
 .notes-header,
 .bookmarks-header,
-.bookmarks-group-title {
+.bookmarks-group-title,
+.settings-label {
   font-size: var(--head);
   font-weight: 400;
   letter-spacing: var(--head-ls);
@@ -304,13 +305,6 @@ html, body {
 .bookmarks-hide:hover {
   background: var(--bg);
   color: var(--ink);
-}
-
-.bookmarks-add:focus-visible,
-.bookmarks-hide:focus-visible,
-.bookmarks-form button:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: 1px;
 }
 
 .bookmark-row:focus-visible {
@@ -639,8 +633,8 @@ select:focus-visible {
   opacity: 0.7;
 }
 
-.pane-drag-handle:hover {
-  opacity: 1 !important;
+.split-container .pane .pane-drag-handle:hover {
+  opacity: 1;
   color: var(--ink);
   background: var(--surface-hover);
 }
@@ -651,8 +645,8 @@ select:focus-visible {
 }
 
 /* Drop target highlight */
-.pane.drop-target {
-  box-shadow: inset 0 0 0 3px var(--accent) !important;
+.split-container .pane.drop-target {
+  box-shadow: inset 0 0 0 2px var(--accent);
 }
 
 /* Floating drag overlay */

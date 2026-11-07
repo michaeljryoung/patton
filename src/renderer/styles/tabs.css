@@ -138,8 +138,8 @@
   opacity: 0.5;
 }
 
-.tab-bar-tab-grip:hover {
-  opacity: 1 !important;
+.tab-bar-tab .tab-bar-tab-grip:hover {
+  opacity: 1;
   cursor: grab;
 }
 
