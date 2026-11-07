@@ -19,4 +19,11 @@ Finished nodes moved off this project's maps by `plan_graph_retire.py`, each row
 | `look_implement` | Restyle tokens, tab bar, sidebar, compose, dialogs per the pick; terminal themes untouched | done | `look_pick` | `448d5ed` `5c4941c` `d540d76` · `src/renderer/styles/main.css` tokens · Send button in `editor-input.ts` |
 | `compose_reason` | Report the recorded reason the compose panel is not the default input | done | — | `98a216e` · `0abba75` (ModeDetector removed 2026-03-09; terminal always owns input) |
 | `compose_default` | Compose-first mode for Claude tabs behind a Settings toggle (default on) and a per-tab palette override; Enter/arrows/Tab/Esc pass through from an empty box, Esc hands focus over from a draft | done | `compose_reason`, `hook_script` | `cb38c2c` `6258544` `cd5fc68` `8af2355` · `src/renderer/components/pane.ts::canTakeKeyboard` · Settings toggle `composeFirst` |
+
+### 2026-11-07 — 2 nodes
+
+| ID | Task | Status | Depends on | Evidence |
+|----|------|--------|------------|----------|
+| `bookmark_reorder` | Rows drag within their group (projects among projects, links among links); blue insertion line, dimmed source, card drag image, hover grip; private drag type so a drop on the terminal types nothing; renders held during a drag; a drop that leaves the group's order unchanged is ignored | done | `bookmark_open` | `bookmarks-panel.ts::setupDragReorder` · `6ec77ff` · review fixes `f257583` (order shown at once, a move counts only when main stored it, stuck-drag release) · 47 headless jsdom checks of the real panel |
+| `bookmark_hide` | Header chevron hides the sidebar; hidden, a 22 px strip with a boxed "+" (whole strip is the button) brings it back; ⌃⌘B toggles the same two states | done | `bookmarks_panel` | `bookmarks-panel.ts::setupRail` · `#bookmarks-rail` in `main.css` · `6ec77ff` |
 <!-- MAP-ARCHIVE:END docs/NEXT_STEPS.md -->

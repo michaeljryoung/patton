@@ -461,3 +461,29 @@ _Earlier entries archived → `docs/session-archive.md` (latest trim 2026-11-06,
 - [x] **DONE — Session 31**: **Shipped the confirm-before-closing-a-tab/pane dialog → v1.7.0** (commit `f935a2b`). ⌘W / ✕ / middle-click now prompt before ending a shell; the last-tab case defers to the app-quit guard (no double prompt); automatic PTY-exit closes don't prompt. Recovered from a crashed session's uncommitted on-disk work via transcript forensics.
 - [x] **DONE — Session 31**: **Hand-bumped the Homebrew tap 1.6.0→1.7.0** (`homebrew-patton` `72c8d40`, SHA-256 independently verified). CI's cask step stayed red on the expired `HOMEBREW_PAT`, as every release since S28.
 - [-] **DROPPED (S31): Install the actual DMG for a correct version string** (was S28→S30 cosmetic) — **moot**. Installing the released DMG *does* set the right version string, but the post-commit auto-rebuild hook re-`package`s + copies a 1.0.0 build to /Applications on the very next commit, so it never survives. /Applications stays code-current but self-reports 1.0.0. The real fix is to stamp the version into `package.json`/the build (folded into the `app.getVersion` Gotcha). WHY: S31 Decisions.
+
+## Session Log (S43 trim 2026-11-07)
+
+### 2026-11-04 (Session 39 — from a `~` security session: npm 12's script policy; the Homebrew tap back)
+- **npm 12 blocks install scripts unless approved:** a clean install would have skipped node-pty's native build (and esbuild, fs-xattr, macos-alias, electron-winstaller), so Patton wouldn't build. Approved by name in `package.json` `allowScripts` (`7b85afd`); `npm approve-scripts --allow-scripts-pending` then listed none, and the post-commit rebuild ran clean on Node 26.
+- **The tap had lost its deploy key:** v1.10.4 (3 Nov) built and published, but its cask step failed with `Permission denied (publickey)` and the tap listed no keys (cause not found; last good cask 12 Oct). A new write key on `homebrew-patton`, its private half in `HOMEBREW_DEPLOY_KEY`, proved by pushing the 1.10.4 cask with it; no copy kept on the Mac. Gotcha updated (`f102181`).
+- No release cut: both commits carry `[no-release]`, both runs skipped.
+- Size pass: four S37 decisions moved word for word to the archive; the Mission Synthesis carries them.
+
+_Earlier entries archived → `docs/session-archive.md` (latest trim 2026-11-07, S42)._
+
+## Decisions (S43 trim 2026-11-07)
+
+- **2026-11-07 (S42) — Push waits for Michael's word.** "again dont push live yet": the fixes stay on local main; the next session installs from Terminal.app and pushes only when he says.
+
+- **2026-11-07 (S42) — The paste dialog became a setting, off by default; not removed, not made smart.** He asked to turn it off; a toggle keeps the escape hatch he valued for compose-first. Asking only where pasted lines would run (no bracketed paste) is offered, not built.
+
+- **2026-11-07 (S42) — Verdict TTL from measured data, erring toward alerting.** 40 s sits just above the 31 s maximum; longer widens the window where a stale verdict parks a pane silently, and a missed alert is the worse failure.
+
+- **2026-11-07 (S42) — The bookmark tells the shell its project through an environment variable, not a new setting.** A "bookmark command" setting would need configuring; `PATTON_PROJECT_DIR` is inert for any other startup command, and `cc` uses it once, so every `cc` he types himself still shows the picker.
+
+- **2026-11-06 (S41) — Install from a plain terminal session, never mid-session in Patton.** Michael: "don't activate anything while we're in here", then "we'll update in a later session in terminal so this doesnt all break". The overwrite has proven survivable (11:40:58, the app ran on), but the risk falls on his live sessions; worktree commits and `PATTON_NO_INSTALL=1` keep builds out of /Applications until then.
+
+## Gotchas (S43 trim 2026-11-07)
+
+- **Claude Code's title glyphs drive the green dot** (S37). Claude Code 2.1.296 prefixes its OSC title with ◐/◑ (U+25D0/U+25D1, alternating ~960ms) while busy and ✳ (U+2733) when stopped — read from its bundle (`C6=["◐","◑"],T6="✳"` in `…/@anthropic-ai/claude-code/bin/claude.exe`). Under tmux/screen the title stays a static ✳, so no Claude dots. If dots stop after a Claude update, re-check the glyphs; `grep '\[DOT\]' main.log` names each signal's source.
