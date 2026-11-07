@@ -156,6 +156,8 @@ export class TerminalView {
       theme: getTheme(),
     });
 
+    this.syncFrameColor(getTheme());
+
     this.fitAddon = new FitAddon();
     this.searchAddon = new SearchAddon();
 
@@ -210,7 +212,9 @@ export class TerminalView {
     this.mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
     this.themeHandler = () => {
       if (!this.customTheme) {
-        this.terminal.options.theme = getTheme();
+        const theme = getTheme();
+        this.terminal.options.theme = theme;
+        this.syncFrameColor(theme);
       }
     };
     this.mediaQuery.addEventListener('change', this.themeHandler);
@@ -613,9 +617,23 @@ export class TerminalView {
     this.copyOnSelectEnabled = enabled;
   }
 
+  /**
+   * Paint the padding frame round the terminal in the theme's own background
+   * (terminal.css reads --term-bg), so it matches the terminal instead of the
+   * OS-mode chrome colour. Called from every place a theme is applied: the
+   * constructor, the OS light/dark listener and setCustomTheme (which Tab calls
+   * for every pane, split panes included, at creation and on theme change).
+   */
+  private syncFrameColor(theme: ITheme): void {
+    if (theme.background) this.container.style.setProperty('--term-bg', theme.background);
+    else this.container.style.removeProperty('--term-bg');
+  }
+
   setCustomTheme(theme: ITheme | null): void {
     this.customTheme = theme;
-    this.terminal.options.theme = theme ?? getTheme();
+    const applied = theme ?? getTheme();
+    this.terminal.options.theme = applied;
+    this.syncFrameColor(applied);
     // WebGL's glyph atlas is keyed under the old theme's colors; a theme swap
     // without a flush can leave stale glyphs (wrong color/contrast) for
     // attribute combinations that were already cached. Cheap to rebuild —
