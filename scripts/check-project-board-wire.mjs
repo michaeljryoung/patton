@@ -137,6 +137,7 @@ function makePatton(state) {
 const payload = (listFound = true) => ({
   listFile: '~/list.md',
   listFound,
+  listTable: listFound,
   projects: [
     { path: '/tmp/proj-a', name: 'Alpha', subProjects: [] },
     { path: '/tmp/proj-b', name: 'Beta', subProjects: [] },

@@ -58,6 +58,7 @@ function fixture() {
   return {
     listFile: '~/tmp/projects.md',
     listFound: true,
+    listTable: true,
     projects: [
       {
         path: P('alpha'), name: 'Alpha', lastSessionAt: NOW - 3 * 60 * 60 * 1000,
@@ -240,6 +241,13 @@ function setup(payload = fixture(), opts = {}) {
     nf.q('.pboard-empty')?.textContent === 'No project list at ~/tmp/projects.md. Set one in Settings → Project list file.', nf.q('.pboard-empty')?.textContent);
   const empty = setup({ ...fixture(), projects: [], layout: { version: 1, themes: [], tiles: {} } });
   check('list empty: a message', /empty/.test(empty.q('.pboard-empty')?.textContent ?? ''), empty.q('.pboard-empty')?.textContent);
+  check('list empty with a project table: invites + Project', /Use \+ Project/.test(empty.q('.pboard-empty')?.textContent ?? ''));
+  // + Project adds only inside a project table, so a file without one says what to add instead.
+  const noTable = setup({ ...fixture(), listTable: false, projects: [], layout: { version: 1, themes: [], tiles: {} } });
+  const noTableText = noTable.q('.pboard-empty')?.textContent ?? '';
+  check('no project table: names the header row and the setting, no + Project invite',
+    noTableText.includes('~/tmp/projects.md') && noTableText.includes('| Project | Path |') && noTableText.includes('Settings')
+    && !/Use \+ Project/.test(noTableText), noTableText);
 }
 
 // ── 3. Drag a tile to another area, before a tile; unknown paths keep their place ──

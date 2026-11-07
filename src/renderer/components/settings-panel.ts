@@ -165,7 +165,7 @@ export class SettingsPanel {
           <div class="settings-group">
             <label class="settings-label" for="setting-project-list-file">Project list file</label>
             <input class="settings-input" id="setting-project-list-file" type="text" placeholder="~/.claude/projects.md" spellcheck="false" />
-            <span class="settings-hint">The Markdown table of projects the board reads (the cc launcher's format). Empty means ~/.claude/projects.md.</span>
+            <span class="settings-hint">The Markdown table of projects the board reads (the cc launcher's format: a header row | Project | Path |, its separator row, then one row per project). Empty means ~/.claude/projects.md.</span>
           </div>
           <div class="settings-group settings-group-toggle">
             <label class="settings-label" for="setting-shell-integration">Shell Integration</label>

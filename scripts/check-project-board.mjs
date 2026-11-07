@@ -301,11 +301,22 @@ async function main() {
     return r;
   };
   await notList('plain text with no table', 'notes.md', 'Some notes.\nNo table here.\n');
-  await notList('a table with no project row', 'header-only.md', '| Project | Path |\n|---|---|\n');
+  // A project list is a file with a table whose header row names Project and
+  // then Path (the line the launcher skips as the header); nothing else (A).
+  const noTable = async (label, name, content) => {
+    const r = await notList(label, name, content);
+    check(`add refused, names the header: ${label}`, String(r.error).includes('| Project | Path |'), r.error);
+  };
+  await noTable('a README table of options with a readable row', 'readme.md', '# Tool\n\n| Option | Meaning |\n|---|---|\n| fast | `' + gamma + '` |\n');
+  await noTable('notes holding a pipe line', 'notes.txt', 'todo\n| a | `b` |\n');
+  await noTable('a cheatsheet with a shell pipe', 'cheatsheet.md', '| ps aux | grep node |\n');
+  await noTable('a project header inside a code fence', 'fenced.md', '```\n| Project | Path |\n|---|---|\n| Gamma | `' + gamma + '` |\n```\n');
+  await noTable('a project header with no separator row', 'nosep.md', '| Project | Path |\n| Gamma | `' + gamma + '` |\n');
+  await noTable('a zero-byte file', 'zero.md', '');
+  await noTable('rows with no header', 'headless.md', '| Gamma | `' + gamma + '` |\n');
   await notList('config file (not .md/.markdown/.txt)', 'config', 'Host x\n| A | `/tmp/a` |\n');
   await notList('shell script with a | row', 'script.sh', 'echo a | `/tmp/a`\n');
   await notList('rows only outside a table', 'loose.md', 'A | `' + gamma + '`\n');
-  await notList('the only row unterminated (the launcher reads none)', 'unterm.md', '| Project | Path |\n|---|---|\n| Gamma | `' + gamma + '` |');
   await notList('a directory named like a list', 'dir.md', null, (f) => mkdirSync(f));
   await notList('larger than the cap', 'big.md', '| Gamma | `' + gamma + '` |\n' + 'x'.repeat(1024 * 1024 + 10) + '\n');
   const latin1 = Buffer.concat([Buffer.from('| Project | Path |\n|---|---|\n| Caf'), Buffer.from([0xe9]), Buffer.from(' | `' + gamma + '` |\n')]);
@@ -320,11 +331,11 @@ async function main() {
   check('add refused, bytes kept: binary content', typeof rb.error === 'string' && readFileSync(binFile).equals(bin), rb.error);
   // A symlink to a non-list: judged by its real file, refused.
   const linkToConf = join(work, 'link.md');
-  writeFileSync(join(work, 'real-config'), 'Host x\n| A | `/tmp/a` |\n');
+  writeFileSync(join(work, 'real-config'), 'Host x\n| Project | Path |\n|---|---|\n| A | `/tmp/a` |\n');
   symlinkSync(join(work, 'real-config'), linkToConf);
   const rs = await m.addProject({ listSetting: linkToConf, userDataDir: userData }, { path: delta, name: 'Delta' });
   check('add refused: a .md symlink to a non-list file', typeof rs.error === 'string'
-    && readFileSync(join(work, 'real-config'), 'utf8') === 'Host x\n| A | `/tmp/a` |\n', rs.error);
+    && readFileSync(join(work, 'real-config'), 'utf8') === 'Host x\n| Project | Path |\n|---|---|\n| A | `/tmp/a` |\n', rs.error);
   // A symlink to a real list: written through, the link kept.
   const realList = join(work, 'real-list.md');
   writeFileSync(realList, '| Project | Path |\n|---|---|\n| Gamma | `' + gamma + '` |\n');
@@ -335,7 +346,7 @@ async function main() {
     !rk.error && readFileSync(realList, 'utf8').includes('| Delta |') && readdirSync(work).includes('linked-list.md'), rk.error);
   // Permissions kept.
   const modeList = join(work, 'mode.md');
-  writeFileSync(modeList, '| Gamma | `' + gamma + '` |\n');
+  writeFileSync(modeList, '| Project | Path |\n|---|---|\n| Gamma | `' + gamma + '` |\n');
   chmodSync(modeList, 0o600);
   await m.addProject({ listSetting: modeList, userDataDir: userData }, { path: delta, name: 'Delta' });
   const { statSync } = await import('node:fs');
@@ -355,12 +366,33 @@ async function main() {
   const g = '| Gamma | `' + gamma + '` |';
   await bytesCase('CRLF kept, row in CRLF', `| Project | Path |\r\n|---|---|\r\n${g}\r\n\r\nNotes\r\n`,
     `| Project | Path |\r\n|---|---|\r\n${g}\r\n${row}\r\n\r\nNotes\r\n`);
-  await bytesCase('no trailing newline after notes stays so', `${g}\n\nnotes with no newline`, `${g}\n${row}\n\nnotes with no newline`);
-  await bytesCase('unterminated last table line stays last, unterminated', `| Project | Path |\n${g}\n| Hidden | \`/tmp/h\` |`,
-    `| Project | Path |\n${g}\n${row}\n| Hidden | \`/tmp/h\` |`);
-  await bytesCase('BOM and non-ASCII text kept', `\ufeff# Café ✓\n${g}\n`, `\ufeff# Café ✓\n${g}\n${row}\n`);
-  check('insertListRow: null with no table row', m.insertListRow('no table\n', row, home) === null
-    && m.insertListRow('| Project | Path |\n|---|---|\n', row, home) === null);
+  const hdr = '| Project | Path |\n|---|---|\n';
+  await bytesCase('no trailing newline after notes stays so', `${hdr}${g}\n\nnotes with no newline`, `${hdr}${g}\n${row}\n\nnotes with no newline`);
+  await bytesCase('unterminated last table line stays last, unterminated', `${hdr}${g}\n| Hidden | \`/tmp/h\` |`,
+    `${hdr}${g}\n${row}\n| Hidden | \`/tmp/h\` |`);
+  await bytesCase('BOM and non-ASCII text kept', `\ufeff# Café ✓\n${hdr}${g}\n`, `\ufeff# Café ✓\n${hdr}${g}\n${row}\n`);
+  // A header-only list takes its first project directly after the separator (C).
+  await bytesCase('header-only list takes its first row', hdr, `${hdr}${row}\n`);
+  await bytesCase('header-only CRLF list, notes kept', '| Project | Path |\r\n| :--- | ---: |\r\n\r\nNotes\r\n',
+    `| Project | Path |\r\n| :--- | ---: |\r\n${row}\r\n\r\nNotes\r\n`);
+  await bytesCase('only row unterminated: new row after the separator', `${hdr}${g}`, `${hdr}${row}\n${g}`);
+  // Another table above the project table is left alone (A).
+  await bytesCase('row goes into the project table, not an earlier table',
+    `| Option | Meaning |\n|---|---|\n| fast | \`/tmp/f\` |\n\n${hdr}${g}\n`,
+    `| Option | Meaning |\n|---|---|\n| fast | \`/tmp/f\` |\n\n${hdr}${g}\n${row}\n`);
+  check('insertListRow: null with no project table', m.insertListRow('no table\n', row) === null
+    && m.insertListRow('| Option | Meaning |\n|---|---|\n| a | `/tmp/a` |\n', row) === null
+    && m.insertListRow('```\n| Project | Path |\n|---|---|\n```\n', row) === null);
+
+  // The board says whether + Project can add, so its empty state agrees (C).
+  const headerOnly = join(work, 'header-only.md');
+  writeFileSync(headerOnly, hdr);
+  const ho = await m.loadBoard({ listSetting: headerOnly, userDataDir: userData });
+  check('load: header-only list is found, empty, with a project table', ho.listFound && ho.listTable === true && ho.projects.length === 0, ho);
+  const zero = await m.loadBoard({ listSetting: join(work, 'zero.md'), userDataDir: userData });
+  check('load: zero-byte list is found, with no project table', zero.listFound && zero.listTable === false, zero);
+  const readme = await m.loadBoard({ listSetting: join(work, 'readme.md'), userDataDir: userData });
+  check('load: a README table is not a project table', readme.listFound && readme.listTable === false, readme.listTable);
 
   // ── "Added" only for a row both readers show (m1) ──
   const pathTools = dir('PathTools');
@@ -376,7 +408,7 @@ async function main() {
   const log = new m.AdditionLog();
   const genBefore = log.generation;
   const addList = join(work, 'gen.md');
-  writeFileSync(addList, '| Gamma | `' + gamma + '` |\n');
+  writeFileSync(addList, '| Project | Path |\n|---|---|\n| Gamma | `' + gamma + '` |\n');
   const genData = join(work, 'gen-data');
   mkdirSync(genData);
   m.saveLayout(genData, { version: 1, themes: [{ id: 'work', name: 'Work', tint: 'sand', projects: [gamma] }], tiles: {} });

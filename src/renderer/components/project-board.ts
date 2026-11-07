@@ -391,7 +391,11 @@ export class ProjectBoard {
       return;
     }
     if (this.payload.projects.length === 0 && this.layout.themes.length === 0) {
-      this.areasEl.appendChild(this.emptyNote('The project list is empty. Use + Project to add one.'));
+      // + Project adds only inside a project table, so invite it only when there is one.
+      this.areasEl.appendChild(this.emptyNote(this.payload.listTable
+        ? 'The project list is empty. Use + Project to add one.'
+        : `${this.payload.listFile} has no project table. Add a header row | Project | Path | with a separator row |---|---| under it, `
+          + 'or choose another file in Settings → Project list file.'));
       return;
     }
     for (const area of this.areas()) this.areasEl.appendChild(this.renderArea(area));

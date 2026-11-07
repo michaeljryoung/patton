@@ -20,8 +20,10 @@ import { isAllowedCwdPath } from './pty-manager';
  * The renderer is untrusted: every layout it sends is validated here, and the
  * one write to the project list (adding a row) checks the folder and the name,
  * writes only to a file that already is a project list (a regular UTF-8 text
- * file holding a table with a row the launcher reads), and leaves every other
- * byte of the file as it was, because `cc` and Claude sessions read it too.
+ * file holding a table whose header row names "Project" and then "Path", the
+ * row the launcher skips as the header), adds the row inside that table, and
+ * leaves every other byte of the file as it was, because `cc` and Claude
+ * sessions read it too.
  */
 
 export const LAYOUT_FILE_NAME = 'project-board.json';
@@ -529,7 +531,7 @@ export async function loadBoard(sources: BoardSources): Promise<BoardPayload> {
   const listFile = resolveListFile(sources.listSetting, home);
   const layout = readLayout(sources.userDataDir);
   const shownFile = listFile ? tildePath(listFile, home) : String(sources.listSetting ?? '');
-  const notFound = (): BoardPayload => ({ listFile: shownFile, listFound: false, projects: [], layout });
+  const notFound = (): BoardPayload => ({ listFile: shownFile, listFound: false, listTable: false, projects: [], layout });
   if (!listFile) {
     console.info('[BOARD] Loaded', { listFound: false });
     return notFound();
@@ -554,12 +556,13 @@ export async function loadBoard(sources: BoardSources): Promise<BoardPayload> {
   }
   const rows = usableRows(parseProjectList(text, home));
   const projects = nestProjects(rows, await gatherRowFacts(rows, home));
+  const listTable = hasListTable(text);
   const subs = projects.reduce((n, p) => n + p.subProjects.length, 0);
   console.info('[BOARD] Loaded', {
-    listFound: true, projects: projects.length, subProjects: subs,
+    listFound: true, listTable, projects: projects.length, subProjects: subs,
     missing: projects.filter((p) => p.missing).length, themes: layout.themes.length,
   });
-  return { listFile: shownFile, listFound: true, projects, layout };
+  return { listFile: shownFile, listFound: true, listTable, projects, layout };
 }
 
 // ── Adding a project row ──
@@ -578,32 +581,59 @@ export function formatListRow(name: string, path: string, linkForm: boolean, hom
   return linkForm ? `| ${name} | [\`${shown}\`](${fileUrl(path)}) |` : `| ${name} | \`${shown}\` |`;
 }
 
+/** The header row of a project table: the line the launcher's reader skips
+ *  for holding "Project" and later "Path". */
+const LIST_HEADER = /Project.*Path/;
+/** A Markdown table's separator row: cells of dashes, colons allowed. */
+const TABLE_SEPARATOR = /^\s*\|\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
+/** What + Project says when the file has no project table. */
+const NO_LIST_TABLE = 'the file has no project table to add to: a Markdown table whose header row names "Project" '
+  + 'and then "Path" (as | Project | Path |), with its separator row (|---|---|) under it';
+
 /**
- * Insert a row directly after the last row of the table that holds the first
- * project row (the file can carry notes below it), leaving every other byte as
- * it was. The row ends with the line ending of the table line it follows. A
- * table line that ends the file with no newline (which the launcher never
- * reads) stays last, so the file's ending is unchanged and the new row is read.
- * Returns null when no table line holds a row the launcher reads: + Project
- * adds to an existing project table, never anywhere else.
+ * The index of the last line of the file's project table, or -1 when it has
+ * none. A project table is a Markdown table outside code fences whose header
+ * row names "Project" and then "Path" (the launcher's own convention: its
+ * reader skips that line as the header), with its separator row right under
+ * it; it runs on over the table lines that follow. The first such table
+ * counts. Only terminated lines count, since the launcher never reads a last
+ * line without a newline: it stays last.
  */
-export function insertListRow(text: string, row: string, home: string = homedir()): string | null {
-  const lines = text.split('\n');
+function listTableEnd(lines: readonly string[]): number {
+  const isTableLine = (line: string) => line.trimStart().startsWith('|');
   // lines[unterminated] is the text after the last newline ('' when the text ends with one).
   const unterminated = lines.length - 1;
-  const isTableLine = (line: string) => line.trimStart().startsWith('|');
-  let anchor = -1;
-  for (let i = 0; i < unterminated; i++) {
-    if (isTableLine(lines[i]) && parseProjectList(lines[i] + '\n', home).length > 0) {
-      anchor = i;
-      break;
-    }
+  let inFence = false;
+  for (let i = 0; i + 1 < unterminated; i++) {
+    const start = lines[i].trimStart();
+    if (start.startsWith('```') || start.startsWith('~~~')) inFence = !inFence;
+    if (inFence) continue;
+    if (!isTableLine(lines[i]) || !LIST_HEADER.test(lines[i]) || !TABLE_SEPARATOR.test(lines[i + 1])) continue;
+    let last = i + 1;
+    while (last + 1 < unterminated && isTableLine(lines[last + 1])) last++;
+    return last;
   }
-  if (anchor === -1) return null;
-  let last = anchor;
-  while (last + 1 < unterminated && isTableLine(lines[last + 1])) last++;
+  return -1;
+}
+
+/** Whether the text holds a project table + Project can add a row to. */
+export function hasListTable(text: string): boolean {
+  return listTableEnd(text.split('\n')) !== -1;
+}
+
+/**
+ * Insert a row directly after the last row of the project table (directly
+ * after its separator when it has no rows yet), leaving every other byte as
+ * it was; the file can carry notes and other tables. The row ends with the
+ * line ending of the table line it follows. Returns null when the file has no
+ * project table: + Project adds there, never anywhere else.
+ */
+export function insertListRow(text: string, row: string): string | null {
+  const lines = text.split('\n');
+  const last = listTableEnd(lines);
+  if (last === -1) return null;
   const eol = lines[last].endsWith('\r') ? '\r\n' : '\n';
-  // Offset just past the table's last terminated line and its newline.
+  // Offset just past the table's last line and its newline.
   let offset = 0;
   for (let i = 0; i <= last; i++) offset += lines[i].length + 1;
   return text.slice(0, offset) + row + eol + text.slice(offset);
@@ -712,10 +742,8 @@ export async function addProject(
   const read = readListForWrite(listFile);
   if (read.ok === false) return refuse(read.reason);
   const { target, bytes, text } = read;
+  if (!hasListTable(text)) return refuse(NO_LIST_TABLE);
   const rows = parseProjectList(text, home);
-  if (rows.length === 0) {
-    return refuse('the file has no project row the launcher reads, so it is not treated as a project list');
-  }
   const listed = rows.filter((r) => isSafeAbsolutePath(r.path)).map((r) => resolve(r.path));
   const check = checkAddRequest(raw, listed);
   if (check.ok === false) return refuse(check.reason);
@@ -727,8 +755,8 @@ export async function addProject(
   if (readBack.length !== 1 || readBack[0].name !== check.name || readBack[0].path !== check.path) {
     return refuse(ROW_UNREADABLE);
   }
-  const next = insertListRow(text, row, home);
-  if (next === null) return refuse('the file has no project table to add a row to');
+  const next = insertListRow(text, row);
+  if (next === null) return refuse(NO_LIST_TABLE);
   const out = Buffer.from(next, 'utf8');
   try {
     writeAtomic(target, out);

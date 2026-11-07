@@ -197,6 +197,9 @@ export interface BoardPayload {
   /** The list file in use, with the home folder shown as ~. */
   listFile: string;
   listFound: boolean;
+  /** The file holds a project table (header row naming "Project" then
+   *  "Path", and its separator row), the only place + Project adds a row. */
+  listTable: boolean;
   projects: BoardProject[];
   layout: BoardLayout;
   /** Set by board:add-project when it refused: the reason, in words. */
