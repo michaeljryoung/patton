@@ -6,6 +6,7 @@
 // generic alone, for either of two different generics.
 
 import { DEFAULTS } from '../../shared/constants';
+import { rlog } from './renderer-logger';
 
 export interface FontChoice {
   /** The family the choice is named after (first in its stack). */
@@ -30,6 +31,7 @@ export const FONT_CHOICES: readonly FontChoice[] = [
   { family: 'Courier New', value: "'Courier New', monospace" },
 ];
 
+const GENERIC_FAMILIES = ['monospace', 'ui-monospace', 'sans-serif', 'serif', 'system-ui'];
 const SAMPLE = 'mmmmmmmmmmlli1WW@@ilil0O';
 
 /** A measurer for `fontDraws`: a 2D canvas context. */
@@ -49,12 +51,16 @@ function defaultMeasurer(): TextMeasurer {
 }
 
 function widthOf(ctx: TextMeasurer, stack: string): number {
+  // An invalid declaration is ignored and keeps the previous font: start from a known one.
+  ctx.font = '10px sans-serif';
   ctx.font = `40px ${stack}`;
   return ctx.measureText(SAMPLE).width;
 }
 
 /** True when `family` is installed or registered and Chromium draws it. */
 export function fontDraws(family: string, ctx: TextMeasurer = defaultMeasurer()): boolean {
+  // A generic keyword (a saved stack may start with `monospace`) always draws.
+  if (GENERIC_FAMILIES.includes(family.trim().toLowerCase())) return true;
   const quoted = `'${family.replace(/['"\\]/g, '')}'`;
   for (const generic of ['sans-serif', 'serif']) {
     if (widthOf(ctx, `${quoted}, ${generic}`) !== widthOf(ctx, generic)) return true;
@@ -94,4 +100,21 @@ export function buildFontOptions(saved: string | undefined, draws: (family: stri
     options.push({ value: saved, label: available ? family : `${family} (not on this Mac)`, available });
   }
   return options;
+}
+
+/** The original six Settings options, listed when the font probe itself fails. */
+const ORIGINAL_FAMILIES = ['SF Mono', 'Menlo', 'JetBrains Mono', 'Fira Code', 'Monaco', 'Courier New'];
+
+/**
+ * `buildFontOptions` that cannot throw: if the probe fails (no canvas
+ * context), Settings still opens with the original options plus the saved value.
+ */
+export function safeFontOptions(saved: string | undefined, draws: (family: string) => boolean = (f) => fontDraws(f)): FontOption[] {
+  try {
+    return buildFontOptions(saved, draws);
+  } catch (err) {
+    rlog('warn', '[FONT] probe failed; listing the original font options', { error: String(err) });
+    const savedFamily = firstFamily(saved || '');
+    return buildFontOptions(saved, (family) => ORIGINAL_FAMILIES.includes(family) || family === savedFamily);
+  }
 }

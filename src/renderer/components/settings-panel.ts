@@ -4,7 +4,7 @@ import { settingsShortcuts, displayKeys, acceleratorToDisplay } from '../../shar
 import { trapFocus } from '../services/focus-trap';
 import { rlog } from '../services/renderer-logger';
 import { wakeCommandOf } from '../services/board-wake';
-import { buildFontOptions, fontDraws } from '../services/font-choices';
+import { safeFontOptions } from '../services/font-choices';
 
 export class SettingsPanel {
   private overlay: HTMLElement;
@@ -429,7 +429,7 @@ export class SettingsPanel {
    */
   private populateFontFamilies(saved: string): void {
     const select = this.overlay.querySelector('#setting-font-family') as HTMLSelectElement;
-    const options = buildFontOptions(saved, (family) => fontDraws(family));
+    const options = safeFontOptions(saved);
     select.replaceChildren();
     for (const o of options) {
       const el = document.createElement('option');
