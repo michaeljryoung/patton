@@ -17,9 +17,9 @@ export const DEFAULT_CHECKPOINT_NUDGE_PCT = DEFAULTS.CHECKPOINT_NUDGE_PCT;
 
 /** What a pane knows about its Claude session, for the clock. */
 export interface CheckpointSource {
-  /** Claude Code runs in the pane (a title glyph has been seen since the last shell prompt). */
+  /** Claude Code runs in the pane (an OSC 7501 report, or a title glyph, since the last shell prompt). */
   claudeActive: boolean;
-  /** Claude is mid-turn (◐/◑ title): /checkpoint can't be typed now. */
+  /** Claude is mid-turn or blocked on a prompt (7501), or mid-turn (◐/◑ title): /checkpoint can't be typed now. */
   claudeWorking: boolean;
   /** /checkpoint may be typed: Claude has stopped and its Stop hook has
    *  reported since (a dialog shows ✳ too but sends no Stop hook). */

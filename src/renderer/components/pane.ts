@@ -1,4 +1,4 @@
-import { TerminalView } from './terminal-view';
+import { TerminalView, type ProgramStatusEvent } from './terminal-view';
 import type { ContextReading } from '../services/patton-osc';
 import { EditorInput, DEFAULT_COMPOSE_PLACEHOLDER } from './editor-input';
 import { SearchOverlay } from './search-overlay';
@@ -14,14 +14,39 @@ import { shouldConfirmMultilinePaste } from '../services/paste-confirm';
 import { PATTON_QUOTES } from '../../shared/constants';
 import { shortcutKeys } from '../../shared/shortcuts';
 import type { CheckpointSource } from '../services/checkpoint-clock';
+import { ProgramStatusRecords, programSignal, type ProgramSignal, type ProgramState } from '../services/program-status';
 
 import type { ITheme } from '@xterm/xterm';
 import type { TabFlag } from '../../shared/types';
 
-/** Background work a parked Claude Code session is waiting on (Stop hook). */
+/** Background work a parked Claude Code session is waiting on: from the Stop
+ *  hook (tasks + crons), or from OSC 7501 child records (tasks + their titles,
+ *  untrusted text, shown only as text). */
 export interface ParkedInfo {
   tasks: number;
   crons: number;
+  titles?: string[];
+}
+
+/** Where a pane's Claude state comes from: Claude Code's own OSC 7501 reports
+ *  once it has sent one (authoritative), else its title glyphs plus the Stop
+ *  hook's verdict (the fallback, unchanged). */
+export type ClaudeStateSource = '7501' | 'title';
+
+/** One pane's Claude Code state, whichever source it came from. */
+export interface ClaudeState {
+  source: ClaudeStateSource;
+  /** Claude Code runs in this pane. */
+  active: boolean;
+  /** Mid-turn (7501 `working`, or a ◐/◑ title). */
+  working: boolean;
+  /** Waiting on a permission, a question, a login or a dialog (7501 only). */
+  blocked: boolean;
+  /** The 7501 root state, null on the title path. */
+  root: ProgramState | null;
+  /** Why the pane last raised "needs you" (7501 only), as plain text. */
+  needsYouText: string | null;
+  parked: ParkedInfo | null;
 }
 
 let paneIdCounter = 0;
@@ -100,10 +125,31 @@ export class Pane {
   private static readonly CLAUDE_STOP_SETTLE_MS = 1500;
   private claudeWorking = false;
   private claudeStopTimer: ReturnType<typeof setTimeout> | null = null;
-  // True once a Claude title glyph (◐ ◑ ✳) has been seen since the shell's
-  // last prompt: Claude Code is running in this pane, so image pastes go to it
-  // as Ctrl+V (it reads the clipboard itself) instead of as a file path.
+  // True once Claude Code has reported (OSC 7501) or a Claude title glyph
+  // (◐ ◑ ✳) has been seen since the shell's last prompt: Claude Code is
+  // running in this pane, so image pastes go to it as Ctrl+V (it reads the
+  // clipboard itself) instead of as a file path.
   private claudeActive = false;
+  // Claude Code's own status (OSC 7501, services/program-status.ts). Once a
+  // pane has had a report, it is the only source: Claude stops putting its
+  // glyph in the title, so the title path stands aside, and the Stop hook's
+  // tasks/crons verdict is ignored (its context reading is still used). A
+  // bare `state=clear` (Claude exiting), a full reset or the shell's next
+  // prompt drops the records and hands the pane back to the title path.
+  // claudeActive / claudeWorking / claudeBlocked / parked are the state both
+  // sources write and every consumer reads (see `claudeState`).
+  private programStatus = new ProgramStatusRecords();
+  private statusReporting = false;
+  private claudeBlocked = false;
+  private lastProgramSignal: ProgramSignal = { kind: 'none' };
+  private lastProgramLogKey = '';
+  private lastIgnoredLogMs = 0;
+  private needsYouText: string | null = null;
+  // Root done and its last child task just finished: Claude usually wakes to
+  // read the task's result, so give it a moment to report working before
+  // calling it a stop. Unmeasured; the [7501] state lines are the data.
+  private static readonly PARKED_DRAIN_SETTLE_MS = 4000;
+  private static readonly IGNORED_LOG_INTERVAL_MS = 5000;
   // The checkpoint clock's reading for this Claude session (Stop hook, OSC 777
   // `ctx=…;since=…[;cpt=…]`); null until the first one, and cleared when
   // Claude stops running here. See services/checkpoint-clock.ts.
@@ -123,8 +169,8 @@ export class Pane {
   private composeFirstSetting = false;
   private composeFirstOverride: boolean | null = null;
   // Engaged: the box is open because Claude Code runs here in compose-first
-  // mode. Nothing is guessed: Claude's presence is claudeActive (its title
-  // glyph), and the box takes focus only on engage, after a submit, and when
+  // mode. Nothing is guessed: Claude's presence is claudeActive (its 7501
+  // reports, else its title glyph), and the box takes focus only on engage, after a submit, and when
   // Claude starts working again after a hand-off.
   private composeFirstEngaged = false;
   // The user gave the keyboard to the terminal (Esc in a non-empty box, or a
@@ -199,7 +245,7 @@ export class Pane {
   // keeps the Mac awake; the tab gets a yellow flag for as long as it does.
   private autoFlagged = false;
 
-  private fireCommandDone(source: 'osc133' | 'claude' | 'bell' | 'osc9' | 'hook'): void {
+  private fireCommandDone(source: 'osc133' | 'claude' | 'bell' | 'osc9' | 'hook' | '7501'): void {
     // While Claude works (or its stop is still settling), a bell or OSC 9 is
     // incidental — e.g. a BEL in tool output — not Claude asking for you. A
     // real stop arrives through the title anyway.
@@ -218,6 +264,9 @@ export class Pane {
   /** Follow Claude Code's working/stopped state from its title. Going from
    *  working to stopped is the moment it needs the user (after the settle). */
   private trackClaudeState(title: string): void {
+    // Claude Code reports its state itself here (OSC 7501) and has dropped
+    // the glyph from its title: the title says nothing about it.
+    if (this.statusReporting) return;
     // A title with neither glyph means Claude is gone (fish, or shell
     // integration off, never sends the OSC 133 prompt that would clear this).
     this.claudeActive = Pane.CLAUDE_WORKING.test(title) || Pane.CLAUDE_STOPPED.test(title);
@@ -231,18 +280,7 @@ export class Pane {
 
   private trackClaudeWorking(title: string): void {
     if (Pane.CLAUDE_WORKING.test(title)) {
-      this.cancelClaudeStop(); // the ✳ was only a flash between turns
-      if (this.claudeWorking) return;
-      this.claudeWorking = true;
-      this.stopSeenSinceWork = false;
-      this.notifyCheckpoint();
-      // A new stretch of work: the next stop is a new event, never a
-      // duplicate of the last one, so it mustn't be debounced away.
-      this.lastCommandDoneMs = 0;
-      this.setParked(null);
-      this.clearPasteChips(); // the pasted image has been sent along with the prompt
-      this.callbacks.onWorkStarted?.();
-      this.reclaimCompose('work-started');
+      this.startWork(); // cancels the settle: the ✳ was only a flash between turns
     } else if (this.claudeWorking) {
       this.claudeWorking = false;
       if (Pane.CLAUDE_STOPPED.test(title)) {
@@ -254,13 +292,155 @@ export class Pane {
     }
   }
 
+  /** Claude started (or went back to) working, from either source. */
+  private startWork(): void {
+    this.cancelClaudeStop();
+    if (this.claudeWorking) return;
+    this.claudeWorking = true;
+    this.stopSeenSinceWork = false;
+    this.notifyCheckpoint();
+    // A new stretch of work: the next stop is a new event, never a
+    // duplicate of the last one, so it mustn't be debounced away.
+    this.lastCommandDoneMs = 0;
+    this.needsYouText = null;
+    this.setParked(null);
+    this.clearPasteChips(); // the pasted image has been sent along with the prompt
+    this.callbacks.onWorkStarted?.();
+    this.reclaimCompose('work-started');
+  }
+
   /** Arm (or re-arm) the settle timer; when it fires, the stop is real. */
-  private armClaudeStop(ms: number): void {
+  private armClaudeStop(ms: number, onSettle: () => void = () => this.settleClaudeStop()): void {
     this.cancelClaudeStop();
     this.claudeStopTimer = setTimeout(() => {
       this.claudeStopTimer = null;
-      this.settleClaudeStop();
+      onSettle();
     }, ms);
+  }
+
+  /** One OSC 7501 event from this pane's terminal. */
+  private handleProgramStatus(event: ProgramStatusEvent): void {
+    switch (event.type) {
+      case 'probe':
+        rlog('info', '[7501] probe answered', { pane: this.id });
+        return;
+      case 'invalid': {
+        // Reasons are fixed strings, never report text. Throttled: `cat` of
+        // a file full of sequences mustn't flood the log.
+        const now = Date.now();
+        if (now - this.lastIgnoredLogMs >= Pane.IGNORED_LOG_INTERVAL_MS) {
+          this.lastIgnoredLogMs = now;
+          rlog('warn', '[7501] report ignored', { pane: this.id, reason: event.reason });
+        }
+        return;
+      }
+      case 'reset':
+        this.resetProgramStatus('reset');
+        return;
+      case 'clear':
+        if (event.id === '') {
+          this.resetProgramStatus('clear');
+          return;
+        }
+        if (!this.statusReporting) return; // nothing of ours to remove
+        this.programStatus.clear(event.id);
+        break;
+      case 'report':
+        this.programStatus.set(event.id, event.record);
+        break;
+    }
+    if (!this.statusReporting) {
+      this.statusReporting = true;
+      // From here on the hook's verdicts don't decide the dot; drop a stored one.
+      if (this.takeVerdict()) rlog('info', '[DOT] Hook verdict dropped: 7501 reports', { pane: this.id });
+    }
+    this.applyProgramStatus();
+  }
+
+  /** Turn this pane's 7501 records into the pane state (see programSignal). */
+  private applyProgramStatus(): void {
+    const signal = programSignal(this.programStatus);
+    const root = this.programStatus.root;
+    const children = this.programStatus.children().length;
+    const logKey = [root?.state, root?.kind, children, signal.kind].join('|');
+    if (logKey !== this.lastProgramLogKey) {
+      this.lastProgramLogKey = logKey;
+      rlog('info', '[7501] state', {
+        pane: this.id, root: root?.state ?? null, kind: root?.kind ?? null, children, signal: signal.kind,
+      });
+    }
+    const previous = this.lastProgramSignal;
+    this.lastProgramSignal = signal;
+    this.claudeActive = true;
+    this.claudeBlocked = root?.state === 'blocked';
+    try {
+      if (signal.kind === 'working') {
+        this.startWork();
+        return;
+      }
+      this.claudeWorking = false;
+      if (signal.kind === 'parked') {
+        this.cancelClaudeStop();
+        const info: ParkedInfo = { tasks: signal.tasks, crons: 0, titles: signal.titles };
+        if (previous.kind !== 'parked' || previous.tasks !== signal.tasks) {
+          rlog('info', '[DOT] Parked', { pane: this.id, tasks: signal.tasks, crons: 0, source: '7501' });
+        }
+        this.setParked(info);
+      } else if (signal.kind === 'needs-you') {
+        this.setParked(null);
+        // The same wait again (a child record changed under a blocked root):
+        // already settling or already raised.
+        if (previous.kind === 'needs-you' && previous.reason === signal.reason) return;
+        const wait = previous.kind === 'parked' ? Pane.PARKED_DRAIN_SETTLE_MS : Pane.CLAUDE_STOP_SETTLE_MS;
+        this.armClaudeStop(wait, () => this.settleProgramStop());
+      } else {
+        this.cancelClaudeStop();
+        this.setParked(null);
+      }
+    } finally {
+      this.syncComposeFirst('7501');
+      this.notifyCheckpoint();
+    }
+  }
+
+  /** A 7501 "needs you" has held for the settle: raise it, reason as text. */
+  private settleProgramStop(): void {
+    const signal = this.lastProgramSignal;
+    if (signal.kind !== 'needs-you') return;
+    this.needsYouText = signal.reason;
+    this.fireCommandDone('7501');
+  }
+
+  /** Drop every 7501 record and hand the pane back to the title path. */
+  private resetProgramStatus(reason: 'clear' | 'reset' | 'shell-prompt'): void {
+    const wasReporting = this.statusReporting;
+    this.programStatus.clear();
+    this.statusReporting = false;
+    this.lastProgramSignal = { kind: 'none' };
+    this.lastProgramLogKey = '';
+    this.claudeBlocked = false;
+    this.needsYouText = null;
+    if (!wasReporting) return;
+    rlog('info', '[7501] state', { pane: this.id, root: 'clear', kind: null, children: 0, reason });
+    this.claudeWorking = false;
+    this.claudeActive = false;
+    this.cancelClaudeStop();
+    this.setParked(null);
+    this.syncComposeFirst('7501-clear');
+    this.notifyCheckpoint();
+  }
+
+  /** This pane's Claude Code state: the one API every consumer reads. */
+  get claudeState(): ClaudeState {
+    return {
+      source: this.statusReporting ? '7501' : 'title',
+      active: this.claudeActive,
+      working: this.claudeWorking,
+      blocked: this.claudeBlocked,
+      root: this.programStatus.root?.state ?? null,
+      needsYouText: this.needsYouText,
+      parked: this.parked,
+    };
   }
 
   /** ✳ has held for the settle: apply the stored verdict, else the title path. */
@@ -288,6 +468,12 @@ export class Pane {
    *  at once (see the state machine above the hook fields). */
   private handleHookStop(tasks: number, crons: number): void {
     this.hookActive = true;
+    // Claude Code reports its own state here: the verdict is only the
+    // fallback for panes that never report.
+    if (this.statusReporting) {
+      rlog('info', '[DOT] Hook verdict ignored: 7501 reports', { pane: this.id, tasks, crons });
+      return;
+    }
     if (this.pendingVerdictTimer) clearTimeout(this.pendingVerdictTimer);
     const replaced = this.pendingVerdict !== null;
     this.pendingVerdict = { tasks, crons };
@@ -327,7 +513,7 @@ export class Pane {
       this.sinceTokens = null;
       this.checkpointAt = null;
     }
-    const key = [this.claudeActive, this.claudeWorking, this.checkpointReady, this.ctxTokens, this.sinceTokens, this.checkpointAt].join('|');
+    const key = [this.claudeActive, this.claudeWorking, this.claudeBlocked, this.checkpointReady, this.ctxTokens, this.sinceTokens, this.checkpointAt].join('|');
     if (key === this.lastCheckpointKey) return;
     this.lastCheckpointKey = key;
     this.callbacks.onCheckpointChange?.(this);
@@ -337,7 +523,9 @@ export class Pane {
   get checkpointSource(): CheckpointSource {
     return {
       claudeActive: this.claudeActive,
-      claudeWorking: this.claudeWorking,
+      // A permission prompt or question (7501 `blocked`) can't take a typed
+      // /checkpoint either.
+      claudeWorking: this.claudeWorking || this.claudeBlocked,
       ready: this.checkpointReady,
       ctxTokens: this.ctxTokens,
       sinceTokens: this.sinceTokens,
@@ -351,20 +539,31 @@ export class Pane {
    *  cannot see it and the command is appended to it; erasing it (Ctrl+U)
    *  would destroy his text, so nothing is sent to clear it. */
   private get checkpointReady(): boolean {
-    return this.claudeActive && !this.claudeWorking && this.stopSeenSinceWork && this.ptyId !== null;
+    if (!this.claudeActive || this.ptyId === null) return false;
+    // Claude Code reports its own state (OSC 7501): its prompt is open only
+    // when the root is done or idle, never while working or blocked on a
+    // question or permission prompt (which has no Stop hook to wait for).
+    if (this.statusReporting) {
+      const root = this.programStatus.root?.state;
+      return root === 'done' || root === 'idle';
+    }
+    return !this.claudeWorking && this.stopSeenSinceWork;
   }
 
   /** Type `/checkpoint` and Enter into this pane's Claude session, through the
    *  compose box's submit path (control characters stripped, no paste dialog,
-   *  never broadcast). Only while Claude runs here, has stopped, and its Stop
-   *  hook has reported since the last ◐ (a dialog shows ✳ but sends none).
-   *  Returns null when sent, else why not. */
+   *  never broadcast). Only while Claude runs here and has stopped: its root
+   *  is done or idle (OSC 7501), else its Stop hook has reported since the
+   *  last ◐ (a dialog shows ✳ but sends none). Returns null when sent, else
+   *  why not. */
   runCheckpoint(): string | null {
     if (!this.checkpointReady) {
       rlog('info', '[CKPT] run skipped', {
-        pane: this.id, claude: this.claudeActive, working: this.claudeWorking, stopSeen: this.stopSeenSinceWork,
+        pane: this.id, claude: this.claudeActive, working: this.claudeWorking, blocked: this.claudeBlocked,
+        stopSeen: this.stopSeenSinceWork, root: this.programStatus.root?.state ?? null,
       });
       if (!this.claudeActive) return 'Checkpoint: Claude Code is not running in this pane';
+      if (this.claudeBlocked) return 'Checkpoint: Claude is waiting on a question or permission prompt';
       return 'Checkpoint: wait until Claude has finished replying';
     }
     rlog('info', '[CKPT] run', { pane: this.id });
@@ -385,7 +584,8 @@ export class Pane {
 
   private setParked(info: ParkedInfo | null): void {
     if (info === null && this.parked === null) return;
-    if (info && this.parked && info.tasks === this.parked.tasks && info.crons === this.parked.crons) return;
+    if (info && this.parked && info.tasks === this.parked.tasks && info.crons === this.parked.crons
+      && (info.titles ?? []).join('\n') === (this.parked.titles ?? []).join('\n')) return;
     this.parked = info;
     this.callbacks.onParked?.(this, info);
   }
@@ -656,6 +856,11 @@ export class Pane {
       }),
     );
 
+    // Claude Code's own status reports (OSC 7501, see handleProgramStatus).
+    this.disposables.push(
+      this.terminalView.onProgramStatus((event) => this.handleProgramStatus(event)),
+    );
+
     // Claude Code Stop hook verdicts (OSC 777, see handleHookStop).
     this.disposables.push(
       this.terminalView.onPattonState((state) => {
@@ -798,6 +1003,7 @@ export class Pane {
         // more — even if it quit mid-work and left a ◐ title behind. Without
         // this, the next `claude` launch's first ✳ would read as a stop.
         if (state === 'prompt') {
+          this.resetProgramStatus('shell-prompt');
           this.claudeWorking = false;
           this.claudeActive = false;
           this.stopSeenSinceWork = false;
@@ -1366,12 +1572,6 @@ export class Pane {
 
   getCwd(): string {
     return this.currentCwd;
-  }
-
-  /** Claude Code in this pane, from its title glyph: working (◐◑), stopped (✳), or not running (null). */
-  get claudeState(): 'working' | 'stopped' | null {
-    if (!this.claudeActive) return null;
-    return this.claudeWorking ? 'working' : 'stopped';
   }
 
   clear(): void {

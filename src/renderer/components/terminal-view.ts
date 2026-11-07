@@ -6,6 +6,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 import { DEFAULTS } from '../../shared/constants';
 import { rlog } from '../services/renderer-logger';
 import { parsePattonOsc, type PattonState } from '../services/patton-osc';
+import { parseProgramStatus, PROGRAM_STATUS_REPLY, type ParsedSequence } from '../services/program-status';
 import type { ITheme } from '@xterm/xterm';
 
 const LIGHT_THEME = {
@@ -94,6 +95,13 @@ export type PromptState = 'prompt' | 'command' | 'idle';
 
 export type { ContextReading, PattonState } from '../services/patton-osc';
 
+/** One OSC 7501 event for the pane: the probe was answered, a report or
+ *  clear arrived (or was refused), or a full reset (RIS) dropped every record. */
+export type ProgramStatusEvent =
+  | { type: 'probe' }
+  | { type: 'reset' }
+  | Exclude<ParsedSequence, { type: 'query' }>;
+
 export class TerminalView {
   readonly terminal: Terminal;
   readonly fitAddon: FitAddon;
@@ -108,6 +116,7 @@ export class TerminalView {
   private promptListeners: ((state: PromptState) => void)[] = [];
   private osc9Listeners: (() => void)[] = [];
   private pattonStateListeners: ((state: PattonState) => void)[] = [];
+  private programStatusListeners: ((event: ProgramStatusEvent) => void)[] = [];
   private webglAddon: WebglAddon | null = null;
   // When false, the WebGL renderer is never (re)loaded and the terminal renders
   // via xterm's DOM renderer — which has no GPU glyph atlas and so is immune to
@@ -305,6 +314,39 @@ export class TerminalView {
         for (const cb of this.osc9Listeners) cb();
       }
       return true;
+    });
+
+    // OSC 7501: the Program Status Protocol (services/program-status.ts).
+    // Claude Code sends `OSC 7501 ; ?` at startup between its other probes and
+    // a DA1 (`CSI c`) sentinel: a reply that reaches it before the DA1 answer
+    // turns status reporting on (and its title glyph off). Ordering holds
+    // because both answers take one synchronous path: this handler runs inside
+    // xterm's parse of the same chunk, before the parser reaches the `CSI c`,
+    // and writes with ipcRenderer.send(PTY_WRITE); xterm answers DA1 through
+    // coreService.triggerDataEvent → onData (synchronous) → Pane's
+    // onTerminalData → the same pty.write, so the two sends leave in order on
+    // one IPC channel and main writes each to the PTY as it arrives.
+    // The reply carries nothing from a report. Debounced like OSC 10/11, so a
+    // program repeating the query can't make a write loop.
+    let lastOsc7501ReplyMs = 0;
+    this.terminal.parser.registerOscHandler(7501, (data) => {
+      const parsed = parseProgramStatus(data);
+      if (parsed.type === 'query') {
+        const now = Date.now();
+        if (this.ptyId === null || now - lastOsc7501ReplyMs < OSC_QUERY_DEBOUNCE_MS) return true;
+        lastOsc7501ReplyMs = now;
+        window.patton.pty.write(this.ptyId, PROGRAM_STATUS_REPLY);
+        this.emitProgramStatus({ type: 'probe' });
+        return true;
+      }
+      this.emitProgramStatus(parsed);
+      return true;
+    });
+    // RIS (ESC c) removes every record (DECSTR does not). Returning false lets
+    // xterm's own reset run as before.
+    this.terminal.parser.registerEscHandler({ final: 'c' }, () => {
+      this.emitProgramStatus({ type: 'reset' });
+      return false;
     });
 
     // Register OSC 133 handler for shell integration (prompt detection)
@@ -673,6 +715,18 @@ export class TerminalView {
     this.pattonStateListeners.push(callback);
     return () => {
       this.pattonStateListeners = this.pattonStateListeners.filter(l => l !== callback);
+    };
+  }
+
+  private emitProgramStatus(event: ProgramStatusEvent): void {
+    for (const cb of this.programStatusListeners) cb(event);
+  }
+
+  /** OSC 7501 probe answers, reports, clears and resets (see the handler). */
+  onProgramStatus(callback: (event: ProgramStatusEvent) => void): () => void {
+    this.programStatusListeners.push(callback);
+    return () => {
+      this.programStatusListeners = this.programStatusListeners.filter(l => l !== callback);
     };
   }
 

@@ -448,8 +448,8 @@ export class TabManager {
         let state: SessionStatus;
         if (awaitingSince !== null) state = 'waiting';
         else if (tab.isPaneParked(pane)) state = 'parked';
-        else if (claude === 'working') state = 'working';
-        else if (claude === 'stopped') state = 'idle';
+        else if (claude.active && claude.working) state = 'working';
+        else if (claude.active) state = 'idle';
         else state = 'shell';
         sessions.push({
           tabId: tab.id,
@@ -687,6 +687,7 @@ export class TabManager {
         flag: t.flag,
         autoFlag: t.autoFlag,
         parked: t.parked,
+        waitingText: t.waitingText,
       })),
     );
     // Every tab change funnels through here, so the bookmarks sidebar hears it too.

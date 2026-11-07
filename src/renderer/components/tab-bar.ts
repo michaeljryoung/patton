@@ -30,18 +30,33 @@ interface TabHeaderInfo {
   flag?: TabFlag | null;
   /** Set from the pane title (`WAKE` → yellow); shown only when no manual flag is. */
   autoFlag?: TabFlag | null;
-  /** Claude Code is waiting on its own background work (Stop hook), not on you. */
-  parked?: { tasks: number; crons: number } | null;
+  /** Claude Code is waiting on its own background work (Stop hook or OSC
+   *  7501 task records, whose titles are untrusted text), not on you. */
+  parked?: { tasks: number; crons: number; titles?: string[] } | null;
+  /** Why the tab needs you (Claude Code's own status report), plain text. */
+  waitingText?: string | null;
 }
 
-function parkedText({ tasks, crons }: { tasks: number; crons: number }): string {
-  return `Waiting on its own background work (${tasks} ${tasks === 1 ? 'task' : 'tasks'}, ${crons} ${crons === 1 ? 'timer' : 'timers'})`;
+/** Task titles listed in the parked tooltip before "and N more". */
+const PARKED_TITLES_SHOWN = 5;
+
+function parkedText({ tasks, crons, titles }: { tasks: number; crons: number; titles?: string[] }): string {
+  const counts: string[] = [];
+  if (tasks > 0 || crons === 0) counts.push(`${tasks} ${tasks === 1 ? 'task' : 'tasks'}`);
+  if (crons > 0) counts.push(`${crons} ${crons === 1 ? 'timer' : 'timers'}`);
+  let text = `Waiting on its own background work (${counts.join(', ')})`;
+  if (titles && titles.length > 0) {
+    const shown = titles.slice(0, PARKED_TITLES_SHOWN).join('; ');
+    const more = titles.length - PARKED_TITLES_SHOWN;
+    text += `: ${shown}${more > 0 ? ` and ${more} more` : ''}`;
+  }
+  return text;
 }
 
 /** The tab's title plus whatever its dot says, e.g. "patton, waiting for you". */
 function tabLabel(tab: TabHeaderInfo, needsYou: boolean, shownFlag: TabFlag | null): string {
   const states: string[] = [];
-  if (needsYou) states.push('waiting for you');
+  if (needsYou) states.push(tab.waitingText ? `waiting for you (${tab.waitingText})` : 'waiting for you');
   if (shownFlag) states.push(`flagged ${shownFlag}`);
   if (tab.parked && !needsYou && !shownFlag) states.push(parkedText(tab.parked).toLowerCase());
   return states.length > 0 ? `${tab.title}, ${states.join(', ')}` : tab.title;

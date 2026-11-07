@@ -257,11 +257,23 @@ export class Tab {
     if (this._parkedPanes.size === 0) return null;
     let tasks = 0;
     let crons = 0;
+    const titles: string[] = [];
     for (const info of this._parkedPanes.values()) {
       tasks += info.tasks;
       crons += info.crons;
+      if (info.titles) titles.push(...info.titles);
     }
-    return { tasks, crons };
+    return { tasks, crons, titles };
+  }
+
+  /** Why a pane of this tab needs you, as plain text (Claude Code's own
+   *  status reports only; null on the title and hook path). */
+  get waitingText(): string | null {
+    for (const pane of this._panesNeedingYou.keys()) {
+      const text = pane.claudeState.needsYouText;
+      if (text) return text;
+    }
+    return null;
   }
 
   private setPaneAutoFlag(pane: Pane, flag: TabFlag | null): void {
