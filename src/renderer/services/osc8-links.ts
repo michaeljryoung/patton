@@ -1,6 +1,6 @@
 import type { ILinkHandler, Terminal } from '@xterm/xterm';
 import { rlog } from './renderer-logger';
-import { localHostNames, resolveHyperlink, type LinkTarget } from './link-target';
+import { describeLinkTarget, localHostNames, resolveHyperlink, type FileLinkOutcome, type LinkTarget } from './link-target';
 
 /**
  * OSC 8 hyperlinks: `ESC ] 8 ; params ; URI ST text ESC ] 8 ; ; ST`.
@@ -41,10 +41,31 @@ function describeForLog(target: LinkTarget): Record<string, string> {
 
 export function createOsc8LinkHandler(terminal: Terminal, getCwd: () => string): ILinkHandler {
   let tooltip: HTMLElement | null = null;
+  // Bumped on every hover and leave, so a late answer from main can't show a
+  // tooltip for a link the pointer has already left.
+  let hoverSeq = 0;
 
   const hideTooltip = (): void => {
     tooltip?.remove();
     tooltip = null;
+  };
+
+  const showTooltip = (event: MouseEvent, text: string): void => {
+    const host = terminal.element;
+    if (!host) return;
+    hideTooltip();
+    const el = document.createElement('div');
+    // `xterm-hover` stops mouse events falling through to other links.
+    el.className = 'xterm-hover osc8-tooltip';
+    el.setAttribute('role', 'tooltip');
+    el.textContent = text;
+    const box = host.getBoundingClientRect();
+    el.style.top = `${Math.max(0, event.clientY - box.top + 16)}px`;
+    host.appendChild(el);
+    // Keep the whole box inside the pane: shift left near the right edge.
+    const left = Math.min(Math.max(0, event.clientX - box.left), Math.max(0, box.width - el.offsetWidth));
+    el.style.left = `${left}px`;
+    tooltip = el;
   };
 
   const open = async (uri: string): Promise<void> => {
@@ -70,27 +91,29 @@ export function createOsc8LinkHandler(terminal: Terminal, getCwd: () => string):
 
     activate(event: MouseEvent, uri: string): void {
       if (event.detail !== 2) return;
+      hoverSeq++;
       hideTooltip();
       void open(uri);
     },
 
     hover(event: MouseEvent, uri: string): void {
-      const host = terminal.element;
-      if (!host) return;
-      hideTooltip();
-      const el = document.createElement('div');
-      // `xterm-hover` stops mouse events falling through to other links.
-      el.className = 'xterm-hover osc8-tooltip';
-      el.setAttribute('role', 'tooltip');
-      el.textContent = uri.length > 300 ? `${uri.slice(0, 300)}…` : uri;
-      const box = host.getBoundingClientRect();
-      el.style.left = `${Math.max(0, event.clientX - box.left)}px`;
-      el.style.top = `${Math.max(0, event.clientY - box.top + 16)}px`;
-      host.appendChild(el);
-      tooltip = el;
+      // Show what a double-click will open, not the raw URI: the two differ
+      // (`https://good.com\@evil.com/` opens good.com/@evil.com/, Cyrillic
+      // hosts open as punycode), and a file main will only reveal says so.
+      const seq = ++hoverSeq;
+      void (async () => {
+        const target = resolveHyperlink(uri, getCwd(), await getLocalHosts());
+        let outcome: FileLinkOutcome | undefined;
+        if (target.kind === 'file') {
+          outcome = await window.patton.editor.linkAction(target.path).catch((): FileLinkOutcome => 'unknown');
+        }
+        if (seq !== hoverSeq) return; // pointer moved on
+        showTooltip(event, describeLinkTarget(target, outcome));
+      })();
     },
 
     leave(): void {
+      hoverSeq++;
       hideTooltip();
     },
   };

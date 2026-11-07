@@ -7,6 +7,8 @@
  * APP_OPEN_IN_EDITOR); these rules are the first gate, not the only one.
  */
 
+import type { FileLinkAction } from '../../shared/types';
+
 /** Main refuses longer URLs; refuse here too so nothing is sent just to fail. */
 const MAX_URL_LENGTH = 2048;
 
@@ -114,4 +116,54 @@ export function urlSpans(text: string): Array<[number, number]> {
     spans.push([match.index, match.index + match[0].length]);
   }
   return spans;
+}
+
+/** Hover text never exceeds this many characters (the box wraps, never cuts). */
+const TOOLTIP_MAX = 120;
+
+/** Shorten `text` to `max` characters by cutting from the MIDDLE, so both
+ *  ends (scheme and host, folder and file name) stay readable. */
+export function elideMiddle(text: string, max: number): string {
+  if (text.length <= max) return text;
+  if (max <= 1) return '…';
+  const keep = max - 1;
+  const head = Math.ceil(keep / 2);
+  return `${text.slice(0, head)}…${text.slice(text.length - (keep - head))}`;
+}
+
+function baseName(path: string): string {
+  return path.slice(path.lastIndexOf('/') + 1);
+}
+
+/** What main will do with a file link (main/link-open-policy.ts decides). */
+export type FileLinkOutcome = FileLinkAction;
+
+/**
+ * The hover text for a link: exactly what a double-click will open, never
+ * the raw URI a program printed. Web links show the normalised URL (punycode
+ * host, `\` read as `/`), whose scheme and host are always shown in full;
+ * file links show the decoded path with the file name always in full; a file
+ * main will only reveal says so. Long text is cut in the middle.
+ */
+export function describeLinkTarget(target: LinkTarget, fileOutcome?: FileLinkOutcome): string {
+  if (target.kind === 'refused') {
+    return `Won't open ${target.scheme ? `${target.scheme}: link` : 'link'} (${target.reason})`;
+  }
+  if (target.kind === 'web') {
+    let head = target.url;
+    try {
+      const u = new URL(target.url);
+      const auth = u.username || u.password ? `${u.username}${u.password ? `:${u.password}` : ''}@` : '';
+      const h = `${u.protocol}//${auth}${u.host}`;
+      if (target.url.startsWith(h)) head = h;
+    } catch { /* keep the whole URL as the head */ }
+    const rest = target.url.slice(head.length);
+    return head + elideMiddle(rest, Math.max(16, TOOLTIP_MAX - head.length));
+  }
+  const name = baseName(target.path);
+  if (fileOutcome === 'reveal') return `Reveal in Finder: ${name}`;
+  if (fileOutcome === 'missing') return `No such file: ${name}`;
+  if (fileOutcome === 'refused') return `Won't open: ${name}`;
+  const dir = target.path.slice(0, target.path.length - name.length);
+  return elideMiddle(dir, Math.max(12, TOOLTIP_MAX - name.length)) + name;
 }

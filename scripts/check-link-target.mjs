@@ -67,6 +67,23 @@ check('urlSpans leaves plain paths', m.urlSpans('/Users/me/x.ts:3 and src/a.ts')
   check('no file link inside https://www.clearscore.com', linksIn('open https://www.clearscore.com now').length === 0);
   check('no file link inside https://kibot.com/subscribe.html', linksIn('https://kibot.com/subscribe.html').length === 0);
   check('bare paths still linked', linksIn('see src/a.ts:4 and ~/n/todo.md').join('|') === 'src/a.ts:4|~/n/todo.md');
+
+  // Hover text: what will be opened, cut in the middle, ends kept.
+  const d = m.describeLinkTarget;
+  check('elideMiddle short unchanged', m.elideMiddle('abc', 5) === 'abc');
+  check('elideMiddle keeps both ends', m.elideMiddle('abcdefghij', 5) === 'ab…ij');
+  check('backslash-@ shows the host it opens', d(r('https://good.com\\@evil.com/')) === 'https://good.com/@evil.com/');
+  check('Cyrillic host shown as punycode', d(r('https://\u0430\u0440\u0440\u04cf\u0435.com/')) === 'https://xn--80ak6aa92e.com/');
+  check('userinfo shown', d(r('https://good.com@evil.com/x')).startsWith('https://good.com@evil.com/'));
+  const longWeb = d(r('https://example.com/' + 'a'.repeat(300) + '/end.html'));
+  check('long URL: host kept, end kept, <=120', longWeb.startsWith('https://example.com/') && longWeb.endsWith('/end.html') && longWeb.length <= 120 && longWeb.includes('…'));
+  const longHost = 'h' + 'x'.repeat(150) + '.com';
+  check('long host kept whole', d(r(`https://${longHost}/` + 'p'.repeat(200))).startsWith(`https://${longHost}/`));
+  const longFile = d(r('file:///Users/me/' + 'd/'.repeat(100) + 'report-final.command'), 'editor');
+  check('long path: file name with extension kept', longFile.endsWith('/report-final.command') && longFile.startsWith('/Users/') && longFile.includes('…'));
+  check('reveal says so', d(r('file:///Users/me/Evil.app'), 'reveal') === 'Reveal in Finder: Evil.app');
+  check('file shows decoded path', d(r('file:///Users/me/My%20Doc.md'), 'open') === '/Users/me/My Doc.md');
+  check('refused says why', d(r('javascript:alert(1)')).startsWith("Won't open javascript: link"));
   process.exit(failed ? 1 : 0);
 }
 
