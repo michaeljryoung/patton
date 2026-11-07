@@ -769,7 +769,11 @@ export class TabManager {
     const pane = this.activeTab?.focusedPane;
     if (!pane) return;
     const why = pane.runCheckpoint();
-    if (why) announce(why, 'assertive');
+    if (why) {
+      // Seen and heard, from the clock's click and the palette alike.
+      announce(why, 'assertive');
+      this.tabBar.showCheckpointReason(why);
+    }
     // The click left focus on the strip's button; the keyboard belongs to Claude.
     pane.focus();
   }

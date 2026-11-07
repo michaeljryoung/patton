@@ -339,9 +339,14 @@
   font-weight: 700;
 }
 
-/* Claude is working: the click waits for its stop. */
+/* Claude is working or blocked: a click shows why /checkpoint waits. */
 .tab-bar-checkpoint.blocked {
-  cursor: default;
+  cursor: help;
+}
+
+/* The "why not" message shown in the clock's place after such a click. */
+.tab-bar-checkpoint.reason {
+  color: var(--ink);
 }
 
 .tab-bar-checkpoint.blocked:hover {

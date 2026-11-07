@@ -89,7 +89,10 @@ export class TabBar {
   private container: HTMLElement;
   private tabsContainer: HTMLElement;
   private checkpointBtn: HTMLButtonElement;
-  private checkpointBlocked = true;
+  /** The clock's last view, restored when a "why not" message ends. */
+  private checkpointView: CheckpointView | null = null;
+  private checkpointReasonTimer: ReturnType<typeof setTimeout> | null = null;
+  private static readonly CHECKPOINT_REASON_MS = 4000;
   private callbacks: TabBarCallbacks;
   private draggedId: string | null = null;
   private contextMenu = new ContextMenu();
@@ -209,8 +212,9 @@ export class TabBar {
     this.checkpointBtn.type = 'button';
     this.checkpointBtn.className = 'tab-bar-checkpoint';
     this.checkpointBtn.hidden = true;
+    // Always handled, ready or not: while Claude can't take /checkpoint the
+    // click shows why (TabManager.runCheckpoint → showCheckpointReason).
     this.checkpointBtn.addEventListener('click', () => {
-      if (this.checkpointBlocked) return;
       this.callbacks.onCheckpoint?.();
     });
     this.container.appendChild(this.checkpointBtn);
@@ -567,10 +571,14 @@ export class TabBar {
   /** Show the checkpoint clock for the focused pane, or hide it (null). */
   setCheckpoint(view: CheckpointView | null): void {
     const btn = this.checkpointBtn;
+    this.checkpointView = view;
     btn.hidden = view === null;
-    this.checkpointBlocked = view === null || view.blocked;
-    if (!view) return;
-    if (btn.textContent !== view.text) btn.textContent = view.text;
+    if (!view) {
+      this.endCheckpointReason();
+      return;
+    }
+    // A "why not" message holds the text until it ends; the rest updates.
+    if (this.checkpointReasonTimer === null && btn.textContent !== view.text) btn.textContent = view.text;
     btn.classList.toggle('due', view.due);
     btn.classList.toggle('blocked', view.blocked);
     btn.setAttribute('aria-disabled', String(view.blocked));
@@ -578,7 +586,27 @@ export class TabBar {
     btn.title = view.label;
   }
 
+  /** Why /checkpoint wasn't sent, in the clock's place for a few seconds
+   *  (the caller announces it too). Nothing to show while the clock is hidden. */
+  showCheckpointReason(text: string): void {
+    const btn = this.checkpointBtn;
+    if (btn.hidden) return;
+    if (this.checkpointReasonTimer) clearTimeout(this.checkpointReasonTimer);
+    btn.textContent = text;
+    btn.classList.add('reason');
+    this.checkpointReasonTimer = setTimeout(() => this.endCheckpointReason(), TabBar.CHECKPOINT_REASON_MS);
+  }
+
+  private endCheckpointReason(): void {
+    if (this.checkpointReasonTimer === null) return;
+    clearTimeout(this.checkpointReasonTimer);
+    this.checkpointReasonTimer = null;
+    this.checkpointBtn.classList.remove('reason');
+    if (this.checkpointView) this.checkpointBtn.textContent = this.checkpointView.text;
+  }
+
   dispose(): void {
+    if (this.checkpointReasonTimer) clearTimeout(this.checkpointReasonTimer);
     this.hoverCard?.dispose();
     this.contextMenu.dispose();
     this.container.innerHTML = '';
