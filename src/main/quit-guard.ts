@@ -17,6 +17,16 @@ import { closeConfirmations } from './close-confirm';
 
 let quitConfirmed = false;
 
+// Before main asks, the chosen window is shown and focused and Patton comes to
+// the front: a Dock Quit from the background must put the dialog in front of
+// the user, or its wait (and a second Dock Quit) would be about a dialog nobody
+// has seen. app.focus({ steal }) is what brings a background app forward.
+closeConfirmations.setRaiser((win) => {
+  win.show();
+  win.focus();
+  app.focus({ steal: true });
+});
+
 /** True once the user confirmed this quit (in the app or in the native box):
  *  every window's close handler then lets its window go without asking again. */
 export function isQuitConfirmed(): boolean {
@@ -68,11 +78,12 @@ export function guardBeforeQuit(event: { preventDefault: () => void }, ptys: { r
   if (terminals <= 0) return true;
 
   // A second ⌘Q while the dialog is open confirms it; while it is still on its
-  // way (not acked) it is ignored, so dialogs never stack.
+  // way (not acked) or has only just appeared (the dwell) it is ignored, so
+  // dialogs never stack and a double-tap never answers a dialog nobody read.
   const again = closeConfirmations.quitShortcut();
   if (again !== 'none') {
     event.preventDefault();
-    console.info(again === 'confirmed' ? '[CLOSE] quit requested again: confirming the open dialog' : '[CLOSE] quit requested again: dialog not shown yet, ignored', { terminals });
+    console.info(again === 'confirmed' ? '[CLOSE] quit requested again: confirming the open dialog' : '[CLOSE] quit requested again: dialog not shown long enough, ignored', { terminals });
     return false;
   }
 

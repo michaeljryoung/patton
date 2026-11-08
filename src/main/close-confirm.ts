@@ -21,10 +21,22 @@
 // One request per window at a time; a second request for the same window is
 // 'busy', so dialogs never stack. No runtime Electron import, so the check
 // scripts can drive it with fakes.
+//
+// Review fixes (S46):
+// - A settled request is RETIRED: its id stays known for a while so a late ack
+//   is refused and the renderer is told again to take its dialog down, and a
+//   late answer is ignored. A renderer that withdraws its own dialog answers
+//   false, so main never stays "acked" for a dialog that is gone.
+// - A second ⌘Q / Dock Quit confirms only a dialog that has been up for
+//   CONFIRM_SHORTCUT_DWELL_MS in a window that can still show it, and never
+//   from key repeat (isCloseKeyRepeat: window-manager swallows repeated ⌘Q/⌘W).
+// - Before asking, the window is shown and focused and Patton comes to the
+//   front (the `raise` hook; quit-guard.ts installs the Electron one), so Dock
+//   Quit from the background shows the dialog it is about to wait on.
 
 import { randomUUID } from 'node:crypto';
 import type { BrowserWindow } from 'electron';
-import { IPC } from '../shared/constants';
+import { CONFIRM_SHORTCUT_DWELL_MS, IPC } from '../shared/constants';
 
 /** 'quit': ends every window's shells and quits Patton. 'close-window': ends one window's shells. */
 export type ConfirmKind = 'quit' | 'close-window';
@@ -40,6 +52,28 @@ export type QuitShortcutResult = 'confirmed' | 'waiting' | 'none';
 /** How long the renderer has to show the dialog (its close-IPC timeout, tab-manager.ts closeIpcTimeoutMs). */
 export const CONFIRM_ACK_TIMEOUT_MS = 1500;
 
+/** How many settled request ids are remembered for refusing late acks and answers. */
+const RETIRED_KEEP = 32;
+
+/** A keyboard event as Electron's 'before-input-event' reports it (the fields used). */
+export interface CloseKeyInput {
+  type: string;
+  key: string;
+  isAutoRepeat?: boolean;
+  meta?: boolean;
+}
+
+/**
+ * True for an auto-repeated ⌘Q or ⌘W. window-manager.ts prevents those
+ * (before-input-event also stops the menu accelerator), so a held key can never
+ * confirm a quit/close dialog, however long the dialog has been up.
+ */
+export function isCloseKeyRepeat(input: CloseKeyInput): boolean {
+  if (input.type !== 'keyDown' || input.isAutoRepeat !== true || input.meta !== true) return false;
+  const key = String(input.key).toLowerCase();
+  return key === 'q' || key === 'w';
+}
+
 export interface ConfirmRequestPayload {
   requestId: string;
   kind: ConfirmKind;
@@ -52,6 +86,8 @@ interface Pending {
   windowId: number;
   kind: ConfirmKind;
   acked: boolean;
+  /** Clock reading when the ack arrived (the dialog went on screen). */
+  ackedAt: number;
   settle: (result: ConfirmResult, tellRenderer: boolean) => void;
 }
 
@@ -60,6 +96,17 @@ export interface CloseConfirmationsOptions {
   /** Can this window show an in-app dialog right now? Default: alive, visible, not minimized. */
   isUsable?: (win: BrowserWindow) => boolean;
   newId?: () => string;
+  /** Monotonic milliseconds. Default: performance.now. */
+  now?: () => number;
+  /** How long a dialog must have been up before a second ⌘Q confirms it. */
+  dwellMs?: number;
+  /** Bring `win` (already usable) and the app to the front before asking. Default: win.show() + win.focus(). */
+  raise?: (win: BrowserWindow) => void;
+}
+
+function defaultRaise(win: BrowserWindow): void {
+  win.show();
+  win.focus();
 }
 
 function defaultIsUsable(win: BrowserWindow): boolean {
@@ -75,11 +122,24 @@ export class CloseConfirmations {
   private readonly ackTimeoutMs: number;
   private readonly isUsable: (win: BrowserWindow) => boolean;
   private readonly newId: () => string;
+  private readonly now: () => number;
+  private readonly dwellMs: number;
+  private raise: (win: BrowserWindow) => void;
+  /** Settled requests: id → the window that held the dialog (to tell it again). Oldest first. */
+  private readonly retired = new Map<string, BrowserWindow>();
 
   constructor(opts: CloseConfirmationsOptions = {}) {
     this.ackTimeoutMs = opts.ackTimeoutMs ?? CONFIRM_ACK_TIMEOUT_MS;
     this.isUsable = opts.isUsable ?? defaultIsUsable;
     this.newId = opts.newId ?? randomUUID;
+    this.now = opts.now ?? (() => performance.now());
+    this.dwellMs = opts.dwellMs ?? CONFIRM_SHORTCUT_DWELL_MS;
+    this.raise = opts.raise ?? defaultRaise;
+  }
+
+  /** Replace the raise hook (quit-guard.ts adds the app-level focus Electron needs). */
+  setRaiser(raise: (win: BrowserWindow) => void): void {
+    this.raise = raise;
   }
 
   /** Can `win` show the dialog now? (Synchronous, so a caller can pick the native box without waiting.) */
@@ -118,6 +178,7 @@ export class CloseConfirmations {
       const onLost = () => settle('unavailable', false);
       const settle = (result: ConfirmResult, tellRenderer: boolean) => {
         if (!this.pending.delete(requestId)) return;
+        this.retire(requestId, win);
         clearTimeout(timer);
         try {
           win.removeListener('closed', onLost);
@@ -131,7 +192,7 @@ export class CloseConfirmations {
         console.info('[CLOSE] in-app confirmation settled', { windowId, kind, requestId, result });
         resolve(result);
       };
-      this.pending.set(requestId, { requestId, win, windowId, kind, acked: false, settle });
+      this.pending.set(requestId, { requestId, win, windowId, kind, acked: false, ackedAt: 0, settle });
       const timer = setTimeout(() => {
         const p = this.pending.get(requestId);
         if (p && !p.acked) {
@@ -139,6 +200,11 @@ export class CloseConfirmations {
           settle('unavailable', true);
         }
       }, this.ackTimeoutMs);
+      try {
+        this.raise(win);
+      } catch (err) {
+        console.warn('[CLOSE] could not bring the window to the front', { windowId, err: String(err) });
+      }
       try {
         win.once('closed', onLost);
         win.webContents.once('render-process-gone', onLost);
@@ -153,11 +219,32 @@ export class CloseConfirmations {
     });
   }
 
+  private retire(requestId: string, win: BrowserWindow): void {
+    this.retired.set(requestId, win);
+    while (this.retired.size > RETIRED_KEEP) {
+      const oldest = this.retired.keys().next().value;
+      if (oldest === undefined) break;
+      this.retired.delete(oldest);
+    }
+  }
+
   /** The renderer says its dialog is up. False for an unknown, late or foreign request (it must then close the dialog). */
   ack(senderWindowId: number, requestId: string): boolean {
     const p = this.pending.get(requestId);
-    if (!p || p.windowId !== senderWindowId) return false;
+    if (!p || p.windowId !== senderWindowId) {
+      const gone = this.retired.get(requestId);
+      if (gone) {
+        // The request was settled (the 1.5 s fallback went native, or it was
+        // answered): this dialog must not stay up. Tell its window again.
+        console.warn('[CLOSE] late ack for a settled confirmation ignored; renderer told to withdraw', { requestId });
+        try {
+          gone.webContents.send(IPC.WINDOW_CONFIRM_DISMISS, { requestId });
+        } catch { /* destroyed: nothing to dismiss */ }
+      }
+      return false;
+    }
     p.acked = true;
+    p.ackedAt = this.now();
     console.info('[CLOSE] in-app confirmation shown', { windowId: p.windowId, kind: p.kind, requestId });
     return true;
   }
@@ -165,20 +252,25 @@ export class CloseConfirmations {
   /** The user's answer. Only the request's own window can give it. */
   answer(senderWindowId: number, requestId: string, ok: boolean): boolean {
     const p = this.pending.get(requestId);
-    if (!p || p.windowId !== senderWindowId) return false;
+    if (!p || p.windowId !== senderWindowId) {
+      if (this.retired.has(requestId)) console.info('[CLOSE] late answer for a settled confirmation ignored', { requestId, ok });
+      return false;
+    }
     p.settle(ok ? 'confirmed' : 'cancelled', false);
     return true;
   }
 
   /**
    * A second ⌘Q (or Dock/menu Quit) while a quit dialog is open confirms it:
-   * the user saw the dialog and asked again. Before the ack it is ignored (the
-   * dialog is not on screen yet, so it confirms nothing).
+   * the user saw the dialog and asked again. It is ignored ('waiting') before
+   * the ack (the dialog is not on screen yet), for the first dwellMs after it
+   * (a double-tap is not a decision) and while the window cannot show it
+   * (hidden or minimized: nobody can have seen it).
    */
   quitShortcut(): QuitShortcutResult {
     for (const p of this.pending.values()) {
       if (p.kind !== 'quit') continue;
-      if (!p.acked) return 'waiting';
+      if (!p.acked || this.now() - p.ackedAt < this.dwellMs || !this.isUsable(p.win)) return 'waiting';
       p.settle('confirmed', true);
       return 'confirmed';
     }

@@ -51,7 +51,7 @@ async function nodeRunner() {
       loader: 'ts',
       contents: `
         export { closeSenderWindow } from './src/main/close-window';
-        export { CloseConfirmations } from './src/main/close-confirm';
+        export { CloseConfirmations, isCloseKeyRepeat } from './src/main/close-confirm';
       `,
     },
     bundle: true, platform: 'node', format: 'cjs', external: ['electron'],
@@ -128,7 +128,7 @@ function electronMain() {
 
   app.whenReady().then(async () => {
     try {
-      const { closeSenderWindow, CloseConfirmations } = require(path.join(outDir, 'close-main.cjs'));
+      const { closeSenderWindow, CloseConfirmations, isCloseKeyRepeat } = require(path.join(outDir, 'close-main.cjs'));
       const { IPC } = require(path.join(outDir, 'constants.cjs'));
       const replies = [];
       ipcMain.handle(IPC.WINDOW_CLOSE, (event) => {
@@ -201,7 +201,7 @@ function electronMain() {
 
       // 4. In-app confirmations (v1.19): the real controller, real IPC, a scripted renderer.
       {
-        const confirmations = new CloseConfirmations({ ackTimeoutMs: 400, isUsable: (w) => !w.isDestroyed() });
+        const confirmations = new CloseConfirmations({ ackTimeoutMs: 400, isUsable: (w) => !w.isDestroyed(), raise: () => { /* never show a window in this check */ } });
         ipcMain.handle(IPC.WINDOW_CONFIRM_ACK, (event, id) => {
           const w = BrowserWindow.fromWebContents(event.sender);
           return w ? confirmations.ack(w.id, id) : false;
@@ -258,6 +258,9 @@ function electronMain() {
           check('silent renderer: the dismiss reached the page', reqs.length === 1 && dismissed[0] === reqs[0].requestId, { reqs, dismissed });
           check('silent renderer: a late ack and a late answer are refused',
             (await read(p, `probe.ack(${JSON.stringify(reqs[0].requestId)})`)) === false && (await read(p, `probe.answer(${JSON.stringify(reqs[0].requestId)}, true)`)) === false);
+          await sleep(60);
+          const dismissed2 = await read(p, 'window.__dismissed');
+          check('silent renderer: the late ack made main tell the page again to take its dialog down (retired id)', dismissed2.length === 2 && dismissed2[1] === reqs[0].requestId, dismissed2);
           p.win.destroy();
         }
         // 4d. a renderer that acks but never answers is NOT timed out (the user is deciding)
@@ -311,6 +314,74 @@ function electronMain() {
           check('and then it is confirmed', settled === 'confirmed', settled);
           p.win.destroy();
           q.win.destroy();
+        }
+
+        // 4i. a renderer that acked and then withdraws its dialog answers false: main is not left acked
+        {
+          const p = await open();
+          await p.run(`window.__reqs=[]; probe.onRequest(async (r) => { window.__reqs.push(r); await probe.ack(r.requestId); await new Promise((x) => setTimeout(x, 450)); window.__withdrawReply = await probe.answer(r.requestId, false); });`);
+          let settled = null;
+          confirmations.ask(p.win, 'quit', 2).then((r) => { settled = r; });
+          await sleep(300);
+          check('acked and still showing: pending, and a second ask is busy', settled === null && confirmations.hasPendingFor(p.win.id) && (await confirmations.ask(p.win, 'quit', 2)) === 'busy');
+          await sleep(400);
+          check("the withdrawal (answer false) settles it 'cancelled' and frees the window", settled === 'cancelled' && !confirmations.hasPendingFor(p.win.id) && (await read(p, 'window.__withdrawReply')) === true, settled);
+          check('after the withdrawal a ⌘Q finds nothing acked to confirm', confirmations.quitShortcut() === 'none' && !confirmations.hasPendingQuit());
+          p.win.destroy();
+        }
+        // 4j. the dwell: a second quit right after the ack is ignored; after the dwell it confirms
+        {
+          const timed = new CloseConfirmations({ ackTimeoutMs: 400, dwellMs: 300, isUsable: (w) => !w.isDestroyed(), raise: () => {} });
+          ipcMain.removeHandler(IPC.WINDOW_CONFIRM_ACK);
+          ipcMain.handle(IPC.WINDOW_CONFIRM_ACK, (event, id) => {
+            const w = BrowserWindow.fromWebContents(event.sender);
+            return w ? timed.ack(w.id, id) : false;
+          });
+          const p = await open();
+          await p.run(`window.__reqs=[]; probe.onRequest((r) => { window.__reqs.push(r); probe.ack(r.requestId); });`);
+          let settled = null;
+          timed.ask(p.win, 'quit', 2).then((r) => { settled = r; });
+          await sleep(60);
+          check('dwell: a quit 60 ms after the ack is ignored', timed.quitShortcut() === 'waiting' && settled === null);
+          await sleep(300);
+          check('dwell: a quit after 300 ms confirms', timed.quitShortcut() === 'confirmed');
+          await sleep(60);
+          check('dwell: settled confirmed', settled === 'confirmed', settled);
+          p.win.destroy();
+        }
+        // 4k. the window is raised before the request reaches the page, and only when it can be asked
+        {
+          const order = [];
+          const raising = new CloseConfirmations({ ackTimeoutMs: 400, isUsable: (w) => !w.isDestroyed(), raise: (w) => order.push(`raise:${w.id}`) });
+          const p = await open();
+          await p.run(`probe.onRequest((r) => { window.__sawRequest = true; });`);
+          p.win.webContents.on('ipc-message', () => {});
+          const asked = raising.ask(p.win, 'quit', 1);
+          order.push(`asked-returned-sync`);
+          await sleep(100);
+          check('raise ran once, for this window, before ask() returned', order[0] === `raise:${p.win.id}` && order.length === 2, order);
+          check('the page got the request after the raise', (await read(p, 'window.__sawRequest === true')) === true);
+          p.win.destroy();
+          await asked;
+          const never = [];
+          const guarded = new CloseConfirmations({ ackTimeoutMs: 400, raise: (w) => never.push(w.id) });
+          const q = await open();
+          await guarded.ask(q.win, 'quit', 1);
+          check('a window that cannot show the dialog is not raised', never.length === 0, never);
+          q.win.destroy();
+        }
+        // 4l. the key-repeat filter reads the fields Electron really reports
+        {
+          const p = await open();
+          const seen = [];
+          p.win.webContents.on('before-input-event', (_e, input) => { seen.push(input); });
+          p.win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Q', modifiers: ['meta'] });
+          await sleep(150);
+          const real = seen.find((i) => i.type === 'keyDown');
+          check('Electron reports meta, key and isAutoRepeat on a keyDown', !!real && real.meta === true && String(real.key).toLowerCase() === 'q' && typeof real.isAutoRepeat === 'boolean', real);
+          check('a real first ⌘Q press is not a repeat', real && isCloseKeyRepeat(real) === false, real);
+          check('the same event flagged as auto-repeat is', real && isCloseKeyRepeat({ ...real, isAutoRepeat: true }) === true, real);
+          p.win.destroy();
         }
         // 4h. the default usability test: a window that is not showing cannot be asked
         {

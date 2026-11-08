@@ -65,13 +65,14 @@ class FakeWindow extends Emitter {
     this.visible = false;
     this.minimized = false;
     this.sent = []; // what main sent this window's renderer: { ch, payload }
+    this.trace = []; // 'show' / 'focus' / 'send:<channel>' in the order they happened
     const wc = new Emitter();
     Object.assign(wc, {
       owner: this,
       session: { webRequest: { onHeadersReceived() {} } },
       setWindowOpenHandler() {},
       isDestroyed: () => this.destroyed,
-      send: (ch, payload) => { if (this.destroyed) throw new Error('Object has been destroyed'); this.sent.push({ ch, payload }); },
+      send: (ch, payload) => { if (this.destroyed) throw new Error('Object has been destroyed'); this.trace.push(`send:${ch}`); this.sent.push({ ch, payload }); },
     });
     this.webContents = wc;
     windows.push(this);
@@ -108,7 +109,8 @@ class FakeWindow extends Emitter {
   isMaximized() { return false; }
   maximize() {}
   center() {}
-  show() {}
+  show() { this.trace.push('show'); }
+  focus() { this.trace.push('focus'); }
   loadURL() { return Promise.resolve(); }
   loadFile() { return Promise.resolve(); }
   static getAllWindows() { return [...windows]; }
@@ -116,6 +118,7 @@ class FakeWindow extends Emitter {
 }
 
 let appQuitCalls = 0;
+const appFocusCalls = [];
 const tmpDirs = []; // the app.getPath stub's directories, removed at the end
 const electron = new Proxy({
   BrowserWindow: FakeWindow,
@@ -127,7 +130,7 @@ const electron = new Proxy({
     handle: (ch, fn) => handlers.set(ch, fn),
     on: (ch, fn) => handlers.set(ch, fn),
   },
-  app: { quit: () => { appQuitCalls++; beforeQuit(); }, isPackaged: false, getPath: () => { const d = mkdtempSync(join(tmpdir(), 'close-guard-')); tmpDirs.push(d); return d; } },
+  app: { focus: (o) => { appFocusCalls.push(o); }, quit: () => { appQuitCalls++; beforeQuit(); }, isPackaged: false, getPath: () => { const d = mkdtempSync(join(tmpdir(), 'close-guard-')); tmpDirs.push(d); return d; } },
 }, { get: (t, k) => (k in t ? t[k] : deep()) });
 
 const store = { getSettings: () => ({}), getWindowState: () => ({ width: 800, height: 600 }), setWindowState() {}, setSession() {} };
@@ -517,8 +520,9 @@ await fresh();
   const req = lastRequest(a);
   check('⌘Q again before the dialog is shown: ignored, no second request, no quit',
     cmdQ() === 'prevented' && requests(a).length === 1 && quitCompleted === 0 && dialogCalls.length === 0, requests(a));
-  check('ignored second ⌘Q logged', logged('dialog not shown yet, ignored'), logs);
+  check('ignored second ⌘Q logged', logged('dialog not shown long enough, ignored'), logs);
   ack(a, req.requestId);
+  clock += 400; // past the dwell: this is a deliberate second ⌘Q
   check('⌘Q again with the dialog up: held back here (the confirm lands a tick later)', cmdQ() === 'prevented');
   await later();
   check('second ⌘Q confirms: quit completed once, no native box', quitCompleted === 1 && appQuitCalls === 1 && dialogCalls.length === 0, { quitCompleted, appQuitCalls });
@@ -586,6 +590,7 @@ reset();
   // ⌘Q while the last window\'s red-button "quit" dialog is open confirms it
   const r2 = lastRequest(w);
   ack(w, r2.requestId);
+  clock += 400;
   cmdQ();
   await later();
   check('⌘Q while the red button\'s quit dialog is open confirms that one (no second dialog)',
@@ -762,6 +767,141 @@ await fresh();
   const late = showing(0, 1); // a window that appears (and gets closed) mid-quit
   late.requestClose();
   check('during a confirmed quit a window closes without any ask', late.isDestroyed() && dialogCalls.length === 0 && requests(late).length === 0, { destroyed: late.isDestroyed(), dialogs: dialogCalls.map((d) => d.title), requests: requests(late).length, confirmed: isQuitConfirmed(), logs: logs.filter((l) => l.includes('quit')) });
+}
+
+
+// ═══ S46 review fixes ═══
+
+// ── 20. Dwell: a second ⌘Q / Dock Quit right after the dialog appears confirms nothing ──
+await fresh();
+{
+  const a = showing(0, 2);
+  focusedWindow = a;
+  cmdQ();
+  const req = lastRequest(a);
+  ack(a, req.requestId);
+  check('second ⌘Q in the same instant as the ack: ignored', cmdQ() === 'prevented' && quitCompleted === 0 && appQuitCalls === 0, { quitCompleted });
+  clock += 299;
+  cmdQ();
+  await later();
+  check('second ⌘Q 299 ms after the ack: still ignored (a double-tap is not a decision)', quitCompleted === 0 && appQuitCalls === 0 && !dismissals(a).includes(req.requestId), { quitCompleted });
+  check('the ignored presses stacked no second dialog and no native box', requests(a).length === 1 && dialogCalls.length === 0);
+  clock += 1;
+  cmdQ();
+  await later();
+  check('second ⌘Q 300 ms after the ack: confirms', quitCompleted === 1 && appQuitCalls === 1, { quitCompleted });
+}
+await fresh();
+{
+  // Nobody can have seen a dialog in a window that went away: a hidden / minimized window confirms nothing.
+  const a = showing(0, 2);
+  focusedWindow = a;
+  cmdQ();
+  const req = lastRequest(a);
+  ack(a, req.requestId);
+  clock += 1000;
+  a.visible = false;
+  cmdQ();
+  await later();
+  check('second ⌘Q while the asked window is hidden: ignored', quitCompleted === 0 && appQuitCalls === 0, { quitCompleted });
+  a.visible = true;
+  a.minimized = true;
+  cmdQ();
+  await later();
+  check('second ⌘Q while the asked window is minimized: ignored', quitCompleted === 0 && appQuitCalls === 0, { quitCompleted });
+  a.minimized = false;
+  cmdQ();
+  await later();
+  check('and once the window shows again the second ⌘Q confirms', quitCompleted === 1, { quitCompleted });
+}
+
+// ── 21. Key repeat: a held ⌘Q or ⌘W is stopped before the menu sees it ──
+await fresh();
+{
+  const a = showing(0, 1);
+  const press = (input) => { let stopped = false; a.webContents.emit('before-input-event', { preventDefault: () => { stopped = true; } }, input); return stopped; };
+  check('held ⌘Q (auto-repeat) is stopped', press({ type: 'keyDown', key: 'q', meta: true, isAutoRepeat: true }) === true);
+  check('held ⌘W (auto-repeat) is stopped', press({ type: 'keyDown', key: 'W', meta: true, isAutoRepeat: true }) === true);
+  check('the first ⌘Q press is not stopped', press({ type: 'keyDown', key: 'q', meta: true, isAutoRepeat: false }) === false);
+  check('the first ⌘W press is not stopped', press({ type: 'keyDown', key: 'w', meta: true }) === false);
+  check('a held plain letter is left alone', press({ type: 'keyDown', key: 'q', meta: false, isAutoRepeat: true }) === false);
+  check('a held ⌘ with another key is left alone', press({ type: 'keyDown', key: 'v', meta: true, isAutoRepeat: true }) === false);
+  check('a key-up is left alone', press({ type: 'keyUp', key: 'q', meta: true, isAutoRepeat: true }) === false);
+  check('stopping a held key is logged', logged('held ⌘Q/⌘W ignored'), logs);
+}
+
+// ── 22. Before asking: the window is shown and focused and Patton comes to the front ──
+await fresh();
+{
+  const a = showing(0, 2);
+  const b = showing(0, 1);
+  focusedWindow = a;
+  appFocusCalls.length = 0;
+  a.trace.length = 0;
+  b.trace.length = 0;
+  cmdQ();
+  const order = a.trace.join();
+  check('⌘Q / Dock Quit: the window is shown and focused BEFORE the request is sent', order === 'show,focus,send:' + IPC.WINDOW_CONFIRM_REQUEST, order);
+  check('Patton is brought to the front (stealing focus, for a Dock Quit from the background)', appFocusCalls.length === 1 && appFocusCalls[0]?.steal === true, appFocusCalls);
+  check('the other window is not raised', b.trace.length === 0, b.trace);
+  const req = lastRequest(a);
+  ack(a, req.requestId);
+  answer(a, req.requestId, false);
+  await later();
+  a.trace.length = 0;
+  appFocusCalls.length = 0;
+  a.requestClose();
+  check('the red button raises its window too, before asking', a.trace[0] === 'show' && a.trace[1] === 'focus' && a.trace.at(-1) === 'send:' + IPC.WINDOW_CONFIRM_REQUEST, a.trace);
+}
+await fresh();
+{
+  const hidden = createWindow(ptyManager);
+  live.set(hidden, 2);
+  hidden.trace.length = 0;
+  dialogAnswer = 0;
+  cmdQ();
+  check('a window that cannot show the dialog is never raised (it would appear just to show a native box)', !hidden.trace.includes('show') && !hidden.trace.includes('focus') && dialogCalls.length === 1, hidden.trace);
+}
+
+// ── 23. A settled request is retired: late ack and late answer cannot revive it ──
+await fresh();
+{
+  const a = showing(0, 2);
+  focusedWindow = a;
+  dialogAnswer = 0;
+  cmdQ();
+  const req = lastRequest(a);
+  await sleep(1700); // no ack in time: main went native (Cancel)
+  const before = dismissals(a).length;
+  check('late ack refused', ack(a, req.requestId) === false);
+  check('and the renderer is told again to take its dialog down', dismissals(a).length === before + 1 && dismissals(a).at(-1) === req.requestId, dismissals(a));
+  check('late ack logged', warns.some((l) => l.includes('late ack for a settled confirmation ignored')), warns);
+  check('a late answer true is ignored: nothing quits', answer(a, req.requestId, true) === false && quitCompleted === 0 && appQuitCalls === 0);
+  check('late answer logged', logged('late answer for a settled confirmation ignored'), logs);
+  // And the next ⌘Q asks afresh instead of treating anything as acked.
+  cmdQ();
+  const req2 = lastRequest(a);
+  check('the next ⌘Q is a new request, not a confirm of the old one', req2.requestId !== req.requestId && quitCompleted === 0 && requests(a).length === 2, requests(a));
+}
+await fresh();
+{
+  // The renderer withdraws a dialog it had acked (its ack reply was slow): answering false leaves main clean.
+  const w = showing(0, 2);
+  w.requestClose();
+  const req = lastRequest(w);
+  ack(w, req.requestId);
+  check('acked red-button request: the window is held', !w.requestClose() && requests(w).length === 1);
+  answer(w, req.requestId, false); // what a withdrawing renderer now sends
+  await later();
+  const closed = w.requestClose();
+  check('after the withdrawal the red button asks afresh (not held forever)', !closed && requests(w).length === 2, requests(w));
+  const req2 = lastRequest(w);
+  ack(w, req2.requestId);
+  clock += 400;
+  answer(w, req2.requestId, false);
+  await later();
+  cmdQ();
+  check('after the withdrawal ⌘Q asks instead of quitting unasked', quitCompleted === 0 && appQuitCalls === 0 && requests(w).length === 3, { quitCompleted, requests: requests(w).length });
 }
 
 console.info = realInfo;

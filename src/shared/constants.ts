@@ -248,3 +248,10 @@ export function uiTextScaleFromArgv(argv: readonly string[]): number {
   const arg = argv.find((a) => a.startsWith(UI_TEXT_SCALE_ARG));
   return uiTextScaleOf(arg === undefined ? undefined : Number(arg.slice(UI_TEXT_SCALE_ARG.length)));
 }
+
+/**
+ * How long a quit / close-window confirmation must have been on screen before
+ * a second ⌘Q (main) or ⌘W (renderer) counts as "yes": a double-tap or a held
+ * key is not a decision (S46 review).
+ */
+export const CONFIRM_SHORTCUT_DWELL_MS = 300;

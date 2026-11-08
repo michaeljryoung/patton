@@ -4,7 +4,7 @@ import { Pane } from '../components/pane';
 import { TabBar } from '../components/tab-bar';
 import { ConfirmDialog } from '../components/confirm-dialog';
 import { HistoryManager } from './history-manager';
-import { DEFAULTS } from '../../shared/constants';
+import { CONFIRM_SHORTCUT_DWELL_MS, DEFAULTS } from '../../shared/constants';
 import { announce } from './announcer';
 import { rlog } from './renderer-logger';
 import { onProjectNamesChanged, projectName, startProjectNames } from './project-names';
@@ -631,6 +631,8 @@ export class TabManager {
       cancelLabel: 'Cancel',
       defaultFocus: 'confirm',
       shortcutConfirms: true,
+      // A double-tapped ⌘W is not a decision about quitting (main applies the same dwell to ⌘Q).
+      shortcutDwellMs: CONFIRM_SHORTCUT_DWELL_MS,
     });
     let acked = false;
     try {
@@ -644,6 +646,15 @@ export class TabManager {
       if (this.mainConfirmId === requestId) this.confirmDialog.dismiss();
       await answered;
       if (this.mainConfirmId === requestId) this.mainConfirmId = null;
+      // Tell main it was withdrawn: when main did record the ack (the reply was
+      // lost or slow) it would otherwise stay "acked" for a dialog that is gone,
+      // hold the red button and let the next ⌘Q quit unasked. A request main
+      // already retired ignores this.
+      try {
+        await window.patton.closeGuard.answerConfirm(requestId, false);
+      } catch (err) {
+        rlog('warn', '[CLOSE] could not tell main the confirmation was withdrawn', { requestId, err: String(err) });
+      }
       return;
     }
     const ok = await answered;

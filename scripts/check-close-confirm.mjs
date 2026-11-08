@@ -524,14 +524,20 @@ await new Promise((r) => setTimeout(r, 320));
       && lastLogs().some((x) => x.includes('confirm answered') && x.includes('main-quit') && x.includes('"ok":true')), lastLogs());
   }
 
-  // 7b. ⌘W (the same entry point as the menu accelerator) confirms; no second dialog, no last-tab path
+  // 7b. ⌘W (the same entry point as the menu accelerator) confirms once the dialog has been up
+  //      for the dwell; inside it the press is swallowed (no answer, no second dialog)
   {
     const tm = tmQuit();
     await ask(tm, { requestId: 'q2', kind: 'quit', terminals: 1 });
     check('1 terminal is singular', /1 terminal still running/.test(dlg('.confirm-dialog-message')), dlg('.confirm-dialog-message'));
     await tm.closeActivePane();
     await tick();
-    check('⌘W confirms the quit dialog: answer true, no last-tab info/pre-confirm/close', events.join() === 'ack:q2,answer:q2:true', events);
+    check('⌘W inside the dwell: swallowed - dialog still up, nothing answered, no last-tab info/pre-confirm/close', visible() && events.join() === 'ack:q2', events);
+    check('⌘W inside the dwell opened no second dialog', w.document.querySelectorAll('.confirm-dialog-overlay.visible').length === 1 && dlg('.confirm-dialog-title') === 'Quit Patton?');
+    await new Promise((r) => setTimeout(r, 320));
+    await tm.closeActivePane();
+    await tick();
+    check('⌘W after the dwell confirms the quit dialog: answer true, no last-tab info/pre-confirm/close', events.join() === 'ack:q2,answer:q2:true', events);
     check('⌘W: answer logged as cmd-w', tm.confirmDialog.lastAnswer === 'cmd-w');
   }
 
@@ -579,7 +585,7 @@ await new Promise((r) => setTimeout(r, 320));
     ackReply = false;
     await ask(tm, { requestId: 'a1', kind: 'quit', terminals: 2 });
     await tick();
-    check('refused ack: dialog withdrawn, no answer', !visible() && events.join() === 'ack:a1', events);
+    check('refused ack: dialog withdrawn and main told (answer false), so it can never stay acked', !visible() && events.join() === 'ack:a1,answer:a1:false', events);
     ackReply = true;
   }
 
@@ -590,7 +596,7 @@ await new Promise((r) => setTimeout(r, 320));
     ackDelayMs = 120;
     await ask(tm, { requestId: 'a2', kind: 'quit', terminals: 2 });
     await new Promise((r) => setTimeout(r, 200));
-    check('slow ack: dialog withdrawn, no answer', !visible() && events.join() === 'ack:a2', events);
+    check('slow ack: dialog withdrawn and main told (answer false): main may have recorded the ack', !visible() && events.join() === 'ack:a2,answer:a2:false', events);
     ackDelayMs = 0;
   }
 
@@ -610,6 +616,30 @@ await new Promise((r) => setTimeout(r, 320));
     key(w.document.activeElement, 'Enter');
     await tick();
     check('and the newer one is answered by the user', events.includes('answer:r2:true'), events);
+  }
+
+  // 7i. Stacked dialogs: another ConfirmDialog instance (the board's, a bookmark's) must not
+  //     leave two dialogs open. The slot is shared, so the newest confirm() answers the rest false.
+  {
+    const other = new ConfirmDialog(w.document.body); // created AFTER the tab manager's, like the board's
+    const tm = tmQuit();
+    const deleting = other.confirm({ title: 'Delete theme?', message: 'x', confirmLabel: 'Delete' });
+    await tick();
+    check('precondition: "Delete theme?" is up with Cancel focused', dlg('.confirm-dialog-title') === 'Delete theme?' && focusedClass() === 'confirm-dialog-cancel');
+    await ask(tm, { requestId: 's1', kind: 'quit', terminals: 2 });
+    check('quit request over "Delete theme?": exactly one dialog is visible, and it is the quit dialog',
+      w.document.querySelectorAll('.confirm-dialog-overlay.visible').length === 1 && dlg('.confirm-dialog-title') === 'Quit Patton?', dlg('.confirm-dialog-title'));
+    check('"Delete theme?" was answered false (not left open behind)', (await deleting) === false && !other.isOpen);
+    check('the focused button is inside the visible dialog (Enter answers what the user sees)',
+      !!w.document.activeElement.closest('.confirm-dialog-overlay.visible') && w.document.activeElement.textContent === 'Quit', w.document.activeElement.textContent);
+    // Reverse: a board dialog opens while the quit dialog is up: the quit dialog is cancelled, never left hidden-but-live.
+    const deleting2 = other.confirm({ title: 'Delete theme?', message: 'x', confirmLabel: 'Delete' });
+    await tick();
+    check('a later dialog over the quit dialog: one visible dialog, the quit request answered false',
+      w.document.querySelectorAll('.confirm-dialog-overlay.visible').length === 1 && dlg('.confirm-dialog-title') === 'Delete theme?' && events.includes('answer:s1:false') && !events.includes('answer:s1:true'), events);
+    key(w.document.activeElement, 'Escape');
+    check('and Esc answers only the visible one', (await deleting2) === false);
+    other.dispose();
   }
 }
 

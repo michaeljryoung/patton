@@ -16,7 +16,24 @@ export interface ConfirmOptions {
    * the tab-close dialog uses it so a second ⌘W confirms the first.
    */
   shortcutConfirms?: boolean;
+  /**
+   * With `shortcutConfirms`: the shortcut confirms only once the dialog has been
+   * up this many ms. Before that it is swallowed (not a fresh close either).
+   * The quit / close-window dialogs main asks for use it so a double-tap is not
+   * a decision. Default 0: the tab-close dialog's "⌘W twice, immediately".
+   */
+  shortcutDwellMs?: number;
 }
+
+/**
+ * The one open dialog across every ConfirmDialog instance (tab manager,
+ * bookmarks, project board). Their overlays share one z-index, so a later
+ * instance paints above an earlier one: with two open, the visible dialog
+ * could differ from the one holding focus and the answer. A new confirm()
+ * therefore cancels (answers false) whatever else is open, so the dialog being
+ * answered is always the visible, focused one.
+ */
+const openSlot: { dialog: ConfirmDialog | null } = { dialog: null };
 
 /** How the last dialog was answered (for logging). */
 export type ConfirmAnswer = 'button' | 'enter' | 'cmd-w' | 'escape' | 'superseded' | 'dismissed';
@@ -47,6 +64,8 @@ export class ConfirmDialog {
   private disposables: (() => void)[] = [];
   private releaseFocusTrap: (() => void) | null = null;
   private shortcutConfirms = false;
+  private shortcutDwellMs = 0;
+  private shownAt = 0;
   /** How the most recent dialog was answered; null before the first. */
   lastAnswer: ConfirmAnswer | null = null;
 
@@ -114,7 +133,12 @@ export class ConfirmDialog {
     // If a prior dialog is still open (rapid repeat keypress), resolve it as
     // cancelled before reusing the overlay.
     this.finish(false, 'superseded');
+    // And a dialog open in another instance (it would paint above or below this one).
+    if (openSlot.dialog && openSlot.dialog !== this) openSlot.dialog.finish(false, 'superseded');
+    openSlot.dialog = this;
     this.shortcutConfirms = opts.shortcutConfirms === true;
+    this.shortcutDwellMs = opts.shortcutDwellMs ?? 0;
+    this.shownAt = performance.now();
 
     (this.overlay.querySelector('.confirm-dialog-title') as HTMLElement).textContent = opts.title;
     (this.overlay.querySelector('.confirm-dialog-message') as HTMLElement).textContent = opts.message;
@@ -141,11 +165,14 @@ export class ConfirmDialog {
   }
 
   /**
-   * Confirm the open dialog from a global shortcut (⌘W). Returns true when it
-   * did, so the caller knows not to treat the shortcut as a fresh close.
+   * Handle a global shortcut (⌘W) while this dialog may be open. Returns true
+   * when the shortcut was taken here (it confirmed, or it came inside the
+   * dialog's dwell and was swallowed), so the caller does not treat it as a
+   * fresh close; false when no shortcut-confirming dialog is open.
    */
   confirmByShortcut(): boolean {
     if (!this.resolve || !this.shortcutConfirms) return false;
+    if (performance.now() - this.shownAt < this.shortcutDwellMs) return true;
     this.finish(true, 'cmd-w');
     return true;
   }
@@ -159,6 +186,7 @@ export class ConfirmDialog {
   private finish(result: boolean, answer: ConfirmAnswer): void {
     if (!this.resolve) return;
     this.lastAnswer = answer;
+    if (openSlot.dialog === this) openSlot.dialog = null;
     this.overlay.classList.remove('visible');
     this.releaseFocusTrap?.();
     this.releaseFocusTrap = null;
@@ -167,6 +195,7 @@ export class ConfirmDialog {
   }
 
   dispose(): void {
+    this.finish(false, 'dismissed');
     for (const d of this.disposables) d();
     this.overlay.remove();
   }

@@ -4,7 +4,7 @@ import * as store from './store';
 import { IPC, UI_TEXT_SCALE_ARG, WINDOW_BG, uiTextScaleOf } from '../shared/constants';
 import type { PtyManager } from './pty-manager';
 import { closePreconfirmations } from './close-preconfirm';
-import { closeConfirmations } from './close-confirm';
+import { closeConfirmations, isCloseKeyRepeat } from './close-confirm';
 import { isQuitConfirmed } from './quit-guard';
 
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
@@ -244,6 +244,19 @@ export function createWindow(ptyManager?: PtyManager): BrowserWindow {
     closePreconfirmations.mark(windowId);
     window.close();
   };
+
+  // A held ⌘Q or ⌘W must never answer the quit / close dialog: auto-repeat
+  // events are stopped here, before the page and the menu accelerators see them.
+  let lastRepeatLog = 0;
+  window.webContents.on('before-input-event', (event, input) => {
+    if (!isCloseKeyRepeat(input)) return;
+    event.preventDefault();
+    const t = Date.now();
+    if (t - lastRepeatLog > 2000) {
+      lastRepeatLog = t;
+      console.info('[CLOSE] held ⌘Q/⌘W ignored (key repeat)', { windowId });
+    }
+  });
 
   window.on('close', (e) => {
     // Guard against silently killing live PTYs by closing a window: the red
