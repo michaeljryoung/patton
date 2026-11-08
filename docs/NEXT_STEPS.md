@@ -112,7 +112,7 @@ flowchart TD
 | `s47_ship` | Release and install the close fix, the in-app quit dialogs and the board in place; live: ⌘W twice and ⌘Q on the last tab ask once in the app and quit (`[CLOSE]` lines in main.log), a tile click and Wake act in the board's tab, a turn ending with agents running shows the ring | live | `close_via_main`, `quit_dialog`, `board_in_place` | v1.19.0 (close fix): pushed `7fe23e4`, run 42460487962, cask `0f3b9365…` matches the DMG, installed 07:53, launched 08:07:17 as 1.19.0 (quit by ⌘Q around 08:08, which v1.19 doesn't log). Main `caadc82`: run 42466222395 failed twice at Build DMG on GitHub 504s for Electron's `SHASUMS256.txt` (no tag made), a watcher re-ran it once GitHub served both files steadily: released as `v1.20.0` 10:38 (attempt 6; cask 1.20.0 sha `4bd781de…` matches the DMG); installed from main 09:16 with a temporary `electronZipDir` (reverted), reports 1.19.0+6, codesign passed, `pty:respawn` and `main did not answer` in the asar. Pending: every live check (and a reinstall from the tag for the label) |
 <!-- MAP:END -->
 
-Last updated: 2026-11-08 (Session 46, v1.19.0; main installed as 1.19.0+6)
+Last updated: 2026-11-08 (Session 46, v1.20.0 released; the installed build reports 1.19.0+6, same code)
 
 CLAUDE.md's `## Next Steps` section points here; this is the canonical list. Items leave only via `[x] DONE — Session N`, `[~] SUPERSEDED — <pointer>`, or `[-] DROPPED: <reason>`. Marked items linger 10 checkpoints, then sweep to `docs/session-archive.md`.
 
