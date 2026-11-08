@@ -588,3 +588,27 @@ _Older entries archived → `docs/session-archive.md` (latest move 2026-11-07, S
 - **A Stop-hook verdict can land while the title still shows ◐** (S40). Claude Code emits each hook's `terminalSequence` as that hook finishes, and Michael's `closing-block-gate.py` can `block` the stop so the turn continues. `pane.ts` therefore stores the verdict and applies it only after ✳ has held 1.5 s; a verdict expires after 40 s (S42: ✳ appears only after every Stop hook ends, and `source-critic.py` makes that 4.5–31 s, so the original 10 s let stops fall through to the title path and go green while background work ran; longer would widen the window where a blocked stop's stale verdict parks a pane that then stops at a question or dialog); a parked pane never fires from the title path. `grep '\[DOT\]' main.log` shows stored/applied (with `afterMs`)/expired.
 
 - **Claude Code's `terminalSequence` allowlist is OSC 0/1/2/9/99/777 + BEL** (S40). Anything else makes the field silently ignored. Patton's channel is `OSC 777;patton;…`; `OSC 777;notify;title;body` counts as attention like OSC 9.
+
+## Session Log (S46 trim 2026-11-08)
+
+### 2026-11-07 (Session 42 — paste dialog off, verdict TTL, bookmark launch; held on local main, from 22:33 on 6 Nov)
+- **Multi-line paste confirmation is a setting, off by default** (`8266f90`). Michael: "im just trying to do standard talking into claude text and its doing this paste warning, can we just turn this off please". Dictation pastes, and the dialog had run on every 3+ line terminal paste since v1.11.0's capture listener. Settings → "Confirm multi-line pastes" brings it back; the flag is one renderer service read at paste time (`services/paste-confirm.ts`), so splits can't miss it; `[PASTE] multi-line text` logs count, confirm and bracketed mode; SECURITY.md says what off costs (bash 3.2 runs pasted lines).
+- **Hook verdicts live 40 s, not 10** (`c6d1af8`, review fix `b192930`). The 6 Nov log, 13:05–22:33: 146 of 189 verdicts expired; applied ones landed 4.5–9.9 s after arrival, 19 stops reached ✳ 10–31 s after theirs and fell to the title path, 2 of them green while the hook had reported background tasks. ✳ waits for the slowest Stop hook (source-critic). A fresh review found 60 s widened the opposite failure (a blocked stop's stale verdict parking a pane that then stops at a question), so 40 s; `afterMs` is now logged.
+- **A bookmark for a closed project launches Claude there** (`5be6a3b`; claude-launcher `238974c`, pushed). Clicking "Foot" gave the `cc` picker: his startup command is a picker, not `claude` as S40 assumed. A bookmark tab's first pane gets `PATTON_PROJECT_DIR` (the renderer sends only `projectDir: true`; main exports the validated cwd); `cc` unsets it and, when it equals `$PWD`, runs "let's work on <name> project". Re-clicking an open project activated its tab (6 Nov 15:23).
+- **Nothing pushed or installed** (Michael: "again dont push live yet"): two `.worktrees/` worktrees, three no-install builds with asar literals checked, `git merge --ff-only`; verified by lint, tsc, five scripted `cc` cases and one fresh review; no live click yet. Size pass: S38's entry, D2/D3/D8 (bookmark UI one-offs) and the macos-14 and close-handler gotchas to the archive, word for word.
+
+_Earlier entries archived → `docs/session-archive.md` (latest trim 2026-11-07, S44)._
+
+## Decisions (S46 trim 2026-11-08)
+
+- **2026-11-07 (S45) — ⌘W twice closes; on the last tab it quits Patton.** Michael: "Command+W, press it twice, and it will close immediately", then "it should shut patton". Supersedes S37's last-tab path (straight to main's native guard, Cancel focused). Only the tab and pane close dialogs focus Close; bookmark and board confirms keep Cancel. ⌘Q and the red button keep the native guard; the in-app confirmation reaches main as a one-shot, own-window, 5 s record.
+
+- **2026-11-07 (S45) — SF Mono comes from the Mac's own Terminal.app at runtime, never bundled.** Apple's licence rules out shipping it, and Chromium can't reach the system copy by name; SF Mono was the default's intent all along and is the "modern" match for macOS. Other fonts show only when they draw.
+
+- **2026-11-07 (S45) — The Claude button types `FORCE_HYPERLINK=1 claude` in the board's own tab.** In place, like Terminal, plain `claude` and never `cc`; the prefix rather than giving every ⌘T shell `FORCE_HYPERLINK` (SECURITY.md rules that out); csh/tcsh get plain `claude`.
+
+- **2026-11-07 (S44) — The board's Wake button runs the command in a new background tab, not the board's own.** Running it in place would take the board away while he still wants to pick a project; a background tab keeps `wake` visible (yellow flag, Ctrl+C there stops it), and "Awake" stops a second one from starting.
+
+- **2026-11-07 (S43) — The checkpoint clock measures context since the session's last `/checkpoint`, not time.** Michael: "i think it should be based off % of context"; offered context-since, total context or time-amber-by-context, he chose context-since. Amber from 20% of a 1M window (a setting); click runs `/checkpoint` only when Claude is stopped.
+
+- **2026-11-06 (S40) — Claude Code state comes from its Stop hook, not from reading the screen.** Hooks are documented for exactly this distinction and the sequence is emitted by Claude Code itself; scraping the task footer would break on every Claude update (and the footer can show stale rows). OSC 777 is the channel because Patton already treats any OSC 9 body as "needs you".
