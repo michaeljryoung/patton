@@ -1,0 +1,6 @@
+# Fonts and rendering
+
+Read before touching fonts, the font setting, window throttling or anything that tests whether the window is visible or focused. Moved word for word from CLAUDE.md's Gotchas (S46 slimming, 2026-11-08).
+
+- **`'SF Mono'` in a CSS font stack never draws in Chromium on macOS** (S45). macOS doesn't expose SF Mono to apps by family name (it ships inside Terminal.app and as a hidden system font), so until v1.16 Patton's default, its "SF Mono" option and "Fira Code" (not installed) all drew Menlo, and Settings → Font Family looked dead. `src/main/system-fonts.ts` now reads the Mac's own Terminal.app faces (never bundled: Apple's licence) and the renderer registers them as a FontFace before any terminal opens; `node scripts/check-fonts.cjs` proves it in a hidden Electron window. Never assume a font in a stack draws: measure it.
+- **`backgroundThrottling: false` is load-bearing, and it makes `document.hidden` useless** (S27; two entries merged S41, originals in the archive). With Chromium's default throttling a backgrounded window's WebGL glyph atlas came back stale (garbled until a resize), so removing the setting brings that back for WebGL users. Side effect: the Page Visibility API always reports visible, so gate "is the user looking?" on `document.hasFocus()`, never `document.hidden` (already so in `app.ts:33`).
