@@ -14,6 +14,7 @@ import { getSystemFonts } from './system-fonts';
 import { RateLimiter } from './rate-limiter';
 import { closePreconfirmations } from './close-preconfirm';
 import { closeSenderWindow } from './close-window';
+import { closeConfirmations } from './close-confirm';
 import { broadcastUiTextScale, isOnlyWindow } from './window-manager';
 import { decideFileOpen, extensionOf, parseLinkPath, type OpenDecision } from './link-open-policy';
 import { annotateBookmarks, validateBookmarks } from './bookmarks'; // bookmarks sidebar
@@ -812,6 +813,24 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
     }
     return closeSenderWindow(event.sender) !== null;
   });
+
+  // --- in-app quit / close confirmations (v1.19; close-confirm.ts) ---
+  // Main asks (WINDOW_CONFIRM_REQUEST); the renderer acks once the dialog is on
+  // screen and later answers. No rate limiter on purpose: both calls must match
+  // a pending request id that main made up (random), only from that request's
+  // own window, so they cannot be used to flood or to skip a dialog, and a
+  // refusal would leave the request hanging (gotcha: limiters refuse silently).
+  ipcMain.handle(IPC.WINDOW_CONFIRM_ACK, (event, requestId: unknown) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win || win.isDestroyed() || typeof requestId !== 'string') return false;
+    return closeConfirmations.ack(win.id, requestId);
+  });
+  ipcMain.handle(IPC.WINDOW_CONFIRM_ANSWER, (event, requestId: unknown, ok: unknown) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win || win.isDestroyed() || typeof requestId !== 'string') return false;
+    return closeConfirmations.answer(win.id, requestId, ok === true);
+  });
+  // --- end in-app quit / close confirmations ---
 
   // --- Claude Code Stop hook (Settings → Claude Code; logic in claude-hook.ts) ---
   // Install and remove throw with a readable message (e.g. settings.json won't

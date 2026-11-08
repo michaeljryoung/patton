@@ -4,6 +4,8 @@ import * as store from './store';
 import { IPC, UI_TEXT_SCALE_ARG, WINDOW_BG, uiTextScaleOf } from '../shared/constants';
 import type { PtyManager } from './pty-manager';
 import { closePreconfirmations } from './close-preconfirm';
+import { closeConfirmations } from './close-confirm';
+import { isQuitConfirmed } from './quit-guard';
 
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
 declare const MAIN_WINDOW_VITE_NAME: string;
@@ -212,6 +214,37 @@ export function createWindow(ptyManager?: PtyManager): BrowserWindow {
   };
 
   const windowId = window.id;
+
+  /** The native fallback box for closing this window with live shells. True = Close Anyway. */
+  const nativeCloseBox = (count: number): boolean => {
+    const isLastWindow = isOnlyWindow();
+    const terminals = `${count} terminal${count === 1 ? '' : 's'}`;
+    const result = dialog.showMessageBoxSync(window, {
+      type: 'warning',
+      buttons: ['Cancel', 'Close Anyway'],
+      defaultId: 0,
+      cancelId: 0,
+      title: isLastWindow ? 'Close Patton' : 'Close Window',
+      message: `${terminals} still running`,
+      detail:
+        (isLastWindow
+          ? 'Closing the last window will end every terminal session and quit Patton. '
+          : `Closing this window will end its ${terminals}; your other windows stay open. `) +
+        'Transcripts on disk are preserved, but in-memory session state is not.\n\n' +
+        'To keep a session alive, cancel and exit it gracefully from inside its tab first.',
+    });
+    return result !== 0;
+  };
+
+  /** The user confirmed closing this window (in the app or natively): record it
+   *  for the guard and close through the normal path, which then skips the ask. */
+  const closeConfirmed = (how: string) => {
+    if (window.isDestroyed()) return;
+    console.info('[CLOSE] window close confirmed', { windowId, how });
+    closePreconfirmations.mark(windowId);
+    window.close();
+  };
+
   window.on('close', (e) => {
     // Guard against silently killing live PTYs by closing a window: the red
     // button or ⌘W on its last tab. On macOS,
@@ -220,38 +253,65 @@ export function createWindow(ptyManager?: PtyManager): BrowserWindow {
     // final window IS a quit action; the before-quit handler can't catch that
     // path because this handler destroys the window's PTYs first, so it then
     // finds none alive and never asks a second time. ⌘Q asks in before-quit
-    // and destroys every PTY before windows close, so it is never asked twice
-    // either.
+    // (quit-guard.ts) and destroys every PTY before windows close, so it is
+    // never asked twice either: once the user confirmed that quit
+    // (isQuitConfirmed) this handler stands down.
     //
     // ⌘W on the last tab has already asked in the app ("Quit Patton?" or
     // "Close this window?"): its renderer records that here (preconfirm IPC),
     // then asks main to close the window (WINDOW_CLOSE → BrowserWindow.close(),
     // which is what emits this event; the page's own window.close() does NOT,
     // measured on Electron 44.9.3), without disposing the tab, so the shells
-    // are still alive. A fresh record for THIS window skips the native box
-    // once; a stale or absent one leaves the guard as it was (close-preconfirm.ts).
+    // are still alive. A fresh record for THIS window skips the ask once; a
+    // stale or absent one leaves the guard as it was (close-preconfirm.ts).
+    //
+    // v1.19 (S46): the red button (no record) asks IN THE APP too, with the
+    // same dialog (Enter / ⌘W confirm, Esc cancels), instead of the native box
+    // that ⌘W could not answer. This supersedes the S45 decision "⌘Q and the
+    // red button keep the native guard". The close is always prevented first;
+    // a confirmation records itself as a pre-confirmation and closes again.
+    // The native box remains only when this window cannot show the dialog
+    // (hidden, minimized, crashed) or its renderer does not answer in time.
     const preconfirm = closePreconfirmations.take(windowId);
     if (preconfirm === 'confirmed') console.info('[CLOSE] window close pre-confirmed', { windowId });
     if (preconfirm === 'expired') console.info('[CLOSE] window close pre-confirmation expired', { windowId });
     const count = ptyManager?.liveCountForWindow(window) ?? 0;
-    if (count > 0 && preconfirm !== 'confirmed') {
-      const isLastWindow = isOnlyWindow();
-      const terminals = `${count} terminal${count === 1 ? '' : 's'}`;
-      const result = dialog.showMessageBoxSync(window, {
-        type: 'warning',
-        buttons: ['Cancel', 'Close Anyway'],
-        defaultId: 0,
-        cancelId: 0,
-        title: isLastWindow ? 'Close Patton' : 'Close Window',
-        message: `${terminals} still running`,
-        detail:
-          (isLastWindow
-            ? 'Closing the last window will end every terminal session and quit Patton. '
-            : `Closing this window will end its ${terminals}; your other windows stay open. `) +
-          'Transcripts on disk are preserved, but in-memory session state is not.\n\n' +
-          'To keep a session alive, cancel and exit it gracefully from inside its tab first.',
-      });
-      if (result === 0) {
+    if (count > 0 && preconfirm !== 'confirmed' && isQuitConfirmed()) {
+      console.info('[CLOSE] window close: the quit was confirmed, not asking again', { windowId, count });
+    } else if (count > 0 && preconfirm !== 'confirmed') {
+      // A dialog is already open for this window, or a quit dialog is open
+      // anywhere: another click or ⌘Q must neither stack a dialog nor skip it.
+      if (closeConfirmations.hasPendingFor(windowId) || closeConfirmations.hasPendingQuit()) {
+        e.preventDefault();
+        console.info('[CLOSE] window close ignored: a confirmation is already open', { windowId });
+        return;
+      }
+      if (closeConfirmations.canAsk(window)) {
+        e.preventDefault();
+        const kind = isOnlyWindow() ? 'quit' : 'close-window';
+        console.info('[CLOSE] window close: asking in the app', { windowId, kind, count });
+        void closeConfirmations.ask(window, kind, count).then((result) => {
+          if (result === 'confirmed') {
+            closeConfirmed('in-app');
+          } else if (result === 'unavailable') {
+            if (window.isDestroyed()) return;
+            // Count again: a crashed renderer's shells are already ended.
+            const now = ptyManager?.liveCountForWindow(window) ?? 0;
+            if (now <= 0) {
+              closeConfirmed('no-shells-left');
+              return;
+            }
+            console.info('[CLOSE] window close: in-app dialog unavailable; native box', { windowId, count: now });
+            if (nativeCloseBox(now)) closeConfirmed('native-fallback');
+            else console.info('[CLOSE] window close cancelled', { windowId, how: 'native-fallback' });
+          } else {
+            console.info('[CLOSE] window close not confirmed', { windowId, result });
+          }
+        });
+        return;
+      }
+      console.info('[CLOSE] window close: window cannot show the in-app dialog; native box', { windowId, count });
+      if (!nativeCloseBox(count)) {
         e.preventDefault();
         return;
       }

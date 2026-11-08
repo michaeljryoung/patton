@@ -19,7 +19,7 @@ export interface ConfirmOptions {
 }
 
 /** How the last dialog was answered (for logging). */
-export type ConfirmAnswer = 'button' | 'enter' | 'cmd-w' | 'escape' | 'superseded';
+export type ConfirmAnswer = 'button' | 'enter' | 'cmd-w' | 'escape' | 'superseded' | 'dismissed';
 
 /**
  * Generic yes/no confirmation modal. Mirrors PasteDialog's structure (themed
@@ -148,6 +148,12 @@ export class ConfirmDialog {
     if (!this.resolve || !this.shortcutConfirms) return false;
     this.finish(true, 'cmd-w');
     return true;
+  }
+
+  /** Take the open dialog down as cancelled, because someone else (main, for a
+   *  quit it already has the answer to) is done with it. No-op when none is open. */
+  dismiss(): void {
+    this.finish(false, 'dismissed');
   }
 
   private finish(result: boolean, answer: ConfirmAnswer): void {

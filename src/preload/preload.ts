@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import { IPC, uiTextScaleFromArgv } from '../shared/constants';
-import type { BoardLayout, BoardPayload, Bookmark, PattonAPI, RenderSnapshot } from '../shared/types';
+import type { BoardLayout, BoardPayload, Bookmark, ConfirmRequest, PattonAPI, RenderSnapshot } from '../shared/types';
 
 const api: PattonAPI = {
   pty: {
@@ -267,6 +267,20 @@ const api: PattonAPI = {
     info: () => ipcRenderer.invoke(IPC.WINDOW_CLOSE_INFO),
     preconfirm: () => ipcRenderer.invoke(IPC.WINDOW_PRECONFIRM_CLOSE),
     closeWindow: () => ipcRenderer.invoke(IPC.WINDOW_CLOSE),
+    // --- in-app quit / close confirmations (v1.19) ---
+    onConfirmRequest: (cb) => {
+      const listener = (_e: Electron.IpcRendererEvent, request: ConfirmRequest) => cb(request);
+      ipcRenderer.on(IPC.WINDOW_CONFIRM_REQUEST, listener);
+      return () => ipcRenderer.removeListener(IPC.WINDOW_CONFIRM_REQUEST, listener);
+    },
+    onConfirmDismiss: (cb) => {
+      const listener = (_e: Electron.IpcRendererEvent, payload: { requestId: string }) => cb(payload.requestId);
+      ipcRenderer.on(IPC.WINDOW_CONFIRM_DISMISS, listener);
+      return () => ipcRenderer.removeListener(IPC.WINDOW_CONFIRM_DISMISS, listener);
+    },
+    ackConfirm: (requestId) => ipcRenderer.invoke(IPC.WINDOW_CONFIRM_ACK, requestId),
+    answerConfirm: (requestId, ok) => ipcRenderer.invoke(IPC.WINDOW_CONFIRM_ANSWER, requestId, ok),
+    // --- end in-app quit / close confirmations ---
   },
 };
 

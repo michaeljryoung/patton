@@ -11,12 +11,19 @@
 // (ipc-handlers.ts) with esbuild, with Electron, the store and the PTY manager
 // replaced by recording stubs, so the guard and the IPC share the real
 // close-preconfirm singleton exactly as in the app.
+// v1.19 (S46): ⌘Q / Dock Quit and the red close button ask IN THE APP too
+// (quit-guard.ts, close-confirm.ts, and the close handler): main sends
+// WINDOW_CONFIRM_REQUEST to the window's renderer, which acks and answers over
+// IPC. Sections 11+ play the renderer through the real IPC handlers; the older
+// sections use windows that are not visible, which cannot show a dialog, so
+// they still meet the native box (the fallback path).
 // Run: node scripts/check-close-guard.mjs   (no extra dependencies)
 import { build } from 'esbuild';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { createRequire } from 'node:module';
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -39,17 +46,40 @@ let dialogAnswer = 0; // 0 = Cancel, 1 = Close Anyway
 const handlers = new Map();
 let nextId = 1;
 
-class FakeWindow {
+/** Minimal EventEmitter (on / once / removeListener / emit). */
+class Emitter {
+  constructor() { this.listeners = new Map(); }
+  on(ev, fn) { (this.listeners.get(ev) ?? this.listeners.set(ev, []).get(ev)).push(fn); return this; }
+  once(ev, fn) { const w = (...a) => { this.removeListener(ev, w); fn(...a); }; w.orig = fn; return this.on(ev, w); }
+  removeListener(ev, fn) { this.listeners.set(ev, (this.listeners.get(ev) ?? []).filter((l) => l !== fn && l.orig !== fn)); return this; }
+  emit(ev, ...args) { for (const fn of [...(this.listeners.get(ev) ?? [])]) fn(...args); }
+}
+let focusedWindow = null;
+class FakeWindow extends Emitter {
   constructor() {
+    super();
     this.id = nextId++;
-    this.listeners = new Map();
     this.destroyed = false;
-    this.webContents = { owner: this, session: { webRequest: { onHeadersReceived() {} } }, on() {}, setWindowOpenHandler() {} };
+    // A window that is not showing cannot show the in-app dialog: the older
+    // sections rely on that to keep meeting the native box. Sections 11+ show it.
+    this.visible = false;
+    this.minimized = false;
+    this.sent = []; // what main sent this window's renderer: { ch, payload }
+    const wc = new Emitter();
+    Object.assign(wc, {
+      owner: this,
+      session: { webRequest: { onHeadersReceived() {} } },
+      setWindowOpenHandler() {},
+      isDestroyed: () => this.destroyed,
+      send: (ch, payload) => { if (this.destroyed) throw new Error('Object has been destroyed'); this.sent.push({ ch, payload }); },
+    });
+    this.webContents = wc;
     windows.push(this);
   }
-  on(ev, fn) { (this.listeners.get(ev) ?? this.listeners.set(ev, []).get(ev)).push(fn); return this; }
-  once(ev, fn) { return this.on(ev, fn); }
-  emit(ev, ...args) { for (const fn of this.listeners.get(ev) ?? []) fn(...args); }
+  isVisible() { return this.visible && !this.destroyed; }
+  isMinimized() { return this.minimized; }
+  reload() { this.reloaded = (this.reloaded ?? 0) + 1; }
+  static getFocusedWindow() { return focusedWindow && !focusedWindow.destroyed ? focusedWindow : null; }
   /** BrowserWindow.close(): run the 'close' listeners; unless one
    *  prevented it, the window goes ('closed'). Returns true when it closed. */
   requestClose() {
@@ -85,17 +115,19 @@ class FakeWindow {
   static fromWebContents(wc) { return wc?.owner ?? null; }
 }
 
+let appQuitCalls = 0;
 const tmpDirs = []; // the app.getPath stub's directories, removed at the end
 const electron = new Proxy({
   BrowserWindow: FakeWindow,
-  dialog: { showMessageBoxSync: (_win, opts) => { dialogCalls.push(opts); return dialogAnswer; } },
+  // Main passes no window when none is left; the options are then the first argument.
+  dialog: { showMessageBoxSync: (a, b) => { dialogCalls.push(b ?? a); return dialogAnswer; } },
   nativeTheme: { shouldUseDarkColors: false },
   screen: deep(),
   ipcMain: {
     handle: (ch, fn) => handlers.set(ch, fn),
     on: (ch, fn) => handlers.set(ch, fn),
   },
-  app: { isPackaged: false, getPath: () => { const d = mkdtempSync(join(tmpdir(), 'close-guard-')); tmpDirs.push(d); return d; } },
+  app: { quit: () => { appQuitCalls++; beforeQuit(); }, isPackaged: false, getPath: () => { const d = mkdtempSync(join(tmpdir(), 'close-guard-')); tmpDirs.push(d); return d; } },
 }, { get: (t, k) => (k in t ? t[k] : deep()) });
 
 const store = { getSettings: () => ({}), getWindowState: () => ({ width: 800, height: 600 }), setWindowState() {}, setSession() {} };
@@ -113,6 +145,7 @@ const ptyManager = {
     return n;
   },
   destroyed: [],
+  destroyAll: () => { for (const [w, n] of live) { ptyManager.destroyed.push(w.id); void n; } live.clear(); },
   get size() { let n = 0; for (const v of live.values()) n += v; return n; },
 };
 
@@ -140,6 +173,7 @@ const bundle = await build({
       export { registerIpcHandlers } from './src/main/ipc-handlers';
       export { closePreconfirmations, CLOSE_PRECONFIRM_TTL_MS } from './src/main/close-preconfirm';
       export { IPC } from './src/shared/constants';
+      export { guardBeforeQuit, isQuitConfirmed } from './src/main/quit-guard';
     `,
     resolveDir: repo,
     loader: 'ts',
@@ -153,9 +187,15 @@ const bundle = await build({
   write: false,
   logLevel: 'silent',
 });
-const mod = { exports: {} };
-new Function('module', 'exports', '__dirname', 'require', bundle.outputFiles[0].text)(mod, mod.exports, join(repo, '.vite', 'build'), (await import('node:module')).createRequire(join(repo, 'noop.js')));
-const { createWindow, registerIpcHandlers, closePreconfirmations, CLOSE_PRECONFIRM_TTL_MS, IPC } = mod.exports;
+// A fresh copy of the bundle: quit-guard's "quit confirmed" flag is module state
+// that a real quit never resets, so every section that confirms a quit gets its own.
+const bundleText = bundle.outputFiles[0].text;
+const instantiate = () => {
+  const m = { exports: {} };
+  new Function('module', 'exports', '__dirname', 'require', bundleText)(m, m.exports, join(repo, '.vite', 'build'), (createRequire)(join(repo, 'noop.js')));
+  return m.exports;
+};
+let { createWindow, registerIpcHandlers, closePreconfirmations, CLOSE_PRECONFIRM_TTL_MS, IPC, guardBeforeQuit, isQuitConfirmed } = instantiate();
 
 // Main-process console lines (the guard logs through console.info).
 const logs = [];
@@ -181,6 +221,50 @@ const later = () => new Promise((r) => setImmediate(r));
 const info = (win) => handlers.get(IPC.WINDOW_CLOSE_INFO)({ sender: win.webContents });
 const preconfirm = (win) => handlers.get(IPC.WINDOW_PRECONFIRM_CLOSE)({ sender: win.webContents });
 const reset = () => { wall += 1100; dialogCalls.length = 0; logs.length = 0; warns.length = 0; ptyManager.destroyed.length = 0; dialogAnswer = 0; };
+
+
+// ── v1.19 helpers: main's quit/close guard with the renderer played by the test ──
+let quitCompleted = 0;
+/** What main.ts's 'before-quit' does: ask the guard; if it lets the quit go on,
+ *  end every shell and close every window (their close handlers run). */
+function beforeQuit() {
+  let prevented = false;
+  const proceed = guardBeforeQuit({ preventDefault: () => { prevented = true; } }, ptyManager);
+  if (proceed && !prevented) {
+    quitCompleted++;
+    ptyManager.destroyAll();
+    for (const w of [...windows]) w.requestClose();
+    return 'quit';
+  }
+  return 'prevented';
+}
+/** ⌘Q, Dock Quit or the app menu: all of them are app.quit() → before-quit. */
+const cmdQ = () => beforeQuit();
+/** A fresh copy of the guard modules, no windows, no shells (see instantiate). */
+async function fresh() {
+  for (const w of [...windows]) w.pageClose();
+  live.clear();
+  focusedWindow = null;
+  await later(); // dialogs left open by the last section settle (native fallback) before the next starts
+  ({ createWindow, registerIpcHandlers, closePreconfirmations, CLOSE_PRECONFIRM_TTL_MS, IPC, guardBeforeQuit, isQuitConfirmed } = instantiate());
+  registerIpcHandlers(ptyManager);
+  quitCompleted = 0;
+  appQuitCalls = 0;
+  reset();
+}
+const showing = (n, shells) => {
+  const w = createWindow(ptyManager);
+  w.visible = true;
+  live.set(w, shells);
+  return w;
+};
+const requests = (w) => w.sent.filter((m) => m.ch === IPC.WINDOW_CONFIRM_REQUEST).map((m) => m.payload);
+const dismissals = (w) => w.sent.filter((m) => m.ch === IPC.WINDOW_CONFIRM_DISMISS).map((m) => m.payload.requestId);
+const lastRequest = (w) => requests(w).at(-1);
+const ack = (w, id) => handlers.get(IPC.WINDOW_CONFIRM_ACK)({ sender: w.webContents }, id);
+const answer = (w, id, ok) => handlers.get(IPC.WINDOW_CONFIRM_ANSWER)({ sender: w.webContents }, id, ok);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const logged = (t) => logs.some((l) => l.includes(t));
 
 // ── 1. The IPC answers for the sender's own window ──
 {
@@ -394,6 +478,290 @@ const reset = () => { wall += 1100; dialogCalls.length = 0; logs.length = 0; war
   w.requestClose();
   check('guarded close: safety net finds nothing', warns.length === 0, warns);
   reset();
+}
+
+
+// ═══ v1.19: ⌘Q and the red button ask in the app ═══
+
+// ── 11. ⌘Q → in-app dialog → confirm: no native box, quits once ──
+await fresh();
+{
+  const a = showing(0, 3);
+  const b = showing(0, 2);
+  focusedWindow = b;
+  check('⌘Q with shells: quit is held back', cmdQ() === 'prevented' && quitCompleted === 0);
+  check('⌘Q: no native box', dialogCalls.length === 0, dialogCalls.length);
+  check('⌘Q: asked once, in the focused window only', requests(b).length === 1 && requests(a).length === 0, [requests(a), requests(b)]);
+  const req = lastRequest(b);
+  check('⌘Q: kind quit and the total number of terminals (5), not the window\'s', req.kind === 'quit' && req.terminals === 5, req);
+  check('⌘Q: asking is logged', logged('[CLOSE] quit: asking in the app') && logged('in-app confirmation requested'), logs);
+  check('⌘Q: nothing confirmed before the user answers', quitCompleted === 0 && appQuitCalls === 0 && ptyManager.size === 5);
+  check('ack from the asked window accepted', ack(b, req.requestId) === true);
+  check('ack for an unknown request refused', ack(b, 'nope') === false);
+  check('another window cannot answer for it', answer(a, req.requestId, true) === false && quitCompleted === 0);
+  check('answer: confirmed', answer(b, req.requestId, true) === true);
+  await later();
+  check('confirm: app.quit() called once, quit completed once', appQuitCalls === 1 && quitCompleted === 1, { appQuitCalls, quitCompleted });
+  check('confirm: every window closed and all shells ended, with no native box anywhere',
+    windows.length === 0 && ptyManager.size === 0 && dialogCalls.length === 0, { windows: windows.length, shells: ptyManager.size, dialogs: dialogCalls.length });
+  check('confirm: no window asked again during the quit', requests(a).length === 0 && requests(b).length === 1);
+  check('confirm: quit-confirmed state set and logged', isQuitConfirmed() === true && logged('[CLOSE] quit confirmed'), logs);
+}
+
+// ── 12. ⌘Q twice: the second confirms; before the ack it is ignored ──
+await fresh();
+{
+  const a = showing(0, 2);
+  focusedWindow = a;
+  cmdQ();
+  const req = lastRequest(a);
+  check('⌘Q again before the dialog is shown: ignored, no second request, no quit',
+    cmdQ() === 'prevented' && requests(a).length === 1 && quitCompleted === 0 && dialogCalls.length === 0, requests(a));
+  check('ignored second ⌘Q logged', logged('dialog not shown yet, ignored'), logs);
+  ack(a, req.requestId);
+  check('⌘Q again with the dialog up: held back here (the confirm lands a tick later)', cmdQ() === 'prevented');
+  await later();
+  check('second ⌘Q confirms: quit completed once, no native box', quitCompleted === 1 && appQuitCalls === 1 && dialogCalls.length === 0, { quitCompleted, appQuitCalls });
+  check('second ⌘Q: still only one dialog ever requested', requests(a).length === 1, requests(a));
+  check('second ⌘Q: the renderer was told to take its dialog down', dismissals(a).includes(req.requestId), a.sent);
+  check('second ⌘Q logged', logged('quit requested again: confirming the open dialog'), logs);
+  check('a late answer from the taken-down dialog changes nothing', answer(a, req.requestId, false) === false);
+}
+
+// ── 13. Esc / Cancel cancels: nothing quits, shells live, a later ⌘Q asks again ──
+await fresh();
+{
+  const a = showing(0, 4);
+  focusedWindow = a;
+  cmdQ();
+  const r1 = lastRequest(a);
+  ack(a, r1.requestId);
+  answer(a, r1.requestId, false);
+  await later();
+  check('Esc: no quit, shells alive, window open, no native box',
+    quitCompleted === 0 && appQuitCalls === 0 && ptyManager.size === 4 && !a.isDestroyed() && dialogCalls.length === 0);
+  check('Esc: quit-confirmed state not set', isQuitConfirmed() === false);
+  check('Esc: cancellation logged', logged('quit not confirmed'), logs);
+  cmdQ();
+  check('⌘Q after a cancel asks again', requests(a).length === 2 && lastRequest(a).requestId !== r1.requestId, requests(a));
+  const r2 = lastRequest(a);
+  ack(a, r2.requestId);
+  answer(a, r2.requestId, true);
+  await later();
+  check('and confirming that one quits', quitCompleted === 1);
+}
+
+// ── 14. Red button → in-app dialog → confirm ──
+await fresh();
+{
+  const w = showing(0, 2);
+  const closed = w.requestClose();
+  check('red button (only window): close held back, no native box', !closed && dialogCalls.length === 0 && !w.isDestroyed(), dialogCalls.length);
+  const req = lastRequest(w);
+  check('red button, only window: asks "quit" with its terminals', req?.kind === 'quit' && req.terminals === 2, req);
+  check('red button: asking logged', logged('[CLOSE] window close: asking in the app'), logs);
+  const again = w.requestClose();
+  check('red button clicked again with the dialog open: still held, no second dialog, no native box',
+    !again && requests(w).length === 1 && dialogCalls.length === 0, requests(w));
+  check('the repeated click is logged as ignored', logged('a confirmation is already open'), logs);
+  ack(w, req.requestId);
+  check('still held after the ack', !w.isDestroyed() && ptyManager.destroyed.length === 0);
+  answer(w, req.requestId, true);
+  await later();
+  check('confirm: window closed through the normal path, shells ended once, no native box',
+    w.isDestroyed() && ptyManager.destroyed.length === 1 && dialogCalls.length === 0 && warns.length === 0, { destroyed: ptyManager.destroyed, warns });
+  check('confirm: logged', logged('[CLOSE] window close confirmed') && logged('window close pre-confirmed'), logs);
+}
+reset();
+{
+  const w = showing(0, 3);
+  w.requestClose();
+  const req = lastRequest(w);
+  ack(w, req.requestId);
+  answer(w, req.requestId, false);
+  await later();
+  check('red button, Esc: window and shells stay, nothing native', !w.isDestroyed() && ptyManager.size === 3 && dialogCalls.length === 0);
+  w.requestClose();
+  check('red button after a cancel asks again', requests(w).length === 2);
+  // ⌘Q while the last window\'s red-button "quit" dialog is open confirms it
+  const r2 = lastRequest(w);
+  ack(w, r2.requestId);
+  cmdQ();
+  await later();
+  check('⌘Q while the red button\'s quit dialog is open confirms that one (no second dialog)',
+    requests(w).length === 2 && w.isDestroyed() && ptyManager.size === 0 && dialogCalls.length === 0, { requests: requests(w).length, destroyed: w.isDestroyed() });
+}
+
+// ── 15. Renderer does not answer in time → native box; never silent ──
+await fresh();
+{
+  const a = showing(0, 2);
+  focusedWindow = a;
+  dialogAnswer = 0;
+  cmdQ();
+  const req = lastRequest(a);
+  await sleep(1700);
+  check('⌘Q, renderer silent: native "Quit Patton" box after the timeout', dialogCalls.length === 1 && dialogCalls[0].title === 'Quit Patton', dialogCalls);
+  check('⌘Q, silent renderer: Cancel keeps everything', quitCompleted === 0 && ptyManager.size === 2 && !a.isDestroyed());
+  check('⌘Q, silent renderer: the renderer was told to drop the dialog', dismissals(a).includes(req.requestId), a.sent);
+  check('a late ack is refused so the renderer closes its dialog', ack(a, req.requestId) === false);
+  check('timeout logged', warns.some((l) => l.includes('did not show the in-app confirmation in time')), warns);
+  reset();
+  dialogAnswer = 1;
+  cmdQ();
+  await sleep(1700);
+  check('⌘Q, silent renderer, Quit Anyway: the quit goes on once', dialogCalls.length === 1 && quitCompleted === 1 && appQuitCalls === 1, { dialogs: dialogCalls.length, quitCompleted, appQuitCalls });
+}
+await fresh();
+{
+  const w = showing(0, 2);
+  dialogAnswer = 0;
+  w.requestClose();
+  await sleep(1700);
+  check('red button, renderer silent: native "Close Patton" box, Cancel keeps the window',
+    dialogCalls.length === 1 && dialogCalls[0].title === 'Close Patton' && !w.isDestroyed() && ptyManager.size === 2, dialogCalls);
+  reset();
+  dialogAnswer = 1;
+  w.requestClose();
+  await sleep(1700);
+  check('red button, silent renderer, Close Anyway: closes with the shells ended, one box only',
+    w.isDestroyed() && ptyManager.destroyed.length === 1 && dialogCalls.length === 1, { dialogs: dialogCalls.length });
+}
+
+// ── 16. A window that cannot show it, or whose renderer dies: native box ──
+await fresh();
+{
+  const a = showing(0, 1);
+  a.minimized = true;
+  focusedWindow = a;
+  dialogAnswer = 0;
+  check('⌘Q, only window minimized: native box at once, nothing sent', cmdQ() === 'prevented' && dialogCalls.length === 1 && a.sent.length === 0, { dialogs: dialogCalls.length, sent: a.sent.length });
+  reset();
+  a.minimized = false;
+  a.visible = false;
+  cmdQ();
+  check('⌘Q, only window hidden: native box at once', dialogCalls.length === 1 && a.sent.length === 0);
+  reset();
+  dialogAnswer = 1;
+  check('⌘Q, hidden window, Quit Anyway: quit goes on in the same event', cmdQ() === 'quit' && quitCompleted === 1 && ptyManager.size === 0);
+}
+await fresh();
+{
+  // The window that was asked crashes: its own crash handler ends its shells and
+  // reloads it; the quit then asks natively about the shells that are left.
+  const a = showing(0, 2);
+  const b = showing(0, 1);
+  focusedWindow = a;
+  dialogAnswer = 0;
+  cmdQ();
+  check('quit dialog asked in A', requests(a).length === 1 && requests(b).length === 0);
+  a.webContents.emit('render-process-gone', {}, { reason: 'crashed' });
+  await later();
+  check('renderer crashes with the quit dialog up: native box, counting what is left (1, not the stale 3)',
+    dialogCalls.length === 1 && /^1 terminal still/.test(dialogCalls[0].message) && quitCompleted === 0, dialogCalls);
+  reset();
+  // The only window crashes: its shells are already ended, so there is nothing left to confirm.
+  await fresh();
+  const c = showing(0, 2);
+  focusedWindow = c;
+  cmdQ();
+  c.webContents.emit('render-process-gone', {}, { reason: 'crashed' });
+  await later();
+  check('only window crashes with the dialog up: its shells are already gone, quit goes on without a box', dialogCalls.length === 0 && quitCompleted === 1, { dialogs: dialogCalls.length, quitCompleted });
+  await fresh();
+  const d = showing(0, 1);
+  showing(0, 1);
+  d.requestClose();
+  d.webContents.emit('render-process-gone', {}, { reason: 'crashed' });
+  await later();
+  check('red button, renderer crashes with the dialog up: shells already ended, so it closes with no box', dialogCalls.length === 0 && d.isDestroyed(), { dialogs: dialogCalls.length });
+}
+
+// ── 17. No shells: no dialog, as before ──
+await fresh();
+{
+  const a = showing(0, 0);
+  focusedWindow = a;
+  check('⌘Q with no shells quits at once', cmdQ() === 'quit' && quitCompleted === 1);
+  check('⌘Q with no shells: no request, no native box', a.sent.length === 0 && dialogCalls.length === 0, a.sent);
+}
+await fresh();
+{
+  const a = showing(0, 0);
+  check('red button with no shells closes at once, no dialog', a.requestClose() && a.sent.length === 0 && dialogCalls.length === 0);
+}
+
+// ── 18. Two windows ──
+await fresh();
+{
+  const a = showing(0, 2);
+  const b = showing(0, 3);
+  focusedWindow = a;
+  // Red button on a non-last window: "close this window", for that window only.
+  const closedA = a.requestClose();
+  const ra = lastRequest(a);
+  check('red button, two windows: "close-window" with that window\'s own terminals',
+    !closedA && ra.kind === 'close-window' && ra.terminals === 2 && requests(b).length === 0, [ra, requests(b)]);
+  ack(a, ra.requestId);
+  // ⌘Q while it is open: the close dialog is taken down and ONE quit dialog asked for everything.
+  cmdQ();
+  check('⌘Q while a close-window dialog is open: that dialog is dismissed', dismissals(a).includes(ra.requestId), a.sent);
+  const rq = requests(a).at(-1);
+  check('⌘Q: one quit dialog (total 5) in the focused window, none in the other',
+    rq.kind === 'quit' && rq.terminals === 5 && requests(a).length === 2 && requests(b).length === 0, [requests(a), requests(b)]);
+  check('the dismissed close-window request cannot be answered any more', answer(a, ra.requestId, true) === false && !a.isDestroyed());
+  ack(a, rq.requestId);
+  answer(a, rq.requestId, true);
+  await later();
+  check('confirm: both windows closed, all shells ended, one dialog in total, no native box',
+    windows.length === 0 && ptyManager.size === 0 && requests(a).length === 2 && requests(b).length === 0 && dialogCalls.length === 0 && quitCompleted === 1,
+    { windows: windows.length, shells: ptyManager.size, dialogs: dialogCalls.length, quitCompleted });
+}
+await fresh();
+{
+  const a = showing(0, 2);
+  const b = showing(0, 3);
+  a.requestClose();
+  const ra = lastRequest(a);
+  ack(a, ra.requestId);
+  b.requestClose();
+  const rb = lastRequest(b);
+  check('each window\'s red button has its own dialog (two windows, two requests)', rb && rb.requestId !== ra.requestId && requests(a).length === 1 && requests(b).length === 1);
+  ack(b, rb.requestId);
+  answer(b, rb.requestId, true);
+  await later();
+  check('confirming window B closes B only; A and its shells remain', b.isDestroyed() && !a.isDestroyed() && live.get(a) === 2 && !live.has(b));
+  answer(a, ra.requestId, false);
+  await later();
+  check('cancelling A keeps A', !a.isDestroyed() && live.get(a) === 2 && dialogCalls.length === 0);
+}
+await fresh();
+{
+  // A quit dialog is open: the red button of ANOTHER window must not stack a second dialog.
+  const a = showing(0, 2);
+  const b = showing(0, 1);
+  focusedWindow = a;
+  cmdQ();
+  const rq = lastRequest(a);
+  ack(a, rq.requestId);
+  const closedB = b.requestClose();
+  check('red button of another window while the quit dialog is open: held, no second dialog, no native box',
+    !closedB && requests(b).length === 0 && requests(a).length === 1 && dialogCalls.length === 0, { b: requests(b).length });
+}
+
+// ── 19. The window close handler stands down once a quit is confirmed ──
+await fresh();
+{
+  const a = showing(0, 2);
+  focusedWindow = a;
+  cmdQ();
+  const rq = lastRequest(a);
+  ack(a, rq.requestId);
+  answer(a, rq.requestId, true);
+  await later();
+  const late = showing(0, 1); // a window that appears (and gets closed) mid-quit
+  late.requestClose();
+  check('during a confirmed quit a window closes without any ask', late.isDestroyed() && dialogCalls.length === 0 && requests(late).length === 0, { destroyed: late.isDestroyed(), dialogs: dialogCalls.map((d) => d.title), requests: requests(late).length, confirmed: isQuitConfirmed(), logs: logs.filter((l) => l.includes('quit')) });
 }
 
 console.info = realInfo;

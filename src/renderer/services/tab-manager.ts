@@ -9,7 +9,7 @@ import { announce } from './announcer';
 import { rlog } from './renderer-logger';
 import { onProjectNamesChanged, projectName, startProjectNames } from './project-names';
 import { hoverBlocks, type HoverBlock, type HoverPaneInput } from './tab-hover';
-import type { SessionState, RendererMode, TabFlag, WindowCloseInfo } from '../../shared/types';
+import type { SessionState, RendererMode, TabFlag, WindowCloseInfo, ConfirmRequest } from '../../shared/types';
 import { orderSessions, sessionNeedsYou, stripClaudeGlyph, type SessionInfo, type SessionStatus } from './sessions';
 import type { ITheme } from '@xterm/xterm';
 
@@ -30,6 +30,8 @@ export class TabManager {
   /** True while a last-tab close is asking main what closing means (the
    *  dialog isn't open yet, so a fast second ⌘W must not start another). */
   private lastTabCloseQuerying = false;
+  /** Id of the quit / close-window confirmation main asked this window for, while its dialog is up. */
+  private mainConfirmId: string | null = null;
   /** How long Cmd-W on the last tab waits for main's close-guard IPC before it
    *  falls back to the page's window.close() (which skips main's close guard;
    *  main's 'closed' handler then still ends the shells). A field, not a
@@ -96,6 +98,7 @@ export class TabManager {
       // --- end bookmarks ---
     });
     this.onCommandDone = options?.onCommandDone || null;
+    this.listenForMainConfirmations();
     this.onTabsChanged = options?.onTabsChanged ?? null;
 
     // Tabs are named after their project. A project renamed in any window
@@ -577,6 +580,86 @@ export class TabManager {
     if (accepted) return;
     rlog('warn', '[CLOSE] main did not take the window close; falling back to window.close()', { why });
     window.close();
+  }
+
+  /**
+   * Main asks for the quit / red-button confirmations (v1.19; main/close-confirm.ts)
+   * instead of showing a native box that ⌘W cannot answer. Shown with the same
+   * dialog and keys as the last-tab ⌘W: Quit/Close Window is focused, so Enter
+   * confirms, ⌘W confirms (closeActivePane → confirmByShortcut), a second ⌘Q
+   * is confirmed by main (it sends a dismiss), Esc and Cancel cancel.
+   */
+  private listenForMainConfirmations(): void {
+    const guard = window.patton.closeGuard;
+    const offRequest = guard.onConfirmRequest((request) => {
+      this.showMainConfirm(request).catch((err) => rlog('error', '[CLOSE] main confirmation failed', { err: String(err) }));
+    });
+    const offDismiss = guard.onConfirmDismiss((requestId) => {
+      if (this.mainConfirmId !== requestId) return;
+      rlog('info', '[CLOSE] main took its confirmation down', { requestId });
+      this.confirmDialog.dismiss();
+    });
+    // The stubbed window.patton of the jsdom checks returns promises here.
+    for (const off of [offRequest, offDismiss]) if (typeof off === 'function') this.disposables.push(off);
+  }
+
+  private async showMainConfirm(request: ConfirmRequest): Promise<void> {
+    const { requestId, kind, terminals } = request;
+    const count = `${terminals} terminal${terminals === 1 ? '' : 's'}`;
+    let title: string;
+    let message: string;
+    let confirmLabel: string;
+    if (kind === 'quit') {
+      title = 'Quit Patton?';
+      message = `${count} still running. Quitting ends every terminal session and any process running inside them (Claude Code conversations, dev servers, watchers, remote shells). Transcripts on disk are kept; in-memory session state is not.`;
+      confirmLabel = 'Quit';
+    } else {
+      title = 'Close this window?';
+      message = `${count} still running in this window. Closing it ends them and any process running inside them. Your other windows stay open.`;
+      confirmLabel = 'Close Window';
+    }
+    // A dialog of ours that is already up (say "Close this tab?") gives way:
+    // confirm() cancels it, and the user is asked about the bigger thing.
+    if (this.confirmDialog.isOpen) rlog('info', '[CLOSE] main confirmation replaces an open dialog', { requestId });
+    this.mainConfirmId = requestId;
+    rlog('info', '[CLOSE] confirm shown', { kind: `main-${kind}`, requestId, terminals, defaultFocus: 'confirm' });
+    // confirm() builds the dialog synchronously, so the ack below really means "on screen".
+    const answered = this.confirmDialog.confirm({
+      title,
+      message,
+      confirmLabel,
+      cancelLabel: 'Cancel',
+      defaultFocus: 'confirm',
+      shortcutConfirms: true,
+    });
+    let acked = false;
+    try {
+      acked = (await this.askMain('confirm-ack', () => window.patton.closeGuard.ackConfirm(requestId))).value === true;
+    } catch {
+      acked = false;
+    }
+    if (!acked) {
+      // Main no longer wants it (it timed out and went native, or the request is stale).
+      rlog('warn', '[CLOSE] main did not accept the confirmation ack; dialog withdrawn', { requestId });
+      if (this.mainConfirmId === requestId) this.confirmDialog.dismiss();
+      await answered;
+      if (this.mainConfirmId === requestId) this.mainConfirmId = null;
+      return;
+    }
+    const ok = await answered;
+    const by = this.confirmDialog.lastAnswer;
+    const dismissedByMain = by === 'dismissed';
+    const superseded = by === 'superseded';
+    if (this.mainConfirmId === requestId) this.mainConfirmId = null;
+    rlog('info', '[CLOSE] confirm answered', { kind: `main-${kind}`, requestId, ok, by });
+    // Main took it down itself (it has the answer), or another dialog replaced
+    // ours: there is nothing to tell it.
+    if (dismissedByMain) return;
+    try {
+      await window.patton.closeGuard.answerConfirm(requestId, ok && !superseded);
+    } catch (err) {
+      rlog('warn', '[CLOSE] could not send the confirmation answer', { requestId, err: String(err) });
+    }
   }
 
   /** Await one close-guard IPC for at most `closeIpcTimeoutMs`: a stalled main

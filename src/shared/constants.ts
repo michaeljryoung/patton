@@ -79,6 +79,14 @@ export const IPC = {
   // Close the sender's own window from main: BrowserWindow.close() emits
   // 'close' (the guard runs), the page's window.close() does not.
   WINDOW_CLOSE: 'window:close',
+  // --- in-app quit / close confirmations (v1.19; main/close-confirm.ts) ---
+  // Main asks the renderer to show "Quit Patton?" / "Close this window?" instead
+  // of a native box (⌘W can answer an in-app dialog, not an NSAlert).
+  WINDOW_CONFIRM_REQUEST: 'window:confirm-request', // main → renderer { requestId, kind, terminals }
+  WINDOW_CONFIRM_DISMISS: 'window:confirm-dismiss', // main → renderer { requestId }
+  WINDOW_CONFIRM_ACK: 'window:confirm-ack', // renderer → main: the dialog is on screen
+  WINDOW_CONFIRM_ANSWER: 'window:confirm-answer', // renderer → main: the user's answer
+  // --- end in-app quit / close confirmations ---
 
   DIAGNOSTICS_SAVE_SNAPSHOT: 'diagnostics:save-snapshot',
 
