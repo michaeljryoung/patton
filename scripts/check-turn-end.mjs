@@ -79,6 +79,14 @@ check('working -> working keeps (hook speaks mid-turn)', clr(V(2, 0), 'working',
 check('working -> done keeps', clr(V(2, 0), 'working', 'done').verdict !== null);
 check('no verdict: nothing cleared', clr(null, 'done', 'working').cleared === false);
 
+const drn = (v, root, a, b) => te.verdictAfterChildren(v, root, a, b);
+check('drain: done root, working children 1 -> 0 drops the verdict', drn(V(1, 0), 'done', 1, 0).cleared && drn(V(1, 0), 'done', 1, 0).verdict === null);
+check('drain: children 2 -> 1 keeps', drn(V(1, 0), 'done', 2, 1).verdict !== null);
+check('drain: 0 -> 0 keeps (hook-only task, no child records)', drn(V(2, 0), 'done', 0, 0).verdict !== null);
+check('drain: 0 -> 1 keeps', drn(V(2, 0), 'done', 0, 1).verdict !== null);
+check('drain: root working keeps (hook speaks mid-turn)', drn(V(1, 0), 'working', 1, 0).verdict !== null);
+check('drain: no verdict -> nothing cleared', drn(null, 'done', 1, 0).cleared === false);
+
 // ── Part 2: the real Pane ──
 const jsdomDir = process.env.JSDOM_DIR || process.argv[2];
 if (!jsdomDir) {
@@ -192,7 +200,7 @@ async function paneChecks() {
     t.root('working'); advance(2000); t.hook(0, 1); advance(2000);
     t.root('done'); advance(5000);
     check('pane: crons only -> no alert, parked 0 tasks 1 cron', t.ev.alerts === 0 && lastParked(t.ev)?.crons === 1 && lastParked(t.ev)?.tasks === 0, [t.ev.alerts, lastParked(t.ev)]);
-    check('pane: crons-only keeps source 7501 in the log', parkedLogs()[0]?.source === '7501', parkedLogs());
+    check('pane: crons-only park logs source hook-crons', parkedLogs()[0]?.source === 'hook-crons', parkedLogs());
   }
   // D: a working 7501 child parks with its titles
   {
@@ -264,6 +272,74 @@ async function paneChecks() {
     t.root('working'); advance(500); t.hook(2, 0); t.root('done'); advance(5000);
     t.root('working'); advance(2000); t.hook(0, 0); advance(500); t.root('done'); advance(1700);
     check('pane: after the ring, a clean turn alerts', t.ev.alerts === 1 && t.pane.claudeState.parked === null, [t.ev.alerts, t.pane.claudeState.parked]);
+  }
+  // J: DRAIN. A working 7501 child parks the done root; the hook said 1 task. The child finishes and
+  // Claude stays silent: the old verdict must not re-park, the drain alerts once (S40).
+  for (const [name, waitMs] of [['30 s', 30_000], ['10 min', 10 * 60_000]]) {
+    logs.length = 0;
+    const t = newPane();
+    t.root('working'); advance(1000); t.child('t1', 'working', { title: 'sleep 90' }); t.hook(1, 0); advance(500);
+    t.root('done'); advance(waitMs);
+    check(`pane: drain ${name}: child working at the done -> parked by 7501, no alert`, t.ev.alerts === 0 && lastParked(t.ev)?.titles?.[0] === 'sleep 90', [t.ev.alerts, lastParked(t.ev)]);
+    t.pane.handleProgramStatus({ type: 'clear', id: 't1' }); advance(30_000);
+    check(`pane: drain ${name}: child gone, Claude silent -> one alert, not parked`, t.ev.alerts === 1 && t.pane.claudeState.parked === null, [t.ev.alerts, t.pane.claudeState.parked]);
+    check(`pane: drain ${name}: the dropped verdict is logged`, logs.filter((l) => l[0] === '[DOT] Hook verdict cleared: working children finished').length === 1, logs.map((l) => l[0]));
+    t.root('working'); advance(1000); t.root('done'); advance(1700);
+    check(`pane: drain ${name}: the next hook-less turn alerts again`, t.ev.alerts === 2, t.ev.alerts);
+  }
+  // J2: a child finishing as 'done' (record kept) drains the same way
+  {
+    const t = newPane();
+    t.root('working'); advance(1000); t.child('t1', 'working', { title: 'job' }); t.hook(1, 0); advance(500);
+    t.root('done'); advance(5000);
+    t.child('t1', 'done', { title: 'job' }); advance(30_000);
+    check('pane: drain via child done record -> one alert', t.ev.alerts === 1 && t.pane.claudeState.parked === null, [t.ev.alerts, t.pane.claudeState.parked]);
+  }
+  // J3: one of two children finishing is not a drain
+  {
+    const t = newPane();
+    t.root('working'); advance(1000); t.child('a', 'working', { title: 'a' }); t.child('b', 'working', { title: 'b' }); t.hook(2, 0); advance(500);
+    t.root('done'); advance(5000);
+    t.pane.handleProgramStatus({ type: 'clear', id: 'a' }); advance(30_000);
+    check('pane: one of two children left -> still parked, no alert', t.ev.alerts === 0 && lastParked(t.ev)?.titles?.[0] === 'b', [t.ev.alerts, lastParked(t.ev)]);
+  }
+  // K: a later 0 / 0 verdict un-parks the ring; alerts once; repeats and an unchanged needs-you never alert twice
+  {
+    const t = newPane();
+    t.root('working'); advance(1000); t.hook(2, 0); advance(1000); t.root('done'); advance(3000);
+    check('pane: K ring up', lastParked(t.ev)?.tasks === 2 && t.ev.alerts === 0, [t.ev.alerts, lastParked(t.ev)]);
+    t.hook(0, 0); advance(5000);
+    check('pane: later 0 / 0 verdict un-parks and alerts once', t.ev.alerts === 1 && t.pane.claudeState.parked === null, [t.ev.alerts, t.pane.claudeState.parked]);
+    t.hook(0, 0); advance(5000);
+    check('pane: the same 0 / 0 verdict again -> no second alert', t.ev.alerts === 1, t.ev.alerts);
+  }
+  {
+    const t = newPane();
+    t.root('working'); advance(1000); t.root('done'); advance(300);
+    t.hook(0, 0); advance(3000);
+    check('pane: 0 / 0 verdict mid-settle -> exactly one alert', t.ev.alerts === 1, t.ev.alerts);
+    t.hook(0, 0); advance(3000);
+    check('pane: 0 / 0 verdict after the alert -> still one', t.ev.alerts === 1, t.ev.alerts);
+  }
+  // L: clear paths. A bare clear and a full reset each drop the stored verdict, so a straight done after
+  // them (inside the TTL) alerts instead of re-parking.
+  for (const [name, ev] of [['clear', { type: 'clear', id: '' }], ['reset', { type: 'reset' }]]) {
+    const t = newPane();
+    t.root('working'); advance(500); t.hook(2, 0); advance(500); t.root('done'); advance(2000);
+    check(`pane: ${name} path: ring up first`, lastParked(t.ev)?.tasks === 2, lastParked(t.ev));
+    t.pane.handleProgramStatus(ev); advance(200);
+    t.root('done'); advance(1700);
+    check(`pane: ${name} drops the verdict; a straight done alerts`, t.ev.alerts === 1 && t.pane.claudeState.parked === null, [t.ev.alerts, t.pane.claudeState.parked]);
+    // the done after the drop is a fresh done: a verdict arriving for it parks (done time re-stamped)
+    t.hook(2, 0); advance(2000);
+    check(`pane: ${name}: a verdict for the next done parks it`, t.pane.claudeState.parked?.tasks === 2, t.pane.claudeState.parked);
+  }
+  // M: a done that follows a blocked prompt is timed from its own done, not an earlier one
+  {
+    const t = newPane();
+    t.root('working'); advance(500); t.root('done'); advance(100); t.root('blocked', { kind: 'permission' }); advance(60_000);
+    t.hook(2, 0); advance(100); t.root('done'); advance(2000);
+    check('pane: verdict timed from the latest done', lastParked(t.ev)?.tasks === 2, lastParked(t.ev));
   }
   Date.now = realDateNow;
 }

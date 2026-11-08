@@ -57,3 +57,21 @@ export function verdictAfterRootChange(
   if (verdict && next === 'working' && previous !== 'working') return { verdict: null, cleared: true };
   return { verdict, cleared: false };
 }
+
+/**
+ * The stored verdict after the working 7501 child records changed under the
+ * root. A root that is done with children working is parked by 7501 itself;
+ * when the last of them finishes (> 0 to 0) the old verdict must not re-park
+ * the pane, or the S40 alert "the background work ended" never fires. The hook
+ * counted what ran when the turn closed, which this drain has outlived. Under
+ * a root that is not done (the hook speaks mid-turn) the verdict is kept.
+ */
+export function verdictAfterChildren(
+  verdict: HookVerdict | null,
+  rootState: ProgramState | null,
+  previousWorking: number,
+  nextWorking: number,
+): { verdict: HookVerdict | null; cleared: boolean } {
+  if (verdict && rootState === 'done' && previousWorking > 0 && nextWorking === 0) return { verdict: null, cleared: true };
+  return { verdict, cleared: false };
+}
