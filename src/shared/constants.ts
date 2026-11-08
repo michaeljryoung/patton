@@ -53,6 +53,8 @@ export const IPC = {
   SESSION_GET: 'session:get',
   SESSION_SET: 'session:set',
   PTY_GET_CWD: 'pty:get-cwd',
+  // board-in-place: swap a pane's shell for a fresh one (see PtyManager.respawn)
+  PTY_RESPAWN: 'pty:respawn',
 
   APP_OPEN_IN_EDITOR: 'app:open-in-editor',
   APP_LINK_ACTION: 'app:link-action',

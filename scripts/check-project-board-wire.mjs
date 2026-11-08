@@ -112,9 +112,18 @@ function makePatton(state) {
   const api = {
     pty: {
       create: async (opts) => { if (state.failCreate) throw new Error('no pty'); const id = nextPty++; state.creates.push({ id, opts }); state.afterCreate?.(id); return id; },
+      // Main's swap: a new PTY for the sender's own old one (ownership and cwd checks: check-pty-respawn.mjs).
+      respawn: async (oldId, opts) => {
+        if (state.failRespawn) throw new Error('respawn refused');
+        const id = nextPty++;
+        state.respawns.push({ oldId, id, opts });
+        state.creates.push({ id, opts, respawned: true });
+        state.destroyed.push(oldId);
+        return id;
+      },
       write: (id, data) => { state.writes.push({ id, data }); },
       resize: () => {},
-      destroy: () => {},
+      destroy: (id) => { state.destroyed.push(id); },
       getCwd: async () => '',
       // Main's answer: the shell asked for, else $SHELL (state.envShell).
       getShell: async (id) => state.creates.find((c) => c.id === id)?.opts?.shell || state.envShell || '/bin/zsh',
@@ -194,6 +203,8 @@ async function main() {
     session: null,
     writes: [],
     creates: [],
+    respawns: [],
+    destroyed: [],
     dataListeners: [],
     boardDelayMs: 0,
   };
@@ -367,23 +378,33 @@ async function main() {
   check('dismiss: the terminal has focus', t2.focusedPane.element.contains(doc.activeElement));
   check('dismiss logged', logs.some((l) => l[0] === '[BOARD] removed' && l[1]?.reason === 'terminal'));
 
-  // --- open from a tile: new tab takes the board's place, no confirm ---
+  // --- open from a tile: the project opens IN the board's own tab, no confirm ---
   tm.switchToId(t1.id);
   const boardIdx = tm.getTabs().indexOf(t1);
   const closedBefore = tm.hasClosedPanes();
   const reopenCount = tm['closedPanes'].length;
   const countBefore = tm.getTabs().length;
+  const createsBefore = state.creates.filter((c) => !c.respawned).length;
+  const oldPty = t1.ptyId;
   board1.host.openProject('/tmp/proj-a');
-  check('tile open: board tab discarded', await until(() => !tm.getTabs().includes(t1)));
+  check('tile open: the board is lifted off its tab', await until(() => board1.disposed && !t1.hasCover));
   const opened = tm.getActiveTab();
-  check('tile open: project tab is active', opened && opened.panes[0].getCwd() === '/tmp/proj-a', opened?.panes[0].getCwd());
-  check('tile open: project tab sits at the board tab index', tm.getTabs().indexOf(opened) === boardIdx, { at: tm.getTabs().indexOf(opened), boardIdx });
+  check('tile open: the board\'s own tab is the project tab (same tab, active)', opened === t1 && tm.getTabs().includes(t1), opened?.id);
+  check('tile open: the project tab is in the project folder', opened.panes[0].getCwd() === '/tmp/proj-a', opened.panes[0].getCwd());
+  check('tile open: it keeps the board tab\'s place in the strip', tm.getTabs().indexOf(opened) === boardIdx, { at: tm.getTabs().indexOf(opened), boardIdx });
   check('tile open: tab count unchanged', tm.getTabs().length === countBefore);
+  check('tile open: no new tab was created', state.creates.filter((c) => !c.respawned).length === createsBefore);
+  const rsp = state.respawns.at(-1);
+  check('tile open: its shell was replaced, asked for like a new project tab (cwd, projectDir)', rsp && rsp.oldId === oldPty && rsp.id === t1.ptyId && rsp.opts.cwd === '/tmp/proj-a' && rsp.opts.projectDir === true && !rsp.opts.hyperlinks, rsp);
+  check('tile open: the old shell is ended (once)', state.destroyed.filter((id) => id === oldPty).length === 1, state.destroyed);
   check('tile open: no confirm dialog', ![...doc.querySelectorAll('.confirm-dialog-overlay')].some((o) => o.classList.contains('visible')));
   check('tile open: not on the reopen list', tm.hasClosedPanes() === closedBefore && tm['closedPanes'].length === reopenCount);
-  check('tile open: board disposed', board1.disposed);
-  check('tile open logged', logs.some((l) => l[0] === '[BOARD] opened' && l[1]?.label === 'Alpha' && l[1]?.action === 'new tab'));
-  check('discard logged', logs.some((l) => l[0] === '[BOARD] discard' && l[1]?.discarded === true));
+  check('tile open logged as in place', logs.some((l) => l[0] === '[BOARD] opened' && l[1]?.label === 'Alpha' && l[1]?.action === 'in place' && l[1]?.toTabId === t1.id));
+  check('tile open: nothing discarded', !logs.some((l) => l[0] === '[BOARD] discard'));
+  // The new shell's exit closes the tab (registered under the new id); the old id does nothing.
+  check('tile open: the pane is registered under its new PTY id only', tm['panesByPtyId'].get(t1.ptyId) === t1.panes[0] && !tm['panesByPtyId'].has(oldPty));
+  // A shell exit for the project tab's new PTY still goes through tm; checked for the old id below.
+  await tick(1);
 
   // --- open from a tile, project already open: board tab just goes ---
   const t3 = await tm.userNewTab();
@@ -393,6 +414,7 @@ async function main() {
   board3.host.openProject('/tmp/proj-a');
   check('open existing: board tab discarded', await until(() => !tm.getTabs().includes(t3)));
   check('open existing: the existing tab is active', tm.getActiveTab() === opened && tm.getTabs().length === n3 - 1);
+  check('open existing: no second session (no shell replaced), the board tab discarded', state.respawns.length === 1 && logs.some((l) => l[0] === '[BOARD] discard' && l[1]?.discarded === true));
 
   // --- a failed open reaches the board, which announces it (m5) ---
   const t5 = await tm.userNewTab();
@@ -401,6 +423,16 @@ async function main() {
   const outcome = await Promise.resolve(board5.host.openProject('/tmp/proj-new')).then(() => 'resolved', () => 'rejected');
   state.failSettings = false;
   check('m5: a failed open rejects back to the board', outcome === 'rejected', outcome);
+  // A refused respawn leaves the board, the old shell and the registration alone.
+  const oldPty5 = t5.ptyId;
+  const respawnsBefore5 = state.respawns.length;
+  state.failRespawn = true;
+  const outcome5 = await Promise.resolve(board5.host.openProject('/tmp/proj-new')).then(() => 'resolved', () => 'rejected');
+  state.failRespawn = false;
+  check('respawn refused: the click rejects back to the board', outcome5 === 'rejected', outcome5);
+  check('respawn refused: board kept, same shell, still registered', t5.hasCover && !board5.disposed && t5.ptyId === oldPty5 && tm['panesByPtyId'].get(oldPty5) === t5.panes[0] && state.respawns.length === respawnsBefore5);
+  // And after the failure the same click works again (the tab is not left "busy").
+  check('respawn refused: the tab is not left busy', !logs.some((l) => l[0] === '[BOARD] open ignored'));
   check('m5: the board stays after a failed open', t5.hasCover && !board5.disposed);
   await tm.closeById(t5.id);
 
@@ -519,68 +551,73 @@ async function main() {
   const createsW = state.creates.length;
   const writesW = state.writes.length;
   const logW = logs.length;
+  const idxW = tm.getTabs().indexOf(wt);
+  const oldPtyW = wt.ptyId;
+  const respawnsW = state.respawns.length;
   boardW.host.wake();
-  // Done once it logs: the tab is open, its shell started, the board back in front.
+  // Done once it logs: the board's tab has a new shell and the board is lifted.
   const started = await until(() => logs.slice(logW).some((l) => l[0] === '[BOARD] wake started'), 1000);
-  check('wake click: a new tab opens', started && tm.getTabs().length === nW + 1, tm.getTabs().length);
-  const wakeTab = tm.getTabs().at(-1);
-  check('wake click: the new tab is last in the strip', wakeTab !== wt && tm.getTabs().indexOf(wakeTab) === tm.getTabs().length - 1);
-  check('wake click: the new tab has no board', !wakeTab.hasCover && made() === madeW);
-  const wakeCreate = state.creates.slice(createsW).find((c) => c.id === wakeTab.ptyId);
-  check('wake click: the new tab is at home, not a project tab', wakeCreate && !wakeCreate.opts?.cwd && !wakeCreate.opts?.projectDir, wakeCreate?.opts);
-  check('wake click: the board\'s tab stays active and covered', tm.getActiveTab() === wt && wt.hasCover && !boardW.disposed);
-  check('wake click: the board keeps focus', await until(() => boardW.element.contains(doc.activeElement), 300), doc.activeElement?.className);
-  check('wake click: logged with the new tab', logs.slice(logW).some((l) => l[0] === '[BOARD] wake started' && l[1]?.wakeTabId === wakeTab.id));
+  const wakeTab = wt;
+  check('wake click: no new tab opens', started && tm.getTabs().length === nW && state.creates.slice(createsW).every((c) => c.respawned), tm.getTabs().length);
+  check('wake click: the board\'s own tab is the wake tab, in the same place and active', tm.getTabs().indexOf(wt) === idxW && tm.getActiveTab() === wt);
+  check('wake click: the board is lifted off the tab', !wt.hasCover && boardW.disposed && made() === madeW);
+  const wakeRsp = state.respawns.slice(respawnsW);
+  check('wake click: one respawn, at home (no cwd, no projectDir), with hyperlinks', wakeRsp.length === 1 && wakeRsp[0].oldId === oldPtyW && wakeRsp[0].id === wt.ptyId && !wakeRsp[0].opts.cwd && !wakeRsp[0].opts.projectDir && wakeRsp[0].opts.hyperlinks === true, wakeRsp);
+  check('wake click: the old shell is ended once', state.destroyed.filter((id) => id === oldPtyW).length === 1);
+  check('wake click: logged in place', logs.slice(logW).some((l) => l[0] === '[BOARD] wake started' && l[1]?.inPlace === true && l[1]?.tabId === wt.id));
   const wakeSent = () => state.writes.slice(writesW).filter((wr) => wr.id === wakeTab.ptyId && wr.data === 'wake\r').length;
   await tick(50);
   check('wake: nothing typed before the prompt', wakeSent() === 0, wakeSent());
   emit(wakeTab.ptyId, '\x1b]133;A\x07');
   check('wake: "wake" + Enter typed once the prompt shows', await until(() => wakeSent() === 1, 1000), wakeSent());
-  check('wake: typed into no other tab', state.writes.slice(writesW).every((wr) => wr.id === wakeTab.ptyId));
+  check('wake: typed into no other shell', state.writes.slice(writesW).every((wr) => wr.id === wakeTab.ptyId));
 
-  // The command titles its pane WAKE: the button turns to "Awake".
+  // The command titles its pane WAKE: another board's button turns to "Awake".
+  const wb = await tm.userNewTab();
+  const boardB = globalThis.__boards.at(-1);
   emit(wakeTab.ptyId, '\x1b]2;WAKE\x07');
-  check('wake: a WAKE title reaches the board (Awake)', await until(() => boardW.wakeSeen?.awake === true, 1000), boardW.wakeSeen);
+  check('wake: a WAKE title reaches the board (Awake)', await until(() => boardB.wakeSeen?.awake === true, 1000), boardB.wakeSeen);
   check('wake: the WAKE tab carries the yellow flag', wakeTab.autoFlag === 'yellow');
   const nJ = tm.getTabs().length;
   const logJ = logs.length;
-  boardW.host.wake();
+  const respawnsJ = state.respawns.length;
+  boardB.host.wake();
   await tick(30);
-  check('awake click: no new tab', tm.getTabs().length === nJ && state.writes.slice(writesW).filter((wr) => wr.data === 'wake\r').length === 1);
+  check('awake click: no new tab and no second wake', tm.getTabs().length === nJ && state.respawns.length === respawnsJ && state.writes.slice(writesW).filter((wr) => wr.data === 'wake\r').length === 1);
   check('awake click: the WAKE tab is active', tm.getActiveTab() === wakeTab);
   check('awake click: logged as a jump', logs.slice(logJ).some((l) => l[0] === '[BOARD] wake jumped' && l[1]?.toTabId === wakeTab.id));
-  tm.switchToId(wt.id);
+  tm.switchToId(wb.id);
   emit(wakeTab.ptyId, '\x1b]2;~\x07');
-  check('wake: the title changing back turns the board to Wake', await until(() => boardW.wakeSeen?.awake === false, 1000), boardW.wakeSeen);
+  check('wake: the title changing back turns the board to Wake', await until(() => boardB.wakeSeen?.awake === false, 1000), boardB.wakeSeen);
   // A pane that isn't its tab's focused one (a split) reaches the board too:
   // only the tab's automatic flag reports its title.
   tm.switchToId(wakeTab.id);
   tm.splitVertical();
   await until(() => wakeTab.panes.length === 2 && wakeTab.focusedPane !== wakeTab.panes[0], 500);
-  tm.switchToId(wt.id);
+  tm.switchToId(wb.id);
   await tick(150); // let the tab switch's own refresh pass first
   const firstPane = wakeTab.panes[0];
   check('split: the first pane is not the focused one', wakeTab.panes.length === 2 && wakeTab.focusedPane !== firstPane);
   emit(firstPane.ptyId, '\x1b]2;WAKE\x07');
-  check('wake: WAKE in an unfocused split pane reaches the board', await until(() => boardW.wakeSeen?.awake === true, 1000), boardW.wakeSeen);
+  check('wake: WAKE in an unfocused split pane reaches the board', await until(() => boardB.wakeSeen?.awake === true, 1000), boardB.wakeSeen);
   emit(firstPane.ptyId, '\x1b]2;~\x07');
-  check('wake: and its title changing back too', await until(() => boardW.wakeSeen?.awake === false, 1000), boardW.wakeSeen);
+  check('wake: and its title changing back too', await until(() => boardB.wakeSeen?.awake === false, 1000), boardB.wakeSeen);
 
   // '' hides the button: live from Settings, and from the saved setting.
   boards.setWakeCommand('');
-  check('setting "": every board repaints without the command', boardW.wakeSeen?.command === '', boardW.wakeSeen);
-  const nE = tm.getTabs().length;
-  boardW.host.wake();
+  check('setting "": every board repaints without the command', boardB.wakeSeen?.command === '', boardB.wakeSeen);
+  const respawnsE = state.respawns.length;
+  boardB.host.wake();
   await tick(30);
-  check('setting "": a click starts nothing', tm.getTabs().length === nE);
+  check('setting "": a click starts nothing', state.respawns.length === respawnsE && boardB.disposed === false);
   boards.setWakeCommand('wake');
   state.settings = { startupCommand: '', boardWakeCommand: '' };
   const wt2 = await tm.userNewTab();
   check('setting "" saved: a new board has no command', globalThis.__boards.at(-1).host.wakeState().command === '');
   state.settings = { startupCommand: '' };
   await tm.closeById(wt2.id);
+  await tm.closeById(wb.id);
   await tm.closeById(wakeTab.id);
-  await tm.closeById(wt.id);
 
   // --- the Claude button (host side; the button itself: check-project-board-ui.mjs) ---
   // The startup command is a project picker here ('cc'): it must never be typed.

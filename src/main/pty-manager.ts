@@ -297,6 +297,26 @@ export class PtyManager {
     return id;
   }
 
+  /**
+   * Replace a PTY with a new one in the same window: the project board opens a
+   * project in the board's own tab this way. The new shell is made exactly as
+   * create() makes one (cwd validated, PATTON_PROJECT_DIR only for a cwd that
+   * passed), and only after it exists is the old one ended, once, through
+   * destroy() (which claims the instance, so no exit event reaches the
+   * renderer and the pane is not mistaken for a closed one). Refuses a PTY the
+   * window does not own; if the new shell cannot start, the old one is kept.
+   */
+  respawn(window: BrowserWindow, oldId: number, opts?: PtyCreateOptions): number {
+    if (!this.validateOwnership(oldId, window)) {
+      console.warn('[SECURITY] PTY respawn refused: not this window\'s PTY', { oldId });
+      throw new Error('PTY access denied');
+    }
+    const newId = this.create(window, opts);
+    this.destroy(oldId);
+    console.info('[PTY] respawned', { oldId, newId });
+    return newId;
+  }
+
   // --- Security: Ownership validation ---
   validateOwnership(id: number, window: BrowserWindow): boolean {
     const instance = this.instances.get(id);

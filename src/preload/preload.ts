@@ -5,6 +5,7 @@ import type { BoardLayout, BoardPayload, Bookmark, PattonAPI, RenderSnapshot } f
 const api: PattonAPI = {
   pty: {
     create: (opts) => ipcRenderer.invoke(IPC.PTY_CREATE, opts),
+    respawn: (id, opts) => ipcRenderer.invoke(IPC.PTY_RESPAWN, id, opts),
     write: (id, data) => ipcRenderer.send(IPC.PTY_WRITE, id, data),
     resize: (id, cols, rows) => ipcRenderer.send(IPC.PTY_RESIZE, id, cols, rows),
     destroy: (id) => ipcRenderer.send(IPC.PTY_DESTROY, id),

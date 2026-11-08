@@ -744,7 +744,7 @@ const submit = (t) => t.q('.pboard-add').dispatchEvent(new t.win.Event('submit',
   check('wake: shown by default, reading Wake', btn && !btn.hidden && btn.textContent === 'Wake', btn?.textContent);
   check('wake: just left of Terminal', btn && btn.nextElementSibling === terminal);
   check('wake: a header button like the others', btn.tagName === 'BUTTON' && btn.type === 'button' && btn.classList.contains('pboard-btn') && btn.tabIndex === 0);
-  check('wake: label and tooltip name the command', btn.getAttribute('aria-label') === 'Wake: run wake in a new tab' && btn.title.includes('runs wake in a new tab'), [btn.getAttribute('aria-label'), btn.title]);
+  check('wake: label and tooltip name the command', btn.getAttribute('aria-label') === 'Wake: run wake in this tab' && btn.title.includes('runs wake in this tab'), [btn.getAttribute('aria-label'), btn.title]);
   check('wake: no dot while asleep', !btn.querySelector('.pboard-wake-dot') && !btn.classList.contains('is-awake'));
   t.click(btn);
   check('wake: click asks the host', t.calls.wake === 1 && t.calls.dismiss === 0 && t.calls.open.length === 0, t.calls);
@@ -769,7 +769,7 @@ const submit = (t) => t.q('.pboard-add').dispatchEvent(new t.win.Event('submit',
   check('wake: hidden when the command is cleared', btn.hidden);
   t.wake.command = 'keepup';
   t.board.refreshLiveState();
-  check('wake: shown again with a command, which the label names', !btn.hidden && btn.getAttribute('aria-label') === 'Wake: run keepup in a new tab');
+  check('wake: shown again with a command, which the label names', !btn.hidden && btn.getAttribute('aria-label') === 'Wake: run keepup in this tab');
 
   const off = setup(fixture(), { wakeCommand: '' });
   check('wake: hidden from the start for an empty command', off.q('.pboard-wake').hidden && off.q('.pboard-terminal'));

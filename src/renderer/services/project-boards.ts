@@ -65,11 +65,14 @@ interface MountedBoard {
  * Puts the project board over new tabs the user opens (⌘T, the palette's New
  * Tab, the tab bar's +) and over the tab Patton opens at launch
  * (startLaunchTab), and nowhere else: reopened, bookmark and split tabs never
- * come through TabManager.userNewTab(). A tile opens its
- * project the way a bookmark click does (open-project.ts), then the board's tab
- * goes; "Terminal" (or Esc) just lifts the board off its tab; "Wake" starts the
- * configured command in a new tab behind the board (see wake()); "Claude" lifts
- * the board and types `claude` into the tab's shell (see startClaude()).
+ * come through TabManager.userNewTab(). A tile opens its project the way a
+ * bookmark click does (open-project.ts), but IN the board's own tab: a project
+ * with no open tab takes over the board's tab (same id and place; its shell is
+ * replaced by one in the project folder), one that is already open is
+ * activated and the board's tab goes. "Terminal" (or Esc) just lifts the board
+ * off its tab; "Wake" lifts it and runs the configured command in the same tab
+ * (see wake()); "Claude" lifts the board and types `claude` into the tab's
+ * shell (see startClaude()).
  */
 export class ProjectBoards {
   private boards = new Map<Tab, MountedBoard>();
@@ -80,8 +83,9 @@ export class ProjectBoards {
   // The Wake button's command (Settings; '' hides it), read with the settings
   // each board load and updated live from the Settings panel.
   private wakeCommand = wakeCommandOf(null);
-  // A Wake click is opening its tab: a second click waits for it.
-  private wakeStarting = false;
+  // Board tabs whose shell is being replaced (a project or Wake click on its
+  // way): a second click on the same board waits for the first.
+  private respawning = new Set<Tab>();
   // Claude sends waiting for their tab's shell, cancelled when the tab closes.
   private claudePending = new Map<Tab, PendingSend>();
 
@@ -260,6 +264,10 @@ export class ProjectBoards {
    */
   private startClaude(tab: Tab): void {
     rlog('info', '[BOARD] claude clicked', { tabId: tab.id });
+    if (this.respawning.has(tab)) {
+      rlog('info', '[BOARD] claude ignored', { tabId: tab.id, reason: 'this tab is already opening something' });
+      return;
+    }
     if (!this.forget(tab, 'claude')) {
       rlog('info', '[BOARD] claude ignored', { tabId: tab.id, reason: 'board already gone' });
       return;
@@ -293,37 +301,61 @@ export class ProjectBoards {
     announce('Starting Claude', 'polite');
   }
 
+  /**
+   * A tile click. The project opens IN the board's own tab: openProject goes
+   * to a session or tab that already shows it (that tab is activated and the
+   * board's tab goes, so there is no second session), and otherwise replaces
+   * the board tab's shell with one in the project folder (PATTON_PROJECT_DIR
+   * exported, the startup command typed in, as for a new project tab). The tab
+   * keeps its id and its place in the strip; the board is lifted off it.
+   */
   private async openFromBoard(boardTab: Tab, path: string): Promise<void> {
     const mounted = this.boards.get(boardTab);
     if (!mounted) return;
+    if (this.respawning.has(boardTab)) {
+      rlog('info', '[BOARD] open ignored', { tabId: boardTab.id, reason: 'this tab is already opening something' });
+      return;
+    }
     const label = projectLabel(mounted.payload, path);
     rlog('info', '[BOARD] open', { tabId: boardTab.id, label });
-    const result = await openProject(this.projectHost, path, '[BOARD]', label);
+    this.respawning.add(boardTab);
+    let result;
+    try {
+      result = await openProject(this.projectHost, path, '[BOARD]', label, {
+        tab: boardTab,
+        respawn: (opts) => this.tabs.respawnTab(boardTab, opts),
+      });
+    } finally {
+      this.respawning.delete(boardTab);
+    }
     rlog('info', '[BOARD] opened', { tabId: boardTab.id, label, action: result.action, toTabId: result.tab?.id ?? null });
 
     // Another click's tab is still on its way: keep the board until it lands.
     if (!result.tab) return;
-    if (!this.boards.has(boardTab)) return; // closed or dismissed meanwhile
-    if (result.tab === boardTab) {
-      // The board's own shell already sits in that folder: just lift the board.
-      this.forget(boardTab, 'project is this tab');
-      boardTab.setCover(null);
+    if (result.action === 'in place' || result.tab === boardTab) {
+      // The board's own tab is now the project's (a new shell in its folder),
+      // or its shell already sat in that folder: just lift the board.
+      if (this.forget(boardTab, result.action === 'in place' ? 'project opened in place' : 'project is this tab')) {
+        boardTab.setCover(null);
+      }
       return;
     }
-    const placeTabId = result.action === 'new tab' ? result.tab.id : undefined;
+    if (!this.boards.has(boardTab)) return; // closed or dismissed meanwhile
+    // The project is open in another tab: it is active now, the board's tab goes.
     // forget() first, so the tab-closed listener has nothing left to do.
-    this.forget(boardTab, 'project opened');
-    const discarded = this.tabs.discardTab(boardTab.id, placeTabId);
-    rlog('info', '[BOARD] discard', { tabId: boardTab.id, discarded, placedTabId: placeTabId ?? null });
+    this.forget(boardTab, 'project open elsewhere');
+    const discarded = this.tabs.discardTab(boardTab.id);
+    rlog('info', '[BOARD] discard', { tabId: boardTab.id, discarded });
     if (!discarded) boardTab.setCover(null);
   }
 
   /**
    * The Wake button. While a pane is titled WAKE, go to it (Ctrl+C there stops
-   * it). Otherwise open a new tab at home (never a board, no project), type the
-   * command once its prompt shows, and hand the window straight back to the
-   * board's tab, so picking a project carries on. createTab adds the tab at the
-   * end of the strip.
+   * it). Otherwise run the command in the board's own tab: its shell is
+   * replaced by a fresh one at home (FORCE_HYPERLINK=1, as the separate wake
+   * tab used to get), the command is typed once the prompt shows, and the
+   * board is lifted, so the tab becomes the wake tab (its WAKE title gives the
+   * yellow flag and turns every board's button to "Awake").
    */
   private async wake(boardTab: Tab): Promise<void> {
     const running = findWakePane(this.tabs.getTabs());
@@ -333,17 +365,15 @@ export class ProjectBoards {
       return;
     }
     const command = this.wakeCommand;
-    if (!command || this.wakeStarting) return;
-    this.wakeStarting = true;
+    if (!command || this.respawning.has(boardTab)) return;
+    this.respawning.add(boardTab);
     try {
-      const wakeTab = await this.tabs.createTab(undefined, { startupCommand: true });
-      runStartupCommand(wakeTab, command);
-      // createTab made the new tab active; the board's tab stays in front
-      // (switched back before the next paint, and it focuses its board).
-      if (this.tabs.getTabs().includes(boardTab)) this.tabs.switchToId(boardTab.id);
-      rlog('info', '[BOARD] wake started', { tabId: boardTab.id, wakeTabId: wakeTab.id, index: this.tabs.getTabs().indexOf(wakeTab) });
+      await this.tabs.respawnTab(boardTab, { hyperlinks: true });
+      runStartupCommand(boardTab, command);
+      if (this.forget(boardTab, 'wake started')) boardTab.setCover(null);
+      rlog('info', '[BOARD] wake started', { tabId: boardTab.id, inPlace: true, index: this.tabs.getTabs().indexOf(boardTab) });
     } finally {
-      this.wakeStarting = false;
+      this.respawning.delete(boardTab);
     }
   }
 

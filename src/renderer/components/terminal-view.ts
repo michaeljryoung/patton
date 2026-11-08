@@ -581,6 +581,17 @@ export class TerminalView {
     this.ptyId = id;
   }
 
+  /** The pane's shell was replaced (Pane.respawn): wipe what the old one left
+   *  on screen (text, modes, scrollback) and drop its program-status records,
+   *  so the new shell starts from a blank terminal like a new tab's. */
+  resetForNewShell(): void {
+    this.terminal.reset();
+    this.emitProgramStatus({ type: 'reset' });
+    if (this.webglAddon) {
+      try { this.terminal.clearTextureAtlas(); } catch { /* best-effort */ }
+    }
+  }
+
   getPtyId(): number | null {
     return this.ptyId;
   }

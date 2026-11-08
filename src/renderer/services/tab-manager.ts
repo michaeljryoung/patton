@@ -133,6 +133,22 @@ export class TabManager {
     }
   }
 
+  /**
+   * Replace the shell of a tab's only pane, keeping the tab itself (id,
+   * position, name rules): the project board opens a project in the board's
+   * own tab this way. The pane is re-registered under its new PTY id, so the
+   * exit of the NEW shell closes the tab as usual and the old one's end does
+   * nothing. Throws, with the old shell and its registration intact, on failure.
+   */
+  async respawnTab(tab: Tab, opts: { cwd?: string; projectDir?: boolean; hyperlinks?: boolean }): Promise<void> {
+    const pane = tab.focusedPane;
+    const { oldId, newId } = await tab.respawnShell(opts);
+    this.panesByPtyId.delete(oldId);
+    // The tab may have been closed while main started the shell (the pane then
+    // destroyed the new one itself and threw above), so only a live pane counts.
+    if (this.tabs.includes(tab)) this.panesByPtyId.set(newId, pane);
+  }
+
   unregisterPane(pane: Pane): void {
     if (pane.ptyId !== null) {
       this.panesByPtyId.delete(pane.ptyId);

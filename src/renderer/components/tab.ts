@@ -143,6 +143,13 @@ export class Tab {
     });
   }
 
+  /** Replace the shell of this tab's only pane (see Pane.respawn). A tab with
+   *  splits is refused: this is for the project board's fresh tab. */
+  respawnShell(opts: { cwd?: string; projectDir?: boolean; hyperlinks?: boolean }): Promise<{ oldId: number; newId: number }> {
+    if (this._panes.length !== 1) return Promise.reject(new Error('Only a one-pane tab can have its shell replaced'));
+    return this._focusedPane.respawn(opts);
+  }
+
   /** Show something over the panes (or remove it with null). Removing it gives
    *  the tab its usual title back and focuses the terminal. */
   setCover(cover: TabCover | null): void {

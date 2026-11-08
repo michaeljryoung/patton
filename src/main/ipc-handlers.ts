@@ -160,6 +160,30 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
     return ptyManager.create(window, opts);
   });
 
+  // --- board-in-place: replace the sender's own PTY with a fresh one ---
+  // The project board opens a project in the board's tab by swapping its
+  // shell. Only the sender's own PTY, at most 5 a second; the options go
+  // through the same validation as PTY_CREATE (cwd, shell, projectDir).
+  const ptyRespawnLimiter = new RateLimiter(5);
+  ipcMain.handle(IPC.PTY_RESPAWN, (event, id: number, opts?: PtyCreateOptions) => {
+    if (typeof id !== 'number' || !Number.isFinite(id)) {
+      console.warn('[SECURITY] PTY_RESPAWN type validation failed', { id });
+      throw new Error('Invalid PTY id');
+    }
+    if (opts !== undefined && (typeof opts !== 'object' || opts === null)) {
+      console.warn('[SECURITY] PTY_RESPAWN type validation failed', { optsType: typeof opts });
+      throw new Error('Invalid options');
+    }
+    if (!ptyRespawnLimiter.allow()) {
+      console.warn('[SECURITY] Rate limit exceeded', { channel: IPC.PTY_RESPAWN });
+      throw new Error('Rate limited');
+    }
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (!window) throw new Error('No window found');
+    return ptyManager.respawn(window, id, opts);
+  });
+  // --- end board-in-place ---
+
   ipcMain.on(IPC.PTY_WRITE, (event, id: number, data: string) => {
     try {
       if (typeof id !== 'number' || !Number.isFinite(id)) {

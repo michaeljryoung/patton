@@ -21,7 +21,7 @@ export interface OpenProjectHost {
   focusTerminal(): void;
 }
 
-export type OpenProjectAction = 'went to waiting session' | 'went to existing session' | 'activated existing tab' | 'new tab' | 'already opening';
+export type OpenProjectAction = 'went to waiting session' | 'went to existing session' | 'activated existing tab' | 'new tab' | 'in place' | 'already opening';
 
 export interface OpenProjectResult {
   action: OpenProjectAction;
@@ -32,6 +32,13 @@ export interface OpenProjectResult {
 // Paths whose tab is being created, so a double-click (or a click on the
 // sidebar and the board at once) can't open two tabs.
 const opening = new Set<string>();
+
+/** Open a project in a tab that already exists (the project board's own tab)
+ *  instead of a new one: `respawn` replaces that tab's shell. */
+export interface InPlaceTarget {
+  tab: Tab;
+  respawn(opts: { cwd: string; projectDir: true; hyperlinks: boolean }): Promise<unknown>;
+}
 
 /** The tab already showing this project — the active tab first, if it is one. */
 export function findTabFor(host: Pick<OpenProjectHost, 'getTabs' | 'getActiveTab'>, path: string): Tab | null {
@@ -45,8 +52,14 @@ export function findTabFor(host: Pick<OpenProjectHost, 'getTabs' | 'getActiveTab
  * that waits for you first (the longest wait), else any session of it, else a
  * tab showing it, else a new tab there (opened `forProject`, with the startup
  * command typed in). Throws if the new tab can't be created.
+ *
+ * With `inPlace`, the last step does not make a new tab: the given tab's shell
+ * is replaced by one in the project folder (`PATTON_PROJECT_DIR` exported, as
+ * for a new tab) and the startup command typed into it; the result is that tab
+ * with action 'in place'. The earlier steps (an existing session or tab) are
+ * the same, so a project that is already open is never started twice.
  */
-export async function openProject(host: OpenProjectHost, path: string, logTag: string, label: string): Promise<OpenProjectResult> {
+export async function openProject(host: OpenProjectHost, path: string, logTag: string, label: string, inPlace?: InPlaceTarget): Promise<OpenProjectResult> {
   const sessions = host.listSessions();
   const waiting = sessions.find((s) => sessionNeedsYou(s) && sessionMatchesPath(s, path));
   if (waiting && host.goToSession(waiting.tabId, waiting.paneId)) {
@@ -77,6 +90,12 @@ export async function openProject(host: OpenProjectHost, path: string, logTag: s
   opening.add(path);
   try {
     const settings = await window.patton.settings.get();
+    if (inPlace) {
+      await inPlace.respawn({ cwd: path, projectDir: true, hyperlinks: Boolean(settings.startupCommand) });
+      if (settings.startupCommand) runStartupCommand(inPlace.tab, settings.startupCommand);
+      host.focusTerminal();
+      return { action: 'in place', tab: inPlace.tab };
+    }
     const tab = await host.createTab(path, { forProject: true, startupCommand: Boolean(settings.startupCommand) });
     if (settings.startupCommand) runStartupCommand(tab, settings.startupCommand);
     host.focusTerminal();

@@ -930,6 +930,55 @@ export class Pane {
     return this.startedShell || this.callbacks.shell || '';
   }
 
+  /**
+   * Replace this pane's shell with a new one (the project board opening a
+   * project in the board's own tab). Main starts the new shell the way a new
+   * tab's is started (`cwd` validated, `projectDir` exports PATTON_PROJECT_DIR,
+   * `hyperlinks` FORCE_HYPERLINK=1) and ends the old one, so no exit event
+   * reaches this pane for it. Afterwards the pane looks like a freshly created
+   * one: blank terminal, shell progress restarted, folder `cwd` (or home).
+   * Returns the old and new PTY ids; throws, leaving the old shell running, if
+   * main refuses or cannot start the new one.
+   */
+  async respawn(opts: { cwd?: string; projectDir?: boolean; hyperlinks?: boolean }): Promise<{ oldId: number; newId: number }> {
+    const oldId = this.ptyId;
+    if (this.disposed || oldId === null) throw new Error('This pane has no shell to replace');
+    const dims = this.terminalView.getDimensions();
+    const shellPath = this.callbacks.shell;
+    const newId = await window.patton.pty.respawn(oldId, {
+      cols: dims.cols,
+      rows: dims.rows,
+      ...(opts.cwd ? { cwd: opts.cwd } : {}),
+      ...(opts.cwd && opts.projectDir ? { projectDir: true } : {}),
+      ...(opts.hyperlinks ? { hyperlinks: true } : {}),
+      ...(shellPath ? { shell: shellPath } : {}),
+      isDark: this.terminalView.isDarkBackground(),
+    });
+    if (this.disposed) {
+      // Closed while main was starting the shell: nothing owns the new one.
+      window.patton.pty.destroy(newId);
+      throw new Error('Pane closed while its shell was being replaced');
+    }
+    this.ptyId = newId;
+    this.ptyExited = false;
+    this.terminalView.setPtyId(newId);
+    this.terminalView.resetForNewShell();
+    if (opts.hyperlinks) this.hyperlinkEnv = true;
+    this.initialCwd = opts.cwd;
+    this.shellStartedAt = performance.now();
+    this.shellSawSignal = false;
+    this.shellSawFirstPrompt = false;
+    this.shellIntegrated = false;
+    this.startedShell = '';
+    window.patton.pty.getShell(newId).then((shell) => {
+      if (this.ptyId === newId) this.startedShell = shell;
+    }).catch((err: unknown) => rlog('warn', '[PTY] could not read the shell', { ptyId: newId, error: String(err) }));
+    // The folder the tab is named from: the project's, or home (unknown) again.
+    this.currentCwd = opts.cwd ?? '';
+    this.callbacks.onCwdChange?.(this);
+    return { oldId, newId };
+  }
+
   /** Run `cb` when this pane is disposed (closed). Returns a remover. */
   onDispose(cb: () => void): () => void {
     this.disposables.push(cb);

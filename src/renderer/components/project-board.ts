@@ -27,8 +27,8 @@ export interface ProjectBoardHost {
   liveState(path: string): ProjectLiveState;
   /** The Wake button's state: read when the board is made and on every live refresh. */
   wakeState(): BoardWakeState;
-  /** Wake button click: the host starts the command in a new tab, or goes to
-   *  the tab already running it, and keeps this board in front for a start. */
+  /** Wake button click: the host runs the command in this board's own tab, or goes to
+   *  the tab already running it. A start lifts this board off its tab. */
   wake(): void;
   /** Claude button click: the host removes the board as "Terminal" does and
    *  types a plain `claude` into this tab's shell (once, however often clicked). */
@@ -40,7 +40,7 @@ export const CLAUDE_BUTTON_LABEL = 'Start a plain Claude Code session in this ta
 
 /** What the header's Wake button shows. */
 export interface BoardWakeState {
-  /** The command it types into a new tab; '' hides the button. */
+  /** The command it runs in the board's own tab; '' hides the button. */
   command: string;
   /** A pane in the window is titled WAKE: the command is running. */
   awake: boolean;
@@ -163,8 +163,8 @@ export class ProjectBoard {
     const addProject = this.button('+ Project', 'pboard-btn pboard-add-project', () => {
       this.pickProject().catch((err) => rlog('error', '[BOARD] pick failed', String(err)));
     });
-    // Wake: starts the configured command in a new tab behind the board, or,
-    // while it runs, goes to that tab. Painted by paintWake().
+    // Wake: runs the configured command in the board's own tab (the board
+    // goes), or, while it runs, goes to that tab. Painted by paintWake().
     this.wakeBtn = this.button('Wake', 'pboard-btn pboard-wake', () => this.onWakeClick());
     // The way out to a plain shell, just left of Claude.
     const terminal = this.button('Terminal', 'pboard-btn pboard-terminal', () => this.host.dismiss());
@@ -670,8 +670,8 @@ export class ProjectBoard {
       btn.title = 'Keeping the Mac awake. Click to go to its tab; Ctrl+C in that tab stops it';
       btn.setAttribute('aria-label', 'Awake: go to the tab keeping the Mac awake. Ctrl+C in that tab stops it');
     } else {
-      btn.title = `Keep the Mac awake: runs ${command} in a new tab at the end of the tab strip`;
-      btn.setAttribute('aria-label', `Wake: run ${command} in a new tab`);
+      btn.title = `Keep the Mac awake: runs ${command} in this tab`;
+      btn.setAttribute('aria-label', `Wake: run ${command} in this tab`);
     }
   }
 

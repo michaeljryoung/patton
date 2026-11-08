@@ -254,6 +254,9 @@ export interface ClipboardImageThumb {
 export interface PattonAPI {
   pty: {
     create: (opts?: PtyCreateOptions) => Promise<number>;
+    /** Replace this pane's own shell with a new one (same options as create);
+     *  resolves to the new PTY id. The old shell is ended by main. */
+    respawn: (id: number, opts?: PtyCreateOptions) => Promise<number>;
     write: (id: number, data: string) => void;
     resize: (id: number, cols: number, rows: number) => void;
     destroy: (id: number) => void;

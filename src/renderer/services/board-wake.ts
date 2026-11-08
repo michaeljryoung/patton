@@ -4,7 +4,7 @@ import { DEFAULTS } from '../../shared/constants';
 import type { AppSettings } from '../../shared/types';
 
 /**
- * The project board's Wake button: the command it types into a new tab
+ * The project board's Wake button: the command it runs in the board's own tab
  * (Settings → "Wake button command"; '' hides the button), and the pane that
  * shows the command is already running (its title is exactly WAKE).
  */
