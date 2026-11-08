@@ -5,6 +5,11 @@
 // window) or "Close this window?" (several), and on confirm pre-confirms the
 // close with main (window.patton.closeGuard) before asking main to close the window, never
 // tearing the tab down first. Main's side: scripts/check-close-guard.mjs.
+// v1.19 (S46): main also asks for the ⌘Q / red-button confirmations ("Quit
+// Patton?" / "Close this window?") through window.patton.closeGuard.onConfirmRequest;
+// section 7 drives that: the dialog opens with Quit focused, acks main, Enter or
+// ⌘W confirms, Esc cancels, main's dismiss takes it down, a refused or slow ack
+// withdraws it, and a new request replaces an open dialog.
 // Drives the REAL ConfirmDialog and the REAL TabManager.closeActivePane — the
 // method app.ts's onCloseTab (the ⌘W menu accelerator's IPC) calls — in jsdom.
 // Run: JSDOM_DIR=<a folder whose node_modules has jsdom> node scripts/check-close-confirm.mjs
@@ -174,6 +179,11 @@ let closedBeforeReply = false; // the close ran while the pre-confirm was still 
 // What main's WINDOW_CLOSE answers: true (taken), false (refused) or an Error (invoke fails).
 let closeWindowReply = true;
 let closeWindowDelayMs = 0;
+// Main → renderer confirmations (v1.19): the callbacks TabManager registered.
+let mainRequest = null;
+let mainDismiss = null;
+let ackReply = true;
+let ackDelayMs = 0;
 {
   const base = w.patton;
   const closeGuard = {
@@ -198,6 +208,14 @@ let closeWindowDelayMs = 0;
       if (closeWindowReply instanceof Error) throw closeWindowReply;
       return closeWindowReply;
     },
+    onConfirmRequest: (cb) => { mainRequest = cb; return () => { mainRequest = null; }; },
+    onConfirmDismiss: (cb) => { mainDismiss = cb; return () => { mainDismiss = null; }; },
+    ackConfirm: async (id) => {
+      events.push('ack:' + id);
+      if (ackDelayMs) await new Promise((r) => setTimeout(r, ackDelayMs));
+      return ackReply;
+    },
+    answerConfirm: async (id, ok) => { events.push(`answer:${id}:${ok}`); return true; },
   };
   w.patton = new Proxy({}, { get: (_t, k) => (k === 'closeGuard' ? closeGuard : base[k]) });
   // The page's own window.close(): it destroys the window WITHOUT a 'close'
@@ -480,6 +498,149 @@ await new Promise((r) => setTimeout(r, 320));
   tm.saveClosedPane = () => {};
   await tm.closeById('solo');
   check('closeById of the last tab: close goes through main, not window.close()', events.join() === 'closeWindow', events);
+}
+
+// ── 7. Main asks for the ⌘Q / red-button confirmations (v1.19) ──
+{
+  const ask = async (tm, request) => { events.length = 0; mainRequest(request); await tick(); };
+  const dlg = (sel) => w.document.querySelector(`.confirm-dialog-overlay.visible ${sel}`)?.textContent ?? '';
+  const tmQuit = () => { const tm = manager(1); w.document.getElementById('term').focus(); return tm; };
+
+  // 7a. Quit: wording, focus, ack, Enter confirms
+  {
+    const tm = tmQuit();
+    await ask(tm, { requestId: 'q1', kind: 'quit', terminals: 3 });
+    check('main quit request: the in-app dialog opens', visible());
+    check('main quit request: title Quit Patton?', dlg('.confirm-dialog-title') === 'Quit Patton?', dlg('.confirm-dialog-title'));
+    check('main quit request: message names the 3 terminals and says it ends them', /3 terminals still running/.test(dlg('.confirm-dialog-message')) && /ends every terminal session/.test(dlg('.confirm-dialog-message')), dlg('.confirm-dialog-message'));
+    check('main quit request: Quit is focused', focusedClass() === 'confirm-dialog-confirm' && w.document.activeElement.textContent === 'Quit', w.document.activeElement.textContent);
+    check('main quit request: main is told the dialog is up, and nothing else yet', events.join() === 'ack:q1', events);
+    key(w.document.activeElement, 'Enter');
+    await tick();
+    check('Enter confirms: answer true sent to main', events.join() === 'ack:q1,answer:q1:true', events);
+    check('dialog hidden after the answer', !visible());
+    check('answer and dialog logged',
+      lastLogs().some((x) => x.includes('confirm shown') && x.includes('main-quit') && x.includes('q1'))
+      && lastLogs().some((x) => x.includes('confirm answered') && x.includes('main-quit') && x.includes('"ok":true')), lastLogs());
+  }
+
+  // 7b. ⌘W (the same entry point as the menu accelerator) confirms once the dialog has been up
+  //      for the dwell; inside it the press is swallowed (no answer, no second dialog)
+  {
+    const tm = tmQuit();
+    await ask(tm, { requestId: 'q2', kind: 'quit', terminals: 1 });
+    check('1 terminal is singular', /1 terminal still running/.test(dlg('.confirm-dialog-message')), dlg('.confirm-dialog-message'));
+    await tm.closeActivePane();
+    await tick();
+    check('⌘W inside the dwell: swallowed - dialog still up, nothing answered, no last-tab info/pre-confirm/close', visible() && events.join() === 'ack:q2', events);
+    check('⌘W inside the dwell opened no second dialog', w.document.querySelectorAll('.confirm-dialog-overlay.visible').length === 1 && dlg('.confirm-dialog-title') === 'Quit Patton?');
+    await new Promise((r) => setTimeout(r, 320));
+    await tm.closeActivePane();
+    await tick();
+    check('⌘W after the dwell confirms the quit dialog: answer true, no last-tab info/pre-confirm/close', events.join() === 'ack:q2,answer:q2:true', events);
+    check('⌘W: answer logged as cmd-w', tm.confirmDialog.lastAnswer === 'cmd-w');
+  }
+
+  // 7c. Esc and Cancel cancel
+  {
+    const tm = tmQuit();
+    await ask(tm, { requestId: 'q3', kind: 'quit', terminals: 2 });
+    key(w.document.activeElement, 'Escape');
+    await tick();
+    check('Esc cancels: answer false', events.join() === 'ack:q3,answer:q3:false' && !visible(), events);
+    await ask(tm, { requestId: 'q3b', kind: 'quit', terminals: 2 });
+    w.document.querySelector('.confirm-dialog-overlay.visible .confirm-dialog-cancel').click();
+    await tick();
+    check('Cancel button: answer false', events.join() === 'ack:q3b,answer:q3b:false', events);
+  }
+
+  // 7d. Close this window?
+  {
+    const tm = tmQuit();
+    await ask(tm, { requestId: 'c1', kind: 'close-window', terminals: 2 });
+    check('close-window request: title and button', dlg('.confirm-dialog-title') === 'Close this window?' && w.document.activeElement.textContent === 'Close Window', [dlg('.confirm-dialog-title'), w.document.activeElement.textContent]);
+    check('close-window request: says other windows stay', /other windows stay open/.test(dlg('.confirm-dialog-message')) && /2 terminals/.test(dlg('.confirm-dialog-message')), dlg('.confirm-dialog-message'));
+    key(w.document.activeElement, 'Enter');
+    await tick();
+    check('close-window: Enter confirms', events.join() === 'ack:c1,answer:c1:true', events);
+  }
+
+  // 7e. Main takes it down (a second ⌘Q): dialog gone, no answer sent; a wrong id changes nothing
+  {
+    const tm = tmQuit();
+    await ask(tm, { requestId: 'd1', kind: 'quit', terminals: 2 });
+    mainDismiss('someone-else');
+    await tick();
+    check('dismiss for another request id: dialog stays', visible());
+    mainDismiss('d1');
+    await tick();
+    check('dismiss from main: dialog down, no answer sent', !visible() && events.join() === 'ack:d1', events);
+    check('dismiss logged', lastLogs().some((x) => x.includes('main took its confirmation down')), lastLogs());
+    check('focus returns to the terminal', w.document.activeElement.id === 'term', w.document.activeElement.id);
+  }
+
+  // 7f. Main refuses the ack (it already gave up): the dialog is withdrawn, nothing answered
+  {
+    const tm = tmQuit();
+    ackReply = false;
+    await ask(tm, { requestId: 'a1', kind: 'quit', terminals: 2 });
+    await tick();
+    check('refused ack: dialog withdrawn and main told (answer false), so it can never stay acked', !visible() && events.join() === 'ack:a1,answer:a1:false', events);
+    ackReply = true;
+  }
+
+  // 7g. Ack slower than the close-IPC timeout: withdrawn too (main has gone native by then)
+  {
+    const tm = tmQuit();
+    tm.closeIpcTimeoutMs = 30;
+    ackDelayMs = 120;
+    await ask(tm, { requestId: 'a2', kind: 'quit', terminals: 2 });
+    await new Promise((r) => setTimeout(r, 200));
+    check('slow ack: dialog withdrawn and main told (answer false): main may have recorded the ack', !visible() && events.join() === 'ack:a2,answer:a2:false', events);
+    ackDelayMs = 0;
+  }
+
+  // 7h. A new request replaces a dialog that is already open
+  {
+    const tm = manager(2);
+    w.document.getElementById('term').focus();
+    const closing = tm.closeActivePane(); // "Close this tab?"
+    await tick();
+    check('precondition: the tab-close dialog is up', dlg('.confirm-dialog-title') === 'Close this tab?', dlg('.confirm-dialog-title'));
+    await ask(tm, { requestId: 'r1', kind: 'quit', terminals: 2 });
+    await closing;
+    check('main request replaces the tab-close dialog (the tab stays)', dlg('.confirm-dialog-title') === 'Quit Patton?' && tm.closed.length === 0, [dlg('.confirm-dialog-title'), tm.closed]);
+    mainRequest({ requestId: 'r2', kind: 'quit', terminals: 2 });
+    await tick();
+    check('a newer main request replaces an older one, and the older is answered false', events.includes('answer:r1:false') && visible(), events);
+    key(w.document.activeElement, 'Enter');
+    await tick();
+    check('and the newer one is answered by the user', events.includes('answer:r2:true'), events);
+  }
+
+  // 7i. Stacked dialogs: another ConfirmDialog instance (the board's, a bookmark's) must not
+  //     leave two dialogs open. The slot is shared, so the newest confirm() answers the rest false.
+  {
+    const other = new ConfirmDialog(w.document.body); // created AFTER the tab manager's, like the board's
+    const tm = tmQuit();
+    const deleting = other.confirm({ title: 'Delete theme?', message: 'x', confirmLabel: 'Delete' });
+    await tick();
+    check('precondition: "Delete theme?" is up with Cancel focused', dlg('.confirm-dialog-title') === 'Delete theme?' && focusedClass() === 'confirm-dialog-cancel');
+    await ask(tm, { requestId: 's1', kind: 'quit', terminals: 2 });
+    check('quit request over "Delete theme?": exactly one dialog is visible, and it is the quit dialog',
+      w.document.querySelectorAll('.confirm-dialog-overlay.visible').length === 1 && dlg('.confirm-dialog-title') === 'Quit Patton?', dlg('.confirm-dialog-title'));
+    check('"Delete theme?" was answered false (not left open behind)', (await deleting) === false && !other.isOpen);
+    check('the focused button is inside the visible dialog (Enter answers what the user sees)',
+      !!w.document.activeElement.closest('.confirm-dialog-overlay.visible') && w.document.activeElement.textContent === 'Quit', w.document.activeElement.textContent);
+    // Reverse: a board dialog opens while the quit dialog is up: the quit dialog is cancelled, never left hidden-but-live.
+    const deleting2 = other.confirm({ title: 'Delete theme?', message: 'x', confirmLabel: 'Delete' });
+    await tick();
+    check('a later dialog over the quit dialog: one visible dialog, the quit request answered false',
+      w.document.querySelectorAll('.confirm-dialog-overlay.visible').length === 1 && dlg('.confirm-dialog-title') === 'Delete theme?' && events.includes('answer:s1:false') && !events.includes('answer:s1:true'), events);
+    key(w.document.activeElement, 'Escape');
+    check('and Esc answers only the visible one', (await deleting2) === false);
+    other.dispose();
+  }
 }
 
 // ── 6. Bookmarks / board style: default options, Cancel focused, Enter cancels ──

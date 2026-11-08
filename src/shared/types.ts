@@ -402,7 +402,26 @@ export interface PattonAPI {
      *  so main's close guard runs (the page's window.close() skips it). True
      *  once main has accepted the request; the close itself follows. */
     closeWindow: () => Promise<boolean>;
+    // --- in-app quit / close confirmations (v1.19; main/close-confirm.ts) ---
+    /** Main asks this window to show "Quit Patton?" / "Close this window?". Returns the unsubscribe. */
+    onConfirmRequest: (callback: (request: ConfirmRequest) => void) => () => void;
+    /** Main has the answer (a second ⌘Q) or gave up: take the dialog down. */
+    onConfirmDismiss: (callback: (requestId: string) => void) => () => void;
+    /** The dialog is on screen. False when main no longer wants it (late, unknown). */
+    ackConfirm: (requestId: string) => Promise<boolean>;
+    /** The user's answer to a request. */
+    answerConfirm: (requestId: string, ok: boolean) => Promise<boolean>;
+    // --- end in-app quit / close confirmations ---
   };
+}
+
+/** Main → renderer: ask the user before ending shells. 'quit' ends every
+ *  window's shells and quits Patton; 'close-window' ends this window's only. */
+export interface ConfirmRequest {
+  requestId: string;
+  kind: 'quit' | 'close-window';
+  /** Shells that will end: all windows' for 'quit', this window's for 'close-window'. */
+  terminals: number;
 }
 
 /** Answer to `closeGuard.info()`: is this the only window, and how many of
