@@ -147,7 +147,17 @@ export class Tab {
    *  splits is refused: this is for the project board's fresh tab. */
   respawnShell(opts: { cwd?: string; projectDir?: boolean; hyperlinks?: boolean }): Promise<{ oldId: number; newId: number }> {
     if (this._panes.length !== 1) return Promise.reject(new Error('Only a one-pane tab can have its shell replaced'));
-    return this._focusedPane.respawn(opts);
+    return this._focusedPane.respawn(opts).then((ids) => {
+      // The new shell is a new start: a name or colour kept from a restored
+      // tab is not this project's, so the tab takes the project's name again
+      // (as a new project tab does).
+      if (this._flag) {
+        this._flag = null;
+        this.onTitleChanged?.();
+      }
+      this.clearCustomTitle();
+      return ids;
+    });
   }
 
   /** Show something over the panes (or remove it with null). Removing it gives

@@ -157,11 +157,13 @@ export class PtyManager {
     return this.instances.size;
   }
 
-  create(window: BrowserWindow, opts?: PtyCreateOptions): number {
+  /** `replacing`: this shell takes the place of one the caller ends right
+   *  after (respawn), so it is net zero for the window and may pass the cap. */
+  create(window: BrowserWindow, opts?: PtyCreateOptions, replacing = false): number {
     // --- Security: Rate limit PTY creation ---
     const winId = window.id;
     const current = this.countByWindow.get(winId) || 0;
-    if (current >= PtyManager.MAX_PTY_PER_WINDOW) {
+    if (current - (replacing ? 1 : 0) >= PtyManager.MAX_PTY_PER_WINDOW) {
       console.warn('[SECURITY] PTY rate limit exceeded (MAX_PTY_PER_WINDOW)', { winId, current });
       throw new Error('Too many terminals open in this window');
     }
@@ -311,7 +313,9 @@ export class PtyManager {
       console.warn('[SECURITY] PTY respawn refused: not this window\'s PTY', { oldId });
       throw new Error('PTY access denied');
     }
-    const newId = this.create(window, opts);
+    // The new shell is made first (a refusal keeps the old one), and counts
+    // as net zero: at the cap, the old shell's slot is the one it takes.
+    const newId = this.create(window, opts, true);
     this.destroy(oldId);
     console.info('[PTY] respawned', { oldId, newId });
     return newId;

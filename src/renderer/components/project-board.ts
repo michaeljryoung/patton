@@ -28,8 +28,10 @@ export interface ProjectBoardHost {
   /** The Wake button's state: read when the board is made and on every live refresh. */
   wakeState(): BoardWakeState;
   /** Wake button click: the host runs the command in this board's own tab, or goes to
-   *  the tab already running it. A start lifts this board off its tab. */
-  wake(): void;
+   *  the tab already running it. A start lifts this board off its tab. A
+   *  returned promise that rejects means it could not start: the board stays
+   *  and says so. */
+  wake(): void | Promise<void>;
   /** Claude button click: the host removes the board as "Terminal" does and
    *  types a plain `claude` into this tab's shell (once, however often clicked). */
   startClaude(): void;
@@ -104,6 +106,15 @@ type DropTarget =
   | { kind: 'tile'; areaId: string; anchor: string | null; after: boolean; mark: HTMLElement; cls: string }
   | { kind: 'area'; anchorId: string; after: boolean; mark: HTMLElement; cls: string };
 
+/** An error's text for the user: Electron's "Error invoking remote method"
+ *  wrapper and "Error:" prefixes dropped. */
+function reasonOf(err: unknown): string {
+  const message = (err as { message?: unknown } | null)?.message;
+  const raw = typeof message === 'string' ? message : String(err);
+  const text = raw.replace(/^(Error:\s*)?Error invoking remote method '[^']*':\s*/, '').replace(/^Error:\s*/, '').trim();
+  return text || 'an unknown error';
+}
+
 export class ProjectBoard {
   readonly element: HTMLElement;
   private payload: BoardPayload;
@@ -135,6 +146,7 @@ export class ProjectBoard {
   /** Bumped on every local change, so a save's reply never overwrites a newer change. */
   private revision = 0;
   private disposed = false;
+  private readonly noticeEl: HTMLElement;
 
   constructor(private readonly host: ProjectBoardHost, payload: BoardPayload) {
     this.payload = payload;
@@ -184,7 +196,14 @@ export class ProjectBoard {
     this.areasEl = document.createElement('div');
     this.areasEl.className = 'pboard-areas';
 
-    this.element.append(head, this.formEl, this.areasEl);
+    // A failure the user must see (a tile or Wake that could not start): shown
+    // in the board itself, as well as announced, and cleared by the next action.
+    this.noticeEl = document.createElement('div');
+    this.noticeEl.className = 'pboard-notice';
+    this.noticeEl.setAttribute('role', 'alert');
+    this.noticeEl.hidden = true;
+
+    this.element.append(head, this.noticeEl, this.formEl, this.areasEl);
 
     this.searchInput.addEventListener('input', () => this.applyFilter());
     this.searchInput.addEventListener('keydown', (e) => this.onSearchKey(e));
@@ -198,6 +217,19 @@ export class ProjectBoard {
 
   focus(): void {
     this.searchInput.focus();
+  }
+
+  /** Show a failure on the board (below the header) and announce it. */
+  showNotice(text: string): void {
+    if (this.disposed) return;
+    this.noticeEl.textContent = text;
+    this.noticeEl.hidden = false;
+    announce(text, 'assertive');
+  }
+
+  private clearNotice(): void {
+    this.noticeEl.textContent = '';
+    this.noticeEl.hidden = true;
   }
 
   setPayload(payload: BoardPayload): void {
@@ -681,7 +713,16 @@ export class ProjectBoard {
 
   private onWakeClick(): void {
     rlog('info', '[BOARD] wake clicked', { awake: this.wakeBtn.classList.contains('is-awake') });
-    this.host.wake();
+    this.clearNotice();
+    const failed = (err: unknown) => {
+      rlog('error', '[BOARD] wake failed', String(err));
+      this.showNotice(`Could not start Wake: ${reasonOf(err)}`);
+    };
+    try {
+      Promise.resolve(this.host.wake()).catch(failed);
+    } catch (err) {
+      failed(err);
+    }
   }
 
   private tileButton(path: string): HTMLElement | null {
@@ -781,8 +822,9 @@ export class ProjectBoard {
   private openPath(path: string, name: string): void {
     const failed = (err: unknown) => {
       rlog('error', '[BOARD] open failed', String(err));
-      announce(`Could not open ${name}`, 'assertive');
+      this.showNotice(`Could not open ${name}: ${reasonOf(err)}`);
     };
+    this.clearNotice();
     rlog('info', '[BOARD] open', { sub: !this.projectByPath(path) });
     try {
       Promise.resolve(this.host.openProject(path)).catch(failed);

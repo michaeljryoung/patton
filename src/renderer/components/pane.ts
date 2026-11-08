@@ -111,6 +111,11 @@ export class Pane {
   historySearch: HistorySearch;
   historyManager: HistoryManager;
   ptyId: number | null = null;
+  // The PTY id a respawn is replacing, from the moment it starts: its output
+  // and exit are dropped (its buffered tail is flushed ahead of main's reply
+  // and would otherwise land in the new shell's terminal).
+  private replacingPtyId: number | null = null;
+  private replacedPtyExited = false;
   title = 'Terminal';
   private disposables: (() => void)[] = [];
   private resizeTimer: ReturnType<typeof setTimeout> | null = null;
@@ -773,8 +778,12 @@ export class Pane {
   refreshCwdNow(): Promise<void> {
     if (this.ptyId === null || this.ptyExited) return Promise.resolve();
     this.lastCwdCheckMs = Date.now();
-    return window.patton.pty.getCwd(this.ptyId)
+    const askedId = this.ptyId;
+    return window.patton.pty.getCwd(askedId)
       .then((cwd) => {
+        // Asked of a shell that has since been replaced (respawn): its folder
+        // is not this pane's any more.
+        if (this.ptyId !== askedId) return;
         if (cwd && cwd !== this.currentCwd) {
           this.currentCwd = cwd;
           this.callbacks.onCwdChange?.(this);
@@ -943,17 +952,34 @@ export class Pane {
   async respawn(opts: { cwd?: string; projectDir?: boolean; hyperlinks?: boolean }): Promise<{ oldId: number; newId: number }> {
     const oldId = this.ptyId;
     if (this.disposed || oldId === null) throw new Error('This pane has no shell to replace');
-    const dims = this.terminalView.getDimensions();
-    const shellPath = this.callbacks.shell;
-    const newId = await window.patton.pty.respawn(oldId, {
-      cols: dims.cols,
-      rows: dims.rows,
-      ...(opts.cwd ? { cwd: opts.cwd } : {}),
-      ...(opts.cwd && opts.projectDir ? { projectDir: true } : {}),
-      ...(opts.hyperlinks ? { hyperlinks: true } : {}),
-      ...(shellPath ? { shell: shellPath } : {}),
-      isDark: this.terminalView.isDarkBackground(),
-    });
+    if (this.replacingPtyId !== null) throw new Error('This pane\'s shell is already being replaced');
+    // From here the old shell's output and exit are ignored, then what was
+    // already handed to xterm is parsed, so reset() below has nothing queued
+    // behind it. On failure the old shell carries on (its exit, if it came
+    // meanwhile, is applied below; the few bytes dropped are of a shell the
+    // board was covering).
+    this.replacingPtyId = oldId;
+    this.replacedPtyExited = false;
+    let newId: number;
+    try {
+      await this.terminalView.drainWrites();
+      const dims = this.terminalView.getDimensions();
+      const shellPath = this.callbacks.shell;
+      newId = await window.patton.pty.respawn(oldId, {
+        cols: dims.cols,
+        rows: dims.rows,
+        ...(opts.cwd ? { cwd: opts.cwd } : {}),
+        ...(opts.cwd && opts.projectDir ? { projectDir: true } : {}),
+        ...(opts.hyperlinks ? { hyperlinks: true } : {}),
+        ...(shellPath ? { shell: shellPath } : {}),
+        isDark: this.terminalView.isDarkBackground(),
+      });
+    } catch (err) {
+      if (this.replacedPtyExited) this.ptyExited = true;
+      throw err;
+    } finally {
+      this.replacingPtyId = null;
+    }
     if (this.disposed) {
       // Closed while main was starting the shell: nothing owns the new one.
       window.patton.pty.destroy(newId);
@@ -976,6 +1002,11 @@ export class Pane {
     // The folder the tab is named from: the project's, or home (unknown) again.
     this.currentCwd = opts.cwd ?? '';
     this.callbacks.onCwdChange?.(this);
+    // The old shell's window title is stale for the new one (and a WAKE title
+    // would keep the yellow flag): back to the default until it sets its own.
+    this.title = 'Terminal';
+    this.callbacks.onTitleChange(this);
+    this.trackAutoFlag('Terminal');
     return { oldId, newId };
   }
 
@@ -1076,7 +1107,7 @@ export class Pane {
     // Wire PTY data → terminal (unconditional — no mode checking)
     this.disposables.push(
       window.patton.pty.onData((id, data) => {
-        if (id === this.ptyId) {
+        if (id === this.ptyId && id !== this.replacingPtyId) {
           this.terminalView.write(data);
         }
       }),
@@ -1085,7 +1116,9 @@ export class Pane {
     // Track PTY exit to avoid destroy-after-exit
     this.disposables.push(
       window.patton.pty.onExit((id) => {
-        if (id === this.ptyId) {
+        if (id === this.replacingPtyId) {
+          this.replacedPtyExited = true;
+        } else if (id === this.ptyId) {
           this.ptyExited = true;
         }
       }),

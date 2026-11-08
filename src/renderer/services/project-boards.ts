@@ -228,9 +228,11 @@ export class ProjectBoards {
       liveState: (path) => this.liveState(path),
       wakeState: () => ({ command: this.wakeCommand, awake: findWakePane(this.tabs.getTabs()) !== null }),
       startClaude: () => this.startClaude(tab),
-      wake: () => {
-        this.wake(tab).catch((err: unknown) => rlog('error', '[BOARD] wake failed', { tabId: tab.id, error: String(err) }));
-      },
+      // A rejection goes back to the board, which shows it.
+      wake: () => this.wake(tab).catch((err: unknown) => {
+        rlog('error', '[BOARD] wake failed', { tabId: tab.id, error: String(err) });
+        throw err;
+      }),
     };
     const board = new ProjectBoard(host, payload);
     this.boards.set(tab, { board, payload });
@@ -321,10 +323,12 @@ export class ProjectBoards {
     this.respawning.add(boardTab);
     let result;
     try {
-      result = await openProject(this.projectHost, path, '[BOARD]', label, {
+      // In place only for a one-pane tab: a restored launch tab can have
+      // splits, and then (like before) the project gets a new tab in its place.
+      result = await openProject(this.projectHost, path, '[BOARD]', label, boardTab.panes.length === 1 ? {
         tab: boardTab,
         respawn: (opts) => this.tabs.respawnTab(boardTab, opts),
-      });
+      } : undefined);
     } finally {
       this.respawning.delete(boardTab);
     }
@@ -343,9 +347,10 @@ export class ProjectBoards {
     if (!this.boards.has(boardTab)) return; // closed or dismissed meanwhile
     // The project is open in another tab: it is active now, the board's tab goes.
     // forget() first, so the tab-closed listener has nothing left to do.
+    const placeTabId = result.action === 'new tab' ? result.tab.id : undefined;
     this.forget(boardTab, 'project open elsewhere');
-    const discarded = this.tabs.discardTab(boardTab.id);
-    rlog('info', '[BOARD] discard', { tabId: boardTab.id, discarded });
+    const discarded = this.tabs.discardTab(boardTab.id, placeTabId);
+    rlog('info', '[BOARD] discard', { tabId: boardTab.id, discarded, placedTabId: placeTabId ?? null });
     if (!discarded) boardTab.setCover(null);
   }
 
@@ -368,10 +373,19 @@ export class ProjectBoards {
     if (!command || this.respawning.has(boardTab)) return;
     this.respawning.add(boardTab);
     try {
-      await this.tabs.respawnTab(boardTab, { hyperlinks: true });
-      runStartupCommand(boardTab, command);
-      if (this.forget(boardTab, 'wake started')) boardTab.setCover(null);
-      rlog('info', '[BOARD] wake started', { tabId: boardTab.id, inPlace: true, index: this.tabs.getTabs().indexOf(boardTab) });
+      if (boardTab.panes.length === 1) {
+        await this.tabs.respawnTab(boardTab, { hyperlinks: true });
+        runStartupCommand(boardTab, command);
+        if (this.forget(boardTab, 'wake started')) boardTab.setCover(null);
+        rlog('info', '[BOARD] wake started', { tabId: boardTab.id, inPlace: true, index: this.tabs.getTabs().indexOf(boardTab) });
+      } else {
+        // A split tab (restored at launch) keeps its shells: Wake gets a new
+        // tab, the board stays in front, as before.
+        const wakeTab = await this.tabs.createTab(undefined, { startupCommand: true });
+        runStartupCommand(wakeTab, command);
+        if (this.tabs.getTabs().includes(boardTab)) this.tabs.switchToId(boardTab.id);
+        rlog('info', '[BOARD] wake started', { tabId: boardTab.id, wakeTabId: wakeTab.id, inPlace: false });
+      }
     } finally {
       this.respawning.delete(boardTab);
     }

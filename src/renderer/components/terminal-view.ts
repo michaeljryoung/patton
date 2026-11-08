@@ -592,6 +592,16 @@ export class TerminalView {
     }
   }
 
+  /** Resolves once everything already written has been parsed (xterm's write
+   *  queue is empty), or after 500 ms. */
+  drainWrites(): Promise<void> {
+    if (this.disposed) return Promise.resolve();
+    return new Promise((resolve) => {
+      const timer = setTimeout(resolve, 500);
+      this.terminal.write('', () => { clearTimeout(timer); resolve(); });
+    });
+  }
+
   getPtyId(): number | null {
     return this.ptyId;
   }

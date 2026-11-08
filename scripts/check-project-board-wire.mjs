@@ -115,6 +115,8 @@ function makePatton(state) {
       // Main's swap: a new PTY for the sender's own old one (ownership and cwd checks: check-pty-respawn.mjs).
       respawn: async (oldId, opts) => {
         if (state.failRespawn) throw new Error('respawn refused');
+        // Main flushes the old shell's buffered bytes ahead of its reply.
+        state.beforeRespawnReply?.(oldId);
         const id = nextPty++;
         state.respawns.push({ oldId, id, opts });
         state.creates.push({ id, opts, respawned: true });
@@ -124,7 +126,13 @@ function makePatton(state) {
       write: (id, data) => { state.writes.push({ id, data }); },
       resize: () => {},
       destroy: (id) => { state.destroyed.push(id); },
-      getCwd: async () => '',
+      // state.cwdAnswers[id] = { cwd, ms }: an lsof that answers late.
+      getCwd: async (id) => {
+        const a = state.cwdAnswers?.[id];
+        if (!a) return '';
+        await new Promise((r) => setTimeout(r, a.ms));
+        return a.cwd;
+      },
       // Main's answer: the shell asked for, else $SHELL (state.envShell).
       getShell: async (id) => state.creates.find((c) => c.id === id)?.opts?.shell || state.envShell || '/bin/zsh',
       // Output for a PTY reaches its pane's terminal (see emit in main()).
@@ -435,6 +443,97 @@ async function main() {
   check('respawn refused: the tab is not left busy', !logs.some((l) => l[0] === '[BOARD] open ignored'));
   check('m5: the board stays after a failed open', t5.hasCover && !board5.disposed);
   await tm.closeById(t5.id);
+
+  // --- review fixes: bytes of the old shell, a late lsof, stale name/colour/title ---
+  state.settings = { startupCommand: 'cc' };
+  const screenOf = (pane) => {
+    const buf = pane.terminalView.terminal.buffer.active;
+    let text = '';
+    for (let i = 0; i < buf.length; i++) text += (buf.getLine(i)?.translateToString(true) ?? '') + '\n';
+    return text;
+  };
+  const sentOf = (id, data, from) => state.writes.slice(from).filter((wr) => wr.id === id && wr.data === data).length;
+  const FIRST_PROMPT = '\x1b]133;D;0\x07\x1b]133;A\x07';
+  const t6 = await tm.userNewTab();
+  const board6 = globalThis.__boards.at(-1);
+  const pane6 = t6.panes[0];
+  const old6 = t6.ptyId;
+  t6.setCustomTitle('Restored name');
+  t6.setFlag('red');
+  emit(old6, '\x1b]2;OLDTITLE\x07');
+  await tick(50);
+  check('stale: the old shell\'s window title is set before the click', pane6.title === 'OLDTITLE', pane6.title);
+  // Bytes already handed to xterm (still queued) and bytes flushed ahead of main's reply,
+  // the second with a "first prompt" that must not fire the startup command early.
+  emit(old6, 'QUEUEDBYTES');
+  state.beforeRespawnReply = (oldId) => emit(oldId, 'FLUSHEDBYTES' + FIRST_PROMPT);
+  state.cwdAnswers = { [old6]: { cwd: '/old/stale/dir', ms: 40 } };
+  const lateCwd = pane6.refreshCwdNow();
+  const writes6 = state.writes.length;
+  board6.host.openProject('/tmp/proj-new');
+  check('stale: the click completed (board lifted)', await until(() => board6.disposed && !t6.hasCover));
+  state.beforeRespawnReply = null;
+  const new6 = t6.ptyId;
+  await lateCwd;
+  await tick(150);
+  const screen6 = screenOf(pane6);
+  check('stale: bytes queued in xterm before the click do not reach the new shell\'s screen', !screen6.includes('QUEUEDBYTES'), screen6);
+  check('stale: bytes flushed ahead of main\'s reply are dropped', !screen6.includes('FLUSHEDBYTES'), screen6);
+  check('stale: the old shell\'s prompt marks do not fire the startup command early', sentOf(new6, 'cc\r', writes6) === 0, state.writes.slice(writes6));
+  emit(new6, FIRST_PROMPT);
+  check('stale: the new shell\'s own first prompt still types it, once', await until(() => sentOf(new6, 'cc\r', writes6) === 1, 1000), state.writes.slice(writes6));
+  check('stale: a late lsof for the old shell does not set the pane\'s folder', pane6.getCwd() === '/tmp/proj-new', pane6.getCwd());
+  check('stale: the old shell\'s window title is cleared', pane6.title === 'Terminal', pane6.title);
+  check('stale: a restored custom name and colour flag are dropped', !t6.hasCustomTitle && t6.flag === null && t6.title !== 'Restored name', { custom: t6.hasCustomTitle, flag: t6.flag, title: t6.title });
+  state.cwdAnswers = null;
+  await tm.closeById(t6.id);
+
+  // --- a split board tab (restored at launch) cannot be respawned: the old path, a new tab ---
+  const cs1 = await tm.createTab();
+  tm.switchToId(cs1.id);
+  tm.splitVertical();
+  await until(() => cs1.panes.length === 2);
+  boards.mount(cs1, state.payload);
+  const boardS1 = globalThis.__boards.at(-1);
+  const idxS1 = tm.getTabs().indexOf(cs1);
+  const respawnsS1 = state.respawns.length;
+  const newTabsS1 = state.creates.filter((c) => !c.respawned).length;
+  const splitOutcome = await Promise.resolve(boardS1.host.openProject('/tmp/proj-split')).then(() => 'resolved', (e) => String(e));
+  check('split tab, tile: the board\'s tab is dropped', await until(() => !tm.getTabs().includes(cs1)), splitOutcome);
+  const placedS1 = tm.getActiveTab();
+  check('split tab, tile: no shell was replaced; a new tab holds the project, in the board tab\'s place',
+    state.respawns.length === respawnsS1 && state.creates.filter((c) => !c.respawned).length > newTabsS1 && placedS1 !== cs1 && placedS1.panes[0].getCwd() === '/tmp/proj-split' && tm.getTabs().indexOf(placedS1) === idxS1,
+    { respawns: state.respawns.length - respawnsS1, at: tm.getTabs().indexOf(placedS1), idxS1 });
+  check('split tab, tile: logged as a new tab', logs.some((l) => l[0] === '[BOARD] opened' && l[1]?.action === 'new tab' && l[1]?.toTabId === placedS1.id));
+  await tm.closeById(placedS1.id);
+
+  state.settings = { startupCommand: '' };
+  const cs2 = await tm.createTab();
+  tm.switchToId(cs2.id);
+  tm.splitVertical();
+  await until(() => cs2.panes.length === 2);
+  boards.mount(cs2, state.payload);
+  const boardS2 = globalThis.__boards.at(-1);
+  const respawnsS2 = state.respawns.length;
+  const tabsS2 = tm.getTabs().length;
+  const wakeSplit = await Promise.resolve(boardS2.host.wake()).then(() => 'resolved', (e) => String(e));
+  check('split tab, Wake: no shell replaced; a new tab runs it; the board stays', state.respawns.length === respawnsS2 && tm.getTabs().length === tabsS2 + 1 && !boardS2.disposed && cs2.hasCover && tm.getActiveTab() === cs2, { wakeSplit, respawns: state.respawns.length - respawnsS2, tabs: tm.getTabs().length - tabsS2 });
+  await tm.closeById(tm.getTabs().at(-1).id);
+  await tm.closeById(cs2.id);
+
+  // --- a refused respawn on Wake: rejects back to the board, which stays ---
+  const t7 = await tm.userNewTab();
+  const board7 = globalThis.__boards.at(-1);
+  const old7 = t7.ptyId;
+  state.failRespawn = true;
+  const wakeOutcome = await Promise.resolve(board7.host.wake()).then(() => 'resolved', () => 'rejected');
+  state.failRespawn = false;
+  check('wake refused: the click rejects back to the board', wakeOutcome === 'rejected', wakeOutcome);
+  check('wake refused: board kept, same shell', t7.hasCover && !board7.disposed && t7.ptyId === old7);
+  const again = await Promise.resolve(board7.host.wake()).then(() => 'resolved', () => 'rejected');
+  check('wake refused: the tab is not left busy (a retry works)', again === 'resolved' && !t7.hasCover);
+  await tm.closeById(t7.id);
+  state.settings = { startupCommand: '' };
 
   // --- closing a board tab disposes its board ---
   const t4 = await tm.userNewTab();

@@ -19,7 +19,7 @@ const stubs = [
     module.exports = { spawn: (shell, args, o) => { if (globalThis.__failSpawn) throw new Error('spawn failed');
       const p = { shell, args, cwd: o.cwd, env: o.env, kills: 0, exitCb: null,
       kill() { p.kills++; }, write() {}, resize() {},
-      onData() {}, onExit(cb) { p.exitCb = cb; } }; fakes.push(p); return p; } };`],
+      onData(cb) { p.dataCb = cb; }, onExit(cb) { p.exitCb = cb; } }; fakes.push(p); return p; } };`],
   [/^\.\/resources-path$/, 'module.exports = { getResourcesPath: () => "/nonexistent" };'],
 ];
 
@@ -81,7 +81,36 @@ try {
   check('respawn: the old shell\'s exit reaches the renderer as nothing (no PTY exit event)', !sent.some((m) => m[1] === 'pty:exit'), sent);
   check('respawn: the window\'s PTY count stays right (one slot, not two)', (() => { for (let i = 0; i < 49; i++) manager.create(A, {}); try { manager.create(A, {}); return false; } catch { return true; } })());
   manager.destroyByWindowId(1);
-  const a3 = manager.create(A, {});
+  let a3 = manager.create(A, {});
+
+  // --- the old shell's buffered output is flushed to the renderer ahead of the reply, under its OLD id ---
+  const fl = manager.create(A, {});
+  const ffl = fakes[fakes.length - 1];
+  ffl.dataCb('OLD-TAIL');
+  const sentBefore = sent.length;
+  const fl2 = manager.respawn(A, fl, { cwd: project });
+  const flushed = sent.slice(sentBefore).filter((m) => m[1] === 'pty:data');
+  check('flush ahead: the old shell\'s buffered bytes are sent during respawn, tagged with the OLD id (the renderer drops them)', flushed.length === 1 && flushed[0][2] === fl && flushed[0][3] === 'OLD-TAIL', flushed);
+  check('flush ahead: nothing of it is tagged with the new id', !sent.some((m) => m[1] === 'pty:data' && m[2] === fl2));
+  manager.destroy(fl2);
+
+  // --- at the 50-terminal cap: a replacing shell is net zero, a new one is refused ---
+  manager.destroyByWindowId(1);
+  const full = [];
+  for (let i = 0; i < 50; i++) full.push(manager.create(A, {}));
+  let capRefused = false;
+  try { manager.create(A, {}); } catch { capRefused = true; }
+  check('cap: a 51st new shell is refused', capRefused);
+  let capErr = null;
+  let capNew = null;
+  try { capNew = manager.respawn(A, full[10], { cwd: project }); } catch (e) { capErr = e; }
+  check('cap: a respawn at 50 succeeds (the new shell takes the old one\'s slot)', capErr === null && typeof capNew === 'number', String(capErr));
+  check('cap: the old shell was ended and the window still holds 50', manager.liveCountForWindow(A) === 50 && !manager.validateOwnership(full[10], A) && manager.validateOwnership(capNew, A), manager.liveCountForWindow(A));
+  let capRefused2 = false;
+  try { manager.create(A, {}); } catch { capRefused2 = true; }
+  check('cap: still refuses a new shell afterwards', capRefused2);
+  manager.destroyByWindowId(1);
+  a3 = manager.create(A, {});
 
   // --- an invalid cwd: the same fallback as a new tab, and no PATTON_PROJECT_DIR ---
   for (const bad of ['/etc', '/Users/someone/../../etc', join(work, 'nope'), 'relative/path', '']) {

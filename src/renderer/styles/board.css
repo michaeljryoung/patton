@@ -135,6 +135,19 @@
   cursor: default;
 }
 
+/* A failure shown on the board (a tile or Wake that could not start) */
+.pboard-notice {
+  flex: 0 0 auto;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--surface);
+  color: var(--error-text);
+}
+
+.pboard-notice[hidden] {
+  display: none;
+}
+
 /* The + Project form */
 .pboard-form {
   flex: 0 0 auto;

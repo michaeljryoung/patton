@@ -135,7 +135,7 @@ function setup(payload = fixture(), opts = {}) {
     dismiss: () => calls.dismiss++,
     liveState: (path) => live.get(path) ?? CLOSED,
     wakeState: () => ({ ...wake }),
-    wake: () => calls.wake++,
+    wake: () => { calls.wake++; return opts.wake?.(); },
     startClaude: () => calls.claude++,
   };
   const board = new win.PB.ProjectBoard(host, payload);
@@ -619,6 +619,33 @@ const submit = (t) => t.q('.pboard-add').dispatchEvent(new t.win.Event('submit',
   t.click(t.tile('beta').querySelector('.pb-tile-main') ?? t.tile('beta'));
   await sleep(40);
   check('m5: a failed open is announced', /Could not open Beta/.test(t.announced()), t.announced());
+}
+
+// A failed open or Wake is shown ON the board (not only announced), with the reason, until the next action.
+{
+  let fail = true;
+  const t = setup(fixture(), {
+    openProject: () => (fail ? Promise.reject(new Error("Error invoking remote method 'pty:respawn': Error: Too many terminals open in this window")) : undefined),
+    wake: () => (fail ? Promise.reject(new Error('respawn refused')) : undefined),
+  });
+  const notice = () => t.q('.pboard-notice');
+  check('notice: hidden before any failure', notice() && notice().hidden);
+  t.click(t.tile('beta').querySelector('.pb-tile-main') ?? t.tile('beta'));
+  await sleep(40);
+  check('notice: a failed open is visible on the board, naming the project and the reason',
+    !notice().hidden && t.el.contains(notice()) && notice().textContent === 'Could not open Beta: Too many terminals open in this window', notice().textContent);
+  check('notice: it is an alert, and still announced', notice().getAttribute('role') === 'alert' && /Could not open Beta/.test(t.announced()));
+  check('notice: the board itself stays (nothing dismissed)', t.calls.dismiss === 0);
+  fail = false;
+  t.click(t.tile('beta').querySelector('.pb-tile-main') ?? t.tile('beta'));
+  await sleep(40);
+  check('notice: cleared by the next successful click', notice().hidden && notice().textContent === '');
+  fail = true;
+  t.click(t.q('.pboard-wake'));
+  await sleep(40);
+  check('notice: a failed Wake is visible on the board with its reason', !notice().hidden && notice().textContent === 'Could not start Wake: respawn refused', notice().textContent);
+  const css = readFileSync(join(repo, 'src', 'renderer', 'styles', 'board.css'), 'utf8');
+  check('notice css: hidden means gone, and it is an error colour', /\.pboard-notice\[hidden\] \{\s*display: none;/.test(css) && /\.pboard-notice \{[^}]*--error-text/.test(css));
 }
 
 // m9: Enter and Esc that belong to an input method's composition do nothing.
