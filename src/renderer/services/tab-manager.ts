@@ -502,8 +502,10 @@ export class TabManager {
    * already confirmed, then asks main to close the window (closeWindow())
    * WITHOUT tearing the tab down first: the guard still saves state and ends
    * the shells, and the S37 rule holds (a guard that finds the shells already
-   * dead can't ask). If main can't answer, or the window has no live shells,
-   * it asks main to close straight away, and the native guard decides.
+   * dead can't ask). A window with no live shells closes straight away. If main
+   * can't answer the close-info question (refused, failed, too slow) no dialog
+   * could be shown, and closing would end every shell unasked, so nothing
+   * closes: the user is told to press ⌘W again or ⌘Q.
    */
   private async closeLastTab(tab: Tab): Promise<void> {
     if (this.lastTabCloseQuerying) return;
@@ -519,10 +521,17 @@ export class TabManager {
     } finally {
       this.lastTabCloseQuerying = false;
     }
-    if (!info || info.liveShells <= 0) {
-      rlog('info', '[CLOSE] last tab closed without the app dialog', {
-        reason: info ? 'no-live-shells' : (timedOut ? 'close-info-timeout' : 'no-close-info'),
+    if (!info) {
+      // Fail closed: with no answer about live shells there was no dialog, and
+      // the fallback window.close() would end every shell with no prompt.
+      rlog('warn', '[CLOSE] last tab not closed: main did not answer', {
+        reason: timedOut ? 'close-info-timeout' : 'no-close-info',
       });
+      announce('Patton could not check for running sessions. Press Command W again, or Command Q.', 'assertive');
+      return;
+    }
+    if (info.liveShells <= 0) {
+      rlog('info', '[CLOSE] last tab closed without the app dialog', { reason: 'no-live-shells' });
       await this.closeWindow('no-dialog');
       return;
     }
@@ -555,7 +564,8 @@ export class TabManager {
    *  event, so main's guard, saveState and PTY teardown run). The page's own
    *  window.close() destroys the window WITHOUT that event (measured on
    *  Electron 44.9.3), so it is only the fallback when main refuses, fails or
-   *  is too slow; main's 'closed' handler then still ends the shells. */
+   *  is too slow AFTER the user already confirmed (or there is nothing to
+   *  lose); main's 'closed' handler then still ends the shells. */
   private async closeWindow(why: string): Promise<void> {
     let accepted = false;
     try {

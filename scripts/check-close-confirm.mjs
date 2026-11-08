@@ -296,16 +296,17 @@ const torn = () => events.some((e) => e === 'dispose' || e.startsWith('closeById
   check('last tab, no live shells: no dialog, the close goes to main straight away', !visible() && events.join() === 'info,closeWindow', events);
 }
 
-// 5g. Main can't answer the query: the close request still goes to main, whose guard decides
+// 5g. Main can't answer the query: fail closed (no dialog could be shown, so nothing closes)
 {
   closeInfo = new Error('rate limited');
   let tm = lastTab();
   await tm.closeActivePane();
-  check('close info fails: no dialog, close goes to main (native guard asks)', !visible() && events.join() === 'info,closeWindow', events);
+  check('close info fails: no dialog, nothing closed (fail closed)', !visible() && events.join() === 'info', events);
+  check('close info fails: logged as not answered', lastLogs().some((x) => x.includes('last tab not closed: main did not answer') && x.includes('no-close-info')), lastLogs());
   closeInfo = null;
   tm = lastTab();
   await tm.closeActivePane();
-  check('close info null: no dialog, close goes to main', !visible() && events.join() === 'info,closeWindow', events);
+  check('close info null: no dialog, nothing closed (fail closed)', !visible() && events.join() === 'info' && !events.includes('window.close'), events);
 }
 
 // 5h. Pre-confirm refused: still asks main to close, logged as not pre-confirmed
@@ -407,8 +408,9 @@ for (const via of ['⌘W', '✕']) {
   let tm = lastTab();
   tm.closeIpcTimeoutMs = 30;
   await tm.closeActivePane();
-  check('close info stalled: no dialog, close goes to main after the timeout', !visible() && events.join() === 'info,closeWindow', events);
+  check('close info stalled: no dialog, nothing closed after the timeout (fail closed)', !visible() && events.join() === 'info', events);
   check('close info stalled: timeout logged', lastLogs().some((x) => x.includes('timed out') && x.includes('"what":"info"')), lastLogs());
+  check('close info stalled: not-closed logged', lastLogs().some((x) => x.includes('last tab not closed: main did not answer') && x.includes('close-info-timeout')), lastLogs());
   // the query flag was released: the next ⌘W is not dropped
   infoDelayMs = 0;
   events.length = 0;

@@ -1,6 +1,6 @@
 // ⌘W on the last tab asks in the app ("Quit Patton?"), so main's close guard
 // must not ask a second time with its native box. The renderer records the
-// confirmation here just before it calls window.close(); the guard takes it.
+// confirmation here just before it asks main to close the window (window:close); the guard takes it.
 //
 // One-shot and short-lived on purpose: the record is consumed by the very next
 // close of that window, and one older than the TTL counts for nothing, so ⌘Q,

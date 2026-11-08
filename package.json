@@ -12,6 +12,7 @@
     "make": "electron-forge make",
     "publish": "electron-forge publish",
     "lint": "eslint .",
+    "check": "bash scripts/run-checks.sh",
     "audit": "npm audit --omit=dev --audit-level=high",
     "release": "bash scripts/release.sh",
     "health": "bash scripts/patton-health.sh"
