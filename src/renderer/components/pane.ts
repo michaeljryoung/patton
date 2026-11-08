@@ -21,6 +21,7 @@ import {
   type BlockedKind, type ProgramSignal, type ProgramState,
 } from '../services/program-status';
 import { paneActivity, type PaneActivity } from '../services/pane-activity';
+import { turnEndSignal, verdictAfterRootChange, type HookVerdict } from '../services/turn-end';
 
 import type { ITheme } from '@xterm/xterm';
 import type { TabFlag } from '../../shared/types';
@@ -174,12 +175,14 @@ export class Pane {
   private lastProgramLogKey = '';
   private lastIgnoredLogMs = 0;
   private needsYouText: string | null = null;
-  // A Stop-hook verdict's timers while 7501 reports (its tasks count is
-  // superseded by child records, its crons are not: 7501 has no timers), and
-  // when the root last turned done. A done root with no child tasks is a
-  // cron-only turn end, parked as in S40, when the two are within the
-  // verdict TTL of each other (either order). Cleared when work starts.
-  private hookCrons: { crons: number; atMs: number } | null = null;
+  // The Stop hook's verdict (tasks + crons) while 7501 reports, and when the
+  // root last turned done. 7501 does not see every background task or timer
+  // (8 Nov 2026: root done, no child records, hook said 2 tasks running, and
+  // the dot went green), so a done root with no working child is parked when
+  // the verdict reported work and came within the verdict TTL of the done
+  // (either order): turnEndSignal. A verdict belongs to one turn: it is
+  // cleared when the root enters `working` from another state.
+  private hookVerdict: HookVerdict | null = null;
   private rootDoneAtMs: number | null = null;
   private lastRootState: ProgramState | null = null;
   private lastStatusKey = '';
@@ -345,7 +348,6 @@ export class Pane {
     if (this.claudeWorking) return;
     this.claudeWorking = true;
     this.stopSeenSinceWork = false;
-    this.hookCrons = null;
     this.notifyCheckpoint();
     // A new stretch of work: the next stop is a new event, never a
     // duplicate of the last one, so it mustn't be debounced away.
@@ -411,14 +413,19 @@ export class Pane {
     const rootState = root?.state ?? null;
     if (rootState === 'done' && this.lastRootState !== 'done') this.rootDoneAtMs = Date.now();
     else if (rootState !== 'done') this.rootDoneAtMs = null;
-    this.lastRootState = rootState;
-    let signal = programSignal(this.programStatus);
-    // Cron-only turn end (S40): done, no child tasks, and the Stop hook said
-    // timers are pending. The ring, not the dot.
-    const crons = this.cronsForThisTurn();
-    if (signal.kind === 'needs-you' && signal.key === 'root:done' && crons > 0) {
-      signal = { kind: 'parked', tasks: 0, crons, titles: [] };
+    const kept = verdictAfterRootChange(this.hookVerdict, this.lastRootState, rootState);
+    if (kept.cleared) {
+      rlog('info', '[DOT] Hook verdict cleared: new turn', { pane: this.id, tasks: this.hookVerdict?.tasks, crons: this.hookVerdict?.crons });
     }
+    this.hookVerdict = kept.verdict;
+    this.lastRootState = rootState;
+    // Turn end: root done with no working child is parked, not "needs you",
+    // when the Stop hook said tasks or timers are still running.
+    const turnEnd = turnEndSignal(
+      programSignal(this.programStatus), this.hookVerdict, this.rootDoneAtMs, Pane.HOOK_VERDICT_TTL_MS,
+    );
+    const signal = turnEnd.signal;
+    const crons = this.hookVerdict && turnEnd.viaHook ? this.hookVerdict.crons : 0;
     const children = this.programStatus.children().length;
     const isClaude = isClaudeProgram(this.programStatus);
     const logKey = [rootState, root?.kind, children, signal.kind, crons, isClaude].join('|');
@@ -446,8 +453,11 @@ export class Pane {
         this.cancelClaudeStop();
         const info: ParkedInfo = { tasks: signal.tasks, crons: signal.crons ?? 0, titles: signal.titles };
         if (previous.kind !== 'parked' || previous.tasks !== signal.tasks || previous.crons !== signal.crons) {
-          rlog('info', '[DOT] Parked', { pane: this.id, tasks: signal.tasks, crons: info.crons, source: '7501' });
+          const source = turnEnd.viaHook && signal.tasks > 0 ? 'hook-tasks' : '7501';
+          rlog('info', '[DOT] Parked', { pane: this.id, tasks: signal.tasks, crons: info.crons, source });
         }
+        // A needs-you raised before a late verdict is withdrawn with it.
+        this.needsYouText = null;
         this.setParked(info);
       } else if (signal.kind === 'needs-you') {
         this.setParked(null);
@@ -474,14 +484,6 @@ export class Pane {
     }
   }
 
-  /** Timers the Stop hook reported for the turn that just ended, if its
-   *  verdict and the root's `done` came within the verdict TTL of each other. */
-  private cronsForThisTurn(): number {
-    if (!this.hookCrons || this.rootDoneAtMs === null) return 0;
-    if (Math.abs(this.hookCrons.atMs - this.rootDoneAtMs) > Pane.HOOK_VERDICT_TTL_MS) return 0;
-    return this.hookCrons.crons;
-  }
-
   /** A 7501 "needs you" has held for the settle: raise it, reason as text. */
   private settleProgramStop(): void {
     const signal = this.lastProgramSignal;
@@ -500,7 +502,7 @@ export class Pane {
     this.lastProgramLogKey = '';
     this.claudeBlocked = false;
     this.needsYouText = null;
-    this.hookCrons = null;
+    this.hookVerdict = null;
     this.rootDoneAtMs = null;
     this.lastRootState = null;
     if (!wasReporting) return;
@@ -600,14 +602,17 @@ export class Pane {
    *  at once (see the state machine above the hook fields). */
   private handleHookStop(tasks: number, crons: number): void {
     this.hookActive = true;
-    // Claude Code reports its own state here: the verdict is only the
-    // fallback for panes that never report. Its tasks are superseded by the
-    // child records; its timers are not (7501 has none), so they are kept
-    // for a cron-only turn end (applyProgramStatus).
+    // Claude Code reports its own state here, so the verdict is not the dot's
+    // source; it is kept for this turn's end, where it turns a "done" that
+    // 7501 shows no work behind into the ring (applyProgramStatus). The hook
+    // does not see everything 7501 does, nor the reverse: 7501 child records
+    // missed running tasks and timers in the field.
     if (this.statusReporting) {
-      rlog('info', '[DOT] Hook verdict ignored: 7501 reports', { pane: this.id, tasks, crons });
-      this.hookCrons = { crons, atMs: Date.now() };
-      if (crons > 0) this.applyProgramStatus();
+      rlog('info', '[DOT] Hook verdict kept: 7501 reports', { pane: this.id, tasks, crons });
+      this.hookVerdict = { tasks, crons, atMs: Date.now() };
+      // A verdict after the done re-evaluates a needs-you still settling or
+      // already raised; while working it is simply stored for the done.
+      if (tasks + crons > 0) this.applyProgramStatus();
       return;
     }
     if (this.pendingVerdictTimer) clearTimeout(this.pendingVerdictTimer);
