@@ -13,6 +13,7 @@ import { registerClipboardImageHandlers } from './clipboard-image';
 import { getSystemFonts } from './system-fonts';
 import { RateLimiter } from './rate-limiter';
 import { closePreconfirmations } from './close-preconfirm';
+import { closeSenderWindow } from './close-window';
 import { broadcastUiTextScale, isOnlyWindow } from './window-manager';
 import { decideFileOpen, extensionOf, parseLinkPath, type OpenDecision } from './link-open-policy';
 import { annotateBookmarks, validateBookmarks } from './bookmarks'; // bookmarks sidebar
@@ -774,12 +775,13 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
   });
 
   // --- ⌘W on the last tab: the in-app "Quit Patton?" dialog (tab-manager.ts) ---
-  // Both act only on the SENDER's own window: a renderer can learn about, and
-  // pre-confirm the close of, its own window and no other. The pre-confirm is
+  // All three act only on the SENDER's own window: a renderer can learn about,
+  // pre-confirm and request the close of its own window and no other. The pre-confirm is
   // one-shot and expires (close-preconfirm.ts), so it can't disarm the guard
   // for a later red-button click or ⌘Q. One call per user action, so a
-  // refusal past the limit is rare; the renderer then calls window.close()
-  // anyway and the native guard asks, which is the safe direction.
+  // refusal past the limit is rare; the renderer then falls back to the page's
+  // window.close(), and the 'closed' safety net in window-manager.ts ends the
+  // shells.
   const closeGuardLimiter = new RateLimiter(10);
   ipcMain.handle(IPC.WINDOW_CLOSE_INFO, (event) => {
     if (!closeGuardLimiter.allow()) {
@@ -800,6 +802,15 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
     closePreconfirmations.mark(win.id);
     console.info('[CLOSE] window close confirmed in the app', { windowId: win.id });
     return true;
+  });
+  // The renderer closes its window through here, never with the page's
+  // window.close(), which skips the 'close' event (close-window.ts).
+  ipcMain.handle(IPC.WINDOW_CLOSE, (event) => {
+    if (!closeGuardLimiter.allow()) {
+      console.warn('[SECURITY] Rate limit exceeded', { channel: IPC.WINDOW_CLOSE });
+      return false;
+    }
+    return closeSenderWindow(event.sender) !== null;
   });
 
   // --- Claude Code Stop hook (Settings → Claude Code; logic in claude-hook.ts) ---

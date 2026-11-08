@@ -1,6 +1,9 @@
 // Headless check of main's window close guard and the last-tab pre-confirm
 // (S45): ⌘W on the last tab asks in the app, the renderer records that through
-// WINDOW_PRECONFIRM_CLOSE, and the guard then skips its native box ONCE for
+// WINDOW_PRECONFIRM_CLOSE, asks main to close its window through WINDOW_CLOSE
+// (BrowserWindow.close(): the only renderer path that emits the 'close' event;
+// the page's own window.close() destroys the window without it, measured on
+// Electron 44.9.3 by scripts/check-close-electron.cjs), and the guard then skips its native box ONCE for
 // that window only, and only while the record is fresh. Everything else (the
 // red button, Window → Close, an expired or another window's record) still
 // meets the native "N terminals still running" box.
@@ -47,7 +50,7 @@ class FakeWindow {
   on(ev, fn) { (this.listeners.get(ev) ?? this.listeners.set(ev, []).get(ev)).push(fn); return this; }
   once(ev, fn) { return this.on(ev, fn); }
   emit(ev, ...args) { for (const fn of this.listeners.get(ev) ?? []) fn(...args); }
-  /** What a close request does: run the 'close' listeners; unless one
+  /** BrowserWindow.close(): run the 'close' listeners; unless one
    *  prevented it, the window goes ('closed'). Returns true when it closed. */
   requestClose() {
     let prevented = false;
@@ -58,6 +61,18 @@ class FakeWindow {
     this.emit('closed');
     return true;
   }
+  /** The page's own window.close() (Electron 44.9.3): the window is destroyed
+   *  and 'closed' fires, but NO 'close' event, so no 'close' listener runs. */
+  pageClose() {
+    this.destroyed = true;
+    windows.splice(windows.indexOf(this), 1);
+    this.emit('closed');
+  }
+  close() { this.requestClose(); }
+  /** BrowserWindow.destroy(): like the page's close, no 'close' event. */
+  destroy() { this.pageClose(); }
+  get id() { if (this.destroyed && this.strict) throw new Error('Object has been destroyed'); return this._id; }
+  set id(v) { this._id = v; }
   isDestroyed() { return this.destroyed; }
   getBounds() { return { x: 0, y: 0, width: 800, height: 600 }; }
   isMaximized() { return false; }
@@ -83,11 +98,20 @@ const electron = new Proxy({
   app: { isPackaged: false, getPath: () => { const d = mkdtempSync(join(tmpdir(), 'close-guard-')); tmpDirs.push(d); return d; } },
 }, { get: (t, k) => (k in t ? t[k] : deep()) });
 
-const store = { getWindowState: () => ({ width: 800, height: 600 }), setWindowState() {}, setSession() {} };
+const store = { getSettings: () => ({}), getWindowState: () => ({ width: 800, height: 600 }), setWindowState() {}, setSession() {} };
 const live = new Map(); // window → live PTY count
 const ptyManager = {
   liveCountForWindow: (w) => live.get(w) ?? 0,
   destroyByWindow: (w) => { ptyManager.destroyed.push(w.id); live.delete(w); },
+  // By id, as the real one: the window is destroyed in the 'closed' handler.
+  destroyByWindowId: (id) => {
+    const w = [...live.keys()].find((x) => x._id === id);
+    if (!w) return 0;
+    const n = live.get(w);
+    ptyManager.destroyed.push(id);
+    live.delete(w);
+    return n;
+  },
   destroyed: [],
   get size() { let n = 0; for (const v of live.values()) n += v; return n; },
 };
@@ -144,10 +168,19 @@ const realNow = performance.now.bind(performance);
 let clock = Math.floor(realNow());
 performance.now = () => clock;
 
+const warns = [];
+const realWarn = console.warn;
+console.warn = (...a) => { warns.push(a.map((x) => (typeof x === 'string' ? x : JSON.stringify(x))).join(' ')); };
 registerIpcHandlers(ptyManager);
+// The IPC rate limiter reads Date.now: a stepped clock keeps sections apart.
+const realDateNow = Date.now;
+let wall = realDateNow();
+Date.now = () => wall;
+const closeIpc = (win) => handlers.get(IPC.WINDOW_CLOSE)({ sender: win.webContents });
+const later = () => new Promise((r) => setImmediate(r));
 const info = (win) => handlers.get(IPC.WINDOW_CLOSE_INFO)({ sender: win.webContents });
 const preconfirm = (win) => handlers.get(IPC.WINDOW_PRECONFIRM_CLOSE)({ sender: win.webContents });
-const reset = () => { dialogCalls.length = 0; logs.length = 0; ptyManager.destroyed.length = 0; dialogAnswer = 0; };
+const reset = () => { wall += 1100; dialogCalls.length = 0; logs.length = 0; warns.length = 0; ptyManager.destroyed.length = 0; dialogAnswer = 0; };
 
 // ── 1. The IPC answers for the sender's own window ──
 {
@@ -182,7 +215,7 @@ const reset = () => { dialogCalls.length = 0; logs.length = 0; ptyManager.destro
   live.set(w, 2);
   check('pre-confirm IPC accepted', preconfirm(w) === true);
   check('pre-confirm logged in main', logs.some((l) => l.includes('[CLOSE] window close confirmed in the app')), logs);
-  clock += 50; // the renderer's window.close() a moment later
+  clock += 50; // the renderer's close request a moment later
   const closed = w.requestClose();
   check('pre-confirmed close: no native box', dialogCalls.length === 0, dialogCalls.length);
   check('pre-confirmed close: window closes', closed);
@@ -266,7 +299,106 @@ const reset = () => { dialogCalls.length = 0; logs.length = 0; ptyManager.destro
   check('forget drops a record', closePreconfirmations.take(998) === 'none');
 }
 
+// ── 9. WINDOW_CLOSE: the renderer's close goes through BrowserWindow.close() ──
+// Last window, confirmed in the app: the guard's close handler really runs
+// (it takes the record), no native box, the shells are ended there, and so
+// before-quit finds none alive (it asks only while ptyManager.size > 0).
+{
+  const w = createWindow(ptyManager);
+  live.set(w, 3);
+  preconfirm(w);
+  clock += 50;
+  const reply = closeIpc(w);
+  check('close IPC accepted at once (reply does not wait for the close)', reply === true && windows.includes(w), reply);
+  await later();
+  check('close IPC: window closed', w.isDestroyed() && !windows.includes(w));
+  check('close IPC: the close handler ran and took the pre-confirmation', logs.some((l) => l.includes('[CLOSE] window close pre-confirmed')), logs);
+  check('close IPC: no native box', dialogCalls.length === 0, dialogCalls.length);
+  check('close IPC: shells ended by the close handler, not the safety net', ptyManager.destroyed.length === 1 && warns.length === 0, { destroyed: ptyManager.destroyed, warns });
+  check('close IPC: before-quit would find no PTYs and not ask', ptyManager.size === 0, ptyManager.size);
+  check('close IPC logged', logs.some((l) => l.includes('[CLOSE] window close requested by its renderer')), logs);
+  reset();
+}
+
+// Not confirmed in the app: the native box asks; Cancel keeps window and shells.
+{
+  const w = createWindow(ptyManager);
+  live.set(w, 2);
+  closeIpc(w);
+  await later();
+  check('close IPC, not confirmed: native box asks', dialogCalls.length === 1 && !w.isDestroyed(), dialogCalls.length);
+  check('close IPC, not confirmed: Cancel keeps the shells', ptyManager.destroyed.length === 0 && ptyManager.size === 2);
+  dialogAnswer = 1;
+  closeIpc(w);
+  await later();
+  check('close IPC, Close Anyway: window closes and shells end', w.isDestroyed() && ptyManager.size === 0);
+  reset();
+}
+
+// A non-last window closed this way ends ITS shells and leaves the other's.
+{
+  const a = createWindow(ptyManager);
+  const b = createWindow(ptyManager);
+  live.set(a, 2);
+  live.set(b, 4);
+  preconfirm(b);
+  closeIpc(b);
+  await later();
+  check('non-last window: closed, its shells ended', b.isDestroyed() && !live.has(b) && ptyManager.destroyed.includes(b.id));
+  check('non-last window: the other window and its shells untouched', !a.isDestroyed() && live.get(a) === 2);
+  // the sender's own window only: a's renderer cannot close b (already gone) and closes a
+  closeIpc(b);
+  await later();
+  check('close IPC from a destroyed window is refused', closeIpc(b) === false);
+  dialogAnswer = 1;
+  closeIpc(a);
+  await later();
+  reset();
+}
+
+// ── 10. The page's own window.close() skips the handler: the safety net ──
+{
+  const a = createWindow(ptyManager);
+  const b = createWindow(ptyManager);
+  live.set(a, 2);
+  live.set(b, 1);
+  a.strict = true; // reading a destroyed window throws, as in Electron
+  preconfirm(a);
+  a.pageClose();
+  check('page window.close(): no close handler ran (no native box, no pre-confirm taken)',
+    dialogCalls.length === 0 && !logs.some((l) => l.includes('window close pre-confirmed')), { dialogCalls: dialogCalls.length, logs });
+  check('page window.close(): safety net ended that window\'s shells', ptyManager.destroyed.length === 1 && !live.has(a), ptyManager.destroyed);
+  check('page window.close(): safety net logged how many it found', warns.some((l) => l.includes('closed without its close guard') && l.includes('"leftover":2')), warns);
+  check('page window.close(): the other window\'s shells untouched', live.get(b) === 1);
+  check('page window.close(): its stale pre-confirmation was forgotten', closePreconfirmations.take(a._id) === 'none');
+  dialogAnswer = 1;
+  b.requestClose();
+  reset();
+}
+
+// WINDOW_CLOSE shares the close-guard rate limit (10/s) and refuses past it.
+{
+  const w = createWindow(ptyManager);
+  const replies = Array.from({ length: 11 }, () => closeIpc(w));
+  check('close IPC rate-limited like the other close-guard channels', replies.slice(0, 10).every((r) => r === true) && replies[10] === false, replies);
+  check('close IPC rate limit logged', warns.some((l) => l.includes('Rate limit exceeded') && l.includes('window:close')), warns);
+  await later();
+  reset();
+}
+
+// The normal close path leaves the safety net nothing to warn about.
+{
+  const w = createWindow(ptyManager);
+  live.set(w, 1);
+  dialogAnswer = 1;
+  w.requestClose();
+  check('guarded close: safety net finds nothing', warns.length === 0, warns);
+  reset();
+}
+
 console.info = realInfo;
+console.warn = realWarn;
+Date.now = realDateNow;
 performance.now = realNow;
 for (const d of tmpDirs) rmSync(d, { recursive: true, force: true });
 console.log(`\n${passed} passed, ${failed} failed`);

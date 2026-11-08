@@ -76,6 +76,9 @@ export const IPC = {
   // one-shot "already confirmed" for main's close guard (close-preconfirm.ts).
   WINDOW_CLOSE_INFO: 'window:close-info',
   WINDOW_PRECONFIRM_CLOSE: 'window:preconfirm-close',
+  // Close the sender's own window from main: BrowserWindow.close() emits
+  // 'close' (the guard runs), the page's window.close() does not.
+  WINDOW_CLOSE: 'window:close',
 
   DIAGNOSTICS_SAVE_SNAPSHOT: 'diagnostics:save-snapshot',
 

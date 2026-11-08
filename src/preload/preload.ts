@@ -266,6 +266,7 @@ const api: PattonAPI = {
   closeGuard: {
     info: () => ipcRenderer.invoke(IPC.WINDOW_CLOSE_INFO),
     preconfirm: () => ipcRenderer.invoke(IPC.WINDOW_PRECONFIRM_CLOSE),
+    closeWindow: () => ipcRenderer.invoke(IPC.WINDOW_CLOSE),
   },
 };
 

@@ -395,6 +395,10 @@ export interface PattonAPI {
     /** Record that the caller's own window close was confirmed in the app
      *  (one-shot, expires after a few seconds). False if main refused it. */
     preconfirm: () => Promise<boolean>;
+    /** Ask main to close the caller's own window with BrowserWindow.close(),
+     *  so main's close guard runs (the page's window.close() skips it). True
+     *  once main has accepted the request; the close itself follows. */
+    closeWindow: () => Promise<boolean>;
   };
 }
 

@@ -31,8 +31,9 @@ export class TabManager {
    *  dialog isn't open yet, so a fast second ⌘W must not start another). */
   private lastTabCloseQuerying = false;
   /** How long Cmd-W on the last tab waits for main's close-guard IPC before it
-   *  falls back to plain window.close() (main's native guard then asks). A
-   *  field, not a constant, so the headless check can shorten it. */
+   *  falls back to the page's window.close() (which skips main's close guard;
+   *  main's 'closed' handler then still ends the shells). A field, not a
+   *  constant, so the headless check can shorten it. */
   closeIpcTimeoutMs = 1500;
   private contentContainer: HTMLElement;
   private disposables: (() => void)[] = [];
@@ -354,7 +355,7 @@ export class TabManager {
     announce(`Closed tab: ${closedTitle}`);
 
     if (this.tabs.length === 0) {
-      window.close();
+      await this.closeWindow('no-tabs-left');
       return;
     }
 
@@ -456,7 +457,7 @@ export class TabManager {
       // The PTY may have exited (auto-closing the tab) while the dialog was up.
       if (!this.tabs.includes(tab)) return;
       // The other tabs may have gone too: this is now the window's last tab,
-      // and closeById would dispose it before window.close() (S37 hazard).
+      // and closeById would dispose it before the window closes (S37 hazard).
       if (this.tabs.length <= 1) {
         await this.closeLastTab(tab);
         return;
@@ -498,11 +499,11 @@ export class TabManager {
    * when it is the only one). Asks in the app, like any other tab, so ⌘W
    * twice or ⌘W then Enter goes through (Michael: ⌘W twice "should shut
    * patton"). On confirm it tells main's close guard this window's close is
-   * already confirmed, then calls window.close() WITHOUT tearing the tab down
-   * first: the guard still saves state and ends the shells, and the S37 rule
-   * holds (a guard that finds the shells already dead can't ask). If main
-   * can't answer, or the window has no live shells, it calls window.close()
-   * straight away as before, and the native guard decides.
+   * already confirmed, then asks main to close the window (closeWindow())
+   * WITHOUT tearing the tab down first: the guard still saves state and ends
+   * the shells, and the S37 rule holds (a guard that finds the shells already
+   * dead can't ask). If main can't answer, or the window has no live shells,
+   * it asks main to close straight away, and the native guard decides.
    */
   private async closeLastTab(tab: Tab): Promise<void> {
     if (this.lastTabCloseQuerying) return;
@@ -522,7 +523,7 @@ export class TabManager {
       rlog('info', '[CLOSE] last tab closed without the app dialog', {
         reason: info ? 'no-live-shells' : (timedOut ? 'close-info-timeout' : 'no-close-info'),
       });
-      window.close();
+      await this.closeWindow('no-dialog');
       return;
     }
     const ok = await this.confirmClose('last-tab', tab.title, info.isLastWindow);
@@ -547,6 +548,24 @@ export class TabManager {
     }
     // Not recorded (refused, failed or too slow): main's native box asks instead.
     rlog('info', '[CLOSE] window close handed to main', { preconfirmed, timedOut: preconfirmTimedOut });
+    await this.closeWindow('last-tab-confirmed');
+  }
+
+  /** Close this window through main (BrowserWindow.close() emits the 'close'
+   *  event, so main's guard, saveState and PTY teardown run). The page's own
+   *  window.close() destroys the window WITHOUT that event (measured on
+   *  Electron 44.9.3), so it is only the fallback when main refuses, fails or
+   *  is too slow; main's 'closed' handler then still ends the shells. */
+  private async closeWindow(why: string): Promise<void> {
+    let accepted = false;
+    try {
+      const r = await this.askMain('close', () => window.patton.closeGuard.closeWindow());
+      accepted = r.value === true;
+    } catch {
+      accepted = false;
+    }
+    if (accepted) return;
+    rlog('warn', '[CLOSE] main did not take the window close; falling back to window.close()', { why });
     window.close();
   }
 
@@ -560,7 +579,7 @@ export class TabManager {
     try {
       const r = await Promise.race([call(), timeout]);
       if (r === 'timeout') {
-        rlog('warn', '[CLOSE] close-guard call timed out; falling back to window.close()', { what, ms: this.closeIpcTimeoutMs });
+        rlog('warn', '[CLOSE] close-guard call timed out', { what, ms: this.closeIpcTimeoutMs });
         return { value: undefined, timedOut: true };
       }
       return { value: r as T, timedOut: false };

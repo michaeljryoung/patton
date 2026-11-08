@@ -224,10 +224,12 @@ export function createWindow(ptyManager?: PtyManager): BrowserWindow {
     // either.
     //
     // ⌘W on the last tab has already asked in the app ("Quit Patton?" or
-    // "Close this window?"): its renderer records that here just before
-    // calling window.close(), without disposing the tab, so the shells are
-    // still alive. A fresh record for THIS window skips the native box once;
-    // a stale or absent one leaves the guard as it was (close-preconfirm.ts).
+    // "Close this window?"): its renderer records that here (preconfirm IPC),
+    // then asks main to close the window (WINDOW_CLOSE → BrowserWindow.close(),
+    // which is what emits this event; the page's own window.close() does NOT,
+    // measured on Electron 44.9.3), without disposing the tab, so the shells
+    // are still alive. A fresh record for THIS window skips the native box
+    // once; a stale or absent one leaves the guard as it was (close-preconfirm.ts).
     const preconfirm = closePreconfirmations.take(windowId);
     if (preconfirm === 'confirmed') console.info('[CLOSE] window close pre-confirmed', { windowId });
     if (preconfirm === 'expired') console.info('[CLOSE] window close pre-confirmation expired', { windowId });
@@ -259,7 +261,15 @@ export function createWindow(ptyManager?: PtyManager): BrowserWindow {
     saveState();
     ptyManager?.destroyByWindow(window);
   });
-  window.on('closed', () => closePreconfirmations.forget(windowId));
+  // Safety net for a close that skipped the handler above (the page's own
+  // window.close(), or any future path): end whatever shells the window still
+  // had. By id, because the window is destroyed here. A non-zero count means
+  // some path bypassed the guard.
+  window.on('closed', () => {
+    closePreconfirmations.forget(windowId);
+    const leftover = ptyManager?.destroyByWindowId(windowId) ?? 0;
+    if (leftover > 0) console.warn('[CLOSE] window closed without its close guard; ended its shells', { windowId, leftover });
+  });
   window.on('resize', debouncedSave);
   window.on('move', debouncedSave);
 

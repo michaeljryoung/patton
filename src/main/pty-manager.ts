@@ -137,6 +137,8 @@ function validateShell(shell: string): string {
 
 interface PtyInstance {
   process: IPty;
+  /** The owning window's id, kept so teardown never reads a destroyed window. */
+  windowId: number;
   buffer: string;
   flushTimer: ReturnType<typeof setTimeout> | null;
   window: BrowserWindow;
@@ -225,6 +227,7 @@ export class PtyManager {
       buffer: '',
       flushTimer: null,
       window,
+      windowId: winId,
       shell,
     };
 
@@ -338,7 +341,7 @@ export class PtyManager {
       // Note the delete-to-claim invariant: only the caller that successfully deletes
       // here (or in the onExit handler above) owns final teardown of `instance`.
       this.instances.delete(id);
-      const winId = instance.window.id;
+      const winId = instance.windowId;
       const c = this.countByWindow.get(winId) ?? 0;
       this.countByWindow.set(winId, Math.max(0, c - 1));
       try {
@@ -405,17 +408,25 @@ export class PtyManager {
   }
 
   destroyByWindow(window: BrowserWindow): void {
+    this.destroyByWindowId(window.id);
+  }
+
+  /** Destroy every PTY of the window with this id and return how many were
+   *  still alive. Takes the id, not the window, so it is safe in a 'closed'
+   *  handler, where reading anything off the destroyed window throws. */
+  destroyByWindowId(windowId: number): number {
     // Collect IDs first to avoid modifying map during iteration
     const idsToDestroy: number[] = [];
     for (const [id, instance] of this.instances) {
-      if (instance.window === window) {
+      if (instance.windowId === windowId) {
         idsToDestroy.push(id);
       }
     }
     for (const id of idsToDestroy) {
       this.destroy(id);
     }
-    this.countByWindow.delete(window.id);
+    this.countByWindow.delete(windowId);
+    return idsToDestroy.length;
   }
 
   destroyAll(): void {
