@@ -649,6 +649,8 @@ export class TabManager {
       shortcutConfirms: true,
       // A double-tapped ⌘W is not a decision about quitting (main applies the same dwell to ⌘Q).
       shortcutDwellMs: CONFIRM_SHORTCUT_DWELL_MS,
+      // An Enter already in flight when the dialog appears must not quit.
+      confirmDwellMs: CONFIRM_SHORTCUT_DWELL_MS,
     });
     let acked = false;
     try {
@@ -745,6 +747,8 @@ export class TabManager {
       cancelLabel: 'Cancel',
       defaultFocus,
       shortcutConfirms: true,
+      // Enter / a click wait out the dwell; the second ⌘W does not (shortcutDwellMs stays 0).
+      confirmDwellMs: CONFIRM_SHORTCUT_DWELL_MS,
     });
     rlog('info', '[CLOSE] confirm answered', { kind, ok, by: this.confirmDialog.lastAnswer });
     return ok;

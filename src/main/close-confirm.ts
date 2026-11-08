@@ -58,20 +58,25 @@ const RETIRED_KEEP = 32;
 /** A keyboard event as Electron's 'before-input-event' reports it (the fields used). */
 export interface CloseKeyInput {
   type: string;
-  key: string;
+  /** Physical key (`KeyQ`, `KeyW`): layout-independent, unlike `key`. */
+  code?: string;
   isAutoRepeat?: boolean;
   meta?: boolean;
+  shift?: boolean;
+  alt?: boolean;
+  control?: boolean;
 }
 
 /**
- * True for an auto-repeated ⌘Q or ⌘W. window-manager.ts prevents those
+ * True for an auto-repeated ⌘Q or ⌘W (⌘ alone: ⌘⇧W and ⌘⌥Q are other
+ * shortcuts; matched by physical key so non-Latin layouts work). window-manager.ts prevents those
  * (before-input-event also stops the menu accelerator), so a held key can never
  * confirm a quit/close dialog, however long the dialog has been up.
  */
 export function isCloseKeyRepeat(input: CloseKeyInput): boolean {
   if (input.type !== 'keyDown' || input.isAutoRepeat !== true || input.meta !== true) return false;
-  const key = String(input.key).toLowerCase();
-  return key === 'q' || key === 'w';
+  if (input.shift === true || input.alt === true || input.control === true) return false;
+  return input.code === 'KeyQ' || input.code === 'KeyW';
 }
 
 export interface ConfirmRequestPayload {
@@ -105,6 +110,7 @@ export interface CloseConfirmationsOptions {
 }
 
 function defaultRaise(win: BrowserWindow): void {
+  if (win.isMinimized()) win.restore();
   win.show();
   win.focus();
 }
@@ -270,11 +276,43 @@ export class CloseConfirmations {
   quitShortcut(): QuitShortcutResult {
     for (const p of this.pending.values()) {
       if (p.kind !== 'quit') continue;
-      if (!p.acked || this.now() - p.ackedAt < this.dwellMs || !this.isUsable(p.win)) return 'waiting';
+      if (!this.isUsable(p.win)) {
+        // The window showing the dialog is hidden or minimized: bring it
+        // back so the user sees what is being asked. This press confirms nothing.
+        this.revealWindow(p.win);
+        return 'waiting';
+      }
+      if (!p.acked || this.now() - p.ackedAt < this.dwellMs) return 'waiting';
       p.settle('confirmed', true);
       return 'confirmed';
     }
     return 'none';
+  }
+
+  /**
+   * A press that cannot answer the open dialog (a second red-button click, a
+   * ⌘Q into a hidden window) brings the window that shows it forward instead
+   * of being swallowed. Prefers `windowId`'s own request, else any quit
+   * request. Never confirms. Returns whether a dialog's window was raised.
+   */
+  revealPending(windowId: number): boolean {
+    let target: Pending | undefined;
+    for (const p of this.pending.values()) {
+      if (p.windowId === windowId) { target = p; break; }
+      if (p.kind === 'quit' && !target) target = p;
+    }
+    if (!target) return false;
+    this.revealWindow(target.win);
+    return true;
+  }
+
+  private revealWindow(win: BrowserWindow): void {
+    try {
+      this.raise(win);
+      console.info('[CLOSE] brought the window with the open confirmation forward');
+    } catch (err) {
+      console.warn('[CLOSE] could not bring the confirmation window forward', { err: String(err) });
+    }
   }
 
   /** A quit supersedes any open "Close this window?" dialog: cancel those and take their dialogs down. */

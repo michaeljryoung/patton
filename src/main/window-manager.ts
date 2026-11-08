@@ -296,6 +296,8 @@ export function createWindow(ptyManager?: PtyManager): BrowserWindow {
       // anywhere: another click or ⌘Q must neither stack a dialog nor skip it.
       if (closeConfirmations.hasPendingFor(windowId) || closeConfirmations.hasPendingQuit()) {
         e.preventDefault();
+        // Not silently: bring the window showing the dialog forward (never confirms).
+        closeConfirmations.revealPending(windowId);
         console.info('[CLOSE] window close ignored: a confirmation is already open', { windowId });
         return;
       }

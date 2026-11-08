@@ -109,7 +109,8 @@ class FakeWindow extends Emitter {
   isMaximized() { return false; }
   maximize() {}
   center() {}
-  show() { this.trace.push('show'); }
+  show() { this.trace.push('show'); this.visible = true; }
+  restore() { this.minimized = false; this.trace.push('restore'); }
   focus() { this.trace.push('focus'); }
   loadURL() { return Promise.resolve(); }
   loadFile() { return Promise.resolve(); }
@@ -568,6 +569,11 @@ await fresh();
   check('red button clicked again with the dialog open: still held, no second dialog, no native box',
     !again && requests(w).length === 1 && dialogCalls.length === 0, requests(w));
   check('the repeated click is logged as ignored', logged('a confirmation is already open'), logs);
+  w.visible = false;
+  w.trace.length = 0;
+  w.requestClose();
+  check('red button clicked again while the dialog window is hidden: window brought forward, nothing confirmed',
+    w.trace.slice(-2).join() === 'show,focus' && !w.isDestroyed() && requests(w).length === 1 && dialogCalls.length === 0, w.trace);
   ack(w, req.requestId);
   check('still held after the ack', !w.isDestroyed() && ptyManager.destroyed.length === 0);
   answer(w, req.requestId, true);
@@ -804,12 +810,15 @@ await fresh();
   cmdQ();
   await later();
   check('second ⌘Q while the asked window is hidden: ignored', quitCompleted === 0 && appQuitCalls === 0, { quitCompleted });
+  check('...but it brings the hidden window forward (shown and focused), not silently swallowed', a.visible === true && a.trace.slice(-2).join() === 'show,focus' && appFocusCalls.length > 0, a.trace);
   a.visible = true;
   a.minimized = true;
+  a.trace.length = 0;
   cmdQ();
   await later();
   check('second ⌘Q while the asked window is minimized: ignored', quitCompleted === 0 && appQuitCalls === 0, { quitCompleted });
-  a.minimized = false;
+  check('...but it restores the minimized window and focuses it', a.minimized === false && a.trace.join() === 'restore,show,focus', a.trace);
+  check('re-raise: no second dialog, still pending', requests(a).length === 1 && !dismissals(a).includes(req.requestId));
   cmdQ();
   await later();
   check('and once the window shows again the second ⌘Q confirms', quitCompleted === 1, { quitCompleted });
@@ -820,13 +829,18 @@ await fresh();
 {
   const a = showing(0, 1);
   const press = (input) => { let stopped = false; a.webContents.emit('before-input-event', { preventDefault: () => { stopped = true; } }, input); return stopped; };
-  check('held ⌘Q (auto-repeat) is stopped', press({ type: 'keyDown', key: 'q', meta: true, isAutoRepeat: true }) === true);
-  check('held ⌘W (auto-repeat) is stopped', press({ type: 'keyDown', key: 'W', meta: true, isAutoRepeat: true }) === true);
-  check('the first ⌘Q press is not stopped', press({ type: 'keyDown', key: 'q', meta: true, isAutoRepeat: false }) === false);
-  check('the first ⌘W press is not stopped', press({ type: 'keyDown', key: 'w', meta: true }) === false);
-  check('a held plain letter is left alone', press({ type: 'keyDown', key: 'q', meta: false, isAutoRepeat: true }) === false);
-  check('a held ⌘ with another key is left alone', press({ type: 'keyDown', key: 'v', meta: true, isAutoRepeat: true }) === false);
-  check('a key-up is left alone', press({ type: 'keyUp', key: 'q', meta: true, isAutoRepeat: true }) === false);
+  check('held ⌘Q (auto-repeat) is stopped', press({ type: 'keyDown', key: 'q', code: 'KeyQ', meta: true, isAutoRepeat: true }) === true);
+  check('held ⌘W (auto-repeat) is stopped', press({ type: 'keyDown', key: 'W', code: 'KeyW', meta: true, isAutoRepeat: true }) === true);
+  check('held ⌘Q on a non-Latin layout (key is not "q") is stopped by its physical key', press({ type: 'keyDown', key: 'й', code: 'KeyQ', meta: true, isAutoRepeat: true }) === true);
+  check('a held key typed as "q" but on another physical key is left alone', press({ type: 'keyDown', key: 'q', code: 'KeyA', meta: true, isAutoRepeat: true }) === false);
+  check('held ⌘⇧W is left alone', press({ type: 'keyDown', key: 'W', code: 'KeyW', meta: true, shift: true, isAutoRepeat: true }) === false);
+  check('held ⌘⌥Q is left alone', press({ type: 'keyDown', key: 'q', code: 'KeyQ', meta: true, alt: true, isAutoRepeat: true }) === false);
+  check('held ⌘⌃W is left alone', press({ type: 'keyDown', key: 'w', code: 'KeyW', meta: true, control: true, isAutoRepeat: true }) === false);
+  check('the first ⌘Q press is not stopped', press({ type: 'keyDown', key: 'q', code: 'KeyQ', meta: true, isAutoRepeat: false }) === false);
+  check('the first ⌘W press is not stopped', press({ type: 'keyDown', key: 'w', code: 'KeyW', meta: true }) === false);
+  check('a held plain letter is left alone', press({ type: 'keyDown', key: 'q', code: 'KeyQ', meta: false, isAutoRepeat: true }) === false);
+  check('a held ⌘ with another key is left alone', press({ type: 'keyDown', key: 'v', code: 'KeyV', meta: true, isAutoRepeat: true }) === false);
+  check('a key-up is left alone', press({ type: 'keyUp', key: 'q', code: 'KeyQ', meta: true, isAutoRepeat: true }) === false);
   check('stopping a held key is logged', logged('held ⌘Q/⌘W ignored'), logs);
 }
 
@@ -903,6 +917,30 @@ await fresh();
   cmdQ();
   check('after the withdrawal ⌘Q asks instead of quitting unasked', quitCompleted === 0 && appQuitCalls === 0 && requests(w).length === 3, { quitCompleted, requests: requests(w).length });
 }
+
+// ── 23. A confirmed quit that never completes does not stand the guards down for good ──
+await fresh();
+{
+  const a = showing(0, 2);
+  focusedWindow = a;
+  cmdQ();
+  const rq = lastRequest(a);
+  ack(a, rq.requestId);
+  answer(a, rq.requestId, true);
+  await later();
+  check('quit confirmed: guards stand down', isQuitConfirmed() === true);
+  clock += 9_999;
+  check('9.999 s later the confirmed quit still stands', isQuitConfirmed() === true);
+  clock += 1;
+  check('10 s later (the quit never completed) the flag is cleared', isQuitConfirmed() === false);
+  check('clearing it is logged', logged('confirmed quit did not complete'), logs);
+  const n = requests(a).length;
+  const b = showing(0, 1);
+  b.requestClose();
+  check('a later window close asks again', requests(b).length === 1 && !b.isDestroyed(), { b: requests(b).length });
+  void n;
+}
+
 
 console.info = realInfo;
 console.warn = realWarn;

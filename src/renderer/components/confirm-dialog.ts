@@ -23,6 +23,14 @@ export interface ConfirmOptions {
    * a decision. Default 0: the tab-close dialog's "⌘W twice, immediately".
    */
   shortcutDwellMs?: number;
+  /**
+   * Enter on the confirm button and a click on it are ignored until the dialog
+   * has been up this many ms (Esc / Cancel work at once). The quit / close
+   * dialogs use it so an Enter already in flight when the dialog appears, or a
+   * stray click, cannot end every session. Independent of `shortcutDwellMs`:
+   * the renderer's own ⌘W-twice dialogs leave that at 0. Default 0.
+   */
+  confirmDwellMs?: number;
 }
 
 /**
@@ -65,6 +73,7 @@ export class ConfirmDialog {
   private releaseFocusTrap: (() => void) | null = null;
   private shortcutConfirms = false;
   private shortcutDwellMs = 0;
+  private confirmDwellMs = 0;
   private shownAt = 0;
   /** How the most recent dialog was answered; null before the first. */
   lastAnswer: ConfirmAnswer | null = null;
@@ -90,7 +99,10 @@ export class ConfirmDialog {
     const cancelBtn = this.overlay.querySelector('.confirm-dialog-cancel') as HTMLElement;
     const confirmBtn = this.overlay.querySelector('.confirm-dialog-confirm') as HTMLElement;
     const cancelHandler = () => this.finish(false, 'button');
-    const confirmHandler = () => this.finish(true, 'button');
+    const confirmHandler = () => {
+      if (this.insideConfirmDwell()) return;
+      this.finish(true, 'button');
+    };
     cancelBtn.addEventListener('click', cancelHandler);
     confirmBtn.addEventListener('click', confirmHandler);
     this.disposables.push(
@@ -118,11 +130,17 @@ export class ConfirmDialog {
       // so a reflexive Enter after an accidental close keystroke cancels.
       if (e.key === 'Enter' && (e.target as HTMLElement)?.classList?.contains('confirm-dialog-confirm')) {
         e.stopPropagation();
+        if (this.insideConfirmDwell()) return;
         this.finish(true, 'enter');
       }
     };
     this.overlay.addEventListener('keydown', keydownHandler);
     this.disposables.push(() => this.overlay.removeEventListener('keydown', keydownHandler));
+  }
+
+  /** True while Enter / a click on the confirm button must still be ignored. */
+  private insideConfirmDwell(): boolean {
+    return this.resolve !== null && performance.now() - this.shownAt < this.confirmDwellMs;
   }
 
   get isOpen(): boolean {
@@ -138,6 +156,7 @@ export class ConfirmDialog {
     openSlot.dialog = this;
     this.shortcutConfirms = opts.shortcutConfirms === true;
     this.shortcutDwellMs = opts.shortcutDwellMs ?? 0;
+    this.confirmDwellMs = opts.confirmDwellMs ?? 0;
     this.shownAt = performance.now();
 
     (this.overlay.querySelector('.confirm-dialog-title') as HTMLElement).textContent = opts.title;

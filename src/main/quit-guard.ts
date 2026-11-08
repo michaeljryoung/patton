@@ -15,13 +15,19 @@
 import { app, BrowserWindow, dialog } from 'electron';
 import { closeConfirmations } from './close-confirm';
 
-let quitConfirmed = false;
+/** How long a confirmed quit stands the guards down. A quit that has not
+ *  finished by then (a window's close was prevented, `will-quit` never came)
+ *  must not leave later closes unasked. Monotonic clock (performance.now). */
+export const QUIT_CONFIRMED_TTL_MS = 10_000;
+
+let quitConfirmedAt: number | null = null;
 
 // Before main asks, the chosen window is shown and focused and Patton comes to
 // the front: a Dock Quit from the background must put the dialog in front of
 // the user, or its wait (and a second Dock Quit) would be about a dialog nobody
 // has seen. app.focus({ steal }) is what brings a background app forward.
 closeConfirmations.setRaiser((win) => {
+  if (win.isMinimized()) win.restore();
   win.show();
   win.focus();
   app.focus({ steal: true });
@@ -30,7 +36,15 @@ closeConfirmations.setRaiser((win) => {
 /** True once the user confirmed this quit (in the app or in the native box):
  *  every window's close handler then lets its window go without asking again. */
 export function isQuitConfirmed(): boolean {
-  return quitConfirmed;
+  if (quitConfirmedAt === null) return false;
+  if (performance.now() - quitConfirmedAt < QUIT_CONFIRMED_TTL_MS) return true;
+  console.info('[CLOSE] confirmed quit did not complete in time; asking again from now on');
+  quitConfirmedAt = null;
+  return false;
+}
+
+function markQuitConfirmed(): void {
+  quitConfirmedAt = performance.now();
 }
 
 /** The native fallback box. True = Quit Anyway. */
@@ -63,7 +77,7 @@ function pickWindow(): BrowserWindow | null {
 /** Quit confirmed: from here every guard stands down, and the quit goes on. */
 function confirmQuit(how: string, terminals: number): void {
   console.info('[CLOSE] quit confirmed', { how, terminals });
-  quitConfirmed = true;
+  markQuitConfirmed();
   app.quit();
 }
 
@@ -73,7 +87,7 @@ function confirmQuit(how: string, terminals: number): void {
  * the answer; a confirmed quit calls app.quit() again and comes back as true).
  */
 export function guardBeforeQuit(event: { preventDefault: () => void }, ptys: { readonly size: number }): boolean {
-  if (quitConfirmed) return true;
+  if (isQuitConfirmed()) return true;
   const terminals = ptys.size;
   if (terminals <= 0) return true;
 
@@ -96,7 +110,7 @@ export function guardBeforeQuit(event: { preventDefault: () => void }, ptys: { r
     console.info('[CLOSE] quit: no window can show the in-app dialog; native box', { terminals });
     if (nativeQuitBox(terminals)) {
       console.info('[CLOSE] quit confirmed', { how: 'native', terminals });
-      quitConfirmed = true;
+      markQuitConfirmed();
       return true;
     }
     console.info('[CLOSE] quit cancelled', { how: 'native', terminals });

@@ -60,6 +60,7 @@ process.on('exit', (code) => {
   if (!finished) console.log('FAIL script ended before all checks ran (a dialog never resolved)');
 });
 const tick = () => new Promise((r) => setTimeout(r, 5));
+const dwell = () => new Promise((r) => setTimeout(r, 320));
 
 // ── Window with a deep-stub window.patton that records rlog lines ──
 const logs = [];
@@ -105,6 +106,7 @@ const lastLogs = () => logs.map((a) => a.join(' ')).filter((l) => l.includes('[C
   check('tab close dialog opens', visible());
   check('Close Tab is focused', focusedClass() === 'confirm-dialog-confirm', focusedClass());
   check('confirm button reads Close Tab', w.document.activeElement.textContent === 'Close Tab');
+  await dwell(); // Enter / a click on a quit-close confirm waits out the 300 ms dwell
   key(w.document.activeElement, 'Enter');
   await p;
   check('Enter closes the tab', tm.closed.join() === 'tab0', tm.closed);
@@ -151,6 +153,7 @@ const lastLogs = () => logs.map((a) => a.join(' ')).filter((l) => l.includes('[C
 
   p = tm.closeActivePane();
   await tick();
+  await dwell(); // Enter / a click on a quit-close confirm waits out the 300 ms dwell
   w.document.querySelector('.confirm-dialog-overlay.visible .confirm-dialog-confirm').click();
   await p;
   check('Close Tab button closes', tm.closed.join() === 'tab0');
@@ -264,6 +267,7 @@ const torn = () => events.some((e) => e === 'dispose' || e.startsWith('closeById
   const tm = lastTab();
   const p = tm.closeActivePane();
   await tick();
+  await dwell(); // Enter / a click on a quit-close confirm waits out the 300 ms dwell
   key(w.document.activeElement, 'Enter');
   await p;
   check('last tab, Enter: pre-confirm then close via main, no teardown', events.join() === 'info,preconfirm,closeWindow', events);
@@ -409,6 +413,7 @@ for (const via of ['⌘W', '✕']) {
   await tick();
   check(`${via} with two tabs: "Close this tab?" first`, dialogText('.confirm-dialog-title') === 'Close this tab?', dialogText('.confirm-dialog-title'));
   tm.tabs = [t0]; // the other tab's shell exited meanwhile
+  await dwell(); // Enter / a click on a quit-close confirm waits out the 300 ms dwell
   key(w.document.activeElement, 'Enter');
   await tick();
   await tick();
@@ -515,6 +520,7 @@ await new Promise((r) => setTimeout(r, 320));
     check('main quit request: message names the 3 terminals and says it ends them', /3 terminals still running/.test(dlg('.confirm-dialog-message')) && /ends every terminal session/.test(dlg('.confirm-dialog-message')), dlg('.confirm-dialog-message'));
     check('main quit request: Quit is focused', focusedClass() === 'confirm-dialog-confirm' && w.document.activeElement.textContent === 'Quit', w.document.activeElement.textContent);
     check('main quit request: main is told the dialog is up, and nothing else yet', events.join() === 'ack:q1', events);
+    await dwell(); // Enter / a click on a quit-close confirm waits out the 300 ms dwell
     key(w.document.activeElement, 'Enter');
     await tick();
     check('Enter confirms: answer true sent to main', events.join() === 'ack:q1,answer:q1:true', events);
@@ -560,6 +566,7 @@ await new Promise((r) => setTimeout(r, 320));
     await ask(tm, { requestId: 'c1', kind: 'close-window', terminals: 2 });
     check('close-window request: title and button', dlg('.confirm-dialog-title') === 'Close this window?' && w.document.activeElement.textContent === 'Close Window', [dlg('.confirm-dialog-title'), w.document.activeElement.textContent]);
     check('close-window request: says other windows stay', /other windows stay open/.test(dlg('.confirm-dialog-message')) && /2 terminals/.test(dlg('.confirm-dialog-message')), dlg('.confirm-dialog-message'));
+    await dwell(); // Enter / a click on a quit-close confirm waits out the 300 ms dwell
     key(w.document.activeElement, 'Enter');
     await tick();
     check('close-window: Enter confirms', events.join() === 'ack:c1,answer:c1:true', events);
@@ -613,6 +620,7 @@ await new Promise((r) => setTimeout(r, 320));
     mainRequest({ requestId: 'r2', kind: 'quit', terminals: 2 });
     await tick();
     check('a newer main request replaces an older one, and the older is answered false', events.includes('answer:r1:false') && visible(), events);
+    await dwell(); // Enter / a click on a quit-close confirm waits out the 300 ms dwell
     key(w.document.activeElement, 'Enter');
     await tick();
     check('and the newer one is answered by the user', events.includes('answer:r2:true'), events);
@@ -664,6 +672,64 @@ await new Promise((r) => setTimeout(r, 320));
   w.document.querySelector('.confirm-dialog-overlay.visible .confirm-dialog-cancel').click();
   check('explicit cancel focus: Cancel resolves false', (await p) === false);
   d.dispose();
+}
+
+// ── 8. Dwell on Enter and the confirm button (final review): an Enter already in flight cannot quit ──
+{
+  const confirmBtn = () => w.document.querySelector('.confirm-dialog-overlay.visible .confirm-dialog-confirm');
+  const cancelBtn = () => w.document.querySelector('.confirm-dialog-overlay.visible .confirm-dialog-cancel');
+  const kinds = [
+    ['tab', () => { const tm = manager(2); return [tm, tm.closeActivePane()]; }],
+    ['pane', () => { const tm = manager(1); return [tm, tm.confirmClose('pane', 'x')]; }],
+    ['last-tab Quit Patton?', () => { const tm = manager(1); return [tm, tm.confirmClose('last-tab', 'x', true)]; }],
+    ['main quit', () => { const tm = manager(1); events.length = 0; mainRequest({ requestId: 'dw', kind: 'quit', terminals: 2 }); return [tm, null]; }],
+    ['main close-window', () => { const tm = manager(1); events.length = 0; mainRequest({ requestId: 'dw', kind: 'close-window', terminals: 2 }); return [tm, null]; }],
+  ];
+  for (const [name, open] of kinds) {
+    for (const how of ['Enter', 'click']) {
+      w.document.getElementById('term').focus();
+      const [tm] = open();
+      await tick();
+      if (!visible()) { check(`${name}: dialog opens for the dwell check`, false); continue; }
+      const d = tm.confirmDialog;
+      const press = () => (how === 'Enter' ? key(w.document.activeElement, 'Enter') : confirmBtn().click());
+      press();
+      await tick();
+      check(`${name}: ${how} inside the dwell is ignored (dialog stays, nothing answered)`, visible() && d.isOpen && d.lastAnswer !== (how === 'Enter' ? 'enter' : 'button'), d.lastAnswer);
+      await dwell();
+      press();
+      await tick();
+      check(`${name}: ${how} after the dwell confirms`, !visible() && d.lastAnswer === (how === 'Enter' ? 'enter' : 'button'), d.lastAnswer);
+    }
+    // Esc and Cancel work at once.
+    for (const how of ['Escape', 'Cancel']) {
+      w.document.getElementById('term').focus();
+      const [tm] = open();
+      await tick();
+      if (how === 'Escape') key(w.document.activeElement, 'Escape'); else cancelBtn().click();
+      await tick();
+      check(`${name}: ${how} inside the dwell answers at once`, !visible() && tm.confirmDialog.lastAnswer === (how === 'Escape' ? 'escape' : 'button'), tm.confirmDialog.lastAnswer);
+    }
+  }
+  // The renderer's own ⌘W twice stays immediate (no dwell on the second ⌘W).
+  {
+    const tm = manager(2);
+    w.document.getElementById('term').focus();
+    const p = tm.closeActivePane();
+    await tick();
+    const second = tm.closeActivePane();
+    await Promise.all([p, second]);
+    check('fast double ⌘W on a tab dialog still closes at once', tm.closed.join() === 'tab0' && tm.confirmDialog.lastAnswer === 'cmd-w' && !visible(), [tm.closed, tm.confirmDialog.lastAnswer]);
+  }
+  // Bookmarks / board style dialogs keep no dwell.
+  {
+    const d = new ConfirmDialog(w.document.body);
+    const p = d.confirm({ title: 'Remove?', message: 'x', defaultFocus: 'confirm' });
+    await tick();
+    key(w.document.activeElement, 'Enter');
+    check('a dialog without confirmDwellMs confirms Enter at once', (await p) === true);
+    d.dispose();
+  }
 }
 
 finished = true;
