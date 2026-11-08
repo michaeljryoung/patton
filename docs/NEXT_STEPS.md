@@ -49,6 +49,7 @@ flowchart TD
     install_prune[install step prunes stale files, checks signature]:::done
     lint_fix[lint green again after Forge 8]:::done
     ui_text_size[Interface Text Size setting]:::done
+    parked_hook_tasks[no green while the hook reports background tasks]:::done
     s46_ship[push, release, install on Michael's word]:::todo
   end
   subgraph P5["Phase 5 — Typing and release"]
@@ -81,6 +82,7 @@ flowchart TD
   lint_fix --> ui_text_size
   install_prune --> s46_ship
   ui_text_size --> s46_ship
+  parked_hook_tasks --> s46_ship
   classDef done fill:#1a7f37,color:#fff
   classDef live fill:#0969da,color:#fff
   classDef todo fill:#8c959f,color:#fff
@@ -116,7 +118,8 @@ flowchart TD
 | `install_prune` | After the install `ditto`, remove what the new build lacks when no Patton runs from /Applications (warn and keep when one does), then `codesign --verify --deep --strict` and warn on failure | done | `s45_install` | `b07e219` (`scripts/install-prune.cjs`, `scripts/check-install-bundle.mjs`); fresh review: ship, 3 minor + 2 nits (an unremovable path failed the build, unanchored pgrep, a check that missed three mutants, no source guard), all fixed in `2fae798`: 57 checks incl. a real spawned process at `Contents/MacOS/Patton`, seven deliberate breaks caught; lint, tsc, no-install asar 22:34:09. First real run comes with the next install |
 | `lint_fix` | `npm run lint` green: Forge 8 and Vite 8 packages expose only `exports`, which eslint-plugin-import's node resolver can't read (11 errors on main since `3881ba3`) | done | — | `ece29a6`: `import/no-unresolved` off for `forge.config.ts` and `vite.*.config.ts` only; `npx eslint .` exit 0, tsc clean |
 | `ui_text_size` | Settings → "Interface Text Size" (90–150%): one `--ui-scale` on `:root` scales every interface font size and the fixed heights holding text; xterm and the compose text keep the terminal Font Size | done | `lint_fix` | `894d253` + review fixes `d8b637f` (rebased onto `cf90b28`): setting `uiTextScale` (0.9/1/1.1/1.25/1.5, anything else → 1), main broadcasts each change to every window and re-centres the traffic lights (darwin only); the launch value reaches the preload as a `--patton-ui-scale=` switch so the chrome is sized before it is built. Fresh review: no major, 4 minor + 1 nit (unscaled tab floor let the close button spill at 150%, applied after the chrome was built, active tab not re-revealed, bookmarks rail mark off-centre, platform guard), all fixed. Checks: `check-ui-text-scale.cjs` 55 (hidden windows; incl. a 40-tab squeezed strip and box-grows-with-text), store 44, fonts 52, board 132/161/155, close-confirm 68; nine deliberate breaks caught. Combined tip: lint 0, tsc 0, no-install asar 22:43:56 with "Interface Text Size" present. Not yet seen live |
-| `s46_ship` | Merge to local main; push, CI release and install only when Michael says (live sessions running) | todo | `install_prune`, `ui_text_size` | Michael 2026-11-07 22:22: "dont push live or anything tho as have live sessions" |
+| `parked_hook_tasks` | A Claude turn that ends while the Stop hook reports background tasks or timers shows the ring, not green; blocked, error and blocked-task alerts unchanged; a verdict counts only for the turn it closed (cleared when the root starts working, or when the last working 7501 child finishes) | done | — | Michael 2026-11-08 06:35, screenshot of a green CK3 tab with two agents and two shells running: "why did this alert me green when isnt ready for me". main.log: hook `tasks:2` ignored 06:33:52, 7501 `root done, children 0` 06:33:56, green 06:33:57; 9 of 60 7501 greens since 7 Nov came after a hook verdict with tasks > 0 (hook first in 59 of 60, 4.4–24.4 s). `a8e6a66` (`services/turn-end.ts`, `pane.ts`), review: ship after one minor (drain case) + one minor (0/0 verdict couldn't un-park) + test gaps, all fixed in `33f1f56`; `check-turn-end.mjs` 71 (pure rules + real Pane in jsdom), each fix broken once; replaying the log converts exactly the 9 false greens; lint, tsc, no-install asar 06:54:11. Not yet seen live |
+| `s46_ship` | Merge to local main; push, CI release and install only when Michael says (live sessions running) | todo | `install_prune`, `ui_text_size`, `parked_hook_tasks` | Michael 2026-11-07 22:22: "dont push live or anything tho as have live sessions" |
 <!-- MAP:END -->
 
 Last updated: 2026-11-07 (Session 45, v1.17.0)
