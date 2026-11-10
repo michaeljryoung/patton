@@ -15,6 +15,7 @@ import { RateLimiter } from './rate-limiter';
 import { closePreconfirmations } from './close-preconfirm';
 import { closeSenderWindow } from './close-window';
 import { closeConfirmations } from './close-confirm';
+import { PauseAllCoordinator, type PauseAllWindow } from './pause-all';
 import { broadcastUiTextScale, isOnlyWindow } from './window-manager';
 import { decideFileOpen, extensionOf, parseLinkPath, type OpenDecision } from './link-open-policy';
 import { annotateBookmarks, validateBookmarks } from './bookmarks'; // bookmarks sidebar
@@ -855,6 +856,36 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
     return closeConfirmations.answer(win.id, requestId, ok === true);
   });
   // --- end in-app quit / close confirmations ---
+
+  // --- Pause all (tab strip button; logic in pause-all.ts) ---
+  // A press asks every window to type `pause` / `resume` into its own Claude
+  // panes. The renderer never names the word or the panes over IPC: main picks
+  // the action from its own state, each renderer picks its panes, and the
+  // report is checked against the press's random request id and the windows
+  // asked. One press at a time (a second is refused while one runs); the
+  // limiter only stops a flood. The renderer shows "try again" on null.
+  const pauseAll = new PauseAllCoordinator((): PauseAllWindow[] => BrowserWindow.getAllWindows().map((win) => ({
+    id: win.id,
+    alive: () => !win.isDestroyed() && !win.webContents.isDestroyed() && !win.webContents.isCrashed(),
+    send: (channel, payload) => win.webContents.send(channel, payload),
+  })));
+  const pauseAllPressLimiter = new RateLimiter(5);
+  ipcMain.handle(IPC.PAUSE_ALL_PRESS, async () => {
+    if (!pauseAllPressLimiter.allow()) {
+      console.warn('[SECURITY] Rate limit exceeded', { channel: IPC.PAUSE_ALL_PRESS });
+      return null;
+    }
+    return pauseAll.press();
+  });
+  // No limiter on these two: the mode is one read at window start (a refusal
+  // would show the wrong label), and a report must match the running press.
+  ipcMain.handle(IPC.PAUSE_ALL_GET_MODE, () => pauseAll.next);
+  ipcMain.handle(IPC.PAUSE_ALL_REPORT, (event, requestId: unknown, report: unknown) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win || win.isDestroyed()) return false;
+    return pauseAll.report(win.id, requestId, report);
+  });
+  // --- end Pause all ---
 
   // --- Claude Code Stop hook (Settings → Claude Code; logic in claude-hook.ts) ---
   // Install and remove throw with a readable message (e.g. settings.json won't

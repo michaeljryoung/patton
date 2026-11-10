@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import { IPC, uiTextScaleFromArgv } from '../shared/constants';
-import type { BoardLayout, BoardPayload, Bookmark, ConfirmRequest, PattonAPI, RenderSnapshot } from '../shared/types';
+import type { BoardLayout, BoardPayload, Bookmark, ConfirmRequest, PattonAPI, PauseAllAction, PauseAllRunRequest, RenderSnapshot } from '../shared/types';
 
 const api: PattonAPI = {
   pty: {
@@ -282,6 +282,21 @@ const api: PattonAPI = {
     ackConfirm: (requestId) => ipcRenderer.invoke(IPC.WINDOW_CONFIRM_ACK, requestId),
     answerConfirm: (requestId, ok) => ipcRenderer.invoke(IPC.WINDOW_CONFIRM_ANSWER, requestId, ok),
     // --- end in-app quit / close confirmations ---
+  },
+  pauseAll: {
+    press: () => ipcRenderer.invoke(IPC.PAUSE_ALL_PRESS),
+    mode: () => ipcRenderer.invoke(IPC.PAUSE_ALL_GET_MODE),
+    onRun: (cb) => {
+      const listener = (_e: Electron.IpcRendererEvent, request: PauseAllRunRequest) => cb(request);
+      ipcRenderer.on(IPC.PAUSE_ALL_RUN, listener);
+      return () => ipcRenderer.removeListener(IPC.PAUSE_ALL_RUN, listener);
+    },
+    report: (requestId, report) => ipcRenderer.invoke(IPC.PAUSE_ALL_REPORT, requestId, report),
+    onMode: (cb) => {
+      const listener = (_e: Electron.IpcRendererEvent, next: PauseAllAction) => cb(next);
+      ipcRenderer.on(IPC.PAUSE_ALL_MODE, listener);
+      return () => ipcRenderer.removeListener(IPC.PAUSE_ALL_MODE, listener);
+    },
   },
 };
 

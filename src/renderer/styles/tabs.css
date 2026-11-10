@@ -48,6 +48,7 @@
 .tab-bar-settings:focus-visible,
 .tab-bar-new:focus-visible,
 .tab-bar-checkpoint:focus-visible,
+.tab-bar-pause-all:focus-visible,
 .tab-bar-tab:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: -2px;
@@ -308,7 +309,8 @@
  * 5.71:1 light / 5.82:1 dark on --surface); once due, amber text that passes
  * 4.5:1 (--amber-text, ratios in main.css) and bold, so the state isn't
  * carried by colour alone. */
-.tab-bar-checkpoint {
+.tab-bar-checkpoint,
+.tab-bar-pause-all {
   background: none;
   border: none;
   border-left: 1px solid var(--hairline);
@@ -330,7 +332,8 @@
   display: none;
 }
 
-.tab-bar-checkpoint:hover {
+.tab-bar-checkpoint:hover,
+.tab-bar-pause-all:hover {
   color: var(--ink);
   background: var(--surface-hover);
 }
@@ -346,7 +349,8 @@
 }
 
 /* The "why not" message shown in the clock's place after such a click. */
-.tab-bar-checkpoint.reason {
+.tab-bar-checkpoint.reason,
+.tab-bar-pause-all.reason {
   color: var(--ink);
 }
 
@@ -357,4 +361,11 @@
 
 .tab-bar-checkpoint.due.blocked:hover {
   color: var(--amber-text);
+}
+
+/* Pause all / Resume all: the strip's far right, the checkpoint clock's look
+ * (rules shared above). Resume all is ink, not grey, so a paused set stands
+ * out; its ▶ and wording carry the state too, not colour alone. */
+.tab-bar-pause-all.resume {
+  color: var(--ink);
 }

@@ -9,7 +9,8 @@ import { announce } from './announcer';
 import { rlog } from './renderer-logger';
 import { onProjectNamesChanged, projectName, startProjectNames } from './project-names';
 import { hoverBlocks, type HoverBlock, type HoverPaneInput } from './tab-hover';
-import type { SessionState, RendererMode, TabFlag, WindowCloseInfo, ConfirmRequest } from '../../shared/types';
+import type { SessionState, RendererMode, TabFlag, WindowCloseInfo, ConfirmRequest, PauseAllAction, PauseAllReport } from '../../shared/types';
+import { PauseAllState, pauseSummary } from './pause-all';
 import { orderSessions, sessionNeedsYou, stripClaudeGlyph, type SessionInfo, type SessionStatus } from './sessions';
 import type { ITheme } from '@xterm/xterm';
 
@@ -54,6 +55,10 @@ export class TabManager {
   private currentRenderer: RendererMode = 'webgl';
   private onTabsChanged: (() => void) | null = null; // bookmarks sidebar
   private checkpointNudgePct: number = DEFAULT_CHECKPOINT_NUDGE_PCT;
+  /** The panes this window's last Pause all reached (services/pause-all.ts). */
+  private pauseAll = new PauseAllState();
+  /** A press is waiting on main: a second click does nothing until it answers. */
+  private pausePressInFlight = false;
   // --- Project board ---
   // Opens a new tab the user asked for (⌘T, the palette, the tab bar's +), so
   // the project board can cover it. Unset: a plain createTab().
@@ -89,6 +94,7 @@ export class TabManager {
       onRenameProject: (id, name) => this.renameProject(id, name),
       onSetFlag: (id, flag) => this.setTabFlag(id, flag),
       onCheckpoint: () => { this.runCheckpoint(); },
+      onPauseAll: () => { this.pressPauseAll().catch(console.error); },
       describeTab: (id) => this.describeTab(id),
       // --- Bookmarks ---
       onBookmarkProject: (id) => {
@@ -99,6 +105,7 @@ export class TabManager {
     });
     this.onCommandDone = options?.onCommandDone || null;
     this.listenForMainConfirmations();
+    this.listenForPauseAll();
     this.onTabsChanged = options?.onTabsChanged ?? null;
 
     // Tabs are named after their project. A project renamed in any window
@@ -1117,6 +1124,66 @@ export class TabManager {
     // The click left focus on the strip's button; the keyboard belongs to Claude.
     pane.focus();
   }
+
+  // --- Pause all (tab strip button; main/pause-all.ts runs a press in every window) ---
+
+  /** Main asks this window to act on its panes, and says what the button does
+   *  next after any window's press; a window opened mid-pause asks once. */
+  private listenForPauseAll(): void {
+    const api = window.patton.pauseAll;
+    const offRun = api.onRun((request) => {
+      if (!request || (request.action !== 'pause' && request.action !== 'resume')) return;
+      const report = this.runPauseAll(request.action);
+      api.report(request.requestId, report).catch(console.error);
+    });
+    const offMode = api.onMode((next) => this.tabBar.setPauseMode(next));
+    if (typeof offRun === 'function') this.disposables.push(offRun);
+    if (typeof offMode === 'function') this.disposables.push(offMode);
+    Promise.resolve(api.mode())
+      .then((next) => { if (next === 'resume') this.tabBar.setPauseMode('resume'); })
+      .catch(console.error);
+  }
+
+  /** Type the word into this window's panes by the Pause all rules, and log
+   *  one line: the pane ids sent to and the ones skipped, with reasons. */
+  runPauseAll(action: PauseAllAction): PauseAllReport {
+    const panes: Pane[] = [];
+    for (const tab of this.tabs) panes.push(...tab.panes);
+    const run = this.pauseAll.run(action, panes);
+    rlog('info', '[PAUSE-ALL] run', { action, sent: run.sent, skipped: run.skipped });
+    return run.report;
+  }
+
+  /** The button's click: main runs the next action in every window and
+   *  answers with the totals, shown on the button and announced. */
+  async pressPauseAll(): Promise<void> {
+    if (this.pausePressInFlight) return;
+    this.pausePressInFlight = true;
+    const focusAfter = this.activeTab?.focusedPane ?? null;
+    try {
+      const outcome = await window.patton.pauseAll.press();
+      if (!outcome) {
+        const why = 'Pause all is busy: try again in a moment';
+        rlog('info', '[PAUSE-ALL] press refused by main');
+        announce(why, 'assertive');
+        this.tabBar.showPauseResult(why);
+        return;
+      }
+      const summary = pauseSummary(outcome);
+      rlog('info', '[PAUSE-ALL] press', {
+        action: outcome.action, sent: outcome.sent, skipped: outcome.skipped,
+        windows: outcome.windows, answered: outcome.answered, next: outcome.next,
+      });
+      this.tabBar.setPauseMode(outcome.next);
+      announce(summary, 'assertive');
+      this.tabBar.showPauseResult(summary);
+    } finally {
+      this.pausePressInFlight = false;
+      // The click left focus on the strip's button; the keyboard belongs to the terminal.
+      focusAfter?.focus();
+    }
+  }
+  // --- end Pause all ---
 
   dispose(): void {
     for (const d of this.disposables) d();

@@ -24,7 +24,8 @@ import { paneActivity, type PaneActivity } from '../services/pane-activity';
 import { turnEndSignal, verdictAfterRootChange, verdictAfterChildren, type HookVerdict } from '../services/turn-end';
 
 import type { ITheme } from '@xterm/xterm';
-import type { TabFlag } from '../../shared/types';
+import type { PauseAllAction, TabFlag } from '../../shared/types';
+import type { PauseInput } from '../services/pause-all';
 
 /** Background work a parked Claude Code session is waiting on: from the Stop
  *  hook (tasks + crons), or from OSC 7501 child records (tasks + their titles,
@@ -731,6 +732,28 @@ export class Pane {
     rlog('info', '[CKPT] run', { pane: this.id });
     this.queueSubmit('/checkpoint', false);
     return null;
+  }
+
+  /** What Pause all needs to decide whether this pane gets `pause` / `resume`
+   *  (services/pause-all.ts pauseSkipReason). */
+  get pauseInput(): PauseInput {
+    return {
+      live: this.ptyId !== null && !this.ptyExited,
+      claude: this.claudeActive,
+      source: this.statusReporting ? '7501' : 'title',
+      working: this.claudeWorking,
+      blocked: this.claudeBlocked,
+      taskBlocked: this.statusReporting && this.programStatus.children().some((c) => c.record.state === 'blocked'),
+      stopSeen: this.stopSeenSinceWork,
+    };
+  }
+
+  /** Type `pause` or `resume` and Enter, through the same submit path as the
+   *  checkpoint clock's /checkpoint (never broadcast). The caller decided this
+   *  pane may take it; a draft in Claude's input line gets the word appended,
+   *  as /checkpoint does (Patton can't see it, and erasing it would lose text). */
+  typePauseWord(word: PauseAllAction): void {
+    this.queueSubmit(word === 'resume' ? 'resume' : 'pause', false);
   }
 
   /** Remove and return the stored verdict, stopping its expiry timer. */

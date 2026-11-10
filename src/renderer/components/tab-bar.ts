@@ -2,7 +2,7 @@ import { ContextMenu } from './context-menu';
 import { announce } from '../services/announcer';
 import { onUiTextScaleApplied } from '../services/ui-text-scale';
 import { DEFAULTS } from '../../shared/constants';
-import type { TabFlag } from '../../shared/types';
+import type { PauseAllAction, TabFlag } from '../../shared/types';
 import type { CheckpointView } from '../services/checkpoint-clock';
 import type { HoverBlock } from '../services/tab-hover';
 import { TabHoverCard } from './tab-hover-card';
@@ -19,6 +19,8 @@ export interface TabBarCallbacks {
   onBookmarkProject?: (id: string) => void; // bookmarks sidebar
   /** The checkpoint clock was clicked: run /checkpoint in the focused pane. */
   onCheckpoint?: () => void;
+  /** Pause all / Resume all was clicked: type the word into every window's Claude panes. */
+  onPauseAll?: () => void;
   /** What the tab hover card shows for a tab, one block per pane (focused
    *  first), or null if the tab is gone. Given = the card is on, and tabs
    *  carry no native `title` tooltip (it would cover the card). */
@@ -94,6 +96,11 @@ export class TabBar {
   private checkpointView: CheckpointView | null = null;
   private checkpointReasonTimer: ReturnType<typeof setTimeout> | null = null;
   private static readonly CHECKPOINT_REASON_MS = 4000;
+  private pauseBtn: HTMLButtonElement;
+  /** What the pause button does next (main's word, shared by every window). */
+  private pauseNext: PauseAllAction = 'pause';
+  private pauseResultTimer: ReturnType<typeof setTimeout> | null = null;
+  private static readonly PAUSE_RESULT_MS = 4000;
   private callbacks: TabBarCallbacks;
   private draggedId: string | null = null;
   private contextMenu = new ContextMenu();
@@ -223,6 +230,53 @@ export class TabBar {
       this.callbacks.onCheckpoint?.();
     });
     this.container.appendChild(this.checkpointBtn);
+
+    // Pause all, at the strip's far right (the checkpoint clock sits just left
+    // of it): types `pause` into every window's Claude panes, then turns into
+    // Resume all, which types `resume` into the ones it paused. Always shown.
+    this.pauseBtn = document.createElement('button');
+    this.pauseBtn.type = 'button';
+    this.pauseBtn.className = 'tab-bar-pause-all';
+    this.pauseBtn.addEventListener('click', () => {
+      this.callbacks.onPauseAll?.();
+    });
+    this.container.appendChild(this.pauseBtn);
+    this.renderPauseButton();
+  }
+
+  /** What the pause button does next: 'pause' shows Pause all, 'resume' Resume all. */
+  setPauseMode(next: PauseAllAction): void {
+    this.pauseNext = next === 'resume' ? 'resume' : 'pause';
+    if (this.pauseResultTimer === null) this.renderPauseButton();
+  }
+
+  get pauseMode(): PauseAllAction {
+    return this.pauseNext;
+  }
+
+  /** A press's result in the button's place for a few seconds (the caller
+   *  announces it too); the label then follows the mode. */
+  showPauseResult(text: string): void {
+    if (this.pauseResultTimer) clearTimeout(this.pauseResultTimer);
+    this.pauseBtn.textContent = text;
+    this.pauseBtn.classList.add('reason');
+    this.pauseResultTimer = setTimeout(() => {
+      this.pauseResultTimer = null;
+      this.pauseBtn.classList.remove('reason');
+      this.renderPauseButton();
+    }, TabBar.PAUSE_RESULT_MS);
+  }
+
+  private renderPauseButton(): void {
+    const btn = this.pauseBtn;
+    const resume = this.pauseNext === 'resume';
+    btn.textContent = resume ? '▶ Resume all' : '⏸ Pause all';
+    const label = resume
+      ? 'Resume all: type resume into every Claude session Pause all paused, in every window'
+      : 'Pause all: type pause into every Claude session in every window, skipping any waiting on you';
+    btn.setAttribute('aria-label', label);
+    btn.title = label;
+    btn.classList.toggle('resume', resume);
   }
 
   /** The tab next to this one in the strip (-1 left, 1 right), or null at an end. */
@@ -633,6 +687,7 @@ export class TabBar {
     this.stopScaleWatch?.();
     this.stopScaleWatch = null;
     if (this.checkpointReasonTimer) clearTimeout(this.checkpointReasonTimer);
+    if (this.pauseResultTimer) clearTimeout(this.pauseResultTimer);
     this.hoverCard?.dispose();
     this.contextMenu.dispose();
     this.container.innerHTML = '';

@@ -89,6 +89,16 @@ export const IPC = {
   WINDOW_CONFIRM_ACK: 'window:confirm-ack', // renderer → main: the dialog is on screen
   WINDOW_CONFIRM_ANSWER: 'window:confirm-answer', // renderer → main: the user's answer
   // --- end in-app quit / close confirmations ---
+  // --- Pause all (tab strip button; main/pause-all.ts) ---
+  // A press in any window types `pause` (later `resume`) into every window's
+  // Claude panes: main asks each window to act on its own panes and adds up
+  // their reports, then tells every window what the button does next.
+  PAUSE_ALL_PRESS: 'pause-all:press', // renderer → main (invoke): run the next action everywhere
+  PAUSE_ALL_RUN: 'pause-all:run', // main → renderer { requestId, action }
+  PAUSE_ALL_REPORT: 'pause-all:report', // renderer → main (invoke): (requestId, PauseAllReport)
+  PAUSE_ALL_MODE: 'pause-all:mode', // main → renderer: the next action ('pause' | 'resume')
+  PAUSE_ALL_GET_MODE: 'pause-all:get-mode', // renderer → main (invoke): the next action, at start
+  // --- end Pause all ---
 
   DIAGNOSTICS_SAVE_SNAPSHOT: 'diagnostics:save-snapshot',
 

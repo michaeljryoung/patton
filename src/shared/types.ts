@@ -413,7 +413,55 @@ export interface PattonAPI {
     answerConfirm: (requestId: string, ok: boolean) => Promise<boolean>;
     // --- end in-app quit / close confirmations ---
   };
+  /** The tab strip's "Pause all" / "Resume all" button (main/pause-all.ts). */
+  pauseAll: {
+    /** Run the next action in every window. Null if main refused (a press
+     *  already in flight, or the rate limit). */
+    press: () => Promise<PauseAllOutcome | null>;
+    /** What the button does next, for a window that opens mid-pause. */
+    mode: () => Promise<PauseAllAction>;
+    /** Main asks this window to act on its own panes. Returns the unsubscribe. */
+    onRun: (callback: (request: PauseAllRunRequest) => void) => () => void;
+    /** This window's answer to a run request. */
+    report: (requestId: string, report: PauseAllReport) => Promise<boolean>;
+    /** What the button does next changed (a press in any window). Returns the unsubscribe. */
+    onMode: (callback: (next: PauseAllAction) => void) => () => void;
+  };
 }
+
+// --- Pause all (main/pause-all.ts, renderer/services/pause-all.ts) ---
+/** The one word the button types, then Enter. */
+export type PauseAllAction = 'pause' | 'resume';
+
+/** Why a pane got nothing: Claude waits on a dialog ('waiting'), Claude's state
+ *  can't rule out a dialog ('unclear', title path only), no Claude ('not-claude'),
+ *  no live shell ('no-shell'), or a paused pane has since closed ('closed'). */
+export type PauseSkipReason = 'waiting' | 'unclear' | 'not-claude' | 'no-shell' | 'closed';
+
+export const PAUSE_SKIP_REASONS: readonly PauseSkipReason[] = ['waiting', 'unclear', 'not-claude', 'no-shell', 'closed'];
+
+/** One window's answer: how many panes got the word, and why the rest didn't. */
+export interface PauseAllReport {
+  sent: number;
+  skipped: Record<PauseSkipReason, number>;
+}
+
+/** Main → renderer: act on this window's panes. */
+export interface PauseAllRunRequest {
+  requestId: string;
+  action: PauseAllAction;
+}
+
+/** A press's result across every window. */
+export interface PauseAllOutcome extends PauseAllReport {
+  action: PauseAllAction;
+  /** Windows asked, and how many answered in time. */
+  windows: number;
+  answered: number;
+  /** What the button does next. */
+  next: PauseAllAction;
+}
+// --- end Pause all ---
 
 /** Main → renderer: ask the user before ending shells. 'quit' ends every
  *  window's shells and quits Patton; 'close-window' ends this window's only. */
