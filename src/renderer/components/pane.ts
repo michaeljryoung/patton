@@ -1,5 +1,5 @@
 import { TerminalView, type ProgramStatusEvent } from './terminal-view';
-import type { ContextReading } from '../services/patton-osc';
+import type { ContextReading, PattonState } from '../services/patton-osc';
 import { EditorInput, DEFAULT_COMPOSE_PLACEHOLDER } from './editor-input';
 import { SearchOverlay } from './search-overlay';
 import { HistorySearch } from './history-search';
@@ -24,7 +24,7 @@ import { paneActivity, type PaneActivity } from '../services/pane-activity';
 import { turnEndSignal, verdictAfterRootChange, verdictAfterChildren, type HookVerdict } from '../services/turn-end';
 
 import type { ITheme } from '@xterm/xterm';
-import type { PauseAllAction, TabFlag } from '../../shared/types';
+import type { PauseAllAction, TabFlag, UnsentInputState } from '../../shared/types';
 import type { PauseInput } from '../services/pause-all';
 
 /** Background work a parked Claude Code session is waiting on: from the Stop
@@ -217,6 +217,26 @@ export class Pane {
   // ended on its own, so Claude's prompt is open. A question or permission
   // dialog also shows ✳ but fires no Stop hook, so ✳ alone is not enough.
   private stopSeenSinceWork = false;
+  // When that Stop-hook message came (Date.now): user input after it (main's
+  // unsent-input tracker) means the open prompt may since have become a
+  // picker or a draft, so Pause all no longer trusts stopSeenSinceWork.
+  private stopSeenAtMs = 0;
+  // Pause all's view of the session (services/pause-all.ts):
+  // - claudeSession counts Claude sessions in this pane: bumped when Claude
+  //   leaves (a bare 7501 `state=clear`, the shell's prompt, the title losing
+  //   its glyph) and when the shell is replaced, so Resume all can tell the
+  //   session it paused from a new one in the same pane.
+  // - claudeSessionAtMs: when the current session began (Date.now), so a
+  //   Ctrl+S the user pressed in an earlier session doesn't count as a stash
+  //   held by this one.
+  // - hadTurn: since 7501 reports began, the root has been something other
+  //   than idle (a session that has only ever said idle is fresh).
+  // - lastSignalAtMs: the last 7501 report or Stop-hook message (Date.now),
+  //   the proof that a `/` command typed before it isn't still showing a menu.
+  private claudeSession = 0;
+  private claudeSessionAtMs = 0;
+  private hadTurn = false;
+  private lastSignalAtMs = 0;
   private disposed = false;
 
   // --- Compose-first (Claude Code tabs) ---
@@ -330,7 +350,10 @@ export class Pane {
     if (this.statusReporting) return;
     // A title with neither glyph means Claude is gone (fish, or shell
     // integration off, never sends the OSC 133 prompt that would clear this).
-    this.claudeActive = Pane.CLAUDE_WORKING.test(title) || Pane.CLAUDE_STOPPED.test(title);
+    const active = Pane.CLAUDE_WORKING.test(title) || Pane.CLAUDE_STOPPED.test(title);
+    if (this.claudeActive && !active) this.newClaudeSession();
+    if (!this.claudeActive && active) this.claudeSessionAtMs = Date.now();
+    this.claudeActive = active;
     this.syncComposeFirst('title');
     try {
       this.trackClaudeWorking(title);
@@ -410,6 +433,7 @@ export class Pane {
         this.programStatus.set(event.id, event.record);
         break;
     }
+    this.lastSignalAtMs = Date.now();
     if (!this.statusReporting) {
       this.statusReporting = true;
       // From here on the hook's verdicts don't decide the dot; drop a stored one.
@@ -459,8 +483,11 @@ export class Pane {
     // Only Claude Code's reports make this a Claude pane (image paste as
     // Ctrl+V, compose-first, /checkpoint); another program's still drive the
     // dot and ring below.
+    if (this.claudeActive && !isClaude) this.newClaudeSession();
+    if (!this.claudeActive && isClaude) this.claudeSessionAtMs = Date.now();
     this.claudeActive = isClaude;
     this.claudeBlocked = rootState === 'blocked';
+    if (rootState !== null && rootState !== 'idle') this.hadTurn = true;
     try {
       if (signal.kind === 'working') {
         this.startWork();
@@ -524,7 +551,11 @@ export class Pane {
     this.rootDoneAtMs = null;
     this.lastRootState = null;
     this.lastWorkingChildren = 0;
+    this.hadTurn = false;
     if (!wasReporting) return;
+    // Claude left (a bare `state=clear`, the shell's prompt). A full reset
+    // (RIS) alone doesn't end the session.
+    if (reason !== 'reset' && this.claudeActive) this.newClaudeSession();
     rlog('info', '[7501] state', { pane: this.id, root: 'clear', kind: null, children: 0, reason });
     this.claudeWorking = false;
     this.claudeActive = false;
@@ -717,9 +748,13 @@ export class Pane {
    *  compose box's submit path (control characters stripped, no paste dialog,
    *  never broadcast). Only while Claude runs here and has stopped: its root
    *  is done or idle (OSC 7501), else its Stop hook has reported since the
-   *  last ◐ (a dialog shows ✳ but sends none). Returns null when sent, else
-   *  why not. */
-  runCheckpoint(): string | null {
+   *  last ◐ (a dialog shows ✳ but sends none) and nothing was typed since.
+   *  Not while a `/` command typed since Claude last reported may still show
+   *  a menu (Enter would pick from it). A draft in Claude's input line (main's
+   *  unsent-input tracker) is stashed first with Ctrl+S, and Claude Code puts
+   *  it back after the submit; if Ctrl+S isn't the stash key here, nothing is
+   *  sent. Resolves to null when sent, else why not. */
+  async runCheckpoint(): Promise<string | null> {
     if (!this.checkpointReady) {
       rlog('info', '[CKPT] run skipped', {
         pane: this.id, claude: this.claudeActive, working: this.claudeWorking, blocked: this.claudeBlocked,
@@ -729,31 +764,118 @@ export class Pane {
       if (this.claudeBlocked) return 'Checkpoint: Claude is waiting on a question or permission prompt';
       return 'Checkpoint: wait until Claude has finished replying';
     }
-    rlog('info', '[CKPT] run', { pane: this.id });
-    this.queueSubmit('/checkpoint', false);
+    const ptyId = this.ptyId;
+    const [input, key] = await Promise.all([this.readInputState(), window.patton.pauseAll.stashKey()]);
+    if (this.ptyId !== ptyId || !this.checkpointReady) return 'Checkpoint: the session changed, try again';
+    const facts = this.inputFacts(input);
+    const keyWhy = 'why' in key ? key.why : null;
+    const skip = facts.menu ? 'menu'
+      : !this.statusReporting && !facts.stopSeen ? 'typed-since-stop'
+      : facts.draft && keyWhy !== null ? 'draft'
+      : facts.draft && facts.stashed ? 'stashed'
+      : null;
+    if (skip) {
+      rlog('info', '[CKPT] run skipped', { pane: this.id, reason: skip, ...(keyWhy === null ? {} : { stashKey: keyWhy }) });
+      if (skip === 'menu') return 'Checkpoint: Claude may be showing a menu (a / command was typed)';
+      if (skip === 'draft') return 'Checkpoint: a draft may be in Claude\'s input and Ctrl+S is not its stash key';
+      if (skip === 'stashed') return 'Checkpoint: a draft is in Claude\'s input and you have stashed text here';
+      return 'Checkpoint: something was typed since Claude stopped';
+    }
+    rlog('info', '[CKPT] run', { pane: this.id, stash: facts.draft });
+    this.queueSubmit('/checkpoint', false, { stashFirst: facts.draft, origin: 'patton' });
     return null;
   }
 
+  /** Main's unsent-input tracker on this pane's PTY; null if it can't say. */
+  async readInputState(): Promise<UnsentInputState | null> {
+    if (this.ptyId === null) return null;
+    try {
+      const [state] = await window.patton.pty.inputState([this.ptyId]);
+      return state ?? null;
+    } catch (err) {
+      rlog('warn', '[PAUSE-ALL] input state unavailable', { pane: this.id, error: String(err) });
+      return null;
+    }
+  }
+
+  /** What main's tracker adds to this pane's own state. Unknown input counts
+   *  as a draft (stashing an empty line is the cheaper mistake).
+   *  - draft: something may be in the input line.
+   *  - menu: the last line sent began with `/` (or can't be read) and no 7501
+   *    report or Stop hook has come since: a picker such as /model may be open.
+   *  - stopSeen (title path): the Stop hook reported and no input came after it.
+   *  - stashed: Claude Code may already hold a stash, so Ctrl+S would overwrite
+   *    or pop it: the user pressed Ctrl+S in this Claude session, or Patton
+   *    stashed here and no line was submitted since. Unknown counts as held. */
+  private inputFacts(input: UnsentInputState | null): { draft: boolean; menu: boolean; stopSeen: boolean; stashed: boolean } {
+    if (input === null) return { draft: true, menu: false, stopSeen: this.stopSeenSinceWork, stashed: true };
+    return {
+      draft: input.dirty,
+      stashed: (input.userStashAt > 0 && input.userStashAt >= this.claudeSessionAtMs) || input.pattonStashAt > 0,
+      menu: input.slashSubmitAt > 0 && input.slashSubmitAt >= this.lastSignalAtMs,
+      stopSeen: this.stopSeenSinceWork && input.lastInputAt < this.stopSeenAtMs,
+    };
+  }
+
+  /** Counts up whenever the Claude session here may have changed (see claudeSession). */
+  get sessionMarker(): number {
+    return this.claudeSession;
+  }
+
+  /** The Claude session here may have changed: count it and restart its clock. */
+  private newClaudeSession(): void {
+    this.claudeSession += 1;
+    this.claudeSessionAtMs = Date.now();
+  }
+
+  /** 'at-prompt' while Claude's root is done or idle with nothing blocked
+   *  (7501): a Ctrl+C typed then empties Claude's input line, and main's
+   *  unsent-input tracker may count the line clean. */
+  private get atPromptOrigin(): 'at-prompt' | undefined {
+    if (!this.statusReporting || this.claudeBlocked) return undefined;
+    const root = this.programStatus.root?.state;
+    if (root !== 'done' && root !== 'idle') return undefined;
+    if (this.programStatus.children().some((c) => c.record.state === 'blocked')) return undefined;
+    return 'at-prompt';
+  }
+
   /** What Pause all needs to decide whether this pane gets `pause` / `resume`
-   *  (services/pause-all.ts pauseSkipReason). */
-  get pauseInput(): PauseInput {
+   *  (services/pause-all.ts pauseSkipReason), given main's tracker state. */
+  pauseInput(input: UnsentInputState | null): PauseInput {
+    const facts = this.inputFacts(input);
     return {
       live: this.ptyId !== null && !this.ptyExited,
       claude: this.claudeActive,
       source: this.statusReporting ? '7501' : 'title',
+      root: this.statusReporting ? this.programStatus.root?.state ?? null : null,
       working: this.claudeWorking,
       blocked: this.claudeBlocked,
       taskBlocked: this.statusReporting && this.programStatus.children().some((c) => c.record.state === 'blocked'),
-      stopSeen: this.stopSeenSinceWork,
+      hadTurn: this.hadTurn,
+      stopSeen: facts.stopSeen,
+      menu: facts.menu,
+      draft: facts.draft,
+      stashed: facts.stashed,
     };
   }
 
   /** Type `pause` or `resume` and Enter, through the same submit path as the
-   *  checkpoint clock's /checkpoint (never broadcast). The caller decided this
-   *  pane may take it; a draft in Claude's input line gets the word appended,
-   *  as /checkpoint does (Patton can't see it, and erasing it would lose text). */
-  typePauseWord(word: PauseAllAction): void {
-    this.queueSubmit(word === 'resume' ? 'resume' : 'pause', false);
+   *  checkpoint clock's /checkpoint (never broadcast, no scroll). The caller
+   *  decided this pane may take it. With `stash`, Ctrl+S first moves a draft
+   *  out of the way; Claude Code restores it after the submit by itself, so
+   *  no second Ctrl+S is sent (it would stash the restored draft again). */
+  typePauseWord(word: PauseAllAction, opts: { stash: boolean }): void {
+    this.queueSubmit(word === 'resume' ? 'resume' : 'pause', false, { stashFirst: opts.stash, scroll: false, origin: 'patton' });
+  }
+
+  /** A Claude Code Stop-hook message (OSC 777): the turn ended on its own. */
+  private handlePattonState(state: PattonState): void {
+    this.stopSeenSinceWork = true;
+    this.stopSeenAtMs = Date.now();
+    this.lastSignalAtMs = this.stopSeenAtMs;
+    if (state.kind === 'stop') this.handleHookStop(state.tasks, state.crons);
+    if (state.context) this.handleContextReading(state.context);
+    else this.notifyCheckpoint();
   }
 
   /** Remove and return the stored verdict, stopping its expiry timer. */
@@ -1010,6 +1132,7 @@ export class Pane {
     }
     this.ptyId = newId;
     this.ptyExited = false;
+    this.newClaudeSession();
     this.terminalView.setPtyId(newId);
     this.terminalView.resetForNewShell();
     if (opts.hyperlinks) this.hyperlinkEnv = true;
@@ -1185,12 +1308,7 @@ export class Pane {
 
     // Claude Code Stop hook verdicts (OSC 777, see handleHookStop).
     this.disposables.push(
-      this.terminalView.onPattonState((state) => {
-        this.stopSeenSinceWork = true;
-        if (state.kind === 'stop') this.handleHookStop(state.tasks, state.crons);
-        if (state.context) this.handleContextReading(state.context);
-        else this.notifyCheckpoint();
-      }),
+      this.terminalView.onPattonState((state) => this.handlePattonState(state)),
     );
     this.disposables.push(() => {
       this.cancelClaudeStop();
@@ -1213,7 +1331,7 @@ export class Pane {
     // Wire terminal data → PTY (unconditional forwarding)
     const termDataDispose = this.terminalView.onTerminalData((data) => {
       if (this.ptyId !== null) {
-        window.patton.pty.write(this.ptyId, data);
+        window.patton.pty.write(this.ptyId, data, data.includes('\x03') ? this.atPromptOrigin : undefined);
       }
     });
     if (termDataDispose) this.disposables.push(termDataDispose);
@@ -1326,6 +1444,7 @@ export class Pane {
         if (state === 'prompt') {
           this.resetProgramStatus('shell-prompt');
           this.claudeWorking = false;
+          if (this.claudeActive) this.newClaudeSession();
           this.claudeActive = false;
           this.stopSeenSinceWork = false;
           this.notifyCheckpoint();
@@ -1353,9 +1472,21 @@ export class Pane {
     this.historyManager.resetCursor();
   }
 
+  /** Delay between Ctrl+S (stash) and the word, so Claude Code has emptied
+   *  the input line first. Chosen by reading, not measured live. */
+  private static readonly STASH_SETTLE_MS = 150;
+
   /** Write one submitted line (then Enter) to the pty: the compose box's
-   *  route, shared with the checkpoint clock. Returns the line as sent. */
-  private queueSubmit(command: string, allowBroadcast: boolean): string {
+   *  route, shared with the checkpoint clock and Pause all. Returns the line
+   *  as sent. Options (Patton's own words only, never the compose box):
+   *  `stashFirst` sends Ctrl+S and waits STASH_SETTLE_MS before the line;
+   *  `scroll: false` leaves the view where it is; `origin: 'patton'` tells
+   *  main's unsent-input tracker the user didn't type it. */
+  private queueSubmit(
+    command: string,
+    allowBroadcast: boolean,
+    opts: { stashFirst?: boolean; scroll?: boolean; origin?: 'patton' } = {},
+  ): string {
     // Broadcast mode: also write to all other panes in the tab
     const broadcast = allowBroadcast ? this.callbacks.onBroadcastWrite : undefined;
     const broadcastPaste = allowBroadcast ? this.callbacks.onBroadcastPaste : undefined;
@@ -1375,13 +1506,26 @@ export class Pane {
 
     // Queue submits sequentially to prevent rapid double-submit from dropping the first Enter.
     // Each submit writes text then Enter with a small gap, and the next submit waits for the previous.
+    const origin = opts.origin;
     this.submitQueue = this.submitQueue.then(() => new Promise<void>((resolve) => {
+      if (this.ptyId === null) { resolve(); return; }
+      if (opts.stashFirst) {
+        window.patton.pty.write(this.ptyId, '\x13', origin);
+        setTimeout(() => {
+          if (this.ptyId === null) { resolve(); return; }
+          submitLine(resolve);
+        }, Pane.STASH_SETTLE_MS);
+        return;
+      }
+      submitLine(resolve);
+    }));
+    const submitLine = (resolve: () => void): void => {
       if (this.ptyId === null) { resolve(); return; }
       const route: 'paste' | 'type' =
         multiLineCompose && this.terminalView.terminal.modes.bracketedPasteMode ? 'paste' : 'type';
-      rlog('info', '[COMPOSE] submit', { pane: this.id, lines, route });
+      rlog('info', '[COMPOSE] submit', { pane: this.id, lines, route, ...(opts.stashFirst ? { stashed: true } : {}) });
       // xterm's scrollOnUserInput only sees its own keys, not the box's.
-      this.terminalView.terminal.scrollToBottom();
+      if (opts.scroll !== false) this.terminalView.terminal.scrollToBottom();
       if (route === 'paste') {
         this.terminalView.terminal.paste(command);
         broadcastPaste?.(command);
@@ -1396,27 +1540,27 @@ export class Pane {
           resolve();
         }, 60);
       } else if (command) {
-        window.patton.pty.write(this.ptyId, command);
+        window.patton.pty.write(this.ptyId, command, origin);
         broadcast?.(command);
         setTimeout(() => {
           if (this.ptyId !== null) {
-            window.patton.pty.write(this.ptyId, '\r');
+            window.patton.pty.write(this.ptyId, '\r', origin);
             broadcast?.('\r');
           }
           resolve();
         }, 10);
       } else {
-        window.patton.pty.write(this.ptyId, '\r');
+        window.patton.pty.write(this.ptyId, '\r', origin);
         broadcast?.('\r');
         resolve();
       }
-    }));
+    };
     return command;
   }
 
   private handleInterrupt(): void {
     if (this.ptyId === null) return;
-    window.patton.pty.write(this.ptyId, '\x03');
+    window.patton.pty.write(this.ptyId, '\x03', this.atPromptOrigin);
   }
 
   private handleTab(): void {

@@ -98,6 +98,8 @@ export const IPC = {
   PAUSE_ALL_REPORT: 'pause-all:report', // renderer → main (invoke): (requestId, PauseAllReport)
   PAUSE_ALL_MODE: 'pause-all:mode', // main → renderer: the next action ('pause' | 'resume')
   PAUSE_ALL_GET_MODE: 'pause-all:get-mode', // renderer → main (invoke): the next action, at start
+  PAUSE_ALL_STASH_KEY: 'pause-all:stash-key', // renderer → main (invoke): is Ctrl+S still Claude Code's stash key?
+  PTY_INPUT_STATE: 'pty:input-state', // renderer → main (invoke): unsent-input state of its own PTYs
   // --- end Pause all ---
 
   DIAGNOSTICS_SAVE_SNAPSHOT: 'diagnostics:save-snapshot',

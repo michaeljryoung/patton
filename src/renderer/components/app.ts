@@ -510,7 +510,7 @@ export class App {
         tab?.toggleComposeFirst();
         break;
       case 'checkpoint-session':
-        this.tabManager.runCheckpoint();
+        void this.tabManager.runCheckpoint();
         break;
       case 'history-search':
         tab?.showHistorySearch();

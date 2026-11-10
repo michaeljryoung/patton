@@ -257,7 +257,13 @@ export interface PattonAPI {
     /** Replace this pane's own shell with a new one (same options as create);
      *  resolves to the new PTY id. The old shell is ended by main. */
     respawn: (id: number, opts?: PtyCreateOptions) => Promise<number>;
-    write: (id: number, data: string) => void;
+    /** `origin: 'startup'` marks Patton's own startup-command write, which
+     *  main's unsent-input tracker ignores; 'patton' marks Patton's own words
+     *  (pause, resume, /checkpoint), tracked but not counted as user input. */
+    write: (id: number, data: string, origin?: PtyWriteOrigin) => void;
+    /** What main's unsent-input tracker (main/unsent-input.ts) knows of each
+     *  PTY's input line, in order; null for a PTY this window doesn't own. */
+    inputState: (ids: number[]) => Promise<(UnsentInputState | null)[]>;
     resize: (id: number, cols: number, rows: number) => void;
     destroy: (id: number) => void;
     getProcess: (id: number) => Promise<string>;
@@ -415,51 +421,131 @@ export interface PattonAPI {
   };
   /** The tab strip's "Pause all" / "Resume all" button (main/pause-all.ts). */
   pauseAll: {
-    /** Run the next action in every window. Null if main refused (a press
-     *  already in flight, or the rate limit). */
-    press: () => Promise<PauseAllOutcome | null>;
+    /** Run the next action in every window ('next'), or pause the Claude
+     *  panes the last pause skipped ('remaining'). Null if main refused (a
+     *  press already in flight, or the rate limit). */
+    press: (kind?: PauseAllPress) => Promise<PauseAllOutcome | null>;
     /** What the button does next, for a window that opens mid-pause. */
-    mode: () => Promise<PauseAllAction>;
+    mode: () => Promise<PauseAllMode>;
     /** Main asks this window to act on its own panes. Returns the unsubscribe. */
     onRun: (callback: (request: PauseAllRunRequest) => void) => () => void;
     /** This window's answer to a run request. */
     report: (requestId: string, report: PauseAllReport) => Promise<boolean>;
     /** What the button does next changed (a press in any window). Returns the unsubscribe. */
-    onMode: (callback: (next: PauseAllAction) => void) => () => void;
+    onMode: (callback: (mode: PauseAllMode) => void) => () => void;
+    /** Whether Ctrl+S is still Claude Code's stash key (main/stash-key.ts),
+     *  read from ~/.claude/keybindings.json now. */
+    stashKey: () => Promise<StashKeyVerdict>;
   };
 }
+
+/** Main's unsent-input tracker on one PTY (main/unsent-input.ts). Times are
+ *  wall-clock ms (Date.now) in main; the renderer compares them with its own. */
+export interface UnsentInputState {
+  /** Something may be in the input line: stash it before typing a word.
+   *  Same as `length !== 0`. */
+  dirty: boolean;
+  /** Characters in the input line as far as the tracker can count them;
+   *  null when it can't (history recall, a long or multi-line paste, Tab,
+   *  an Enter that may have picked an `@` completion). */
+  length: number | null;
+  /** The last user input (0: none yet). */
+  lastInputAt: number;
+  /** When the last submitted line that began with `/` (or with something the
+   *  tracker can't read) went in; 0 when the last one was plain text. */
+  slashSubmitAt: number;
+  /** The last Ctrl+S the user typed (0: none since the PTY started). */
+  userStashAt: number;
+  /** The last Ctrl+S Patton sent, until the user next submits a line (0: none). */
+  pattonStashAt: number;
+}
+
+/** Who made a PTY write, for main's unsent-input tracker:
+ *  - 'startup': Patton's startup command (not tracked);
+ *  - 'patton': Patton's own words (Pause all, the checkpoint clock);
+ *  - 'at-prompt': the user, while Claude's root is done or idle with nothing
+ *    blocked (7501), so a Ctrl+C in it clears Claude's input line;
+ *  - undefined: the user, anywhere else. */
+export type PtyWriteOrigin = 'startup' | 'patton' | 'at-prompt';
+
+/** Ctrl+S is Claude Code's chat:stash here, or why not. */
+export type StashKeyVerdict = { ok: true } | { ok: false; why: string };
 
 // --- Pause all (main/pause-all.ts, renderer/services/pause-all.ts) ---
 /** The one word the button types, then Enter. */
 export type PauseAllAction = 'pause' | 'resume';
 
-/** Why a pane got nothing: Claude waits on a dialog ('waiting'), Claude's state
- *  can't rule out a dialog ('unclear', title path only), no Claude ('not-claude'),
- *  no live shell ('no-shell'), or a paused pane has since closed ('closed'). */
-export type PauseSkipReason = 'waiting' | 'unclear' | 'not-claude' | 'no-shell' | 'closed';
+/** 'next': the button's action. 'remaining': pause the Claude panes not yet paused. */
+export type PauseAllPress = 'next' | 'remaining';
 
-export const PAUSE_SKIP_REASONS: readonly PauseSkipReason[] = ['waiting', 'unclear', 'not-claude', 'no-shell', 'closed'];
+/** Why a pane got nothing:
+ *  - 'waiting': Claude, or one of its background tasks, waits on a permission,
+ *    question or login (Enter would answer it).
+ *  - 'menu': the last line sent began with `/` and Claude hasn't reported since
+ *    (a picker such as /model, where Enter selects).
+ *  - 'fresh': a session that has never run a turn.
+ *  - 'draft': a draft may be in the input line and Ctrl+S is not the stash key.
+ *  - 'stashed': a draft may be in the input line and a stash may already be
+ *    held (the user pressed Ctrl+S this session, or Patton did and no line
+ *    was submitted since): Ctrl+S would overwrite or pop it.
+ *  - 'unclear': Claude's state can't rule out a dialog (title path, or 7501 error).
+ *  - 'changed': resume only; the pane's shell or Claude session is not the one paused.
+ *  - 'not-claude', 'no-shell', 'closed' (resume: the paused pane has closed). */
+export type PauseSkipReason =
+  | 'waiting' | 'menu' | 'fresh' | 'draft' | 'stashed' | 'unclear' | 'changed' | 'not-claude' | 'no-shell' | 'closed';
+
+export const PAUSE_SKIP_REASONS: readonly PauseSkipReason[] = [
+  'waiting', 'menu', 'fresh', 'draft', 'stashed', 'unclear', 'changed', 'not-claude', 'no-shell', 'closed',
+];
+
+/** Skips that leave a Claude session running unpaused: "Pause remaining" retries these. */
+export const PAUSE_CLAUDE_SKIPS: readonly PauseSkipReason[] = ['waiting', 'menu', 'fresh', 'draft', 'stashed', 'unclear'];
+
+/** A skipped pane named for the summary: its tab's title and why. */
+export interface PauseSkipName {
+  title: string;
+  reason: PauseSkipReason;
+}
+
+/** At most this many skipped panes are named, per window and in the summary. */
+export const PAUSE_NAMED_MAX = 3;
 
 /** One window's answer: how many panes got the word, and why the rest didn't. */
 export interface PauseAllReport {
   sent: number;
+  /** Of `sent`, how many were mid-turn (the word queues behind the turn). */
+  queued: number;
   skipped: Record<PauseSkipReason, number>;
+  /** Up to PAUSE_NAMED_MAX skipped panes by tab title (not plain shells). */
+  named: PauseSkipName[];
 }
 
 /** Main → renderer: act on this window's panes. */
 export interface PauseAllRunRequest {
   requestId: string;
   action: PauseAllAction;
+  /** Pause only panes not already in the paused set, adding to it. */
+  remaining: boolean;
+}
+
+/** What the button does next, and how many Claude panes the last pause left unpaused. */
+export interface PauseAllMode {
+  next: PauseAllAction;
+  left: number;
 }
 
 /** A press's result across every window. */
 export interface PauseAllOutcome extends PauseAllReport {
   action: PauseAllAction;
-  /** Windows asked, and how many answered in time. */
+  remaining: boolean;
+  /** Windows asked, how many answered in time, and how many closed meanwhile. */
   windows: number;
   answered: number;
+  closed: number;
   /** What the button does next. */
   next: PauseAllAction;
+  /** Claude panes still unpaused after this pause (0 after a resume). */
+  left: number;
 }
 // --- end Pause all ---
 

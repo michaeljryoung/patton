@@ -9,8 +9,8 @@ import { announce } from './announcer';
 import { rlog } from './renderer-logger';
 import { onProjectNamesChanged, projectName, startProjectNames } from './project-names';
 import { hoverBlocks, type HoverBlock, type HoverPaneInput } from './tab-hover';
-import type { SessionState, RendererMode, TabFlag, WindowCloseInfo, ConfirmRequest, PauseAllAction, PauseAllReport } from '../../shared/types';
-import { PauseAllState, pauseSummary } from './pause-all';
+import type { SessionState, RendererMode, TabFlag, WindowCloseInfo, ConfirmRequest, PauseAllAction, PauseAllMode, PauseAllPress, PauseAllReport } from '../../shared/types';
+import { PauseAllState, emptyReport, pauseSummary, type PauseTarget } from './pause-all';
 import { orderSessions, sessionNeedsYou, stripClaudeGlyph, type SessionInfo, type SessionStatus } from './sessions';
 import type { ITheme } from '@xterm/xterm';
 
@@ -93,8 +93,8 @@ export class TabManager {
       onRename: (id, name) => this.renameTab(id, name),
       onRenameProject: (id, name) => this.renameProject(id, name),
       onSetFlag: (id, flag) => this.setTabFlag(id, flag),
-      onCheckpoint: () => { this.runCheckpoint(); },
-      onPauseAll: () => { this.pressPauseAll().catch(console.error); },
+      onCheckpoint: () => { void this.runCheckpoint(); },
+      onPauseAll: (kind) => { void this.pressPauseAll(kind); },
       describeTab: (id) => this.describeTab(id),
       // --- Bookmarks ---
       onBookmarkProject: (id) => {
@@ -1111,11 +1111,18 @@ export class TabManager {
     return hoverBlocks(panes, Date.now());
   }
 
-  /** The clock's click and the palette's "Checkpoint this session". */
-  runCheckpoint(): void {
+  /** The clock's click and the palette's "Checkpoint this session". Never
+   *  rejects: a failure is logged and announced. */
+  async runCheckpoint(): Promise<void> {
     const pane = this.activeTab?.focusedPane;
     if (!pane) return;
-    const why = pane.runCheckpoint();
+    let why: string | null;
+    try {
+      why = await pane.runCheckpoint();
+    } catch (err) {
+      rlog('error', '[CKPT] run failed', { pane: pane.id, error: String(err) });
+      why = 'Checkpoint failed';
+    }
     if (why) {
       // Seen and heard, from the clock's click and the palette alike.
       announce(why, 'assertive');
@@ -1133,50 +1140,100 @@ export class TabManager {
     const api = window.patton.pauseAll;
     const offRun = api.onRun((request) => {
       if (!request || (request.action !== 'pause' && request.action !== 'resume')) return;
-      const report = this.runPauseAll(request.action);
-      api.report(request.requestId, report).catch(console.error);
+      void this.answerPauseAll(request.requestId, request.action, request.remaining === true);
     });
-    const offMode = api.onMode((next) => this.tabBar.setPauseMode(next));
+    const offMode = api.onMode((mode) => this.setPauseMode(mode));
     if (typeof offRun === 'function') this.disposables.push(offRun);
     if (typeof offMode === 'function') this.disposables.push(offMode);
     Promise.resolve(api.mode())
-      .then((next) => { if (next === 'resume') this.tabBar.setPauseMode('resume'); })
-      .catch(console.error);
+      .then((mode) => this.setPauseMode(mode))
+      .catch((err: unknown) => rlog('error', '[PAUSE-ALL] mode unavailable', { error: String(err) }));
+  }
+
+  /** Main's mode, checked: a malformed one leaves the button as it is. */
+  private setPauseMode(mode: PauseAllMode | null | undefined): void {
+    if (!mode || (mode.next !== 'pause' && mode.next !== 'resume')) return;
+    const left = typeof mode.left === 'number' && Number.isFinite(mode.left) ? Math.max(0, Math.floor(mode.left)) : 0;
+    this.tabBar.setPauseMode({ next: mode.next, left });
+  }
+
+  /** Run main's request in this window and send the report back; on failure
+   *  an empty report, so main isn't left waiting. */
+  private async answerPauseAll(requestId: string, action: PauseAllAction, remaining: boolean): Promise<void> {
+    let report: PauseAllReport;
+    try {
+      report = await this.runPauseAll(action, remaining);
+    } catch (err) {
+      rlog('error', '[PAUSE-ALL] run failed', { action, remaining, error: String(err) });
+      report = emptyReport();
+    }
+    try {
+      await window.patton.pauseAll.report(requestId, report);
+    } catch (err) {
+      rlog('error', '[PAUSE-ALL] report failed', { requestId, error: String(err) });
+    }
   }
 
   /** Type the word into this window's panes by the Pause all rules, and log
-   *  one line: the pane ids sent to and the ones skipped, with reasons. */
-  runPauseAll(action: PauseAllAction): PauseAllReport {
-    const panes: Pane[] = [];
-    for (const tab of this.tabs) panes.push(...tab.panes);
-    const run = this.pauseAll.run(action, panes);
-    rlog('info', '[PAUSE-ALL] run', { action, sent: run.sent, skipped: run.skipped });
+   *  one line: the pane ids sent to and the ones skipped, with reasons. Reads
+   *  main's unsent-input state for every pane and the stash key first. */
+  async runPauseAll(action: PauseAllAction, remaining = false): Promise<PauseAllReport> {
+    const entries: { pane: Pane; title: string }[] = [];
+    for (const tab of this.tabs) for (const pane of tab.panes) entries.push({ pane, title: tab.title });
+    const ids = entries.map((e) => e.pane.ptyId ?? -1);
+    const [states, key] = await Promise.all([
+      window.patton.pty.inputState(ids.filter((id) => id >= 0)),
+      window.patton.pauseAll.stashKey(),
+    ]);
+    const byPty = new Map<number, (typeof states)[number]>();
+    ids.filter((id) => id >= 0).forEach((id, i) => byPty.set(id, states[i] ?? null));
+    const targets: PauseTarget[] = entries.map(({ pane, title }) => {
+      const ptyId = pane.ptyId;
+      return {
+        id: pane.id,
+        title,
+        ptyId,
+        session: pane.sessionMarker,
+        input: pane.pauseInput(ptyId === null ? null : byPty.get(ptyId) ?? null),
+        send: (word: PauseAllAction, stash: boolean) => pane.typePauseWord(word, { stash }),
+      };
+    });
+    const run = this.pauseAll.run(action, targets, key, remaining);
+    rlog('info', '[PAUSE-ALL] run', {
+      action, remaining, sent: run.sent, queued: run.report.queued, skipped: run.skipped,
+      ...('why' in key ? { stashKey: key.why } : {}),
+    });
     return run.report;
   }
 
-  /** The button's click: main runs the next action in every window and
-   *  answers with the totals, shown on the button and announced. */
-  async pressPauseAll(): Promise<void> {
+  /** The button's click ('next') or "Pause remaining" ('remaining'): main
+   *  runs it in every window and answers with the totals, shown on the button
+   *  and announced. Never rejects: a failure is logged and announced. */
+  async pressPauseAll(kind: PauseAllPress = 'next'): Promise<void> {
     if (this.pausePressInFlight) return;
     this.pausePressInFlight = true;
     const focusAfter = this.activeTab?.focusedPane ?? null;
     try {
-      const outcome = await window.patton.pauseAll.press();
+      const outcome = await window.patton.pauseAll.press(kind);
       if (!outcome) {
         const why = 'Pause all is busy: try again in a moment';
-        rlog('info', '[PAUSE-ALL] press refused by main');
+        rlog('info', '[PAUSE-ALL] press refused by main', { kind });
         announce(why, 'assertive');
         this.tabBar.showPauseResult(why);
         return;
       }
       const summary = pauseSummary(outcome);
       rlog('info', '[PAUSE-ALL] press', {
-        action: outcome.action, sent: outcome.sent, skipped: outcome.skipped,
-        windows: outcome.windows, answered: outcome.answered, next: outcome.next,
+        kind, action: outcome.action, sent: outcome.sent, queued: outcome.queued, skipped: outcome.skipped,
+        windows: outcome.windows, answered: outcome.answered, next: outcome.next, left: outcome.left,
       });
-      this.tabBar.setPauseMode(outcome.next);
+      this.setPauseMode({ next: outcome.next, left: outcome.left });
       announce(summary, 'assertive');
       this.tabBar.showPauseResult(summary);
+    } catch (err) {
+      rlog('error', '[PAUSE-ALL] press failed', { kind, error: String(err) });
+      announce('Pause all failed', 'assertive');
+      this.tabBar.showPauseResult('Pause all failed');
     } finally {
       this.pausePressInFlight = false;
       // The click left focus on the strip's button; the keyboard belongs to the terminal.

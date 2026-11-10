@@ -64,6 +64,9 @@
   --title: calc(11px * var(--ui-scale));
   --title-ls: 0.08em;
   --tabh: calc(28px * var(--ui-scale));
+  /* Pause all's summary and "Pause N remaining" in the tab strip (tabs.css). */
+  --pause-all-max-width: calc(360px * var(--ui-scale));
+  --pause-remaining-max-width: calc(160px * var(--ui-scale));
 
   color-scheme: light;
 }

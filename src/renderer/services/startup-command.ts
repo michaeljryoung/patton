@@ -52,7 +52,8 @@ export function runStartupCommand(
   const fireIfDue = () => {
     if (fired || shellReady === null || allowed !== true) return;
     fired = true;
-    window.patton.pty.write(ptyId, cmd + '\r');
+    // Tagged so main's unsent-input tracker ignores it: Patton typed it, not the user.
+    window.patton.pty.write(ptyId, cmd + '\r', 'startup');
     rlog('info', `[STARTUP] ${label} sent`, { via: shellReady });
   };
   const ready = (via: 'prompt' | 'fallback') => {

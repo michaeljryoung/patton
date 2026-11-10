@@ -1,12 +1,13 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import { IPC, uiTextScaleFromArgv } from '../shared/constants';
-import type { BoardLayout, BoardPayload, Bookmark, ConfirmRequest, PattonAPI, PauseAllAction, PauseAllRunRequest, RenderSnapshot } from '../shared/types';
+import type { BoardLayout, BoardPayload, Bookmark, ConfirmRequest, PattonAPI, PauseAllMode, PauseAllRunRequest, RenderSnapshot } from '../shared/types';
 
 const api: PattonAPI = {
   pty: {
     create: (opts) => ipcRenderer.invoke(IPC.PTY_CREATE, opts),
     respawn: (id, opts) => ipcRenderer.invoke(IPC.PTY_RESPAWN, id, opts),
-    write: (id, data) => ipcRenderer.send(IPC.PTY_WRITE, id, data),
+    write: (id, data, origin) => ipcRenderer.send(IPC.PTY_WRITE, id, data, origin),
+    inputState: (ids) => ipcRenderer.invoke(IPC.PTY_INPUT_STATE, ids),
     resize: (id, cols, rows) => ipcRenderer.send(IPC.PTY_RESIZE, id, cols, rows),
     destroy: (id) => ipcRenderer.send(IPC.PTY_DESTROY, id),
     getProcess: (id) => ipcRenderer.invoke(IPC.PTY_GET_PROCESS, id),
@@ -284,7 +285,7 @@ const api: PattonAPI = {
     // --- end in-app quit / close confirmations ---
   },
   pauseAll: {
-    press: () => ipcRenderer.invoke(IPC.PAUSE_ALL_PRESS),
+    press: (kind) => ipcRenderer.invoke(IPC.PAUSE_ALL_PRESS, kind ?? 'next'),
     mode: () => ipcRenderer.invoke(IPC.PAUSE_ALL_GET_MODE),
     onRun: (cb) => {
       const listener = (_e: Electron.IpcRendererEvent, request: PauseAllRunRequest) => cb(request);
@@ -293,10 +294,11 @@ const api: PattonAPI = {
     },
     report: (requestId, report) => ipcRenderer.invoke(IPC.PAUSE_ALL_REPORT, requestId, report),
     onMode: (cb) => {
-      const listener = (_e: Electron.IpcRendererEvent, next: PauseAllAction) => cb(next);
+      const listener = (_e: Electron.IpcRendererEvent, mode: PauseAllMode) => cb(mode);
       ipcRenderer.on(IPC.PAUSE_ALL_MODE, listener);
       return () => ipcRenderer.removeListener(IPC.PAUSE_ALL_MODE, listener);
     },
+    stashKey: () => ipcRenderer.invoke(IPC.PAUSE_ALL_STASH_KEY),
   },
 };
 

@@ -16,6 +16,8 @@ import { closePreconfirmations } from './close-preconfirm';
 import { closeSenderWindow } from './close-window';
 import { closeConfirmations } from './close-confirm';
 import { PauseAllCoordinator, type PauseAllWindow } from './pause-all';
+import { UnsentInputTracker } from './unsent-input';
+import { readStashKeyVerdict } from './stash-key';
 import { broadcastUiTextScale, isOnlyWindow } from './window-manager';
 import { decideFileOpen, extensionOf, parseLinkPath, type OpenDecision } from './link-open-policy';
 import { annotateBookmarks, validateBookmarks } from './bookmarks'; // bookmarks sidebar
@@ -186,7 +188,28 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
   });
   // --- end board-in-place ---
 
-  ipcMain.on(IPC.PTY_WRITE, (event, id: number, data: string) => {
+  // Unsent input per PTY (unsent-input.ts): every write passes here, so this
+  // is the one place that sees all of it. Pause all and the checkpoint clock
+  // read it to stash a draft before typing their word.
+  const unsentInput = new UnsentInputTracker();
+  ipcMain.handle(IPC.PTY_INPUT_STATE, (event, ids: unknown) => {
+    if (!Array.isArray(ids) || ids.length > 1000) {
+      console.warn('[SECURITY] PTY_INPUT_STATE type validation failed', { isArray: Array.isArray(ids) });
+      return [];
+    }
+    // No rate limit: one call per press (Gotchas: a refused answer loses data).
+    return ids.map((id: unknown) => {
+      if (typeof id !== 'number' || !Number.isFinite(id)) return null;
+      try {
+        requireOwnership(ptyManager, event, id);
+      } catch {
+        return null;
+      }
+      return unsentInput.state(id);
+    });
+  });
+
+  ipcMain.on(IPC.PTY_WRITE, (event, id: number, data: string, origin?: unknown) => {
     try {
       if (typeof id !== 'number' || !Number.isFinite(id)) {
         console.warn('[SECURITY] PTY_WRITE type validation failed', { id });
@@ -208,6 +231,8 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
         return;
       }
       ptyManager.write(id, data);
+      // Patton's own startup command is not the user's input (note() skips it).
+      unsentInput.note(id, data, origin === 'startup' || origin === 'patton' || origin === 'at-prompt' ? origin : undefined);
     } catch {
       console.warn('[SECURITY] PTY ownership check failed', { channel: IPC.PTY_WRITE, id });
     }
@@ -242,6 +267,7 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
       }
       requireOwnership(ptyManager, event, id);
       ptyManager.destroy(id);
+      unsentInput.forget(id);
     } catch {
       console.warn('[SECURITY] PTY ownership check failed', { channel: IPC.PTY_DESTROY, id });
     }
@@ -868,22 +894,32 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
     id: win.id,
     alive: () => !win.isDestroyed() && !win.webContents.isDestroyed() && !win.webContents.isCrashed(),
     send: (channel, payload) => win.webContents.send(channel, payload),
+    onClosed: (cb) => {
+      win.once('closed', cb);
+      return () => { if (!win.isDestroyed()) win.removeListener('closed', cb); };
+    },
   })));
   const pauseAllPressLimiter = new RateLimiter(5);
-  ipcMain.handle(IPC.PAUSE_ALL_PRESS, async () => {
+  ipcMain.handle(IPC.PAUSE_ALL_PRESS, async (_event, kind: unknown) => {
     if (!pauseAllPressLimiter.allow()) {
       console.warn('[SECURITY] Rate limit exceeded', { channel: IPC.PAUSE_ALL_PRESS });
       return null;
     }
-    return pauseAll.press();
+    return pauseAll.press(kind === 'remaining' ? 'remaining' : 'next');
   });
-  // No limiter on these two: the mode is one read at window start (a refusal
-  // would show the wrong label), and a report must match the running press.
-  ipcMain.handle(IPC.PAUSE_ALL_GET_MODE, () => pauseAll.next);
+  // No limiter on these: the mode is one read at window start (a refusal
+  // would show the wrong label), a report must match a press, and the stash
+  // key is read once per press.
+  ipcMain.handle(IPC.PAUSE_ALL_GET_MODE, () => pauseAll.mode);
   ipcMain.handle(IPC.PAUSE_ALL_REPORT, (event, requestId: unknown, report: unknown) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win || win.isDestroyed()) return false;
     return pauseAll.report(win.id, requestId, report);
+  });
+  ipcMain.handle(IPC.PAUSE_ALL_STASH_KEY, () => {
+    const verdict = readStashKeyVerdict(join(homedir(), '.claude', 'keybindings.json'));
+    if ('why' in verdict) console.info('[PAUSE-ALL] stash key not usable', { why: verdict.why });
+    return verdict;
   });
   // --- end Pause all ---
 
