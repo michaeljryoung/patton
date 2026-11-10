@@ -223,7 +223,7 @@ async function main() {
   const logs = [];
   const info = console.info;
   console.info = (...args) => {
-    if (typeof args[0] === 'string' && args[0].startsWith('[BOARD]')) logs.push(args);
+    if (typeof args[0] === 'string' && /^\[(BOARD|WAKE)\]/.test(args[0])) logs.push(args);
     else info(...args);
   };
 
@@ -677,6 +677,17 @@ async function main() {
   emit(wakeTab.ptyId, '\x1b]2;WAKE\x07');
   check('wake: a WAKE title reaches the board (Awake)', await until(() => boardB.wakeSeen?.awake === true, 1000), boardB.wakeSeen);
   check('wake: the WAKE tab carries the yellow flag', wakeTab.autoFlag === 'yellow');
+  // 10 Nov: "when one types our wake command … always shift it to first tab on left".
+  check('wake first: the WAKE tab moved to the far left', idxW > 0 && tm.getTabs()[0] === wakeTab && tm.getTabs().length === nW + 1, { idxW, at: tm.getTabs().indexOf(wakeTab) });
+  check('wake first: the strip shows it first', tabBarEl.querySelector('.tab-bar-tab')?.dataset.tabId === wakeTab.id);
+  check('wake first: logged with where it came from', logs.slice(logW).some((l) => l[0] === '[WAKE] tab moved first' && l[1]?.tabId === wakeTab.id && l[1]?.from === idxW), logs.slice(logW).filter((l) => l[0].startsWith('[WAKE]')));
+  // Dragged elsewhere while wake runs, a later title report leaves it there.
+  tm.reorder(wakeTab.id, tm.getTabs()[2].id);
+  const dragIdx = tm.getTabs().indexOf(wakeTab);
+  const movesBefore = logs.filter((l) => l[0] === '[WAKE] tab moved first').length;
+  emit(wakeTab.ptyId, '\x1b]2;WAKE\x07');
+  await tick(30);
+  check('wake first: a drag while wake runs sticks', dragIdx === 2 && tm.getTabs().indexOf(wakeTab) === 2 && logs.filter((l) => l[0] === '[WAKE] tab moved first').length === movesBefore, { dragIdx, at: tm.getTabs().indexOf(wakeTab) });
   const nJ = tm.getTabs().length;
   const logJ = logs.length;
   const respawnsJ = state.respawns.length;
@@ -701,6 +712,8 @@ async function main() {
   check('wake: WAKE in an unfocused split pane reaches the board', await until(() => boardB.wakeSeen?.awake === true, 1000), boardB.wakeSeen);
   emit(firstPane.ptyId, '\x1b]2;~\x07');
   check('wake: and its title changing back too', await until(() => boardB.wakeSeen?.awake === false, 1000), boardB.wakeSeen);
+  check('wake first: wake started again (in the unfocused split pane) moves the tab left again', tm.getTabs()[0] === wakeTab && logs.filter((l) => l[0] === '[WAKE] tab moved first').length === movesBefore + 1, { at: tm.getTabs().indexOf(wakeTab) });
+  check('wake first: the title changing back leaves the tab where it is', tm.getTabs()[0] === wakeTab);
 
   // '' hides the button: live from Settings, and from the saved setting.
   boards.setWakeCommand('');

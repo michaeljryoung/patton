@@ -7,6 +7,7 @@ import { HistoryManager } from './history-manager';
 import { CONFIRM_SHORTCUT_DWELL_MS, DEFAULTS } from '../../shared/constants';
 import { announce } from './announcer';
 import { rlog } from './renderer-logger';
+import { WAKE_TITLE } from './board-wake';
 import { onProjectNamesChanged, projectName, startProjectNames } from './project-names';
 import { hoverBlocks, type HoverBlock, type HoverPaneInput } from './tab-hover';
 import type { SessionState, RendererMode, TabFlag, WindowCloseInfo, ConfirmRequest, PauseAllAction, PauseAllMode, PauseAllPress, PauseAllReport } from '../../shared/types';
@@ -59,6 +60,9 @@ export class TabManager {
   private pauseAll = new PauseAllState();
   /** A press is waiting on main: a second click does nothing until it answers. */
   private pausePressInFlight = false;
+  /** Tabs where `wake` runs (a pane titled exactly WAKE), so a tab moves to
+   *  the far left once when wake starts, not again on later title changes. */
+  private wakeTabIds = new Set<string>();
   // --- Project board ---
   // Opens a new tab the user asked for (⌘T, the palette, the tab bar's +), so
   // the project board can cover it. Unset: a plain createTab().
@@ -239,7 +243,7 @@ export class TabManager {
     tab.setRegistrationCallbacks(
       (pane) => this.registerPane(pane),
       (pane) => this.unregisterPane(pane),
-      () => this.updateTabBar(),
+      () => { this.moveWakeTabFirst(tab); this.updateTabBar(); },
       () => this.onCommandDone?.(tab.id, tab.title),
       () => { if (tab === this.activeTab) this.updateCheckpoint(); this.tabBar.refreshHoverCard(); },
       () => { this.tabBar.refreshHoverCard(); this.onTabsChanged?.(); },
@@ -365,6 +369,26 @@ export class TabManager {
     this.updateTabBar();
   }
 
+  /** Michael, 10 Nov: "when one types our wake command … always shift it to
+   *  first tab on left". When a pane of this tab takes the WAKE title (typed
+   *  `wake` or the board's Wake button), the tab moves to the far left of its
+   *  window, once per run: a drag elsewhere afterwards sticks, and the tab
+   *  stays put when wake ends. The caller redraws the strip. */
+  private moveWakeTabFirst(tab: Tab): void {
+    const waking = tab.panes.some((pane) => pane.title === WAKE_TITLE);
+    if (!waking) {
+      this.wakeTabIds.delete(tab.id);
+      return;
+    }
+    if (this.wakeTabIds.has(tab.id)) return;
+    this.wakeTabIds.add(tab.id);
+    const from = this.tabs.indexOf(tab);
+    if (from <= 0) return;
+    this.tabs.splice(from, 1);
+    this.tabs.unshift(tab);
+    rlog('info', '[WAKE] tab moved first', { tabId: tab.id, from });
+  }
+
   async closeById(id: string): Promise<void> {
     const idx = this.tabs.findIndex(t => t.id === id);
     if (idx === -1) return;
@@ -399,6 +423,7 @@ export class TabManager {
     if (idx === -1) return;
     tab.dispose();
     this.tabs.splice(idx, 1);
+    this.wakeTabIds.delete(tab.id);
     for (const listener of this.tabClosedListeners) {
       try {
         listener(tab);

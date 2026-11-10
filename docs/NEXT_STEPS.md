@@ -52,6 +52,7 @@ flowchart TD
   subgraph P10["Phase 10 — S47: Pause all"]
     pause_all[Pause all / Resume all button, drafts stashed]:::done
     tab_selected[selected tab drawn apart: ground + ink bar]:::done
+    wake_first[wake's tab moves to the far left]:::done
     pause_ship[install, live checks, release]:::todo
   end
   subgraph P5["Phase 5 — Typing and release"]
@@ -83,6 +84,7 @@ flowchart TD
   board_in_place --> s47_ship
   pause_all --> pause_ship
   tab_selected --> pause_ship
+  wake_first --> pause_ship
   classDef done fill:#1a7f37,color:#fff
   classDef live fill:#0969da,color:#fff
   classDef todo fill:#8c959f,color:#fff
@@ -119,7 +121,8 @@ flowchart TD
 | `s47_ship` | Release and install the close fix, the in-app quit dialogs and the board in place; live: ⌘W twice and ⌘Q on the last tab ask once in the app and quit (`[CLOSE]` lines in main.log), a tile click and Wake act in the board's tab, a turn ending with agents running shows the ring | live | `close_via_main`, `quit_dialog`, `board_in_place` | v1.19.0 (close fix): pushed `7fe23e4`, run 42460487962, cask `0f3b9365…` matches the DMG, installed 07:53, launched 08:07:17 as 1.19.0 (quit by ⌘Q around 08:08, which v1.19 doesn't log). Main `caadc82`: run 42466222395 failed twice at Build DMG on GitHub 504s for Electron's `SHASUMS256.txt` (no tag made), a watcher re-ran it once GitHub served both files steadily: released as `v1.20.0` 10:38 (attempt 6; cask 1.20.0 sha `4bd781de…` matches the DMG); installed from main 09:16 with a temporary `electronZipDir` (reverted), reports 1.19.0+6, codesign passed, `pty:respawn` and `main did not answer` in the asar. Pending: every live check (and a reinstall from the tag for the label) |
 | `pause_all` | "⏸ Pause all" at the strip's far right (clock one place left) types `pause` into every Claude pane in every window that is at its prompt or working with nothing blocked, skips and names the rest (waiting on him, new session, possible menu, plain shell, stash risk), then becomes "▶ Resume all" for exactly those panes (same `ptyId` and session); a draft goes to Claude Code's Ctrl+S stash first; "Pause remaining" retries the skipped; the checkpoint button stashes drafts too | done | — | `8a59c5d`, `655ab78`, `6adaf6c` (`src/main/unsent-input.ts`, `src/main/stash-key.ts`, `src/main/pause-all.ts`, `src/renderer/services/pause-all.ts`); `scripts/check-pause-all.mjs` 122 checks; `npm run check` 16/16, lint, tsc, no-install asar 2026-11-10 11:57:37 |
 | `tab_selected` | The selected tab reads at a glance: the terminal's ground (`--bg`, against the strip's `--surface`) and a 3 px ink bar on its bottom edge, bold kept; flagged and plain tabs have neither; dragging over it keeps the bar | done | — | Michael 2026-11-10 21:34 (screenshot of a strip with three green flags, the selected one marked only by bold): "not very clear … which one's selected". `src/renderer/styles/tabs.css` `.tab-bar-tab.active`; `check-ui-text-scale.cjs` 5 new checks (60 pass; the old styles fail 3); `npm run check` 16/16, lint, tsc, no-install asar 21:39 carries the rule |
-| `pause_ship` | With Patton quit, from Terminal.app: install main, relaunch; live: the selected tab stands out (light and dark), a draft comes back after Pause all ("Draft restored"), a permission prompt and an open `/model` are skipped and named, Resume all restarts the paused, the 150 ms stash wait holds, ⌥-click is Pause remaining; then push so CI releases (check the no-release marker first) and verify the cask | todo | `pause_all`, `tab_selected` | — |
+| `wake_first` | When a pane takes the WAKE title (typed `wake` or the board's Wake button), its tab moves to the far left of its window, once per run: a drag afterwards sticks, the tab stays put when wake ends, and wake started again moves it again | done | — | Michael 2026-11-10 21:43: "when one types our wake command, cna we also always shift it to first tab on left". `src/renderer/services/tab-manager.ts::moveWakeTabFirst` (logs `[WAKE] tab moved first`); `check-project-board-wire.mjs` 6 new checks on a real TabManager (184 pass; 5 fail with the move switched off); `npm run check` 16/16, lint, tsc, no-install asar 21:48 carries the log line |
+| `pause_ship` | With Patton quit, from Terminal.app: install main, relaunch; live: the selected tab stands out (light and dark), typing `wake` moves its tab to the far left, a draft comes back after Pause all ("Draft restored"), a permission prompt and an open `/model` are skipped and named, Resume all restarts the paused, the 150 ms stash wait holds, ⌥-click is Pause remaining; then push so CI releases (check the no-release marker first) and verify the cask | todo | `pause_all`, `tab_selected`, `wake_first` | — |
 <!-- MAP:END -->
 
 Last updated: 2026-11-10 (Session 47, the Pause all button on local main `6adaf6c`, not pushed or installed). Before that, 2026-11-08 (Session 46, v1.20.0 released; the installed build reports 1.19.0+6, same code)
