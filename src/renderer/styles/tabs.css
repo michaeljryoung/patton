@@ -106,9 +106,18 @@
   color: var(--ink);
 }
 
+/* The selected tab: the terminal's own ground (--bg, against the strip's
+ * --surface) and a 3 px ink bar on its bottom edge, sitting on the strip's
+ * rule, so it reads at a glance even when other tabs carry dots or flags
+ * (Michael, 10 Nov: bold alone made it "not very clear … which one's
+ * selected"). Bold stays as a cue that doesn't rest on colour. The bar is an
+ * inset shadow, so no tab moves; this rule comes after :hover, so hovering
+ * the selected tab keeps its ground. */
 .tab-bar-tab.active {
   color: var(--ink);
   font-weight: 700;
+  background: var(--bg);
+  box-shadow: inset 0 -3px 0 var(--ink);
 }
 
 /* Drag-to-reorder states */
@@ -118,6 +127,11 @@
 
 .tab-bar-tab.drag-over {
   box-shadow: inset 2px 0 0 var(--accent);
+}
+
+/* Dragging over the selected tab keeps its bar alongside the drop line. */
+.tab-bar-tab.active.drag-over {
+  box-shadow: inset 2px 0 0 var(--accent), inset 0 -3px 0 var(--ink);
 }
 
 .tab-bar-tab-grip {

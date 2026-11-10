@@ -13,6 +13,8 @@
 //    Font Size, not this setting);
 //  - squeezed strip (40 tabs, every tab at its floor): no tab's close button spills
 //    out of its tab, at 1 and 1.5; the active tab is still in view after a size change;
+//  - the selected tab sits on the terminal's ground with a 3 px ink bar under it, and
+//    a flagged or plain tab has neither (light scheme only: the hidden window's);
 //  - the collapsed bookmarks rail's mark is centred on the header row it stood in;
 //  - every text box taller than its text grew with the text (a fixed height shows up as no growth);
 //  - the real preload hands the renderer the launch scale synchronously (additionalArguments);
@@ -554,6 +556,33 @@ async function pageRun(BIG) {
   check(`active tab m30 is still in view after the size changes to x${BIG}`, inView('m30'), { scrollLeft: strip.scrollLeft });
   await setScale(1);
   check('active tab m30 is still in view after the size changes back to x1', inView('m30'), { scrollLeft: strip.scrollLeft });
+
+  // --- the selected tab is drawn apart from the rest, not by bold alone
+  // (10 Nov: "not very clear … which one's selected"): the terminal's ground
+  // (--bg) and a 3 px ink bar on its bottom edge; a flagged or plain tab has
+  // neither, and dragging over the selected tab keeps the bar.
+  tabBar.update(tabs);
+  await frame();
+  const tabEl = (id) => strip.querySelector(`.tab-bar-tab[data-tab-id="${id}"]`);
+  const probe = document.createElement('div');
+  probe.style.background = 'var(--bg)';
+  document.body.appendChild(probe);
+  const bgColour = getComputedStyle(probe).backgroundColor;
+  probe.style.background = 'var(--ink)';
+  const inkColour = getComputedStyle(probe).backgroundColor;
+  probe.remove();
+  const sel = getComputedStyle(tabEl('t1'));
+  const bar = `${inkColour} 0px -3px 0px 0px inset`;
+  check('selected tab sits on the terminal ground (--bg)', sel.backgroundColor === bgColour, { tab: sel.backgroundColor, bg: bgColour });
+  check('selected tab carries a 3px ink bar on its bottom edge', sel.boxShadow === bar, { boxShadow: sel.boxShadow, want: bar });
+  for (const id of ['t4', 't6']) {
+    const other = getComputedStyle(tabEl(id));
+    check(`unselected tab ${id} has neither the ground nor the bar`, other.backgroundColor !== bgColour && other.boxShadow === 'none', { background: other.backgroundColor, boxShadow: other.boxShadow });
+  }
+  tabEl('t1').classList.add('drag-over');
+  const dragged = getComputedStyle(tabEl('t1')).boxShadow;
+  check('dragging over the selected tab keeps its bar beside the drop line', dragged.includes(bar) && dragged.split('inset').length - 1 === 2, { boxShadow: dragged });
+  tabEl('t1').classList.remove('drag-over');
 
   return { checks, table, surfaces: surfaceCounts };
 }
