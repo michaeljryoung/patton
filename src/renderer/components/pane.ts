@@ -1324,6 +1324,9 @@ export class Pane {
       if (this.ptyId !== null) {
         window.patton.pty.write(this.ptyId, data, data.includes('\x03') ? this.atPromptOrigin : undefined);
       }
+      // A lone Enter sends the message: a paste arrives as one larger string and
+      // Shift+Enter as `\x1b[13;2u`, neither is exactly '\r'.
+      if (data === '\r') this.clearPasteChipsOnSend('enter');
     });
     if (termDataDispose) this.disposables.push(termDataDispose);
 
@@ -1515,6 +1518,9 @@ export class Pane {
       const route: 'paste' | 'type' =
         multiLineCompose && this.terminalView.terminal.modes.bracketedPasteMode ? 'paste' : 'type';
       rlog('info', '[COMPOSE] submit', { pane: this.id, lines, route, ...(opts.stashFirst ? { stashed: true } : {}) });
+      // The user's own send takes the pasted images with it; Patton's own typing
+      // (Pause all, checkpoint) says nothing about the user's message.
+      if (origin !== 'patton') this.clearPasteChipsOnSend('compose');
       // xterm's scrollOnUserInput only sees its own keys, not the box's.
       if (opts.scroll !== false) this.terminalView.terminal.scrollToBottom();
       if (route === 'paste') {
@@ -1672,6 +1678,16 @@ export class Pane {
 
   private clearPasteChips(): void {
     for (const entry of [...this.pasteChips]) this.removePasteChip(entry);
+  }
+
+  /** The user sent a message from this pane. Claude Code may take it into a turn
+   *  that is already running (the pane never goes idle, so startWork's clear never
+   *  fires), hence the clear on the send itself. */
+  private clearPasteChipsOnSend(reason: 'enter' | 'compose'): void {
+    const count = this.pasteChips.length;
+    if (count === 0) return;
+    this.clearPasteChips();
+    rlog('info', '[PASTE] chips cleared', { pane: this.id, reason, count });
   }
 
   /** Sanitize pasted text and, if the setting asks for it, confirm multi-line

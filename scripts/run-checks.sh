@@ -9,7 +9,7 @@
 set -u
 cd "$(dirname "$0")/.." || exit 1
 
-NEEDS_JSDOM=" check-close-confirm.mjs check-pause-all.mjs check-project-board-ui.mjs check-project-board-wire.mjs "
+NEEDS_JSDOM=" check-close-confirm.mjs check-paste-chips.mjs check-pause-all.mjs check-project-board-ui.mjs check-project-board-wire.mjs "
 pass=0; fail=0; skip=0
 log="$(mktemp)"
 trap 'rm -f "$log"' EXIT
