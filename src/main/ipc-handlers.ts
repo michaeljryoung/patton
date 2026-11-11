@@ -884,9 +884,9 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
   // --- end in-app quit / close confirmations ---
 
   // --- Pause all (tab strip button; logic in pause-all.ts) ---
-  // A press asks every window to type `pause` / `resume` into its own Claude
-  // panes. The renderer never names the word or the panes over IPC: main picks
-  // the action from its own state, each renderer picks its panes, and the
+  // A press asks every window to type `pause` into its own Claude
+  // panes. The renderer never names the word or the panes over IPC: each
+  // renderer picks its panes, and the
   // report is checked against the press's random request id and the windows
   // asked. One press at a time (a second is refused while one runs); the
   // limiter only stops a flood. The renderer shows "try again" on null.
@@ -900,17 +900,15 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
     },
   })));
   const pauseAllPressLimiter = new RateLimiter(5);
-  ipcMain.handle(IPC.PAUSE_ALL_PRESS, async (_event, kind: unknown) => {
+  ipcMain.handle(IPC.PAUSE_ALL_PRESS, async () => {
     if (!pauseAllPressLimiter.allow()) {
       console.warn('[SECURITY] Rate limit exceeded', { channel: IPC.PAUSE_ALL_PRESS });
       return null;
     }
-    return pauseAll.press(kind === 'remaining' ? 'remaining' : 'next');
+    return pauseAll.press();
   });
-  // No limiter on these: the mode is one read at window start (a refusal
-  // would show the wrong label), a report must match a press, and the stash
-  // key is read once per press.
-  ipcMain.handle(IPC.PAUSE_ALL_GET_MODE, () => pauseAll.mode);
+  // No limiter on these: a report must match a press, and the stash key is
+  // read once per press.
   ipcMain.handle(IPC.PAUSE_ALL_REPORT, (event, requestId: unknown, report: unknown) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win || win.isDestroyed()) return false;

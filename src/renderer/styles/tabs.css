@@ -49,7 +49,6 @@
 .tab-bar-new:focus-visible,
 .tab-bar-checkpoint:focus-visible,
 .tab-bar-pause-all:focus-visible,
-.tab-bar-pause-remaining:focus-visible,
 .tab-bar-tab:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: -2px;
@@ -325,8 +324,7 @@
  * 4.5:1 (--amber-text, ratios in main.css) and bold, so the state isn't
  * carried by colour alone. */
 .tab-bar-checkpoint,
-.tab-bar-pause-all,
-.tab-bar-pause-remaining {
+.tab-bar-pause-all {
   background: none;
   border: none;
   border-left: 1px solid var(--hairline);
@@ -349,8 +347,7 @@
 }
 
 .tab-bar-checkpoint:hover,
-.tab-bar-pause-all:hover,
-.tab-bar-pause-remaining:hover {
+.tab-bar-pause-all:hover {
   color: var(--ink);
   background: var(--surface-hover);
 }
@@ -380,13 +377,8 @@
   color: var(--amber-text);
 }
 
-/* Pause all / Resume all: the strip's far right, the checkpoint clock's look
- * (rules shared above). Resume all is ink, not grey, so a paused set stands
- * out; its ▶ and wording carry the state too, not colour alone. */
-.tab-bar-pause-all.resume {
-  color: var(--ink);
-}
-
+/* Pause all: the strip's far right, the checkpoint clock's look (rules
+ * shared above). */
 /* A long summary ("Paused 4 Claude sessions (…); skipped 2: …") is cut with
  * an ellipsis; the button's title and the announcer carry it whole. */
 .tab-bar-pause-all {
@@ -395,15 +387,3 @@
   text-overflow: ellipsis;
 }
 
-/* "Pause N remaining": shown while the last pause skipped Claude panes; a
- * smaller, quieter control beside Resume all. */
-.tab-bar-pause-remaining {
-  font-size: var(--title);
-  max-width: var(--pause-remaining-max-width);
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.tab-bar-pause-remaining[hidden] {
-  display: none;
-}

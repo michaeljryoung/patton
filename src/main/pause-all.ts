@@ -1,32 +1,27 @@
 // "Pause all" (tab strip button, top right). Michael types `pause` into each
-// Claude session before shutting the laptop and `resume` later; a Claude Code
-// hook makes each session suspend (and later restart) the jobs it started. The
-// button only delivers those words, as if typed: Patton stops no process itself.
+// Claude session before shutting the laptop; a Claude Code hook makes each
+// session suspend the jobs it started. The button only delivers that word, as
+// if typed: Patton stops no process itself. Resuming is typed by hand, tab by
+// tab (each session is a bit different), so there is no Resume button.
 //
 // Tab state lives in each window's renderer, so a press in any window comes
 // here and main asks EVERY window to act on its own panes:
-//   renderer → main  PAUSE_ALL_PRESS   (invoke, 'next' | 'remaining') → PauseAllOutcome | null
-//   main → renderer  PAUSE_ALL_RUN     { requestId, action, remaining }
+//   renderer → main  PAUSE_ALL_PRESS   (invoke) → PauseAllOutcome | null
+//   main → renderer  PAUSE_ALL_RUN     { requestId }
 //   renderer → main  PAUSE_ALL_REPORT  (requestId, PauseAllReport)
-//   main → renderer  PAUSE_ALL_MODE    { next, left }, to every window
-// Main keeps only what the button does next and how many Claude panes the
-// last pause left unpaused ("Pause remaining" is offered while that is > 0);
-// which panes were paused stays in each window's renderer (pane ids are per
-// window). Nothing survives a relaunch.
+// Every press is a pause, by the same rules; a pane already paused is paused
+// again. Main keeps no state between presses and nothing survives a relaunch.
 // A window that doesn't answer within REPORT_TIMEOUT_MS is counted as asked but
 // not answered; one that closes meanwhile is counted as closed, not silent, and
-// stops holding the press. A late answer still counts toward the next action:
-// a window that paused panes after the timeout turns the button to Resume all.
+// stops holding the press. A late answer is only logged.
 // One press at a time: a second press while one runs is refused.
-// After a pause the button turns to "Resume all" only if some pane got the word.
 // No runtime Electron import, so scripts/check-pause-all.mjs drives it with fakes.
 
 import { randomUUID } from 'node:crypto';
 import { IPC } from '../shared/constants';
 import {
-  PAUSE_CLAUDE_SKIPS, PAUSE_NAMED_MAX, PAUSE_SKIP_REASONS,
-  type PauseAllAction, type PauseAllMode, type PauseAllOutcome, type PauseAllPress, type PauseAllReport,
-  type PauseSkipName, type PauseSkipReason,
+  PAUSE_NAMED_MAX, PAUSE_SKIP_REASONS,
+  type PauseAllOutcome, type PauseAllReport, type PauseSkipName, type PauseSkipReason,
 } from '../shared/types';
 
 /** One window, as the coordinator needs it. */
@@ -85,16 +80,8 @@ export function cleanReport(raw: unknown): PauseAllReport | null {
   return { sent, queued: Math.min(count(r.queued), sent), skipped, named };
 }
 
-/** Claude panes a report left unpaused. */
-function claudeSkips(r: PauseAllReport): number {
-  let n = 0;
-  for (const reason of PAUSE_CLAUDE_SKIPS) n += r.skipped[reason];
-  return n;
-}
-
 interface Pending {
   requestId: string;
-  action: PauseAllAction;
   waiting: Set<number>;
   total: PauseAllReport;
   answered: number;
@@ -102,16 +89,13 @@ interface Pending {
   finish: () => void;
 }
 
-/** A press that has finished but still had windows waiting: their late answers count. */
+/** A press that has finished but still had windows waiting: their late answers are only logged. */
 interface Late {
   requestId: string;
-  action: PauseAllAction;
   waiting: Set<number>;
 }
 
 export class PauseAllCoordinator {
-  private nextAction: PauseAllAction = 'pause';
-  private left = 0;
   private pending: Pending | null = null;
   private late: Late | null = null;
 
@@ -121,21 +105,9 @@ export class PauseAllCoordinator {
     private readonly log: (msg: string, data: unknown) => void = (msg, data) => console.info(msg, data),
   ) {}
 
-  get next(): PauseAllAction {
-    return this.nextAction;
-  }
-
-  get mode(): PauseAllMode {
-    return { next: this.nextAction, left: this.nextAction === 'resume' ? this.left : 0 };
-  }
-
-  /** Run the next action ('next'), or pause what the last pause skipped
-   *  ('remaining', only while a paused set exists), in every live window.
-   *  Null while a press is running. */
-  async press(kind: PauseAllPress = 'next'): Promise<PauseAllOutcome | null> {
+  /** Pause every live window's panes. Null while a press is running. */
+  async press(): Promise<PauseAllOutcome | null> {
     if (this.pending) return null;
-    const remaining = kind === 'remaining' && this.nextAction === 'resume';
-    const action: PauseAllAction = remaining ? 'pause' : this.nextAction;
     const targets = this.windows().filter((w) => w.alive());
     const requestId = randomUUID();
     const total: PauseAllReport = { sent: 0, queued: 0, skipped: emptySkipped(), named: [] };
@@ -144,7 +116,7 @@ export class PauseAllCoordinator {
     const pending = await new Promise<Pending>((resolve) => {
       let timer: ReturnType<typeof setTimeout> | null = null;
       const p: Pending = {
-        requestId, action,
+        requestId,
         waiting: new Set(targets.map((w) => w.id)),
         total, answered: 0, closed: 0,
         finish: () => {
@@ -168,7 +140,7 @@ export class PauseAllCoordinator {
           this.log('[PAUSE-ALL] could not watch a window', { window: w.id, error: String(err) });
         }
         try {
-          w.send(IPC.PAUSE_ALL_RUN, { requestId, action, remaining });
+          w.send(IPC.PAUSE_ALL_RUN, { requestId });
         } catch (err) {
           p.waiting.delete(w.id);
           this.log('[PAUSE-ALL] send failed', { window: w.id, error: String(err) });
@@ -179,30 +151,15 @@ export class PauseAllCoordinator {
     for (const off of offs) {
       try { off(); } catch { /* a window going away */ }
     }
-    if (pending.waiting.size > 0) this.late = { requestId, action, waiting: new Set(pending.waiting) };
-    if (remaining) {
-      // Still Resume all; what's left is what this run skipped.
-      this.left = claudeSkips(total);
-    } else if (action === 'pause') {
-      // A pause that reached no pane leaves it at Pause all (nothing to resume).
-      this.nextAction = total.sent > 0 ? 'resume' : 'pause';
-      this.left = claudeSkips(total);
-    } else {
-      // Resume always hands the button back to Pause all.
-      this.nextAction = 'pause';
-      this.left = 0;
-    }
+    if (pending.waiting.size > 0) this.late = { requestId, waiting: new Set(pending.waiting) };
     const outcome: PauseAllOutcome = {
-      ...total, action, remaining,
+      ...total,
       windows: targets.length, answered: pending.answered, closed: pending.closed,
-      next: this.nextAction, left: this.mode.left,
     };
     this.log('[PAUSE-ALL] press', {
-      action, remaining, windows: targets.length, answered: pending.answered, closed: pending.closed,
+      windows: targets.length, answered: pending.answered, closed: pending.closed,
       late: pending.waiting.size, sent: total.sent, queued: total.queued, skipped: total.skipped,
-      next: this.nextAction, left: outcome.left,
     });
-    this.broadcastMode();
     return outcome;
   }
 
@@ -228,28 +185,9 @@ export class PauseAllCoordinator {
       const r = cleanReport(raw);
       if (!r) return false;
       l.waiting.delete(windowId);
-      this.log('[PAUSE-ALL] late report', { window: windowId, action: l.action, sent: r.sent, skipped: r.skipped });
-      // That window paused panes after all: it holds a paused set, so the
-      // button must offer Resume all. A late resume changes nothing (its set is empty).
-      if (l.action === 'pause') {
-        if (r.sent > 0) this.nextAction = 'resume';
-        this.left += claudeSkips(r);
-        this.broadcastMode();
-      }
+      this.log('[PAUSE-ALL] late report', { window: windowId, sent: r.sent, skipped: r.skipped });
       return true;
     }
     return false;
-  }
-
-  private broadcastMode(): void {
-    const mode = this.mode;
-    for (const w of this.windows()) {
-      if (!w.alive()) continue;
-      try {
-        w.send(IPC.PAUSE_ALL_MODE, mode);
-      } catch (err) {
-        this.log('[PAUSE-ALL] mode send failed', { window: w.id, error: String(err) });
-      }
-    }
   }
 }

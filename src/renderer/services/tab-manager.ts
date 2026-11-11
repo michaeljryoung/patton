@@ -10,8 +10,8 @@ import { rlog } from './renderer-logger';
 import { WAKE_TITLE } from './board-wake';
 import { onProjectNamesChanged, projectName, startProjectNames } from './project-names';
 import { hoverBlocks, type HoverBlock, type HoverPaneInput } from './tab-hover';
-import type { SessionState, RendererMode, TabFlag, WindowCloseInfo, ConfirmRequest, PauseAllAction, PauseAllMode, PauseAllPress, PauseAllReport } from '../../shared/types';
-import { PauseAllState, emptyReport, pauseSummary, type PauseTarget } from './pause-all';
+import type { SessionState, RendererMode, TabFlag, WindowCloseInfo, ConfirmRequest, PauseAllReport } from '../../shared/types';
+import { runPause, emptyReport, pauseSummary, type PauseTarget } from './pause-all';
 import { orderSessions, sessionNeedsYou, stripClaudeGlyph, type SessionInfo, type SessionStatus } from './sessions';
 import type { ITheme } from '@xterm/xterm';
 
@@ -56,8 +56,6 @@ export class TabManager {
   private currentRenderer: RendererMode = 'webgl';
   private onTabsChanged: (() => void) | null = null; // bookmarks sidebar
   private checkpointNudgePct: number = DEFAULT_CHECKPOINT_NUDGE_PCT;
-  /** The panes this window's last Pause all reached (services/pause-all.ts). */
-  private pauseAll = new PauseAllState();
   /** A press is waiting on main: a second click does nothing until it answers. */
   private pausePressInFlight = false;
   /** Tabs where `wake` runs (a pane titled exactly WAKE), so a tab moves to
@@ -98,7 +96,7 @@ export class TabManager {
       onRenameProject: (id, name) => this.renameProject(id, name),
       onSetFlag: (id, flag) => this.setTabFlag(id, flag),
       onCheckpoint: () => { void this.runCheckpoint(); },
-      onPauseAll: (kind) => { void this.pressPauseAll(kind); },
+      onPauseAll: () => { void this.pressPauseAll(); },
       describeTab: (id) => this.describeTab(id),
       // --- Bookmarks ---
       onBookmarkProject: (id) => {
@@ -1159,37 +1157,23 @@ export class TabManager {
 
   // --- Pause all (tab strip button; main/pause-all.ts runs a press in every window) ---
 
-  /** Main asks this window to act on its panes, and says what the button does
-   *  next after any window's press; a window opened mid-pause asks once. */
+  /** Main asks this window to act on its panes. */
   private listenForPauseAll(): void {
-    const api = window.patton.pauseAll;
-    const offRun = api.onRun((request) => {
-      if (!request || (request.action !== 'pause' && request.action !== 'resume')) return;
-      void this.answerPauseAll(request.requestId, request.action, request.remaining === true);
+    const offRun = window.patton.pauseAll.onRun((request) => {
+      if (!request || typeof request.requestId !== 'string') return;
+      void this.answerPauseAll(request.requestId);
     });
-    const offMode = api.onMode((mode) => this.setPauseMode(mode));
     if (typeof offRun === 'function') this.disposables.push(offRun);
-    if (typeof offMode === 'function') this.disposables.push(offMode);
-    Promise.resolve(api.mode())
-      .then((mode) => this.setPauseMode(mode))
-      .catch((err: unknown) => rlog('error', '[PAUSE-ALL] mode unavailable', { error: String(err) }));
-  }
-
-  /** Main's mode, checked: a malformed one leaves the button as it is. */
-  private setPauseMode(mode: PauseAllMode | null | undefined): void {
-    if (!mode || (mode.next !== 'pause' && mode.next !== 'resume')) return;
-    const left = typeof mode.left === 'number' && Number.isFinite(mode.left) ? Math.max(0, Math.floor(mode.left)) : 0;
-    this.tabBar.setPauseMode({ next: mode.next, left });
   }
 
   /** Run main's request in this window and send the report back; on failure
    *  an empty report, so main isn't left waiting. */
-  private async answerPauseAll(requestId: string, action: PauseAllAction, remaining: boolean): Promise<void> {
+  private async answerPauseAll(requestId: string): Promise<void> {
     let report: PauseAllReport;
     try {
-      report = await this.runPauseAll(action, remaining);
+      report = await this.runPauseAll();
     } catch (err) {
-      rlog('error', '[PAUSE-ALL] run failed', { action, remaining, error: String(err) });
+      rlog('error', '[PAUSE-ALL] run failed', { error: String(err) });
       report = emptyReport();
     }
     try {
@@ -1202,7 +1186,7 @@ export class TabManager {
   /** Type the word into this window's panes by the Pause all rules, and log
    *  one line: the pane ids sent to and the ones skipped, with reasons. Reads
    *  main's unsent-input state for every pane and the stash key first. */
-  async runPauseAll(action: PauseAllAction, remaining = false): Promise<PauseAllReport> {
+  async runPauseAll(): Promise<PauseAllReport> {
     const entries: { pane: Pane; title: string }[] = [];
     for (const tab of this.tabs) for (const pane of tab.panes) entries.push({ pane, title: tab.title });
     const ids = entries.map((e) => e.pane.ptyId ?? -1);
@@ -1218,45 +1202,43 @@ export class TabManager {
         id: pane.id,
         title,
         ptyId,
-        session: pane.sessionMarker,
         input: pane.pauseInput(ptyId === null ? null : byPty.get(ptyId) ?? null),
-        send: (word: PauseAllAction, stash: boolean) => pane.typePauseWord(word, { stash }),
+        send: (stash: boolean) => pane.typePauseWord({ stash }),
       };
     });
-    const run = this.pauseAll.run(action, targets, key, remaining);
+    const run = runPause(targets, key);
     rlog('info', '[PAUSE-ALL] run', {
-      action, remaining, sent: run.sent, queued: run.report.queued, skipped: run.skipped,
+      sent: run.sent, queued: run.report.queued, skipped: run.skipped,
       ...('why' in key ? { stashKey: key.why } : {}),
     });
     return run.report;
   }
 
-  /** The button's click ('next') or "Pause remaining" ('remaining'): main
-   *  runs it in every window and answers with the totals, shown on the button
-   *  and announced. Never rejects: a failure is logged and announced. */
-  async pressPauseAll(kind: PauseAllPress = 'next'): Promise<void> {
+  /** The button's click: main runs a pause in every window and answers with
+   *  the totals, shown on the button and announced. Never rejects: a failure
+   *  is logged and announced. */
+  async pressPauseAll(): Promise<void> {
     if (this.pausePressInFlight) return;
     this.pausePressInFlight = true;
     const focusAfter = this.activeTab?.focusedPane ?? null;
     try {
-      const outcome = await window.patton.pauseAll.press(kind);
+      const outcome = await window.patton.pauseAll.press();
       if (!outcome) {
         const why = 'Pause all is busy: try again in a moment';
-        rlog('info', '[PAUSE-ALL] press refused by main', { kind });
+        rlog('info', '[PAUSE-ALL] press refused by main');
         announce(why, 'assertive');
         this.tabBar.showPauseResult(why);
         return;
       }
       const summary = pauseSummary(outcome);
       rlog('info', '[PAUSE-ALL] press', {
-        kind, action: outcome.action, sent: outcome.sent, queued: outcome.queued, skipped: outcome.skipped,
-        windows: outcome.windows, answered: outcome.answered, next: outcome.next, left: outcome.left,
+        sent: outcome.sent, queued: outcome.queued, skipped: outcome.skipped,
+        windows: outcome.windows, answered: outcome.answered,
       });
-      this.setPauseMode({ next: outcome.next, left: outcome.left });
       announce(summary, 'assertive');
       this.tabBar.showPauseResult(summary);
     } catch (err) {
-      rlog('error', '[PAUSE-ALL] press failed', { kind, error: String(err) });
+      rlog('error', '[PAUSE-ALL] press failed', { error: String(err) });
       announce('Pause all failed', 'assertive');
       this.tabBar.showPauseResult('Pause all failed');
     } finally {

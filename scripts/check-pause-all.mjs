@@ -1,7 +1,8 @@
 // Headless check of the tab strip's "Pause all" button (10 Nov 2026). Michael
 // types `pause` into each Claude session before shutting the laptop (a Claude
-// Code hook then suspends the jobs it started) and `resume` later; the button
-// does that for every Claude pane in every window.
+// Code hook then suspends the jobs it started) and resumes each tab by hand;
+// the button types `pause` into every Claude pane in every window, and every
+// press pauses again (no Resume all, no "Pause remaining", no mode broadcast).
 // Drives the REAL TabManager + TabBar in two jsdom windows, the REAL
 // PauseAllCoordinator (main/pause-all.ts) standing in for main's IPC between
 // them, main's REAL UnsentInputTracker (main/unsent-input.ts) behind
@@ -11,21 +12,21 @@
 // Pane's own listeners: OSC 7501 bodies through the real parseProgramStatus,
 // Stop-hook messages through the real parsePattonOsc, window titles, and
 // keystrokes as terminal data, so the bytes checked are the bytes the app writes.
-// Covers: the button sits right of the checkpoint clock and its label
-// toggles; pause sends `pause\r` to done-after-a-turn, working and title-path
+// Covers: the button sits right of the checkpoint clock and its label never
+// changes; a second press pauses the same panes again; pause sends `pause\r` to done-after-a-turn, working and title-path
 // stopped panes and skips blocked (permission, question, a blocked child),
 // error, fresh idle, a `/model` menu, a title path typed into since the stop,
 // plain shells and exited shells; a draft gets `\x13pause\r` (one Ctrl+S); a
 // draft erased by Backspace gets a plain send; a user Ctrl+S skips the pane;
-// a rebound stash key skips draft panes; resume goes to exactly the paused
-// set and skips a respawned shell, a closed pane and a draft Patton stashed;
-// "Pause remaining" retries only the skipped; the checkpoint button stashes a
+// a rebound stash key skips draft panes; a draft Patton stashed is skipped
+// until the user submits; the checkpoint button stashes a
 // draft the same way; the summary names skipped tabs and splits at-the-prompt
 // from queued. Main side: a window closed mid-press, a send that throws, a
 // late report, a second press, and an untrusted report.
 // Run: JSDOM_DIR=<a folder whose node_modules has jsdom> node scripts/check-pause-all.mjs
 //   jsdom is not a project dependency: install it in a scratch folder.
 import { build } from 'esbuild';
+import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -109,7 +110,6 @@ const mainBundle = await build({
 });
 const M = await import('data:text/javascript;base64,' + Buffer.from(mainBundle.outputFiles[0].text).toString('base64'));
 const IPC_RUN = 'pause-all:run';
-const IPC_MODE = 'pause-all:mode';
 
 let failed = 0;
 let passed = 0;
@@ -133,12 +133,13 @@ let keybindings = KEYS_DEFAULT;
 const mainLogs = [];
 
 const windows = [];
+const runRequests = []; // every PAUSE_ALL_RUN payload main sent, to any window
 const coordinator = new M.PauseAllCoordinator(() => windows.map((win) => ({
   id: win.id,
   alive: () => !win.gone,
   send: (channel, payload) => {
     if (channel === IPC_RUN) for (const cb of win.onRun) cb(payload);
-    if (channel === IPC_MODE) for (const cb of win.onMode) cb(payload);
+    runRequests.push(payload);
   },
   onClosed: () => () => {},
 })), 1000, (msg, data) => mainLogs.push([msg, data]));
@@ -155,7 +156,7 @@ const stubWith = (overrides) => new Proxy(function () {}, {
 
 let ptySeq = 0;
 function makeWindow(id) {
-  const win = { id, gone: false, onRun: [], onMode: [], writes: [], logs: [], exitCbs: [] };
+  const win = { id, gone: false, onRun: [], writes: [], logs: [], exitCbs: [] };
   const dom = new JSDOM('<!doctype html><body><div id="bar"></div><div id="content"></div></body>', {
     runScripts: 'outside-only', pretendToBeVisual: true, virtualConsole: new VirtualConsole(),
   });
@@ -179,10 +180,8 @@ function makeWindow(id) {
     history: stubWith({ get: () => Promise.resolve([]), add: () => Promise.resolve(), clear: () => Promise.resolve() }),
     log: { send: (_lvl, args) => win.logs.push(args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ')) },
     pauseAll: {
-      press: (kind) => coordinator.press(kind ?? 'next'),
-      mode: () => Promise.resolve(coordinator.mode),
+      press: () => coordinator.press(),
       onRun: (cb) => { win.onRun.push(cb); return () => {}; },
-      onMode: (cb) => { win.onMode.push(cb); return () => {}; },
       report: (requestId, report) => Promise.resolve(coordinator.report(id, requestId, report)),
       stashKey: () => Promise.resolve(M.stashKeyVerdict(keybindings)),
     },
@@ -225,7 +224,7 @@ const bytesByPty = (win) => {
 const clearWrites = () => { for (const win of windows) win.writes.length = 0; };
 const btnOf = (win) => win.w.document.querySelector('.tab-bar-pause-all');
 // A press and the stash path's 150 ms settle.
-const press = async (win, kind = 'next') => { await win.tm.pressPauseAll(kind); await wait(250); };
+const press = async (win) => { await win.tm.pressPauseAll(); await wait(250); };
 
 const A = makeWindow(1);
 const B = makeWindow(2);
@@ -245,7 +244,10 @@ await wait(5);
   check('aria-label says what it does', /type pause into every Claude session/.test(btn.getAttribute('aria-label') ?? ''), btn.getAttribute('aria-label'));
   check('tooltip matches the aria-label', btn.title === btn.getAttribute('aria-label'));
   check('shown even with no Claude pane (clock hidden)', btn.hidden === false && ck.hidden === true);
-  check('Pause remaining hidden before any pause', bar.querySelector('.tab-bar-pause-remaining').hidden === true);
+  check('no "Pause remaining" button in the tab bar', bar.querySelector('.tab-bar-pause-remaining') === null && !/remaining/i.test(bar.textContent));
+  check('no Resume class on the pause button', !btn.classList.contains('resume'));
+  const constantsSrc = readFileSync(join(repo, 'src/shared/constants.ts'), 'utf8');
+  check('no PAUSE_ALL_MODE / GET_MODE channel in constants.ts', !/PAUSE_ALL_MODE|PAUSE_ALL_GET_MODE|pause-all:mode/.test(constantsSrc));
 }
 
 // ── 2. Pause: who gets the word ──
@@ -302,10 +304,10 @@ await wait(300);
   const text = btnOf(A).textContent;
   check('pause: summary splits at-the-prompt from queued and names skipped tabs',
     text === 'Paused 7 Claude sessions (6 at the prompt, 1 queued behind a running turn); skipped 8: perm (waiting on you), quest (waiting on you), err (state unclear), 5 more', text);
-  check('pause: clicked window now in resume mode, 8 left', A.tm.tabBar.pauseMode.next === 'resume' && A.tm.tabBar.pauseMode.left === 8, A.tm.tabBar.pauseMode);
-  check('pause: other window\'s button turns to Resume all', btnOf(B).textContent === '▶ Resume all', btnOf(B).textContent);
-  const rem = B.w.document.querySelector('.tab-bar-pause-remaining');
-  check('pause: Pause remaining shown with the count', rem.hidden === false && rem.textContent === 'Pause 8 remaining', [rem.hidden, rem.textContent]);
+  check('pause: after a press that sent, neither window\'s button turns to Resume all',
+    btnOf(B).textContent === '⏸ Pause all' && !btnOf(B).classList.contains('resume') && !btnOf(A).classList.contains('resume'), [btnOf(A).textContent, btnOf(B).textContent]);
+  check('pause: main\'s run requests carry nothing but the request id (no action to flip)',
+    runRequests.length === 2 && runRequests.every((q) => Object.keys(q).join() === 'requestId'), runRequests);
   const log = A.logs.find((l) => l.includes('[PAUSE-ALL] run'));
   const reasonOf = (k) => `"pane":"${a[k].id}","reason":"`;
   const why = (k) => { const i = log?.indexOf(reasonOf(k)) ?? -1; return i < 0 ? null : log.slice(i + reasonOf(k).length).split('"')[0]; };
@@ -315,59 +317,42 @@ await wait(300);
   check('pause: press summary logged by main', mainLogs.some(([m, d]) => m === '[PAUSE-ALL] press' && d.answered === 2 && d.sent === 7), mainLogs.map(([m]) => m));
 }
 
-// ── 3. The label returns to Resume all once the result has shown ──
+// ── 3. The label returns to Pause all once the result has shown ──
 {
   const btn = btnOf(A);
   check('result is styled as a transient message', btn.classList.contains('reason'));
   A.tm.tabBar.showPauseResult('x'); // re-arm with a short wait for the check
   await wait(4100);
-  check('after the result: Resume all', btn.textContent === '▶ Resume all' && !btn.classList.contains('reason'), btn.textContent);
-  check('Resume all aria-label offers the skipped', /type resume into every Claude session Pause all paused.*Option-click: pause the 8 skipped/.test(btn.getAttribute('aria-label') ?? ''), btn.getAttribute('aria-label'));
+  check('after the result: still Pause all', btn.textContent === '⏸ Pause all' && !btn.classList.contains('reason') && !btn.classList.contains('resume'), btn.textContent);
+  check('after the result: aria-label is still Pause all\'s', /^Pause all: type pause into every Claude session/.test(btn.getAttribute('aria-label') ?? ''), btn.getAttribute('aria-label'));
 }
 
-// ── 4. Pause remaining: only the skipped ones that can take it now ──
+// ── 4. A second press pauses again, from either window; panes now able are added ──
 report(A, a.perm, ROOT('done')); // the permission was answered and the turn ended
 await wait(5);
 report(A, a.menu, ROOT('done')); // Claude reported after the /model: no menu now
 clearWrites();
-B.w.document.querySelector('.tab-bar-pause-remaining').click();
+runRequests.length = 0;
+btnOf(B).click();
 await wait(300);
 {
   const wa = bytesByPty(A);
-  check('remaining: answered-permission pane gets "pause\\r"', wa.get(a.perm.ptyId) === 'pause\r', wa.get(a.perm.ptyId));
-  check('remaining: menu pane with a report since gets "pause\\r"', wa.get(a.menu.ptyId) === 'pause\r', wa.get(a.menu.ptyId));
-  check('remaining: no pane paused before gets a second word', wa.size === 2 && B.writes.length === 0, [[...wa.keys()], B.writes]);
-  check('remaining: still Resume all, 6 left', B.tm.tabBar.pauseMode.next === 'resume' && B.tm.tabBar.pauseMode.left === 6, B.tm.tabBar.pauseMode);
+  for (const k of ['done', 'work', 'bs', 'titleDone', 'close']) {
+    check(`second press: ${k} pane (paused by the first) gets "pause\\r" again`, wa.get(a[k].ptyId) === 'pause\r', wa.get(a[k].ptyId));
+  }
+  check('second press: other window\'s pane gets "pause\\r" again', bytesByPty(B).get(b.done.ptyId) === 'pause\r', bytesByPty(B).get(b.done.ptyId));
+  check('second press: answered-permission pane now gets "pause\\r"', wa.get(a.perm.ptyId) === 'pause\r', wa.get(a.perm.ptyId));
+  check('second press: menu pane with a report since gets "pause\\r"', wa.get(a.menu.ptyId) === 'pause\r', wa.get(a.menu.ptyId));
+  check('second press: the draft Patton stashed is skipped until a user submit, no second Ctrl+S',
+    !wa.has(a.draft.ptyId) && !A.writes.some(([, d]) => d.includes('\x13')), wa.get(a.draft.ptyId));
+  check('second press: only those seven panes are written to', wa.size === 7 && B.writes.length === 2, [[...wa.keys()], B.writes]);
+  check('second press: the clicked window\'s button still reads Pause all',
+    btnOf(B).classList.contains('reason') && btnOf(B).textContent.startsWith('Paused 8 Claude sessions') && !btnOf(B).classList.contains('resume'), btnOf(B).textContent);
+  check('second press: main again asked every window to pause (request has only an id)',
+    runRequests.length === 2 && runRequests.every((q) => Object.keys(q).join() === 'requestId'), runRequests);
 }
 
-// ── 5. Resume: exactly the paused set, by the rules at this moment ──
-await a.bs.respawn({}); // a new shell in a paused pane
-setTabs(A, order.filter((k) => k !== 'close').map((k) => tab(k, [a[k]]))); // the close pane's tab closed
-clearWrites();
-btnOf(B).click(); // resume from the other window
-await wait(300);
-{
-  const wa = bytesByPty(A);
-  for (const k of ['done', 'work', 'titleDone', 'perm', 'menu']) {
-    check(`resume: paused ${k} pane gets exactly "resume\\r"`, wa.get(a[k].ptyId) === 'resume\r', wa.get(a[k].ptyId));
-  }
-  check('resume: other window\'s paused pane gets "resume\\r"', bytesByPty(B).get(b.done.ptyId) === 'resume\r');
-  check('resume: respawned shell gets nothing', !wa.has(a.bs.ptyId));
-  check('resume: draft Patton stashed (no user submit since) gets nothing', !wa.has(a.draft.ptyId), wa.get(a.draft.ptyId));
-  for (const k of ['quest', 'err', 'fresh', 'child', 'userStash', 'shell', 'titleStale']) {
-    check(`resume: never-paused ${k} pane gets nothing`, !wa.has(a[k].ptyId));
-  }
-  check('resume: no Ctrl+S sent', !A.writes.some(([, d]) => d.includes('\x13')));
-  const text = btnOf(B).textContent;
-  check('resume: summary names the skipped',
-    text === 'Resumed 6 Claude sessions (5 at the prompt, 1 queued behind a running turn); skipped 3: bs (a different session now), a closed pane (closed since), draft (draft: you have stashed text here)', text);
-  check('resume: both windows back to Pause all', A.tm.tabBar.pauseMode.next === 'pause' && B.tm.tabBar.pauseMode.next === 'pause');
-  check('resume: Pause all label back in the other window', btnOf(A).textContent === '⏸ Pause all', btnOf(A).textContent);
-  check('resume: Pause remaining hidden again', A.w.document.querySelector('.tab-bar-pause-remaining').hidden === true);
-  check('resume: paused sets emptied', A.tm.pauseAll.pausedIds.length === 0 && B.tm.pauseAll.pausedIds.length === 0);
-}
-
-// ── 6. A user submit clears Patton's stash; a Claude session change is "changed" ──
+// ── 6. A user submit clears Patton's stash; a new Claude session in the same shell is paused ──
 {
   const p = await makePane(A);
   const q = await makePane(A);
@@ -385,9 +370,8 @@ await wait(300);
   type(p, '\r'); type(p, 'next');
   clearWrites();
   await press(A);
-  check('stash cycle: after a user submit, resume stashes the new draft', bytesByPty(A).get(p.ptyId) === '\x13resume\r', bytesByPty(A).get(p.ptyId));
-  check('session change: new Claude session in the same shell gets nothing', !bytesByPty(A).has(q.ptyId));
-  check('session change: named as a different session', btnOf(A).textContent.includes('q (a different session now)'), btnOf(A).textContent);
+  check('stash cycle: after a user submit, the next press stashes the new draft and pauses', bytesByPty(A).get(p.ptyId) === '\x13pause\r', bytesByPty(A).get(p.ptyId));
+  check('session change: a new Claude session in the same shell is paused like any other', bytesByPty(A).get(q.ptyId) === 'pause\r', bytesByPty(A).get(q.ptyId));
 }
 
 // ── 7. A rebound stash key: drafts skipped, clean panes still paused ──
@@ -404,11 +388,10 @@ await wait(300);
   check('rebound key: clean pane gets "pause\\r"', bytesByPty(A).get(c.ptyId) === 'pause\r');
   check('rebound key: summary says why', btnOf(A).textContent.includes('rb-draft (draft: stash key rebound)'), btnOf(A).textContent);
   check('rebound key: rlog names the binding', A.logs.some((l) => l.includes('[PAUSE-ALL] run') && l.includes('ctrl+s is bound to chat:submit')));
-  await press(A); // resume, back to Pause all
   keybindings = KEYS_DEFAULT;
 }
 
-// ── 8. Nothing ready leaves the button at Pause all ──
+// ── 8. Nothing ready: the button still reads Pause all and says so ──
 {
   const s = await makePane(A);
   const f = await makePane(A);
@@ -418,7 +401,6 @@ await wait(300);
   clearWrites();
   await press(A);
   check('nothing ready: no writes', A.writes.length === 0 && B.writes.length === 0);
-  check('nothing ready: still Pause all', A.tm.tabBar.pauseMode.next === 'pause');
   check('nothing ready: says so', btnOf(A).textContent === 'Nothing paused; skipped 1: new (new session)', btnOf(A).textContent);
 }
 
@@ -479,7 +461,6 @@ await wait(300);
   clearWrites();
   await press(A);
   check('title path: after a new Stop hook it gets "pause\\r"', bytesByPty(A).get(p.ptyId) === 'pause\r', bytesByPty(A).get(p.ptyId));
-  await press(A); // resume
 }
 
 // ── 11. Stash-key verdicts on keybindings.json text ──
@@ -499,7 +480,7 @@ await wait(300);
   const logs = [];
   const fakes = [];
   const fake = (id, opts = {}) => {
-    const f = { id, closed: [], modes: [], runs: [], ...opts };
+    const f = { id, closed: [], runs: [], ...opts };
     fakes.push(f);
     return f;
   };
@@ -508,7 +489,6 @@ await wait(300);
     alive: () => !f.dead,
     send: (channel, payload) => {
       if (f.throws) throw new Error('webContents destroyed');
-      if (channel === IPC_MODE) { f.modes.push(payload); return; }
       f.runs.push(payload);
       f.onRun?.(payload);
     },
@@ -528,24 +508,25 @@ await wait(300);
   check('main: the press ends without waiting for the timeout', took < 300, took);
   check('main: a send that throws is logged, not waited on', logs.some(([m, d]) => m === '[PAUSE-ALL] send failed' && d.window === 3), logs.map(([m]) => m));
   check('main: a dead window is not asked', fakes[3].runs.length === 0);
-  check('main: totals and next action', out.sent === 2 && out.skipped.waiting === 1 && out.next === 'resume' && out.left === 1, out);
-  check('main: mode sent to every live window it can reach', fakes[0].modes.at(-1)?.next === 'resume' && fakes[1].modes.at(-1)?.next === 'resume');
+  check('main: totals', out.sent === 2 && out.skipped.waiting === 1, out);
   check('main: closed-window listeners removed after the press', fakes.every((f) => f.closed.length === 0));
+  check('main: the outcome carries no next action or mode', !('next' in out) && !('left' in out) && !('action' in out), out);
+  const out2 = await co.press();
+  check('main: after a press that sent, the next press is again a plain pause request to the same window',
+    out2 !== null && out2.sent === 2 && fakes[0].runs.length === 2 && fakes[0].runs.every((q) => Object.keys(q).join() === 'requestId'), fakes[0].runs);
 
-  // Resume, with a silent window that answers late.
+  // A silent window that answers late.
   fakes.length = 0;
   fake(1, { onRun: (req) => queueMicrotask(() => co.report(1, req.requestId, rep(0, { skipped: {} }))) });
   let lateReq = null;
   fake(2, { onRun: (req) => { lateReq = req; } });
   const outR = await co.press();
-  check('main: resume with a silent window times out as not answered', outR.action === 'resume' && outR.windows === 2 && outR.answered === 1 && outR.next === 'pause', outR);
-  // Now a pause where window 2 answers late.
+  check('main: a silent window times out as not answered', outR.windows === 2 && outR.answered === 1, outR);
+  // Again, with window 2 still silent.
   fakes[0].onRun = (req) => queueMicrotask(() => co.report(1, req.requestId, rep(0, { skipped: {} })));
   const outP = await co.press();
-  check('main: pause that reached no pane in time stays at Pause all', outP.action === 'pause' && outP.sent === 0 && outP.next === 'pause', outP);
+  check('main: a press that reached no pane in time reports sent 0', outP.sent === 0 && outP.answered === 1, outP);
   check('main: late report counted', co.report(2, lateReq.requestId, rep(3)) === true, lateReq);
-  check('main: late pause report turns the button to Resume all', co.next === 'resume' && co.mode.left === 1, co.mode);
-  check('main: late report broadcasts the mode', fakes[0].modes.at(-1)?.next === 'resume');
   check('main: late report logged', logs.some(([m, d]) => m === '[PAUSE-ALL] late report' && d.window === 2 && d.sent === 3));
   check('main: a second late report from the same window refused', co.report(2, lateReq.requestId, rep(3)) === false);
   check('main: a report with an unknown request id refused', co.report(1, 'nope', rep(1)) === false);
@@ -563,9 +544,13 @@ await wait(300);
   await first;
   check('main: an old request\'s late answer no longer counts after a new press', co.report(2, lateReq.requestId, rep(5)) === false);
 
+  await co.press();
+  check('main: after late reports, the next press is still the same plain request',
+    fakes[1].runs.length > 0 && fakes[1].runs.every((q) => Object.keys(q).join() === 'requestId'), fakes[1].runs);
+
   // Untrusted reports.
-  const c = M.cleanReport({ sent: -3, queued: 9, skipped: { waiting: 2.5, closed: 1e9, bogus: 4, menu: 2 }, named: [{ title: 'a\u001b[31mb\n', reason: 'menu' }, { title: 'z', reason: 'bogus' }] });
-  check('main: report numbers are cleaned', c.sent === 0 && c.queued === 0 && c.skipped.waiting === 0 && c.skipped.closed === 0 && c.skipped.menu === 2 && !('bogus' in c.skipped), c);
+  const c = M.cleanReport({ sent: -3, queued: 9, skipped: { waiting: 2.5, 'no-shell': 1e9, bogus: 4, menu: 2 }, named: [{ title: 'a\u001b[31mb\n', reason: 'menu' }, { title: 'z', reason: 'bogus' }] });
+  check('main: report numbers are cleaned', c.sent === 0 && c.queued === 0 && c.skipped.waiting === 0 && c.skipped['no-shell'] === 0 && c.skipped.menu === 2 && !('bogus' in c.skipped), c);
   check('main: report titles stripped of control characters, unknown reasons dropped', c.named.length === 1 && c.named[0].title === 'a[31mb', c.named);
   check('main: a non-object report refused', M.cleanReport('x') === null && M.cleanReport(null) === null);
 }

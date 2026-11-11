@@ -419,20 +419,15 @@ export interface PattonAPI {
     answerConfirm: (requestId: string, ok: boolean) => Promise<boolean>;
     // --- end in-app quit / close confirmations ---
   };
-  /** The tab strip's "Pause all" / "Resume all" button (main/pause-all.ts). */
+  /** The tab strip's "Pause all" button (main/pause-all.ts). */
   pauseAll: {
-    /** Run the next action in every window ('next'), or pause the Claude
-     *  panes the last pause skipped ('remaining'). Null if main refused (a
-     *  press already in flight, or the rate limit). */
-    press: (kind?: PauseAllPress) => Promise<PauseAllOutcome | null>;
-    /** What the button does next, for a window that opens mid-pause. */
-    mode: () => Promise<PauseAllMode>;
+    /** Pause every window's Claude panes by the rules. Null if main refused
+     *  (a press already in flight, or the rate limit). */
+    press: () => Promise<PauseAllOutcome | null>;
     /** Main asks this window to act on its own panes. Returns the unsubscribe. */
     onRun: (callback: (request: PauseAllRunRequest) => void) => () => void;
     /** This window's answer to a run request. */
     report: (requestId: string, report: PauseAllReport) => Promise<boolean>;
-    /** What the button does next changed (a press in any window). Returns the unsubscribe. */
-    onMode: (callback: (mode: PauseAllMode) => void) => () => void;
     /** Whether Ctrl+S is still Claude Code's stash key (main/stash-key.ts),
      *  read from ~/.claude/keybindings.json now. */
     stashKey: () => Promise<StashKeyVerdict>;
@@ -472,12 +467,6 @@ export type PtyWriteOrigin = 'startup' | 'patton' | 'at-prompt';
 export type StashKeyVerdict = { ok: true } | { ok: false; why: string };
 
 // --- Pause all (main/pause-all.ts, renderer/services/pause-all.ts) ---
-/** The one word the button types, then Enter. */
-export type PauseAllAction = 'pause' | 'resume';
-
-/** 'next': the button's action. 'remaining': pause the Claude panes not yet paused. */
-export type PauseAllPress = 'next' | 'remaining';
-
 /** Why a pane got nothing:
  *  - 'waiting': Claude, or one of its background tasks, waits on a permission,
  *    question or login (Enter would answer it).
@@ -489,17 +478,13 @@ export type PauseAllPress = 'next' | 'remaining';
  *    held (the user pressed Ctrl+S this session, or Patton did and no line
  *    was submitted since): Ctrl+S would overwrite or pop it.
  *  - 'unclear': Claude's state can't rule out a dialog (title path, or 7501 error).
- *  - 'changed': resume only; the pane's shell or Claude session is not the one paused.
- *  - 'not-claude', 'no-shell', 'closed' (resume: the paused pane has closed). */
+ *  - 'not-claude', 'no-shell'. */
 export type PauseSkipReason =
-  | 'waiting' | 'menu' | 'fresh' | 'draft' | 'stashed' | 'unclear' | 'changed' | 'not-claude' | 'no-shell' | 'closed';
+  | 'waiting' | 'menu' | 'fresh' | 'draft' | 'stashed' | 'unclear' | 'not-claude' | 'no-shell';
 
 export const PAUSE_SKIP_REASONS: readonly PauseSkipReason[] = [
-  'waiting', 'menu', 'fresh', 'draft', 'stashed', 'unclear', 'changed', 'not-claude', 'no-shell', 'closed',
+  'waiting', 'menu', 'fresh', 'draft', 'stashed', 'unclear', 'not-claude', 'no-shell',
 ];
-
-/** Skips that leave a Claude session running unpaused: "Pause remaining" retries these. */
-export const PAUSE_CLAUDE_SKIPS: readonly PauseSkipReason[] = ['waiting', 'menu', 'fresh', 'draft', 'stashed', 'unclear'];
 
 /** A skipped pane named for the summary: its tab's title and why. */
 export interface PauseSkipName {
@@ -523,29 +508,14 @@ export interface PauseAllReport {
 /** Main → renderer: act on this window's panes. */
 export interface PauseAllRunRequest {
   requestId: string;
-  action: PauseAllAction;
-  /** Pause only panes not already in the paused set, adding to it. */
-  remaining: boolean;
-}
-
-/** What the button does next, and how many Claude panes the last pause left unpaused. */
-export interface PauseAllMode {
-  next: PauseAllAction;
-  left: number;
 }
 
 /** A press's result across every window. */
 export interface PauseAllOutcome extends PauseAllReport {
-  action: PauseAllAction;
-  remaining: boolean;
   /** Windows asked, how many answered in time, and how many closed meanwhile. */
   windows: number;
   answered: number;
   closed: number;
-  /** What the button does next. */
-  next: PauseAllAction;
-  /** Claude panes still unpaused after this pause (0 after a resume). */
-  left: number;
 }
 // --- end Pause all ---
 

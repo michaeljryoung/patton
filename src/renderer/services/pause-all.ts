@@ -1,11 +1,13 @@
 /**
- * "Pause all" for one window: which panes get `pause` (later `resume`) typed
- * into them, which are skipped and why, and the line the button and the
- * announcer show. Main runs a press across every window (main/pause-all.ts);
- * this file decides for this window's panes. No DOM, no IPC.
+ * "Pause all" for one window: which panes get `pause` typed into them, which
+ * are skipped and why, and the line the button and the announcer show. Main
+ * runs a press across every window (main/pause-all.ts); this file decides for
+ * this window's panes. No DOM, no IPC. Every press pauses every pane that can
+ * take it, panes already paused included; nothing is remembered between
+ * presses. Resume is typed by hand, tab by tab (no Resume button).
  *
  * The rules (Michael, 10 Nov 2026: a shut MacBook overheated on jobs left
- * running after "pause"; a Claude Code hook acts on a bare `pause` / `resume`):
+ * running after "pause"; a Claude Code hook acts on a bare `pause`):
  * - Claude's root done, or idle after at least one turn: send.
  * - Claude mid-turn with no background task blocked: send. Claude Code queues
  *   a line typed mid-turn and takes it at its next step (seen 10 Nov:
@@ -25,7 +27,7 @@
  */
 import {
   PAUSE_NAMED_MAX, PAUSE_SKIP_REASONS,
-  type PauseAllAction, type PauseAllOutcome, type PauseAllReport, type PauseSkipName, type PauseSkipReason,
+  type PauseAllOutcome, type PauseAllReport, type PauseSkipName, type PauseSkipReason,
   type StashKeyVerdict,
 } from '../../shared/types';
 
@@ -66,11 +68,9 @@ export interface PauseTarget {
   /** Its tab's title, for the summary. */
   readonly title: string;
   readonly ptyId: number | null;
-  /** Counts up whenever the Claude session here may have changed. */
-  readonly session: number;
   readonly input: PauseInput;
-  /** Type the word and Enter; with `stash`, Ctrl+S first. */
-  send(word: PauseAllAction, stash: boolean): void;
+  /** Type `pause` and Enter; with `stash`, Ctrl+S first. */
+  send(stash: boolean): void;
 }
 
 /** Why the pane gets nothing, or null when it gets the word. */
@@ -108,65 +108,29 @@ export interface PauseRun {
   skipped: { pane: string; reason: PauseSkipReason }[];
 }
 
-/** Which shell and Claude session a pane had when it was paused. */
-interface PausedPane {
-  ptyId: number | null;
-  session: number;
-}
-
-/** The panes this window paused, so resume goes to exactly those. */
-export class PauseAllState {
-  private paused = new Map<string, PausedPane>();
-
-  get pausedIds(): string[] {
-    return Array.from(this.paused.keys());
-  }
-
-  /** Pause: every pane by the rules (with `remaining`, only those not paused
-   *  yet); the ones sent to join the paused set.
-   *  Resume: only the paused panes, and only while their shell and Claude
-   *  session are the ones paused; the set empties (the button goes back to
-   *  Pause all). */
-  run(action: PauseAllAction, panes: PauseTarget[], key: StashKeyVerdict, remaining = false): PauseRun {
-    const out: PauseRun = { report: emptyReport(), sent: [], skipped: [] };
-    const skip = (id: string, title: string, reason: PauseSkipReason): void => {
-      out.skipped.push({ pane: id, reason });
+/** Pause: every pane by the rules; the ones that can take the word get it,
+ *  with a draft stashed first. The rest are skipped and counted, and the
+ *  Claude ones named in the summary. */
+export function runPause(panes: PauseTarget[], key: StashKeyVerdict): PauseRun {
+  const out: PauseRun = { report: emptyReport(), sent: [], skipped: [] };
+  for (const pane of panes) {
+    const reason = pauseSkipReason(pane.input, key);
+    if (reason !== null) {
+      out.skipped.push({ pane: pane.id, reason });
       out.report.skipped[reason] += 1;
-      if (!nameable(action, reason)) return;
-      if (out.report.named.length < PAUSE_NAMED_MAX) out.report.named.push({ title, reason });
-    };
-    let targets = panes;
-    if (action === 'resume') {
-      targets = [];
-      for (const [id, was] of this.paused) {
-        const pane = panes.find((p) => p.id === id);
-        if (!pane) { skip(id, 'a closed pane', 'closed'); continue; }
-        if (pane.ptyId !== was.ptyId || pane.session !== was.session) { skip(id, pane.title, 'changed'); continue; }
-        targets.push(pane);
-      }
-    } else if (remaining) {
-      targets = panes.filter((p) => !this.paused.has(p.id));
+      if (nameable(reason) && out.report.named.length < PAUSE_NAMED_MAX) out.report.named.push({ title: pane.title, reason });
+      continue;
     }
-    const sent = new Map<string, PausedPane>();
-    for (const pane of targets) {
-      const reason = pauseSkipReason(pane.input, key);
-      if (reason !== null) { skip(pane.id, pane.title, reason); continue; }
-      pane.send(action, pane.input.draft);
-      out.sent.push(pane.id);
-      out.report.sent += 1;
-      if (isQueued(pane.input)) out.report.queued += 1;
-      sent.set(pane.id, { ptyId: pane.ptyId, session: pane.session });
-    }
-    if (action === 'resume') this.paused = new Map();
-    else if (remaining) for (const [id, was] of sent) this.paused.set(id, was);
-    else this.paused = sent;
-    return out;
+    pane.send(pane.input.draft);
+    out.sent.push(pane.id);
+    out.report.sent += 1;
+    if (isQueued(pane.input)) out.report.queued += 1;
   }
+  return out;
 }
 
-/** Named in the summary: Claude panes left unpaused; on resume, every skip. */
-function nameable(action: PauseAllAction, reason: PauseSkipReason): boolean {
-  if (action === 'resume') return true;
+/** Named in the summary: Claude panes left unpaused, not plain shells. */
+function nameable(reason: PauseSkipReason): boolean {
   return reason !== 'not-claude' && reason !== 'no-shell';
 }
 
@@ -178,28 +142,25 @@ export const PAUSE_SKIP_WORDS: Record<PauseSkipReason, string> = {
   draft: 'draft: stash key rebound',
   stashed: 'draft: you have stashed text here',
   unclear: 'state unclear',
-  changed: 'a different session now',
   'not-claude': 'not Claude',
   'no-shell': 'shell exited',
-  closed: 'closed since',
 };
 
 const sessions = (n: number): string => `${n} Claude session${n === 1 ? '' : 's'}`;
 
-/** The skips the summary counts: Claude panes, and on resume shells too. */
+/** The skips the summary counts: Claude panes. */
 function countedSkips(o: PauseAllOutcome): PauseSkipReason[] {
-  return PAUSE_SKIP_REASONS.filter((r) => o.skipped[r] > 0 && nameable(o.action, r));
+  return PAUSE_SKIP_REASONS.filter((r) => o.skipped[r] > 0 && nameable(r));
 }
 
 /** The line the button shows for a few seconds and the announcer reads. */
 export function pauseSummary(o: PauseAllOutcome): string {
   const parts: string[] = [];
-  const verb = o.action === 'pause' ? 'Paused' : 'Resumed';
   if (o.sent > 0) {
     const atPrompt = o.sent - o.queued;
-    parts.push(`${verb} ${sessions(o.sent)} (${atPrompt} at the prompt, ${o.queued} queued behind a running turn)`);
+    parts.push(`Paused ${sessions(o.sent)} (${atPrompt} at the prompt, ${o.queued} queued behind a running turn)`);
   } else {
-    parts.push(`Nothing ${o.action === 'pause' ? 'paused' : 'resumed'}`);
+    parts.push('Nothing paused');
   }
   const reasons = countedSkips(o);
   const total = reasons.reduce((n, r) => n + o.skipped[r], 0);
@@ -208,7 +169,7 @@ export function pauseSummary(o: PauseAllOutcome): string {
     const rest = total - named.length;
     if (rest > 0) named.push(`${rest} more`);
     parts.push(`skipped ${total}: ${named.join(', ')}`);
-  } else if (o.action === 'pause' && o.sent === 0) {
+  } else if (o.sent === 0) {
     parts.push('no Claude session found');
   }
   const silent = o.windows - o.answered;

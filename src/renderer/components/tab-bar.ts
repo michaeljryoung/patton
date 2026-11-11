@@ -2,7 +2,7 @@ import { ContextMenu } from './context-menu';
 import { announce } from '../services/announcer';
 import { onUiTextScaleApplied } from '../services/ui-text-scale';
 import { DEFAULTS } from '../../shared/constants';
-import type { PauseAllAction, PauseAllMode, PauseAllPress, TabFlag } from '../../shared/types';
+import type { TabFlag } from '../../shared/types';
 import type { CheckpointView } from '../services/checkpoint-clock';
 import type { HoverBlock } from '../services/tab-hover';
 import { TabHoverCard } from './tab-hover-card';
@@ -19,9 +19,8 @@ export interface TabBarCallbacks {
   onBookmarkProject?: (id: string) => void; // bookmarks sidebar
   /** The checkpoint clock was clicked: run /checkpoint in the focused pane. */
   onCheckpoint?: () => void;
-  /** Pause all / Resume all was clicked ('next'), or "Pause remaining" /
-   *  ⌥-click asked to pause the Claude panes the last pause skipped ('remaining'). */
-  onPauseAll?: (kind: PauseAllPress) => void;
+  /** Pause all was clicked: pause every window's Claude panes that can take it. */
+  onPauseAll?: () => void;
   /** What the tab hover card shows for a tab, one block per pane (focused
    *  first), or null if the tab is gone. Given = the card is on, and tabs
    *  carry no native `title` tooltip (it would cover the card). */
@@ -98,11 +97,6 @@ export class TabBar {
   private checkpointReasonTimer: ReturnType<typeof setTimeout> | null = null;
   private static readonly CHECKPOINT_REASON_MS = 4000;
   private pauseBtn: HTMLButtonElement;
-  /** "Pause remaining": shown while the last pause skipped Claude panes. */
-  private pauseRemainingBtn: HTMLButtonElement;
-  /** What the pause button does next, and how many Claude panes the last
-   *  pause left unpaused (main's mode, shared by every window). */
-  private pauseState: PauseAllMode = { next: 'pause', left: 0 };
   private pauseResultTimer: ReturnType<typeof setTimeout> | null = null;
   private static readonly PAUSE_RESULT_MS = 4000;
   private callbacks: TabBarCallbacks;
@@ -236,45 +230,21 @@ export class TabBar {
     this.container.appendChild(this.checkpointBtn);
 
     // Pause all, at the strip's far right (the checkpoint clock sits just left
-    // of it): types `pause` into every window's Claude panes, then turns into
-    // Resume all, which types `resume` into the ones it paused. Always shown.
+    // of it): types `pause` into every window's Claude panes. Always reads
+    // "Pause all" and every press pauses again; resume is typed by hand, tab
+    // by tab. Always shown.
     this.pauseBtn = document.createElement('button');
     this.pauseBtn.type = 'button';
     this.pauseBtn.className = 'tab-bar-pause-all';
-    // ⌥-click pauses what the last pause skipped, while there is any.
-    this.pauseBtn.addEventListener('click', (e) => {
-      const remaining = e.altKey && this.pauseState.next === 'resume' && this.pauseState.left > 0;
-      this.callbacks.onPauseAll?.(remaining ? 'remaining' : 'next');
+    this.pauseBtn.addEventListener('click', () => {
+      this.callbacks.onPauseAll?.();
     });
-    // "Pause remaining", just left of the main button while the last pause
-    // skipped Claude panes (waiting on you, a menu, a draft…).
-    this.pauseRemainingBtn = document.createElement('button');
-    this.pauseRemainingBtn.type = 'button';
-    this.pauseRemainingBtn.className = 'tab-bar-pause-remaining';
-    this.pauseRemainingBtn.hidden = true;
-    this.pauseRemainingBtn.addEventListener('click', () => {
-      this.callbacks.onPauseAll?.('remaining');
-    });
-    this.container.appendChild(this.pauseRemainingBtn);
     this.container.appendChild(this.pauseBtn);
     this.renderPauseButton();
   }
 
-  /** What the pause button does next ('pause' shows Pause all, 'resume'
-   *  Resume all), and how many Claude panes "Pause remaining" would retry. */
-  setPauseMode(mode: PauseAllMode): void {
-    const next: PauseAllAction = mode.next === 'resume' ? 'resume' : 'pause';
-    this.pauseState = { next, left: next === 'resume' ? Math.max(0, mode.left) : 0 };
-    if (this.pauseResultTimer === null) this.renderPauseButton();
-    this.renderPauseRemaining();
-  }
-
-  get pauseMode(): PauseAllMode {
-    return { ...this.pauseState };
-  }
-
   /** A press's result in the button's place for a few seconds (the caller
-   *  announces it too); the label then follows the mode. */
+   *  announces it too); the label then comes back. */
   showPauseResult(text: string): void {
     if (this.pauseResultTimer) clearTimeout(this.pauseResultTimer);
     this.pauseBtn.textContent = text;
@@ -290,23 +260,8 @@ export class TabBar {
 
   private renderPauseButton(): void {
     const btn = this.pauseBtn;
-    const resume = this.pauseState.next === 'resume';
-    btn.textContent = resume ? '▶ Resume all' : '⏸ Pause all';
-    const left = this.pauseState.left;
-    const label = resume
-      ? `Resume all: type resume into every Claude session Pause all paused, in every window${left > 0 ? `. Option-click: pause the ${left} skipped` : ''}`
-      : 'Pause all: type pause into every Claude session in every window, skipping any waiting on you';
-    btn.setAttribute('aria-label', label);
-    btn.title = label;
-    btn.classList.toggle('resume', resume);
-  }
-
-  private renderPauseRemaining(): void {
-    const btn = this.pauseRemainingBtn;
-    const left = this.pauseState.left;
-    btn.hidden = left === 0;
-    btn.textContent = `Pause ${left} remaining`;
-    const label = `Pause remaining: type pause into the ${left} Claude session${left === 1 ? '' : 's'} the last Pause all skipped, if they can take it now`;
+    btn.textContent = '⏸ Pause all';
+    const label = 'Pause all: type pause into every Claude session in every window, skipping any waiting on you';
     btn.setAttribute('aria-label', label);
     btn.title = label;
   }

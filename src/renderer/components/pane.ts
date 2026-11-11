@@ -24,7 +24,7 @@ import { paneActivity, type PaneActivity } from '../services/pane-activity';
 import { turnEndSignal, verdictAfterRootChange, verdictAfterChildren, type HookVerdict } from '../services/turn-end';
 
 import type { ITheme } from '@xterm/xterm';
-import type { PauseAllAction, TabFlag, UnsentInputState } from '../../shared/types';
+import type { TabFlag, UnsentInputState } from '../../shared/types';
 import type { PauseInput } from '../services/pause-all';
 
 /** Background work a parked Claude Code session is waiting on: from the Stop
@@ -222,18 +222,15 @@ export class Pane {
   // picker or a draft, so Pause all no longer trusts stopSeenSinceWork.
   private stopSeenAtMs = 0;
   // Pause all's view of the session (services/pause-all.ts):
-  // - claudeSession counts Claude sessions in this pane: bumped when Claude
-  //   leaves (a bare 7501 `state=clear`, the shell's prompt, the title losing
-  //   its glyph) and when the shell is replaced, so Resume all can tell the
-  //   session it paused from a new one in the same pane.
   // - claudeSessionAtMs: when the current session began (Date.now), so a
   //   Ctrl+S the user pressed in an earlier session doesn't count as a stash
-  //   held by this one.
+  //   held by this one. Restarted when Claude leaves (a bare 7501
+  //   `state=clear`, the shell's prompt, the title losing its glyph) and when
+  //   the shell is replaced.
   // - hadTurn: since 7501 reports began, the root has been something other
   //   than idle (a session that has only ever said idle is fresh).
   // - lastSignalAtMs: the last 7501 report or Stop-hook message (Date.now),
   //   the proof that a `/` command typed before it isn't still showing a menu.
-  private claudeSession = 0;
   private claudeSessionAtMs = 0;
   private hadTurn = false;
   private lastSignalAtMs = 0;
@@ -817,14 +814,8 @@ export class Pane {
     };
   }
 
-  /** Counts up whenever the Claude session here may have changed (see claudeSession). */
-  get sessionMarker(): number {
-    return this.claudeSession;
-  }
-
-  /** The Claude session here may have changed: count it and restart its clock. */
+  /** The Claude session here may have changed: restart its clock. */
   private newClaudeSession(): void {
-    this.claudeSession += 1;
     this.claudeSessionAtMs = Date.now();
   }
 
@@ -839,7 +830,7 @@ export class Pane {
     return 'at-prompt';
   }
 
-  /** What Pause all needs to decide whether this pane gets `pause` / `resume`
+  /** What Pause all needs to decide whether this pane gets `pause`
    *  (services/pause-all.ts pauseSkipReason), given main's tracker state. */
   pauseInput(input: UnsentInputState | null): PauseInput {
     const facts = this.inputFacts(input);
@@ -859,13 +850,13 @@ export class Pane {
     };
   }
 
-  /** Type `pause` or `resume` and Enter, through the same submit path as the
+  /** Type `pause` and Enter, through the same submit path as the
    *  checkpoint clock's /checkpoint (never broadcast, no scroll). The caller
    *  decided this pane may take it. With `stash`, Ctrl+S first moves a draft
    *  out of the way; Claude Code restores it after the submit by itself, so
    *  no second Ctrl+S is sent (it would stash the restored draft again). */
-  typePauseWord(word: PauseAllAction, opts: { stash: boolean }): void {
-    this.queueSubmit(word === 'resume' ? 'resume' : 'pause', false, { stashFirst: opts.stash, scroll: false, origin: 'patton' });
+  typePauseWord(opts: { stash: boolean }): void {
+    this.queueSubmit('pause', false, { stashFirst: opts.stash, scroll: false, origin: 'patton' });
   }
 
   /** A Claude Code Stop-hook message (OSC 777): the turn ended on its own. */
