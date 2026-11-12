@@ -78,15 +78,23 @@
   padding: 0 12px;
   height: 100%;
   flex: 0 1 auto;
-  /* Floor = the tab's own chrome, so nothing spills into the next tab when the
-     title has shrunk to nothing (the title is overflow:hidden, so it gives way
-     first): padding 12+12, dot 9, close ~14, and two 7 px gaps (dot-title,
-     title-close) = 24 + 9 + 14 + 14 = 61; 63 adds 2 px of slack. The drag grip
-     is out of the flow (below), so it adds nothing. The close is font-sized,
-     so 14 px of it scales with Interface Text Size; the rest is fixed. Not
-     clipped with overflow, which would cut the needs-you dot's 6 px glow. The
-     hover tooltip names the tab at this width. */
-  min-width: calc(49px + 14px * var(--ui-scale));
+  /* Floor = the tab's own chrome plus enough label to say what the tab is
+     (12 Nov, Michael: "I can't see what the tab actually is"). Chrome: padding
+     12+12, dot 9, and two 7 px gaps (dot-title, title-close) = 47 fixed, plus
+     the close ~14 s (it is font-sized, so it scales with Interface Text Size);
+     the dot is counted whether or not the tab has one, so a tab without one
+     shows a little more. Label: 5 characters and the ellipsis,
+     measured with the real font at 700 weight (the selected tab's) on the widest
+     likely starts (Wedne... 46.6 px at x1, 69.9 at x1.5): 47 px x scale, 48 with
+     1 px of slack. Floor = 47 + 2 px of slack + (14 + 48) s = 49 + 62 s:
+     111 px at x1, 142 at x1.5; with a flag and the red circle, a second
+     indicator and gap (+16): 65 + 62 s. Past it the strip scrolls
+     (.tab-bar-tabs is overflow-x: auto) and keeps the selected tab in view. The
+     drag grip is out of the flow (below), so it adds nothing. The title is
+     overflow:hidden, so it gives way first; the tab itself is not clipped,
+     which would cut the needs-you dot's 6 px glow. The hover tooltip still
+     names the tab. */
+  min-width: calc(49px + 62px * var(--ui-scale));
   max-width: 220px;
   background: transparent;
   cursor: pointer;
@@ -103,7 +111,7 @@
    7 px gap on the floor above (measured: the close button spilled 15.6 px at
    x1 and 13 px at x1.5 on the plain floor). */
 .tab-bar-tab.has-flag-and-ckpt {
-  min-width: calc(65px + 14px * var(--ui-scale));
+  min-width: calc(65px + 62px * var(--ui-scale));
 }
 
 .tab-bar-tab + .tab-bar-tab {
