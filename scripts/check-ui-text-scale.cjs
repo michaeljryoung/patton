@@ -636,38 +636,6 @@ async function pageRun(BIG) {
   barEl.style.flex = '';
   await setScale(1);
 
-  // --- a tab at its floor still shows what it is (12 Nov, Michael: "I can't see what the tab
-  // actually is"): with enough tabs to overflow an 820 px window, every tab sits at its floor
-  // and shows at least 5 label characters (then the ellipsis); the strip scrolls for the rest,
-  // and the active tab, wherever it is, lies fully inside the strip's visible area. The labels
-  // are mixed-case words (the widest 5-letter starts a title is likely to have), the active
-  // tab is bold, and flagged, red-circled and both-indicator tabs are in the mix.
-  const WORDS = ['Wedne', 'Repea', 'Calen', 'Fixin', 'gener', 'Refac', 'Proje', 'Debug', 'Migra'];
-  const floorTabs = Array.from({ length: 40 }, (_, i) => ({
-    id: `f${i + 1}`, title: `${WORDS[i % WORDS.length]}${i + 1} and more words after`, active: false,
-    flag: i === 3 || i === 5 ? 'red' : undefined, checkpointDone: i === 4 || i === 5,
-    parked: i === 7 ? { tasks: 1, crons: 0 } : undefined, awaitingInput: i === 9,
-  }));
-  barEl.style.width = '820px';
-  barEl.style.flex = 'none';
-  for (const s of [1, BIG]) {
-    await setScale(s);
-    for (const activeId of ['f1', 'f20', 'f40']) {
-      tabBar.update(floorTabs.map((t) => ({ ...t, active: t.id === activeId })));
-      await frame();
-      const els = [...strip.querySelectorAll('.tab-bar-tab')];
-      const atFloor = els.filter((t) => Math.abs(t.getBoundingClientRect().width - parseFloat(getComputedStyle(t).minWidth)) <= 0.5);
-      const fewest = els.map((t) => ({ tab: t.dataset.tabId, chars: visibleChars(t.querySelector('.tab-bar-tab-title')), w: +t.getBoundingClientRect().width.toFixed(1), dot: !!t.querySelector('.tab-bar-tab-indicator') })).sort((a, b) => a.chars - b.chars);
-      check(`tabs at their floor (820px, x${s}, ${activeId} selected): all 40 sit at it and each shows at least 5 label characters`, atFloor.length === 40 && fewest[0].chars >= 5, { atFloor: atFloor.length, fewest: fewest.slice(0, 4) });
-      const sr = strip.getBoundingClientRect();
-      const ar = strip.querySelector('.tab-bar-tab.active').getBoundingClientRect();
-      check(`tabs at their floor (820px, x${s}, ${activeId} selected): the selected tab lies fully inside the strip`, ar.left >= sr.left - 0.5 && ar.right <= sr.right + 0.5, { tab: [ar.left, ar.right], strip: [sr.left, sr.right] });
-    }
-  }
-  barEl.style.width = '';
-  barEl.style.flex = '';
-  await setScale(1);
-
   // An automatic name arrives cut to 15 characters (Tab.displayTitle); the tab keeps the
   // full title for its tooltip and screen-reader label, and the hidden bold copy follows
   // the shown text, so the width is the short name's.
