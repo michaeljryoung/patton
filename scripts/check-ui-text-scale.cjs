@@ -558,6 +558,98 @@ async function pageRun(BIG) {
     check(`blank spacer x${s}: full strip height, no-drag, default cursor`, !!space && Math.abs(sw.height - strip.getBoundingClientRect().height) <= 1 && getComputedStyle(space).webkitAppRegion === 'no-drag' && getComputedStyle(space).cursor === 'default', space && { h: sw.height, region: getComputedStyle(space).webkitAppRegion, cursor: getComputedStyle(space).cursor });
   }
 
+  // --- a squeezed tab's label starts right after the dot and runs to the close button
+  // (12 Nov, Michael: "it leaves a lot of space to the left, and I can't see what the tab
+  // actually is ... to the left of the dot, there's only one letter"). Measured cause: the
+  // drag grip, drawn only on hover, still took 7 px plus a 7 px gap in the flow, so a 90 px
+  // tab spent 14 px on nothing before its dot or label. For every tab, at a narrow and a
+  // wide window and at both text sizes: the title span begins within 2 px of the dot's
+  // right edge plus the gap (of the left padding when there is no dot), ends within 2 px of
+  // the close button's left edge minus the gap, and, from a 120 px tab up, shows 6 characters.
+  // Visible characters are counted with a Range per character: the text is laid out in full
+  // (overflow only clips it), so a character is visible if its box ends before the span's
+  // right edge less the width of an "..." when the text is cut.
+  const barEl = byId('tab-bar');
+  const visibleChars = (span) => {
+    const node = span.firstChild;
+    const text = node.textContent;
+    const sr = span.getBoundingClientRect();
+    const cut = span.scrollWidth > span.clientWidth + 0.5;
+    const probeEl = document.createElement('span');
+    probeEl.textContent = '\u2026';
+    probeEl.style.cssText = 'position:absolute;visibility:hidden;white-space:nowrap;font:inherit';
+    span.appendChild(probeEl);
+    const ell = cut ? probeEl.getBoundingClientRect().width : 0;
+    probeEl.remove();
+    let n = 0;
+    for (let i = 0; i < text.length; i++) {
+      const r = document.createRange();
+      r.setStart(node, i);
+      r.setEnd(node, i + 1);
+      if (r.getBoundingClientRect().right <= sr.right - ell + 0.5) n++; else break;
+    }
+    return n;
+  };
+  const layoutTabs = [
+    { id: 'p1', title: 'Repeated permission prompts', active: false },
+    { id: 'p2', title: 'Calendly personal Gmail account', active: false, parked: { tasks: 1, crons: 0 } },
+    { id: 'p3', title: 'generated report build', active: true },
+    { id: 'p4', title: 'Fixing the flaky test suite', active: false, parked: { tasks: 1, crons: 0 } },
+    { id: 'p5', title: 'bash', active: false },
+    { id: 'p6', title: 'Refactor tab strip layout now', active: false, checkpointDone: true },
+  ];
+  const measured = [];
+  for (const winW of [820, 1200]) {
+    barEl.style.width = `${winW}px`;
+    barEl.style.flex = 'none';
+    for (const s of [1, BIG]) {
+      await setScale(s);
+      tabBar.update(layoutTabs);
+      await frame();
+      const bad = [];
+      let widest = 0;
+      for (const t of strip.querySelectorAll('.tab-bar-tab')) {
+        const tr = t.getBoundingClientRect();
+        const ts = getComputedStyle(t);
+        const gap = parseFloat(ts.columnGap);
+        const span = t.querySelector('.tab-bar-tab-title');
+        const sr = span.getBoundingClientRect();
+        const dot = t.querySelector('.tab-bar-tab-indicator');
+        const close = t.querySelector('.tab-bar-tab-close');
+        const wantLeft = dot ? dot.getBoundingClientRect().right + gap : tr.left + parseFloat(ts.paddingLeft);
+        const cr = close.getBoundingClientRect();
+        const wantRight = cr.left - parseFloat(getComputedStyle(close).marginLeft) - gap;
+        const chars = visibleChars(span);
+        const need = Math.min(6, span.textContent.length);
+        const firstEl = dot || span;
+        const first = firstEl.getBoundingClientRect().left - (tr.left + parseFloat(ts.paddingLeft));
+        const row = { tab: t.dataset.tabId, first: +first.toFixed(1), tabW: +tr.width.toFixed(1), left: +(sr.left - wantLeft).toFixed(1), right: +(sr.right - wantRight).toFixed(1), titleW: +sr.width.toFixed(1), chars, dot: !!dot, align: getComputedStyle(span).textAlign };
+        widest = Math.max(widest, tr.width);
+        if (Math.abs(row.first) > 2 || Math.abs(row.left) > 2 || Math.abs(row.right) > 2 || (tr.width >= 120 && chars < need)) bad.push(row);
+        if (s === 1 && winW === 820) measured.push(row);
+      }
+      check(`label layout (${winW}px window, x${s}): the dot or title starts at the left padding, every title starts after its dot, ends at its close button, shows 6 characters from a 120px tab`, bad.length === 0 && strip.querySelectorAll('.tab-bar-tab').length === 6, { bad: bad.slice(0, 3), widest });
+    }
+  }
+  check('label layout: measurements of the 820px window at x1 (for the record)', measured.length === 6, measured);
+  barEl.style.width = '';
+  barEl.style.flex = '';
+  await setScale(1);
+
+  // An automatic name arrives cut to 15 characters (Tab.displayTitle); the tab keeps the
+  // full title for its tooltip and screen-reader label, and the hidden bold copy follows
+  // the shown text, so the width is the short name's.
+  tabBar.update([{ id: 'n1', title: 'Repeated permission prompts', displayTitle: 'Repeated permi\u2026', active: true }, { id: 'n2', title: 'a-project-with-a-long-name', active: false }]);
+  await frame();
+  const n1 = strip.querySelector('.tab-bar-tab[data-tab-id="n1"]');
+  const n2 = strip.querySelector('.tab-bar-tab[data-tab-id="n2"]');
+  const n1t = n1.querySelector('.tab-bar-tab-title');
+  check('auto name: the tab shows the 15-character name, its width copy too', n1t.textContent === 'Repeated permi\u2026' && n1t.dataset.title === 'Repeated permi\u2026' && n1t.textContent.length <= 15, { text: n1t.textContent, data: n1t.dataset.title });
+  check('auto name: the full title stays in the accessible name (and the native tooltip, when the hover card is off)', n1.getAttribute('aria-label') === 'Repeated permission prompts' && (n1.title === 'Repeated permission prompts' || n1.title === ''), { aria: n1.getAttribute('aria-label'), title: n1.title });
+  check('auto name: a title sent with no short name (a project\'s) is untouched', n2.querySelector('.tab-bar-tab-title').textContent === 'a-project-with-a-long-name');
+  tabBar.update(withActive('m30'));
+  await frame();
+
   // --- the active tab is still on screen after a size change
   await setScale(1);
   tabBar.update(withActive('m30'));

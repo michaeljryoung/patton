@@ -80,12 +80,13 @@
   flex: 0 1 auto;
   /* Floor = the tab's own chrome, so nothing spills into the next tab when the
      title has shrunk to nothing (the title is overflow:hidden, so it gives way
-     first): padding 12+12, grip ~6, dot 9, close ~14, and three 7 px gaps
-     (grip-dot, dot-title, title-close) = 24 + 6 + 9 + 14 + 21 = 74; 76 adds
-     2 px of slack. The grip and the close are font-sized, so their 20 px
-     scale with Interface Text Size; the rest is fixed. Not clipped with overflow, which would cut the needs-you
-     dot's 6 px glow. The hover tooltip names the tab at this width. */
-  min-width: calc(56px + 20px * var(--ui-scale));
+     first): padding 12+12, dot 9, close ~14, and two 7 px gaps (dot-title,
+     title-close) = 24 + 9 + 14 + 14 = 61; 63 adds 2 px of slack. The drag grip
+     is out of the flow (below), so it adds nothing. The close is font-sized,
+     so 14 px of it scales with Interface Text Size; the rest is fixed. Not
+     clipped with overflow, which would cut the needs-you dot's 6 px glow. The
+     hover tooltip names the tab at this width. */
+  min-width: calc(49px + 14px * var(--ui-scale));
   max-width: 220px;
   background: transparent;
   cursor: pointer;
@@ -102,7 +103,7 @@
    7 px gap on the floor above (measured: the close button spilled 15.6 px at
    x1 and 13 px at x1.5 on the plain floor). */
 .tab-bar-tab.has-flag-and-ckpt {
-  min-width: calc(72px + 20px * var(--ui-scale));
+  min-width: calc(65px + 14px * var(--ui-scale));
 }
 
 .tab-bar-tab + .tab-bar-tab {
@@ -150,12 +151,19 @@
   opacity: 0;
   transition: opacity 0.12s;
   padding: 2px 0;
-  flex-shrink: 0;
+  /* Out of the flow, in the tab's left padding (12 Nov, Michael: "it leaves a lot
+     of space to the left, and I can't see what the tab actually is"): drawn only
+     on hover, it used to hold 7 px plus a 7 px gap in every tab, so a squeezed
+     tab spent 14 px on nothing before its dot or label. Now the dot, or the
+     label, starts at the padding. The glyph sits 3 px from the tab's edge. */
+  position: absolute;
+  left: -3px;
+  top: 50%;
+  transform: translateY(-50%);
   /* Hit area ~16 x 26 px (WCAG 2.5.8 wants 24 px): a transparent border grows
-     the target, the equal negative margin keeps the layout where it was. */
+     the target; it hangs over the tab's edge and the glyph's place is unchanged. */
   border: solid transparent;
   border-width: 6px 5px;
-  margin: -6px -5px;
   background-clip: padding-box;
   -webkit-app-region: no-drag;
 }
