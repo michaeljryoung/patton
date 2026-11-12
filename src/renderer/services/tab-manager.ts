@@ -1201,7 +1201,6 @@ export class TabManager {
       return {
         id: pane.id,
         title,
-        ptyId,
         input: pane.pauseInput(ptyId === null ? null : byPty.get(ptyId) ?? null),
         send: (stash: boolean) => pane.typePauseWord({ stash }),
       };

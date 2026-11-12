@@ -231,6 +231,7 @@ export class Tab {
         for (const p of this._panes) {
           if (p !== pane && p.ptyId !== null) {
             window.patton.pty.write(p.ptyId, data);
+            if (data === '\r') p.noteEnterSent();
           }
         }
       },

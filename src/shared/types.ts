@@ -259,7 +259,7 @@ export interface PattonAPI {
     respawn: (id: number, opts?: PtyCreateOptions) => Promise<number>;
     /** `origin: 'startup'` marks Patton's own startup-command write, which
      *  main's unsent-input tracker ignores; 'patton' marks Patton's own words
-     *  (pause, resume, /checkpoint), tracked but not counted as user input. */
+     *  (pause, /checkpoint), tracked but not counted as user input. */
     write: (id: number, data: string, origin?: PtyWriteOrigin) => void;
     /** What main's unsent-input tracker (main/unsent-input.ts) knows of each
      *  PTY's input line, in order; null for a PTY this window doesn't own. */

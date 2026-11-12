@@ -378,12 +378,10 @@
 }
 
 /* Pause all: the strip's far right, the checkpoint clock's look (rules
- * shared above). */
-/* A long summary ("Paused 4 Claude sessions (…); skipped 2: …") is cut with
- * an ellipsis; the button's title and the announcer carry it whole. */
+ * shared above). A long summary ("Paused 4 Claude sessions (…); skipped 2: …")
+ * is cut with an ellipsis; the button's title and the announcer carry it whole. */
 .tab-bar-pause-all {
   max-width: var(--pause-all-max-width);
   overflow: hidden;
   text-overflow: ellipsis;
 }
-

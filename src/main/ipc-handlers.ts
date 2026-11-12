@@ -884,10 +884,9 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
   // --- end in-app quit / close confirmations ---
 
   // --- Pause all (tab strip button; logic in pause-all.ts) ---
-  // A press asks every window to type `pause` into its own Claude
-  // panes. The renderer never names the word or the panes over IPC: each
-  // renderer picks its panes, and the
-  // report is checked against the press's random request id and the windows
+  // A press asks every window to type `pause` into its own Claude panes. The
+  // renderer never names the word or the panes over IPC: each renderer picks
+  // its panes, and the report is checked against the press's random request id and the windows
   // asked. One press at a time (a second is refused while one runs); the
   // limiter only stops a flood. The renderer shows "try again" on null.
   const pauseAll = new PauseAllCoordinator((): PauseAllWindow[] => BrowserWindow.getAllWindows().map((win) => ({

@@ -198,6 +198,67 @@ const submit = async (p, origin) => {
   check('an empty compose submit (a bare Enter) clears too', chips(p) === 0);
 }
 
+// ── 5. Enter from the empty compose box, while Claude asks, with no PTY, Patton's own words ──
+{
+  const key = (k) => ({ key: k, shiftKey: false, metaKey: false, ctrlKey: false, altKey: false });
+  const p = await makePane();
+  report(p, 'working');
+  p.composeFirstEngaged = true; // compose-first, empty box: Enter goes to the PTY through forwardEmptyBoxKey
+  chip(p);
+  logs.length = 0; writes.length = 0;
+  check('an arrow from the empty box keeps the chip', p.forwardEmptyBoxKey(key('ArrowUp')) === true && chips(p) === 1);
+  check('empty-box Enter is forwarded', p.forwardEmptyBoxKey(key('Enter')) === true && writes.some(([id, d]) => id === p.ptyId && d === '\r'));
+  check('empty-box Enter (or Send) clears the chip mid-turn', chips(p) === 0);
+  const l = clearedLogs();
+  check('...logged with reason enter, count 1', l.length === 1 && l[0].includes('"reason":"enter"') && l[0].includes('"count":1'), l);
+
+  // Claude waiting on a permission prompt or question: Enter answers it.
+  report(p, 'blocked');
+  p.composeFirstEngaged = true;
+  chip(p);
+  logs.length = 0;
+  type(p, '\r');
+  check('blocked: a terminal Enter keeps the chip', chips(p) === 1 && clearedLogs().length === 0, clearedLogs());
+  p.forwardEmptyBoxKey(key('Enter'));
+  check('blocked: an empty-box Enter keeps the chip', chips(p) === 1 && clearedLogs().length === 0, clearedLogs());
+  p.noteEnterSent();
+  check('blocked: a broadcast Enter (noteEnterSent) keeps the chip', chips(p) === 1);
+  await submit(p);
+  check('blocked: the user\'s own compose submit still clears', chips(p) === 0);
+
+  // Back to a state where Enter sends a message: noteEnterSent clears (the broadcast receiver's path).
+  report(p, 'working');
+  chip(p);
+  p.noteEnterSent();
+  check('working: noteEnterSent (broadcast receiver) clears the chip', chips(p) === 0);
+}
+{
+  // No PTY: nothing was sent, so nothing clears.
+  const p = await makePane();
+  report(p, 'working');
+  chip(p);
+  const id = p.ptyId;
+  p.ptyId = null;
+  logs.length = 0;
+  type(p, '\r');
+  check('no PTY: a lone Enter keeps the chip', chips(p) === 1 && clearedLogs().length === 0, clearedLogs());
+  p.ptyId = id;
+}
+{
+  // Patton's own words (Pause all, checkpoint) with the pane idle, so startWork's clear cannot be the cause.
+  const p = await makePane();
+  report(p, 'idle');
+  chip(p);
+  logs.length = 0; writes.length = 0;
+  p.typePauseWord({ stash: false });
+  await wait(80);
+  check('typePauseWord reached the PTY', writes.some(([, d]) => d === 'pause') && writes.some(([, d]) => d === '\r'), writes);
+  check('typePauseWord keeps the chip and logs no clear', chips(p) === 1 && clearedLogs().length === 0, clearedLogs());
+  p.typePauseWord({ stash: true });
+  await wait(300);
+  check('typePauseWord with a stash first keeps the chip too', chips(p) === 1 && clearedLogs().length === 0, clearedLogs());
+}
+
 // ── 4. The existing clears still work ──
 {
   const p = await makePane();

@@ -1323,10 +1323,10 @@ export class Pane {
     const termDataDispose = this.terminalView.onTerminalData((data) => {
       if (this.ptyId !== null) {
         window.patton.pty.write(this.ptyId, data, data.includes('\x03') ? this.atPromptOrigin : undefined);
+        // A lone Enter sends the message: a paste arrives as one larger string and
+        // Shift+Enter as `\x1b[13;2u`, neither is exactly '\r'.
+        if (data === '\r') this.noteEnterSent();
       }
-      // A lone Enter sends the message: a paste arrives as one larger string and
-      // Shift+Enter as `\x1b[13;2u`, neither is exactly '\r'.
-      if (data === '\r') this.clearPasteChipsOnSend('enter');
     });
     if (termDataDispose) this.disposables.push(termDataDispose);
 
@@ -1683,6 +1683,15 @@ export class Pane {
   /** The user sent a message from this pane. Claude Code may take it into a turn
    *  that is already running (the pane never goes idle, so startWork's clear never
    *  fires), hence the clear on the send itself. */
+  /** An Enter reached this pane's PTY (typed, from the empty compose box, or
+   *  broadcast from another pane). While Claude waits on a permission prompt or
+   *  question that Enter answers the dialog and the image is still in the draft,
+   *  so the chips stay. */
+  noteEnterSent(): void {
+    if (this.claudeBlocked) return;
+    this.clearPasteChipsOnSend('enter');
+  }
+
   private clearPasteChipsOnSend(reason: 'enter' | 'compose'): void {
     const count = this.pasteChips.length;
     if (count === 0) return;
@@ -1808,6 +1817,7 @@ export class Pane {
     const seq = this.composeKeySequence(e);
     if (seq === null) return false;
     window.patton.pty.write(this.ptyId, seq);
+    if (seq === '\r') this.noteEnterSent();
     this.terminalView.terminal.scrollToBottom(); // as xterm's scrollOnUserInput would
     rlog('info', '[COMPOSE] handoff', {
       pane: this.id, key: e.shiftKey ? `Shift+${e.key}` : e.key, route: 'pty',

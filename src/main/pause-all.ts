@@ -10,7 +10,8 @@
 //   main → renderer  PAUSE_ALL_RUN     { requestId }
 //   renderer → main  PAUSE_ALL_REPORT  (requestId, PauseAllReport)
 // Every press is a pause, by the same rules; a pane already paused is paused
-// again. Main keeps no state between presses and nothing survives a relaunch.
+// again. Main keeps no per-press state beyond which windows are still owed a
+// late answer (kept until the next press) and nothing survives a relaunch.
 // A window that doesn't answer within REPORT_TIMEOUT_MS is counted as asked but
 // not answered; one that closes meanwhile is counted as closed, not silent, and
 // stops holding the press. A late answer is only logged.

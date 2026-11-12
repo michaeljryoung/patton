@@ -67,7 +67,6 @@ export interface PauseTarget {
   readonly id: string;
   /** Its tab's title, for the summary. */
   readonly title: string;
-  readonly ptyId: number | null;
   readonly input: PauseInput;
   /** Type `pause` and Enter; with `stash`, Ctrl+S first. */
   send(stash: boolean): void;
@@ -140,7 +139,7 @@ export const PAUSE_SKIP_WORDS: Record<PauseSkipReason, string> = {
   menu: 'in a menu?',
   fresh: 'new session',
   draft: 'draft: stash key rebound',
-  stashed: 'draft: you have stashed text here',
+  stashed: 'a draft is set aside here',
   unclear: 'state unclear',
   'not-claude': 'not Claude',
   'no-shell': 'shell exited',
