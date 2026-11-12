@@ -6,9 +6,10 @@
 // Bundles the REAL modules with esbuild (electron and node-pty stubbed), points
 // HOME at a fresh temp folder with fixture repos, a linked git worktree and a
 // project list, and never opens a window or touches Patton's settings.
+// A source assertion at the end checks the production wiring in ipc-handlers.ts.
 import { build } from 'esbuild';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -56,8 +57,9 @@ async function main() {
 
   // Fixtures: ~/Projects/pf is a git repo holding the registered sub-projects
   // stocks-and-shares and em (not repos of their own) and an unregistered
-  // folder `other`; ~/Projects/loose is not a repo; ~/Projects/other-repo
-  // is a repo with a registered path that is its own root.
+  // folder `other`; ~/Projects/pf-old is a sibling repo whose name starts like
+  // pf; ~/Projects/loose is not a repo; ~/Projects/real/deep is a sub-project
+  // of the repo ~/Projects/real reached through the symlink ~/Projects/link.
   const projects = join(home, 'Projects');
   const pf = join(projects, 'pf');
   const git = (cwd, ...args) => execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...args], { cwd, stdio: 'pipe' });
@@ -71,6 +73,13 @@ async function main() {
   const wt = join(work, 'pf-worktree');
   git(pf, 'worktree', 'add', '-q', wt, '-b', 'feat');
   mkdirSync(join(projects, 'loose', 'sub'), { recursive: true });
+  const pfOld = join(projects, 'pf-old');
+  mkdirSync(join(pfOld, 'stocks-and-shares'), { recursive: true });
+  git(pfOld, 'init', '-q');
+  const realRepo = join(projects, 'real');
+  mkdirSync(join(realRepo, 'deep', 'x'), { recursive: true });
+  git(realRepo, 'init', '-q');
+  symlinkSync(realRepo, join(projects, 'link'));
   const stocks = join(pf, 'stocks-and-shares');
   const em = join(pf, 'em');
   symlinkSync(em, join(pf, 'em-link'));
@@ -90,7 +99,9 @@ async function main() {
   // Before the source is wired: today's behaviour.
   check('no source set: sub-project folder resolves to the repo', root(stocks) === pf, root(stocks));
 
-  m.setRegisteredProjectPaths(() => m.registeredProjectPaths(''));
+  const wire = (setting = '') => { m.setProjectListSetting(setting); m.setRegisteredProjects(() => m.registeredProjects()); };
+  const wireRows = (rows) => m.setRegisteredProjects(() => rows.map((r) => m.toRegisteredProject(r)).filter(Boolean));
+  wire();
   check('sub-project folder resolves to the sub-project', root(stocks) === stocks, root(stocks));
   check('its project name comes from the sub-project folder', m.resolveProject(stocks)?.defaultName === 'shares');
   check('a deeper folder inside it resolves to the sub-project', root(join(stocks, 'scripts', 'deep')) === stocks);
@@ -117,10 +128,38 @@ async function main() {
   check('the log line names the cwd, the repo and the project',
     overrideLogs.some((l) => l[1]?.cwd === stocks && l[1]?.repo === pf && l[1]?.project === stocks), overrideLogs.map((l) => l[1]));
 
-  m.setRegisteredProjectPaths(() => [join(pf, 'em-link')]);
+  wireRows([join(pf, 'em-link')]);
   check('a registered symlink to a folder inside the repo: real paths compared, the root is the path as listed',
     root(em) === join(pf, 'em-link') && root(join(pf, 'em-link', 'x')) === join(pf, 'em-link'), [root(em), root(join(pf, 'em-link', 'x'))]);
-  m.setRegisteredProjectPaths(() => m.registeredProjectPaths(''));
+  wire();
+
+  // Repo-level sibling prefix: a registered row in `pf-old` is not inside `pf`, nor `pf` inside it.
+  const oldSub = join(pfOld, 'stocks-and-shares');
+  check('a sibling repo whose name starts like the parent is its own repo', root(oldSub) === pfOld, root(oldSub));
+  wireRows([join(pf, 'stocks-and-shares')]);
+  check('a sub-project row in pf does not capture the pf-old sibling', root(oldSub) === pfOld && root(stocks) === stocks);
+  wireRows([oldSub]);
+  check('a row in pf-old does not capture pf or its sub-project', root(stocks) === pf && root(oldSub) === oldSub, [root(stocks), root(oldSub)]);
+  wire();
+
+  // Case: the volume is case-insensitive, so a row typed in another case still names the folder.
+  const caseInsensitive = (() => { try { statSync(join(pf, 'STOCKS-AND-SHARES')); return true; } catch { return false; } })();
+  if (caseInsensitive) {
+    wireRows([join(pf, 'STOCKS-and-Shares')]);
+    check('a row typed in a different case still registers the sub-project (root as listed)', root(stocks) === join(pf, 'STOCKS-and-Shares'), root(stocks));
+    wire();
+    check('a cwd typed in a different case resolves to the sub-project as listed',
+      root(join(pf, 'Stocks-And-Shares', 'scripts')) === stocks, root(join(pf, 'Stocks-And-Shares', 'scripts')));
+    wire();
+  } else console.log('skip  case-insensitivity checks (this volume is case-sensitive)');
+
+  // Symlinked ancestor: the repo is reached through a link, the row through the real path (and the reverse).
+  const realDeep = join(realRepo, 'deep');
+  wireRows([realDeep]);
+  check('a cwd under a symlinked ancestor resolves to the registered sub-project', root(join(projects, 'link', 'deep', 'x')) === realDeep, root(join(projects, 'link', 'deep', 'x')));
+  wireRows([join(projects, 'link', 'deep')]);
+  check('a row under a symlinked ancestor matches a cwd under the real path', root(join(realDeep, 'x')) === join(projects, 'link', 'deep'), root(join(realDeep, 'x')));
+  wire();
 
   // The list is re-read when the file changes, not on every call.
   writeList(['| Personal Finances | `~/Projects/pf` |']);
@@ -129,7 +168,31 @@ async function main() {
   writeList(['| Personal Finances | `~/Projects/pf` |', '| S | `~/Projects/pf/stocks-and-shares` |']);
   utimesSync(listFile, new Date(Date.now() + 9000), new Date(Date.now() + 9000));
   check('the sub-project row added back is picked up', root(stocks) === stocks, root(stocks));
-  // A same-size, same-mtime rewrite is not seen (documented cache key): skipped.
+
+  // Same size, mtime put back: ctime and inode still change, so the rewrite is seen.
+  const swapList = (text, how) => {
+    const mtime = statSync(listFile).mtime;
+    const tmp = `${listFile}.new`;
+    writeFileSync(tmp, text);
+    utimesSync(tmp, mtime, mtime);
+    if (how === 'rename') renameSync(tmp, listFile);
+    else { copyFileSync(tmp, listFile); rmSync(tmp); utimesSync(listFile, mtime, mtime); }
+  };
+  const sameSize = (rows) => ['| Project | Path |', '|---|---|', ...rows, ''].join('\n');
+  const rowsA = ['| P | `~/Projects/pf` |', '| S | `~/Projects/pf/stocks-and-shares` |'];
+  const rowsB = ['| P | `~/Projects/pf` |', '| S | `~/Projects/pf/stocks-and-sharez` |'];
+  mkdirSync(join(pf, 'stocks-and-sharez'), { recursive: true });
+  swapList(sameSize(rowsA), 'copy');
+  check('(setup) list names the sub-project', root(stocks) === stocks);
+  const sub2 = join(pf, 'stocks-and-sharez');
+  const statBefore = statSync(listFile);
+  swapList(sameSize(rowsB), 'rename');
+  const statAfter = statSync(listFile);
+  check('(setup) the replacement keeps the size and the mtime', statAfter.size === statBefore.size && statAfter.mtimeMs === statBefore.mtimeMs, [statBefore.size, statAfter.size, statBefore.mtimeMs, statAfter.mtimeMs]);
+  check('a same-size, same-mtime rename-replace is picked up (inode/ctime in the key)', root(stocks) === pf && root(sub2) === sub2, [root(stocks), root(sub2)]);
+  swapList(sameSize(rowsA), 'copy');
+  check('a same-size, same-mtime in-place rewrite is picked up (ctime in the key)', root(stocks) === stocks && root(sub2) === pf, [root(stocks), root(sub2)]);
+  rmSync(join(pf, 'stocks-and-sharez'), { recursive: true });
 
   // A setting naming another list file; a missing, directory or unreadable list.
   rmSync(listFile);
@@ -137,17 +200,59 @@ async function main() {
   mkdirSync(listFile);
   check('list path is a folder: the old result', root(stocks) === pf, root(stocks));
   rmSync(listFile, { recursive: true });
-  m.setRegisteredProjectPaths(() => { throw new Error('boom'); });
+  m.setRegisteredProjects(() => { throw new Error('boom'); });
   check('a failing source: the old result', root(stocks) === pf, root(stocks));
-  m.setRegisteredProjectPaths(() => m.registeredProjectPaths(join(work, 'nowhere', 'list.md')));
+  root(stocks); root(stocks);
+  check('a failing source warns once, not on every call', logs.filter((l) => String(l[0]).includes('Registered project list unavailable')).length === 1);
+  wire(join(work, 'nowhere', 'list.md'));
   check('a setting naming a missing file: the old result', root(stocks) === pf);
-  m.setRegisteredProjectPaths(() => ['relative/path', '/x/../y', `${stocks}`]);
+  wireRows(['relative/path', '/x/../y', `${stocks}`]);
   check('unsafe registered paths are skipped, a good one still counts', root(stocks) === stocks);
 
+  // A setting naming a second, existing list file decides which list is read
+  // (so `cache.file === file` matters), and a change of setting switches at once.
+  const list2 = join(work, 'other-list.md');
+  writeFileSync(list2, ['| Project | Path |', '|---|---|', '| Em | `~/Projects/pf/em` |', ''].join('\n'));
+  writeList(['| P | `~/Projects/pf` |', '| S | `~/Projects/pf/stocks-and-shares` |']);
+  wire();
+  check('default list: stocks-and-shares registered, em not', root(stocks) === stocks && root(em) === pf, [root(stocks), root(em)]);
+  wire(list2);
+  check('setting names a second list: its rows apply, the default list\'s do not', root(em) === em && root(stocks) === pf, [root(em), root(stocks)]);
+  m.setProjectListSetting('~/.claude/projects.md');
+  check('the tilde form of the default list switches back', root(stocks) === stocks && root(em) === pf);
+  wire();
+
+  // Problems with the list are logged once per file and reason, not per call.
+  const problemLogs = () => logs.filter((l) => l[0] === '[PROJECTS] Registered project list gives no projects');
+  const p0 = problemLogs().length;
+  wire(join(work, 'absent.md'));
+  root(stocks); root(stocks); root(stocks);
+  check('an unreadable list is logged once', problemLogs().length === p0 + 1 && problemLogs().at(-1)[1].reason === 'unreadable', problemLogs().slice(p0).map((l) => l[1]));
+  const big = join(work, 'big.md');
+  writeFileSync(big, 'x'.repeat(1024 * 1024 + 1));
+  wire(big);
+  root(stocks); root(stocks);
+  check('an oversize list is logged once', problemLogs().length === p0 + 2 && problemLogs().at(-1)[1].reason === 'too large', problemLogs().slice(p0).map((l) => l[1]));
+  const empty = join(work, 'empty.md');
+  writeFileSync(empty, '| Project | Path |\n|---|---|\n| Gone | `~/Projects/nowhere` |\n');
+  wire(empty);
+  root(stocks); root(stocks);
+  check('a list with no usable rows is logged once', problemLogs().length === p0 + 3 && problemLogs().at(-1)[1].reason === 'no usable rows', problemLogs().slice(p0).map((l) => l[1]));
+  wire();
+
+  // The lookup does not stat or realpath each row: with 300 rows, each lookup stays fast.
+  const manyRows = Array.from({ length: 300 }, (_, i) => `| P${i} | \`~/Projects/pf/em\` |`);
+  writeList(['| P | `~/Projects/pf` |', ...manyRows]);
+  root(stocks);
+  const t0 = process.hrtime.bigint();
+  for (let i = 0; i < 200; i++) root(stocks);
+  const perCallMs = Number(process.hrtime.bigint() - t0) / 1e6 / 200;
+  check('a warm lookup with 300 rows is well under the 4 ms the settings store cost', perCallMs < 1, perCallMs);
+
   // --- openProject: a session in the sub-project is not an open session of the parent ---
-  m.setRegisteredProjectPaths(null);
+  m.setRegisteredProjects(null);
   const oldProject = m.resolveProject(join(stocks, 'scripts'));
-  m.setRegisteredProjectPaths(() => [stocks, em]);
+  wireRows([stocks, em]);
   const newProject = m.resolveProject(join(stocks, 'scripts'));
   await build({
     entryPoints: [join(repo, 'src/renderer/services/open-project.ts')],
@@ -185,6 +290,17 @@ async function main() {
   check('opening the sub-project still goes to its own session', r3.action === 'went to existing session', r3.action);
   const r4 = await op.openProject(makeHost([session(m.resolveProject(pf), pf)]).host, stocks, '[T]', 'Stocks');
   check('a parent session present: opening the sub-project makes a new tab', r4.action === 'new tab', r4.action);
+
+  // --- Production wiring (source assertions, as check-pty-respawn.mjs does for its handlers) ---
+  const ipc = readFileSync(join(repo, 'src/main/ipc-handlers.ts'), 'utf8');
+  const afterSaved = ipc.slice(ipc.indexOf('function afterSettingsSaved'), ipc.indexOf('// --- Notes scratchpad'));
+  check('wiring: handlers register the registered-project source', ipc.includes('setRegisteredProjects(() => registeredProjects())'));
+  check('wiring: the list-file setting is set once when the handlers register',
+    /setProjectListSetting\(store\.getSettings\(\)\.projectListFile\);\s*\n\s*setRegisteredProjects\(/.test(ipc));
+  check('wiring: a saved projectListFile updates it (afterSettingsSaved)',
+    /'projectListFile' in saved/.test(afterSaved) && /setProjectListSetting\(store\.getSettings\(\)\.projectListFile\)/.test(afterSaved));
+  check('wiring: a lookup never reads the settings store (no getSettings inside the source callback)',
+    !/setRegisteredProjects\(\(\) => [^\n]*getSettings/.test(ipc));
 
   rmSync(work, { recursive: true, force: true });
   console.log(`\n${passed} passed, ${failed} failed`);

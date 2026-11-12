@@ -28,45 +28,57 @@ export function resolveProject(cwd: string): ProjectInfo | null {
   return registeredSubProject(resolve(cwd), base) ?? base;
 }
 
-/** Where the registered project folders come from (the project list), set once
+/** Where the registered project folders come from (the project list, each with
+ *  its real path resolved ahead of time: see registered-projects.ts), set once
  *  by the IPC layer; unset = none registered. */
-let registeredPaths: (() => readonly string[]) | null = null;
-export function setRegisteredProjectPaths(source: (() => readonly string[]) | null): void {
-  registeredPaths = source;
+let registeredSource: (() => readonly { path: string; real: string }[]) | null = null;
+export function setRegisteredProjects(source: (() => readonly { path: string; real: string }[]) | null): void {
+  registeredSource = source;
 }
 
+const MAX_LOGGED_OVERRIDES = 500;
 const loggedOverrides = new Set<string>();
+let warnedSourceFailure = false;
+let warnedOverrideCap = false;
 
 /**
  * The deepest registered project that equals or contains `start` and lies
  * strictly inside `base.root`, as a project; else null. Compared on real paths
- * (symlinks resolved), the project reported as the list writes it. A registered
- * folder that doesn't exist is ignored.
+ * (symlinks resolved, on-disk case), the project reported as the list writes it.
+ * The registered rows' real paths are already resolved, so only the two paths
+ * of this lookup are touched on disk. A registered folder that doesn't exist
+ * is ignored.
  */
 function registeredSubProject(start: string, base: ProjectInfo): ProjectInfo | null {
-  if (!registeredPaths) return null;
-  let candidates: readonly string[];
+  if (!registeredSource) return null;
+  let candidates: readonly { path: string; real: string }[];
   try {
-    candidates = registeredPaths();
+    candidates = registeredSource();
   } catch (err) {
-    console.warn('[PROJECTS] Registered project list unavailable', { err: String(err) });
+    if (!warnedSourceFailure) {
+      warnedSourceFailure = true;
+      console.warn('[PROJECTS] Registered project list unavailable (logged once)', { err: String(err) });
+    }
     return null;
   }
   if (candidates.length === 0) return null;
   const realBase = realOrSelf(base.root);
   const realStart = realOrSelf(start);
   let best: { path: string; real: string } | null = null;
-  for (const raw of candidates) {
-    if (!isSafeAbsolutePath(raw)) continue;
-    const path = resolve(raw);
-    const real = realPath(path);
-    if (!real || real === realBase || !isInside(real, realBase) || !isInside(realStart, real)) continue;
-    if (!best || real.length > best.real.length) best = { path, real };
+  for (const candidate of candidates) {
+    const { real } = candidate;
+    if (real === realBase || !isInside(real, realBase) || !isInside(realStart, real)) continue;
+    if (!best || real.length > best.real.length) best = candidate;
   }
   if (!best) return null;
-  if (!loggedOverrides.has(start) && loggedOverrides.size < 500) {
-    loggedOverrides.add(start);
-    console.info('[PROJECTS] Registered sub-project overrides the repo root', { cwd: start, repo: base.root, project: best.path });
+  if (!loggedOverrides.has(start)) {
+    if (loggedOverrides.size < MAX_LOGGED_OVERRIDES) {
+      loggedOverrides.add(start);
+      console.info('[PROJECTS] Registered sub-project overrides the repo root', { cwd: start, repo: base.root, project: best.path });
+    } else if (!warnedOverrideCap) {
+      warnedOverrideCap = true;
+      console.info('[PROJECTS] Override log cap reached; further overrides are not logged', { cap: MAX_LOGGED_OVERRIDES });
+    }
   }
   return projectAt(best.path);
 }
@@ -76,9 +88,11 @@ function isInside(child: string, parent: string): boolean {
   return child === parent || child.startsWith(parent.endsWith(sep) ? parent : parent + sep);
 }
 
+/** Native realpath: it also returns the case the disk holds, which the plain
+ *  one does not on this case-insensitive volume. */
 function realPath(p: string): string | null {
   try {
-    return realpathSync(p);
+    return realpathSync.native(p);
   } catch {
     return null;
   }

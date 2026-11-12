@@ -5,8 +5,8 @@ import { homedir, hostname } from 'node:os';
 import { basename, join } from 'node:path';
 import { IPC, uiTextScaleOf } from '../shared/constants';
 import { PtyManager } from './pty-manager';
-import { isSafeAbsolutePath, resolveProject, setRegisteredProjectPaths } from './projects';
-import { registeredProjectPaths } from './registered-projects';
+import { isSafeAbsolutePath, resolveProject, setRegisteredProjects } from './projects';
+import { registeredProjects, setProjectListSetting } from './registered-projects';
 import { getHookStatus, installHook, refreshInstalledScript, removeHook, type ClaudeHookPaths } from './claude-hook';
 import { getResourcesPath } from './resources-path';
 import * as store from './store';
@@ -393,6 +393,11 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
     if ('uiTextScale' in saved) {
       broadcastUiTextScale(uiTextScaleOf(store.getSettings().uiTextScale));
     }
+    // The project list's file, which resolveProject reads without touching the
+    // settings store. Read back, so a refused value leaves the kept one.
+    if ('projectListFile' in saved) {
+      setProjectListSetting(store.getSettings().projectListFile);
+    }
   }
 
   // --- Notes scratchpad ---
@@ -415,14 +420,18 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
   // --- Project names ---
   // A tab is named after the project its folder belongs to (see projects.ts).
   // Renaming a project updates its tabs in every window.
-  // A lookup is a handful of existsSync calls, so the cap is generous: restoring
+  // A lookup is a handful of existsSync and realpath calls, so the cap is generous: restoring
   // a full session (100 tabs, the session cap) looks up every tab at once, and
   // now every pane too (up to 5 per tab).
   // Failures throw rather than return null, so the renderer can tell "couldn't
   // check" (keep the current name) from "not in a project".
   // A registered sub-project (a row of the project list inside a repo) is its
   // own project, not the repo's: resolveProject reads the list through this.
-  setRegisteredProjectPaths(() => registeredProjectPaths(store.getSettings().projectListFile));
+  // The list-file setting is held in registered-projects.ts (set here, and by
+  // afterSettingsSaved when it changes), so a lookup is a stat of the list file
+  // and string comparison, not a read and decrypt of the settings store.
+  setProjectListSetting(store.getSettings().projectListFile);
+  setRegisteredProjects(() => registeredProjects());
   const projectResolveLimiter = new RateLimiter(100);
   ipcMain.handle(IPC.PROJECT_RESOLVE, (_event, cwd: unknown) => {
     if (!isSafeAbsolutePath(cwd)) {
