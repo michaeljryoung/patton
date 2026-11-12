@@ -698,3 +698,19 @@ _Earlier entries archived → `docs/session-archive.md` (latest trim 2026-11-08,
 - **After that checkpoint:** v1.20.0 released 10:38 once GitHub recovered (a watcher waited for both Electron files to answer steadily; attempt 6, cask `4bd781de…` verified); CLAUDE.md slimmed 34,674 → 19,490 by moving rare-task gotchas, Key Files and the S43/S44 entries word for word to `docs/reference/` and the archive (`cf7fc73`).
 
 _Earlier entries archived → `docs/session-archive.md` (latest trim 2026-11-12, S49)._
+
+## Session Log (S49 trim 2026-11-12)
+
+### 2026-11-10 (Session 47 — the Pause all button, from a `~` session)
+- **The ask:** after his shut laptop overheated with sessions' jobs still running, "can we actually add a button in patton in top right (pushing the checkpoint one to left) which pauses all tabs?"; then, on drafts, "even if there is text in the line we still need to pause but then ideally put the text back".
+- **Built in `.worktrees/pause-all`:** builder (`8a59c5d`) → fresh review (request changes: default-allow pane states, a stale title-path stop flag, `pause` appended to drafts, skips counted not named, resume keyed by pane id only, late and dead windows, silent failures, hand-set test fields) → fix builders (`655ab78`, `6adaf6c`). Main-side unsent-input tracker in `PTY_WRITE` (`src/main/unsent-input.ts`), `stash-key.ts`, coordinator `src/main/pause-all.ts`, `src/renderer/services/pause-all.ts`; the checkpoint button uses the same stash path.
+- **Verified:** lint, tsc, `npm run check` 16/16 (`check-pause-all.mjs` 122 checks on real Panes and main's real tracker), no-install asar 11:57:37; /Applications untouched (8 Nov 09:16). Merged to main `--ff-only` (no post-commit), worktree and branch removed; not pushed, not installed.
+- **Process:** two fix builders ran out of context, one reading Claude Code's binary; the next two, briefed with the design settled (code first, then tests), landed.
+
+_Earlier entries archived → `docs/session-archive.md` (latest trim 2026-11-12, S50)._
+
+## Decisions (S49 trim 2026-11-12)
+
+- **2026-11-10 (S48) — The selected tab gets the terminal's ground and an ink bar; `wake`'s tab moves left once per run.** Michael asked only that the selected tab be clear and that `wake` "always shift it to first tab on left". The treatment (`--bg` against the strip's `--surface`, a 3 px inset ink bar, bold kept, no colour of its own so it never reads as a flag) and the once-per-run rule (a drag while wake runs sticks, the tab stays put when wake ends, wake started again moves it again) are my calls, not his words: flip either if it reads wrong in use.
+
+- **2026-11-10 (S47) — Pause all types the exact words, and a draft goes to Claude Code's stash.** The estate's scope-reminder hook acts only on a bare `pause` or `resume`, so the button sends those words rather than signalling processes. Michael: "even if there is text in the line we still need to pause but then ideally put the text back": Ctrl+S (`chat:stash` in Claude Code 2.1.321) sets the draft aside and Claude Code restores it after the submit. A pane where a stash may already exist (his own Ctrl+S in this session, Patton's not yet followed by his submit, a rebound key) is skipped and named, because Ctrl+S on an empty line brings back an old stash. (S49: Resume all removed, see the S49 decision.) Sending follows an allowlist of states, never default-allow.
