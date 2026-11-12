@@ -5,6 +5,7 @@ import { HistoryManager } from '../services/history-manager';
 import { projectName } from '../services/project-names';
 import { rlog } from '../services/renderer-logger';
 import { formatProjectTitle } from '../services/sessions';
+import { shortTabName } from '../services/tab-name';
 import {
   splitPane as splitPaneInTree,
   closePane as closePaneInTree,
@@ -462,6 +463,16 @@ export class Tab {
   get autoTitle(): string {
     if (this._cover) return COVERED_TAB_TITLE;
     return this._project ? projectTitle(this._project) : this._focusedPane.title;
+  }
+
+  /** What the tab strip writes on the tab. A name the user typed, a project's
+   *  name (or the user's default for it) and the board's "Projects" are shown
+   *  whole; a title the program in the pane set is cut to 15 characters
+   *  (tab-name.ts). `title` stays the full name for the tooltip, the screen
+   *  reader label, the hover card and the close dialogs. */
+  get displayTitle(): string {
+    if (this._customTitle || this._cover || this._project) return this.title;
+    return shortTabName(this.title);
   }
 
   /** Recompute the displayed title — after a title, folder or project-name

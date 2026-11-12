@@ -30,6 +30,10 @@ export interface TabBarCallbacks {
 interface TabHeaderInfo {
   id: string;
   title: string;
+  /** What the tab strip writes on the tab, when shorter than `title` (an
+   *  automatic name cut to 15 characters); `title` stays the tooltip, the
+   *  accessible name and the rename box's value. */
+  displayTitle?: string;
   /** What the tab shows without a name of its own — the rename box's placeholder. */
   autoTitle?: string;
   /** The tab's project, if it is in one: its current and automatic names. */
@@ -445,9 +449,10 @@ export class TabBar {
 
       const titleSpan = document.createElement('span');
       titleSpan.className = 'tab-bar-tab-title';
-      titleSpan.textContent = tab.title;
+      const shown = tab.displayTitle ?? tab.title;
+      titleSpan.textContent = shown;
       // Reserves the bold (active) width in CSS so switching tabs doesn't shift the rest.
-      titleSpan.dataset.title = tab.title;
+      titleSpan.dataset.title = shown;
       el.appendChild(titleSpan);
 
       // Double-click to rename this one tab

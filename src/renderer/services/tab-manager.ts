@@ -1073,6 +1073,7 @@ export class TabManager {
       this.tabs.map(t => ({
         id: t.id,
         title: t.title,
+        displayTitle: t.displayTitle,
         autoTitle: t.autoTitle,
         project: t.project ? { name: projectName(t.project), defaultName: t.project.defaultName } : null,
         active: t.id === this.activeTab?.id,

@@ -313,6 +313,36 @@ async function main() {
   const restored = await tm2.restoreSession(false);
   check('restored tab: no board', restored && tm2.getTabs().length === 1 && !tm2.getTabs()[0].hasCover && made() === before);
 
+  // --- tab names (12 Nov: "it should always default to 10 to 15 characters max") ---
+  // An automatic name (the title a program sets) shows at most 15 characters, the
+  // full one stays the tab's tooltip; a typed name and a project's name stay whole.
+  {
+    const rt = tm2.getTabs()[0];
+    const spanOf = () => tm2Bar.querySelector('.tab-bar-tab[data-tab-id="' + rt.id + '"]');
+    const LONG = 'Repeated permission prompts';
+    rt.focusedPane.title = LONG;
+    rt.refreshTitle();
+    const el = spanOf();
+    const span = el.querySelector('.tab-bar-tab-title');
+    check('tab names: a long program title keeps the full name on the tab', rt.title === LONG, rt.title);
+    check('tab names: ...but the tab strip writes 15 characters at most', rt.displayTitle === 'Repeated permi…' && span.textContent === 'Repeated permi…' && span.dataset.title === 'Repeated permi…', { display: rt.displayTitle, span: span.textContent, data: span.dataset.title });
+    check('tab names: the tooltip and the accessible name carry the full title', el.getAttribute('aria-label') === LONG && (el.title === LONG || el.title === ''), { aria: el.getAttribute('aria-label'), title: el.title });
+    rt.focusedPane.title = 'bash';
+    rt.refreshTitle();
+    check('tab names: a short title is shown as it is', rt.displayTitle === 'bash' && spanOf().querySelector('.tab-bar-tab-title').textContent === 'bash');
+    rt.setCustomTitle('A name I typed myself');
+    check('tab names: a name the user typed is shown whole', rt.displayTitle === 'A name I typed myself' && spanOf().querySelector('.tab-bar-tab-title').textContent === 'A name I typed myself');
+    rt.clearCustomTitle();
+    rt.focusedPane.title = LONG;
+    rt.refreshTitle();
+    rt['_project'] = { root: '/tmp/a-project-with-a-long-folder-name', defaultName: 'a-project-with-a-long-folder-name' };
+    rt.refreshTitle();
+    check('tab names: a project\'s name is shown whole, however long', rt.title === 'a-project-with-a-long-folder-name' && rt.displayTitle === rt.title && spanOf().querySelector('.tab-bar-tab-title').textContent === rt.title, { title: rt.title, display: rt.displayTitle });
+    rt['_project'] = null;
+    rt.refreshTitle();
+    check('tab names: leaving the project goes back to the short title', rt.displayTitle === 'Repeated permi…', rt.displayTitle);
+  }
+
   // --- last tab is never discarded ---
   check('discardTab refuses the last tab', tm2.discardTab(tm2.getTabs()[0].id) === false && tm2.getTabs().length === 1);
   boards2.dispose();
