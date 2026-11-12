@@ -5,7 +5,8 @@ import { homedir, hostname } from 'node:os';
 import { basename, join } from 'node:path';
 import { IPC, uiTextScaleOf } from '../shared/constants';
 import { PtyManager } from './pty-manager';
-import { isSafeAbsolutePath, resolveProject } from './projects';
+import { isSafeAbsolutePath, resolveProject, setRegisteredProjectPaths } from './projects';
+import { registeredProjectPaths } from './registered-projects';
 import { getHookStatus, installHook, refreshInstalledScript, removeHook, type ClaudeHookPaths } from './claude-hook';
 import { getResourcesPath } from './resources-path';
 import * as store from './store';
@@ -419,6 +420,9 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
   // now every pane too (up to 5 per tab).
   // Failures throw rather than return null, so the renderer can tell "couldn't
   // check" (keep the current name) from "not in a project".
+  // A registered sub-project (a row of the project list inside a repo) is its
+  // own project, not the repo's: resolveProject reads the list through this.
+  setRegisteredProjectPaths(() => registeredProjectPaths(store.getSettings().projectListFile));
   const projectResolveLimiter = new RateLimiter(100);
   ipcMain.handle(IPC.PROJECT_RESOLVE, (_event, cwd: unknown) => {
     if (!isSafeAbsolutePath(cwd)) {

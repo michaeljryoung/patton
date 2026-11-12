@@ -54,7 +54,7 @@ const stubs = [
   [/^electron$/, electronStub],
   [/^node:child_process$/, cpStub],
   [/^node:fs$/, fsStub],
-  [/^\.\/projects$/, mk(['isSafeAbsolutePath', 'resolveProject'])],
+  [/^\.\/projects$/, mk(['isSafeAbsolutePath', 'resolveProject', 'setRegisteredProjectPaths'])],
   [/^\.\/claude-hook$/, mk(['getHookStatus', 'installHook', 'removeHook'])],
   [/^\.\/resources-path$/, mk(['getResourcesPath'])],
   [/^\.\/store$/, mk([])],

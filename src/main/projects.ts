@@ -16,8 +16,89 @@ import type { ProjectInfo } from '../shared/types';
  * belongs to its main repository, with `worktree` naming it, so its tab reads
  * "patton ⎇ feat-x" and the main project's bookmark finds it. A submodule stays
  * its own project.
+ *
+ * One exception to "nearest repo": a folder the project list registers lying
+ * strictly inside that root (a sub-project such as personal-finances/em, which
+ * is not a repo of its own) is its own project, so a session there is not an
+ * open session of the parent. See `registeredSubProject`.
  */
 export function resolveProject(cwd: string): ProjectInfo | null {
+  const base = resolveByGit(cwd);
+  if (!base || base.worktree) return base;
+  return registeredSubProject(resolve(cwd), base) ?? base;
+}
+
+/** Where the registered project folders come from (the project list), set once
+ *  by the IPC layer; unset = none registered. */
+let registeredPaths: (() => readonly string[]) | null = null;
+export function setRegisteredProjectPaths(source: (() => readonly string[]) | null): void {
+  registeredPaths = source;
+}
+
+const loggedOverrides = new Set<string>();
+
+/**
+ * The deepest registered project that equals or contains `start` and lies
+ * strictly inside `base.root`, as a project; else null. Compared on real paths
+ * (symlinks resolved), the project reported as the list writes it. A registered
+ * folder that doesn't exist is ignored.
+ */
+function registeredSubProject(start: string, base: ProjectInfo): ProjectInfo | null {
+  if (!registeredPaths) return null;
+  let candidates: readonly string[];
+  try {
+    candidates = registeredPaths();
+  } catch (err) {
+    console.warn('[PROJECTS] Registered project list unavailable', { err: String(err) });
+    return null;
+  }
+  if (candidates.length === 0) return null;
+  const realBase = realOrSelf(base.root);
+  const realStart = realOrSelf(start);
+  let best: { path: string; real: string } | null = null;
+  for (const raw of candidates) {
+    if (!isSafeAbsolutePath(raw)) continue;
+    const path = resolve(raw);
+    const real = realPath(path);
+    if (!real || real === realBase || !isInside(real, realBase) || !isInside(realStart, real)) continue;
+    if (!best || real.length > best.real.length) best = { path, real };
+  }
+  if (!best) return null;
+  if (!loggedOverrides.has(start) && loggedOverrides.size < 500) {
+    loggedOverrides.add(start);
+    console.info('[PROJECTS] Registered sub-project overrides the repo root', { cwd: start, repo: base.root, project: best.path });
+  }
+  return projectAt(best.path);
+}
+
+/** `child` is `parent` or lies inside it (both already resolved). */
+function isInside(child: string, parent: string): boolean {
+  return child === parent || child.startsWith(parent.endsWith(sep) ? parent : parent + sep);
+}
+
+function realPath(p: string): string | null {
+  try {
+    return realpathSync(p);
+  } catch {
+    return null;
+  }
+}
+
+/** The real path of `p`; when its tail doesn't exist (yet), the real path of
+ *  the deepest folder that does, with the tail added back. */
+function realOrSelf(p: string): string {
+  let dir = p;
+  let tail = '';
+  while (dir !== dirname(dir)) {
+    const real = realPath(dir);
+    if (real) return tail ? join(real, tail) : real;
+    tail = tail ? join(basename(dir), tail) : basename(dir);
+    dir = dirname(dir);
+  }
+  return p;
+}
+
+function resolveByGit(cwd: string): ProjectInfo | null {
   const home = homedir();
   const start = resolve(cwd);
 
