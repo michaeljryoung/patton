@@ -11,8 +11,10 @@
 //    control's content height holds one line of its text);
 //  - the xterm terminal and the compose textarea keep their size (both follow
 //    Font Size, not this setting);
-//  - squeezed strip (40 tabs, every tab at its floor): no tab's close button spills
-//    out of its tab, at 1 and 1.5; the active tab is still in view after a size change;
+//  - squeezed strip (40 tabs, every tab at its floor): nothing spills out of a tab's padding
+//    and the close button's box stays inside its tab, at 1 and 1.5;
+//  - Pause all is an icon while idle; the close button takes no room and shows only on a real
+//    hover (sendInputEvent) or Tab-key focus; 13 tabs fit a 1000 px window at 1 and 1.5; the active tab is still in view after a size change;
 //  - the selected tab sits on the terminal's ground with a 3 px ink bar under it, and
 //    a flagged or plain tab has neither (light scheme only: the hidden window's);
 //  - the collapsed bookmarks rail's mark is centred on the header row it stood in;
@@ -181,7 +183,20 @@ function electronMain() {
         webPreferences: { backgroundThrottling: false, contextIsolation: false, nodeIntegration: false },
       });
       await win.loadFile(path.join(outDir, 'page.html'));
+      win.webContents.focus(); // page focus, so :focus and :focus-visible can match; the window stays hidden
+      // The page asks for real input (a hover is not something a script can fake): it sets
+      // window.__inputReq, this poll sends it with sendInputEvent and flags window.__inputDone.
+      const relay = setInterval(async () => {
+        try {
+          const req = await win.webContents.executeJavaScript('window.__inputReq || null');
+          if (!req) return;
+          await win.webContents.executeJavaScript('window.__inputReq = null');
+          win.webContents.sendInputEvent(req);
+          await win.webContents.executeJavaScript('window.__inputDone = true');
+        } catch { /* the window is going away */ }
+      }, 15);
       const result = await win.webContents.executeJavaScript(`(${pageRun.toString()})(${BIG})`);
+      clearInterval(relay);
       // The real preload in a sandboxed, context-isolated window, as main creates it.
       for (const [label, args, want] of [['1.5', ['--patton-ui-scale=1.5'], 1.5], ['0.9', ['--patton-ui-scale=0.9'], 0.9], ['no switch', [], 1], ['a bad switch', ['--patton-ui-scale=7'], 1]]) {
         const w = new BrowserWindow({
@@ -209,6 +224,15 @@ async function pageRun(BIG) {
   const check = (name, ok, detail) => checks.push({ name, ok: Boolean(ok), detail });
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const frame = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  // Real input from outside the page (see electronMain): resolves once Chromium has had it and drawn.
+  const sendInput = async (ev) => {
+    window.__inputDone = false;
+    window.__inputReq = ev;
+    for (let i = 0; i < 200 && !window.__inputDone; i++) await sleep(10);
+    await frame();
+    return window.__inputDone;
+  };
+  const hoverAt = (x, y) => sendInput({ type: 'mouseMove', x: Math.round(x), y: Math.round(y) });
 
   // --- the preload bridge, stubbed: every call answers, the ones the components read answer with data
   const calls = [];
@@ -529,19 +553,24 @@ async function pageRun(BIG) {
     const atFloor = tabEls.filter((t) => Math.abs(t.getBoundingClientRect().width - parseFloat(getComputedStyle(t).minWidth)) <= 0.5).length;
     const both = tabEls.filter((t) => t.querySelector('.checkpoint-done') && t.querySelector('[class*="flag-"]'));
     check(`squeezed strip x${s}: all 40 tabs sit at their own floor (${floor}px plain; a flag with the red circle has a taller one)`, tabEls.length === 40 && atFloor === 40 && both.length === 1, { tabs: tabEls.length, atFloor, floor, both: both.length });
+    // The close button is out of the tab's flow (13 Nov: shown only on hover, overlaid on the
+    // tab's right end), so nothing in the flow may spill instead: the close button's box stays
+    // inside its tab, and the dot, flag, red circle and title all end inside the tab's padding.
     const spills = [];
     for (const t of tabEls) {
       const close = t.querySelector('.tab-bar-tab-close');
       if (!close) { spills.push({ tab: t.dataset.tabId, why: 'no close button' }); continue; }
       const tr = t.getBoundingClientRect();
       const cr = close.getBoundingClientRect();
-      const cs = getComputedStyle(close);
       const ts = getComputedStyle(t);
-      const closeEnd = cr.right + parseFloat(cs.marginRight); // the drawn close button's right edge
       const contentEnd = tr.right - parseFloat(ts.paddingRight);
-      if (closeEnd > contentEnd + 0.5) spills.push({ tab: t.dataset.tabId, over: +(closeEnd - contentEnd).toFixed(1), tabW: tr.width });
+      if (cr.left < tr.left - 0.5 || cr.right > tr.right + 0.5) spills.push({ tab: t.dataset.tabId, why: 'close box outside the tab', cl: cr.left - tr.left, cr: cr.right - tr.right });
+      for (const el of t.querySelectorAll('.tab-bar-tab-indicator, .tab-bar-tab-title')) {
+        const er = el.getBoundingClientRect();
+        if (er.right > contentEnd + 0.5) spills.push({ tab: t.dataset.tabId, el: el.className, over: +(er.right - contentEnd).toFixed(1), tabW: tr.width });
+      }
     }
-    check(`squeezed strip x${s}: no close button spills out of its tab's padding`, spills.length === 0, spills.slice(0, 4));
+    check(`squeezed strip x${s}: nothing spills out of a tab's padding, and the close button's box stays inside its tab`, spills.length === 0, spills.slice(0, 4));
 
     // The blank spacer beside + (12 Nov: "nowhere I can click in the top bar"): present
     // however full the strip is, as wide as +, between + and the checkpoint clock,
@@ -633,10 +662,8 @@ async function pageRun(BIG) {
         const span = t.querySelector('.tab-bar-tab-title');
         const sr = span.getBoundingClientRect();
         const dot = t.querySelector('.tab-bar-tab-indicator');
-        const close = t.querySelector('.tab-bar-tab-close');
         const wantLeft = dot ? dot.getBoundingClientRect().right + gap : tr.left + parseFloat(ts.paddingLeft);
-        const cr = close.getBoundingClientRect();
-        const wantRight = cr.left - parseFloat(getComputedStyle(close).marginLeft) - gap;
+        const wantRight = tr.right - parseFloat(ts.paddingRight); // the close button is out of the flow: the title runs to the right padding
         const chars = visibleChars(span);
         const need = Math.min(6, span.textContent.length);
         const firstEl = dot || span;
@@ -646,7 +673,7 @@ async function pageRun(BIG) {
         if (Math.abs(row.first) > 2 || Math.abs(row.left) > 2 || Math.abs(row.right) > 2 || (tr.width >= 120 && chars < need)) bad.push(row);
         if (s === 1 && winW === 820) measured.push(row);
       }
-      check(`label layout (${winW}px window, x${s}): the dot or title starts at the left padding, every title starts after its dot, ends at its close button, shows 6 characters from a 120px tab`, bad.length === 0 && strip.querySelectorAll('.tab-bar-tab').length === 6, { bad: bad.slice(0, 3), widest });
+      check(`label layout (${winW}px window, x${s}): the dot or title starts at the left padding, every title starts after its dot, ends at the right padding, shows 6 characters from a 120px tab`, bad.length === 0 && strip.querySelectorAll('.tab-bar-tab').length === 6, { bad: bad.slice(0, 3), widest });
     }
   }
   check('label layout: measurements of the 820px window at x1 (for the record)', measured.length === 6, measured);
@@ -713,11 +740,12 @@ async function pageRun(BIG) {
   // and dot visible with crowded tabs showing 1 to 3 letters, he chose "all tabs visible"). With a
   // mix of dots (needs-you, a flag, the red circle, the parked ring) and one active tab, at x1 and
   // x1.5: no horizontal scrolling, every tab and every dot inside the strip.
-  // MEASURED LIMIT: this holds only from a ~1200 px window (x1) / ~1300 px (x1.5). In the 820 px
-  // window the strip is 508 px (458 at x1.5) after the 78 px traffic-light padding, the settings
-  // button, + and the spacer, the clock and the 110 px Pause all, against 13 floors of 63 px
-  // (70 at x1.5): the strip scrolls, so 820 is not asserted. A tab at its floor shows no label
-  // at all (the floor is the chrome: 2 px left), so "at least one character" is not asserted either.
+  // MEASURED LIMIT (13 Nov, after Pause all became an icon and the close button left the flow):
+  // all 13 fit from 830 px (x1) / 860 px (x1.5), asserted at 1000 px; before, 1100 / 1220 with the
+  // icon alone, ~1200 / ~1300 with the words and a close button a tab. The 13
+  // floors are 42 px each (58 with a flag and the red circle) against what the traffic-light
+  // padding, settings button, +, spacer, clock and icon leave of the window, so an 820 px window
+  // is ~10 px short at x1 and is not asserted. A tab at its floor shows no label at all.
   const thirteen = Array.from({ length: 13 }, (_, i) => ({
     id: `k${i + 1}`,
     title: ['Repeated permission prompts', 'Calendly personal Gmail', 'generated report build', 'Fixing the flaky test suite', 'bash', 'Refactor tab strip layout', 'wake', 'ssh prod-db', 'npm run check', 'Draft the quarterly note', 'git rebase main', 'Patton tabs', 'claude'][i],
@@ -727,7 +755,8 @@ async function pageRun(BIG) {
     parked: i === 1 || i === 8 ? { tasks: 1, crons: 0 } : undefined,
     awaitingInput: i === 0 || i === 10,
   }));
-  for (const [winW, s] of [[1200, 1], [1300, BIG]]) {
+  // Fit test for one window width and scale: no horizontal scrolling, every tab and dot inside the strip.
+  const fits = async (winW, s) => {
     barEl.style.width = `${winW}px`;
     barEl.style.flex = 'none';
     await setScale(s);
@@ -744,12 +773,97 @@ async function pageRun(BIG) {
         inStrip: tr.left >= sr.left - 0.5 && tr.right <= sr.right + 0.5,
         dotInTab: !dr || (dr.left >= tr.left - 0.5 && dr.right <= tr.right + 0.5 && dr.width > 0),
         dotInStrip: !dr || (dr.left >= sr.left - 0.5 && dr.right <= sr.right + 0.5),
-              });
+      });
     }
     const info = { stripW: +sr.width.toFixed(1), scrollW: strip.scrollWidth, scrolls: strip.scrollWidth > strip.clientWidth + 0.5, widths: rows.map((r) => r.w) };
     const bad = rows.filter((r) => !r.inStrip || !r.dotInTab || !r.dotInStrip);
-    check(`13 tabs in a ${winW}px window, x${s}: all fit with no scrolling, every tab and dot inside the strip`, rows.length === 13 && !info.scrolls && bad.length === 0, { bad: bad.slice(0, 4), ...info });
+    return { ok: rows.length === 13 && !info.scrolls && bad.length === 0, bad: bad.slice(0, 4), ...info };
+  };
+  const minFit = {};
+  for (const s of [1, BIG]) {
+    let found = null;
+    for (let w = 500; w <= 1500 && !found; w += 10) if ((await fits(w, s)).ok) found = w;
+    minFit[s] = found;
   }
+  check('13 tabs: the smallest window width (10px steps) at which all fit, x1 and x' + BIG + ' (was ~1200 and ~1300 before 13 Nov)', minFit[1] !== null && minFit[BIG] !== null, minFit);
+  for (const [winW, s] of [[1000, 1], [1000, BIG]]) {
+    const r = await fits(winW, s);
+    const { ok, ...detail } = r;
+    check(`13 tabs in a ${winW}px window, x${s}: all fit with no scrolling, every tab and dot inside the strip`, ok, detail);
+  }
+
+  // --- the close button: out of the flow, shown only over its tab (13 Nov: ~20 px a tab back).
+  // Hover is real: the page asks main for a mouseMove through sendInputEvent (see electronMain).
+  // The command palette check above leaves its overlay open over the whole window, which
+  // would take every hover: close it for this section and put it back after.
+  const overlays = [...document.querySelectorAll('.visible')].filter((e) => /overlay|backdrop/.test(e.className));
+  for (const o of overlays) o.classList.remove('visible');
+  barEl.style.width = '1200px';
+  barEl.style.flex = 'none';
+  const hoverTabs = [
+    { id: 'h1', title: 'Repeated permission prompts', active: false },
+    { id: 'h2', title: 'Calendly personal Gmail', active: true },
+    { id: 'h3', title: 'bash', active: false },
+  ];
+  for (const s of [1, BIG]) {
+    await setScale(s);
+    tabBar.update(hoverTabs);
+    await frame();
+    const tabOf = (id) => strip.querySelector(`.tab-bar-tab[data-tab-id="${id}"]`);
+    const closeOf = (id) => tabOf(id).querySelector('.tab-bar-tab-close');
+    const centre = (el) => { const r = el.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; };
+    const state = (id) => {
+      const c = closeOf(id);
+      const cs = getComputedStyle(c);
+      const [cx, cy] = centre(c);
+      return { opacity: cs.opacity, events: cs.pointerEvents, position: cs.position, hit: document.elementFromPoint(cx, cy) === c };
+    };
+    // Pointer parked over the terminal area, away from every tab.
+    const [px, py] = [600, 700];
+    await hoverAt(px, py);
+    const rows = ['h1', 'h2', 'h3'].map((id) => {
+      const t = tabOf(id);
+      const tr = t.getBoundingClientRect();
+      const ts = getComputedStyle(t);
+      const title = t.querySelector('.tab-bar-tab-title').getBoundingClientRect();
+      return { id, gap: +(tr.right - parseFloat(ts.paddingRight) - title.right).toFixed(1), ...state(id) };
+    });
+    check(`close x${s}: no tab is hovered, so no close button is visible (selected tab included), none takes a click`, rows.every((r) => r.opacity === '0' && r.events === 'none' && !r.hit), rows);
+    check(`close x${s}: without hover it takes no room: every label's right edge reaches the tab's right padding (within 2px), and the button is out of the flow`, rows.every((r) => Math.abs(r.gap) <= 2 && r.position === 'absolute'), rows);
+    const hovered = {};
+    for (const id of ['h1', 'h2', 'h3']) {
+      const [tx, ty] = centre(tabOf(id).querySelector('.tab-bar-tab-title'));
+      await hoverAt(tx, ty);
+      hovered[id] = { self: state(id), others: ['h1', 'h2', 'h3'].filter((o) => o !== id).map((o) => state(o).opacity), isHover: tabOf(id).matches(':hover') };
+    }
+    check(`close x${s}: hovering a tab (real mouseMove) shows its own close button, reachable at its centre, and no other tab's`, Object.values(hovered).every((h) => h.isHover && h.self.opacity === '1' && h.self.events === 'auto' && h.self.hit && h.others.every((o) => o === '0')), hovered);
+    // The button sits on the tab's own ground and inside the tab, over its right end.
+    await hoverAt(...centre(tabOf('h1').querySelector('.tab-bar-tab-title')));
+    const c1 = closeOf('h1'); const t1 = tabOf('h1');
+    await sleep(300); // both backgrounds transition (0.12-0.15 s)
+    const hoverGround = getComputedStyle(t1).backgroundColor;
+    const cr = c1.getBoundingClientRect(); const tr1 = t1.getBoundingClientRect();
+    check(`close x${s}: hovered, it paints the tab's hover ground and lies inside the tab's right end`, getComputedStyle(c1).backgroundColor === hoverGround && cr.right <= tr1.right + 0.5 && cr.left > tr1.left + tr1.width / 2, { close: getComputedStyle(c1).backgroundColor, tab: hoverGround, cr: [cr.left, cr.right], tabBox: [tr1.left, tr1.right] });
+    await hoverAt(px, py);
+    // Keyboard: Tab onto the close button of an unhovered tab shows it (:focus-visible).
+    const c3 = closeOf('h3');
+    await sendInput({ type: 'keyDown', keyCode: 'Tab' });
+    await sendInput({ type: 'keyUp', keyCode: 'Tab' });
+    const reached = [];
+    for (let i = 0; i < 40 && document.activeElement !== c3; i++) {
+      if (document.activeElement && document.activeElement.classList.contains('tab-bar-tab-close')) reached.push(document.activeElement.getAttribute('aria-label'));
+      await sendInput({ type: 'keyDown', keyCode: 'Tab' });
+      await sendInput({ type: 'keyUp', keyCode: 'Tab' });
+    }
+    const kf = { focused: document.activeElement === c3, focusVisible: c3.matches(':focus-visible'), pageFocus: document.hasFocus(), ...state('h3'), hovered: tabOf('h3').matches(':hover') };
+    check(`close x${s}: Tab-key focus on an unhovered tab's close button shows it and keeps it clickable (keyboard users can still reach it)`, kf.focused && kf.focusVisible && !kf.hovered && kf.opacity === '1' && kf.events === 'auto' && kf.hit, { ...kf, reached });
+    if (document.activeElement) document.activeElement.blur();
+  }
+  tabBar.update([{ id: 'solo', title: 'only tab', active: true }]);
+  await frame();
+  check('close: a single tab has no close button', strip.querySelectorAll('.tab-bar-tab-close').length === 0);
+  await hoverAt(600, 700);
+  for (const o of overlays) o.classList.add('visible');
   tabBar.update(withActive('m1'));
   barEl.style.width = '';
   barEl.style.flex = '';

@@ -80,15 +80,17 @@
   flex: 0 1 auto;
   /* Floor = the tab's own chrome, so nothing spills into the next tab when the
      title has shrunk to nothing (the title is overflow:hidden, so it gives way
-     first): padding 12+12, dot 9, close ~14, and two 7 px gaps (dot-title,
-     title-close) = 24 + 9 + 14 + 14 = 61; 63 adds 2 px of slack. The drag grip
-     is out of the flow (below), so it adds nothing. The close is font-sized,
-     so 14 px of it scales with Interface Text Size; the rest is fixed. Not
-     clipped with overflow, which would cut the needs-you dot's 6 px glow. The
-     hover tooltip names the tab at this width. */
-  min-width: calc(49px + 14px * var(--ui-scale));
+     first): padding 12+12, dot 9 and the one 7 px gap (dot-title) = 24 + 9 + 7
+     = 40; 42 adds 2 px of slack. The close button is out of the flow (below) and
+     so is the drag grip, so neither adds anything; the floor no longer scales
+     with Interface Text Size. Not clipped with overflow, which would cut the
+     needs-you dot's 6 px glow. The hover tooltip names the tab at this width. */
+  min-width: 42px;
   max-width: 220px;
   background: transparent;
+  /* What the close button paints under itself, so the label's last characters
+     don't show through it: the tab's own ground in each state. */
+  --tab-bg: var(--surface);
   cursor: pointer;
   font-size: calc(var(--ui) - 1px * var(--ui-scale));
   color: var(--muted);
@@ -100,10 +102,9 @@
 }
 
 /* A manual flag's square AND the red circle: a second 9 px indicator and its
-   7 px gap on the floor above (measured: the close button spilled 15.6 px at
-   x1 and 13 px at x1.5 on the plain floor). */
+   7 px gap on the floor above (42 + 16). */
 .tab-bar-tab.has-flag-and-ckpt {
-  min-width: calc(65px + 14px * var(--ui-scale));
+  min-width: 58px;
 }
 
 .tab-bar-tab + .tab-bar-tab {
@@ -111,6 +112,7 @@
 }
 
 .tab-bar-tab:hover {
+  --tab-bg: var(--surface-hover);
   background: var(--surface-hover);
   color: var(--ink);
 }
@@ -123,6 +125,7 @@
  * inset shadow, so no tab moves; this rule comes after :hover, so hovering
  * the selected tab keeps its ground. */
 .tab-bar-tab.active {
+  --tab-bg: var(--bg);
   color: var(--ink);
   font-weight: 700;
   background: var(--bg);
@@ -293,29 +296,38 @@
 }
 
 .tab-bar-tab-close {
-  background: none;
+  /* Out of the flow: it takes no room in the tab (12 Nov, 13 tabs would not fit
+     an 820 px window), and shows only while the pointer is over its tab or the
+     button itself has keyboard focus, laid over the tab's right end on the
+     tab's own ground (--tab-bg). Hidden is opacity 0 with no pointer events,
+     not display or visibility, so the Tab key still reaches it. Hit area: the
+     tab's full height by ~20-23 px wide (glyph plus 6 px each side), so it
+     stays clear of a floor-width tab's dot. */
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  background: var(--tab-bg);
   font-family: var(--font-ui);
   font-size: calc(13px * var(--ui-scale));
   font-weight: 400;
   color: var(--muted);
   cursor: pointer;
-  padding: 1px 3px;
-  /* Hit area ~26 x 27 px, drawn size unchanged: transparent border plus an
-     equal negative margin; the hover fill stops at the padding box. */
-  border: 6px solid transparent;
-  margin: -6px;
-  background-clip: padding-box;
+  padding: 0 6px;
+  border: none;
+  margin: 0;
   line-height: 1;
   border-radius: 0;
   transition: background 0.12s, color 0.12s;
   -webkit-app-region: no-drag;
   opacity: 0;
+  pointer-events: none;
 }
 
 .tab-bar-tab:hover .tab-bar-tab-close,
-.tab-bar-tab.active .tab-bar-tab-close,
 .tab-bar-tab-close:focus-visible {
   opacity: 1;
+  pointer-events: auto;
 }
 
 .tab-bar-tab-close:hover {
@@ -323,9 +335,9 @@
   color: var(--ink);
 }
 
-/* Keep the focus ring 1 px outside the drawn button, inside the 6 px hit-area border. */
+/* The focus ring sits inside the button's box, which is the tab's own edge. */
 .tab-bar-tab-close:focus-visible {
-  outline-offset: -5px;
+  outline-offset: -2px;
 }
 
 .tab-bar-new {
