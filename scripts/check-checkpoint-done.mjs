@@ -12,8 +12,10 @@
 // after the start fires; selecting the tab clears it; a new turn clears it; a
 // new Claude session clears it and resets the baseline; a split tab shows red
 // for either pane and one selection clears both; the circle sits beside a
-// manual Red flag's square; an active tab never shows it; the CSS variable
-// exists in the light and dark blocks.
+// manual Red flag's square; an active tab never shows it; a checkpoint whose turn spans
+// several Stop readings stays up until the tab is seen (then only a newer cpt
+// raises it); a second-boundary slack at the session start; the CSS variable
+// is defined in :root.
 // Run: JSDOM_DIR=<a folder whose node_modules has jsdom> node scripts/check-checkpoint-done.mjs
 import { build } from 'esbuild';
 import { readFileSync } from 'node:fs';
@@ -133,8 +135,8 @@ const ROOT = (state) => `state=${state}:app=claude-code`;
 const NOW = () => Math.floor(Date.now() / 1000);
 // Fixed readings, so "the same cpt again" really is the same number.
 const T0 = NOW() + 1000; // after any session start in this run
-const reading = (p, cpt) => view(p).__emit('onPattonState', PA.parsePattonOsc(
-  `patton;stop;tasks=0;crons=0;ctx=50000;since=20000${cpt === null ? '' : `;cpt=${cpt}`}`));
+const reading = (p, cpt, tasks = 0) => view(p).__emit('onPattonState', PA.parsePattonOsc(
+  `patton;stop;tasks=${tasks};crons=0;ctx=50000;since=20000${cpt === null ? '' : `;cpt=${cpt}`}`));
 // A Claude session that has run a turn and is at its prompt.
 const turnDone = (p) => { report(p, ROOT('working')); report(p, ROOT('done')); };
 const countFor = (needle, pane) => logs.filter((l) => l.includes(needle) && l.includes(`"pane":"${pane.id}"`)).length;
@@ -267,14 +269,71 @@ tm.switchToId(t1.id);
 tm.switchToId(t3.id);
 check('active tab: nothing shows up later on switching away', !t3.checkpointDone);
 
-// ── 12. The CSS variable is in both blocks, and the circle uses it ──
+// ── 11b. A checkpoint whose turn spans several Stop readings stays up until seen ──
+const tM = await tm.createTab();
+const pM = tM.panes[0];
+tm.switchToId(t3.id);
+turnDone(pM);
+reading(pM, T0 + 60, 5); // Stop with background tasks still running
+check('multi-Stop: first Stop raises the mark', pM.checkpointDone === true && countFinished(pM) === 1);
+report(pM, ROOT('working')); // a background task wakes Claude
+check('multi-Stop: the wake-up turn clears it', pM.checkpointDone === false);
+report(pM, ROOT('done'));
+reading(pM, T0 + 60, 0); // the final Stop carries the same cpt
+check('multi-Stop: the final Stop (same cpt, tasks=0) leaves the mark up', pM.checkpointDone === true && countFinished(pM) === 2, countFinished(pM));
+reading(pM, T0 + 60, 0);
+check('multi-Stop: a repeat while up logs nothing more', countFinished(pM) === 2);
+tm.switchToId(tM.id);
+check('multi-Stop: selecting the tab clears it', pM.checkpointDone === false);
+tm.switchToId(t3.id);
+reading(pM, T0 + 60, 0);
+check('seen: a later Stop with the same cpt does not raise it', pM.checkpointDone === false && countFinished(pM) === 2);
+reading(pM, T0 + 61, 0);
+check('seen: a later NEW cpt does', pM.checkpointDone === true && countFinished(pM) === 3);
+tm.switchToId(tM.id);
+tm.switchToId(t3.id);
+reading(pM, T0 + 59, 0); // a /resume-like reading older than what he has seen
+check('seen: an in-session cpt older than the acked one does not', pM.checkpointDone === false && countFinished(pM) === 3);
+// The active-tab guard consumes a mark as "seen" too.
+tm.switchToId(tM.id);
+reading(pM, T0 + 62, 0);
+check('active tab: consumed mark is acked', pM.checkpointDone === false);
+tm.switchToId(t3.id);
+reading(pM, T0 + 62, 0);
+check('active tab: the same cpt later does not raise it', pM.checkpointDone === false && countFinished(pM) === 4, countFinished(pM));
+// A new turn that clears the mark is not "seen": the next Stop raises it again.
+reading(pM, T0 + 63, 0);
+report(pM, ROOT('working'));
+report(pM, ROOT('done'));
+reading(pM, T0 + 63, 0);
+check('unseen: a mark cleared by a new turn comes back on the next Stop', pM.checkpointDone === true);
+tm.switchToId(tM.id);
+tm.switchToId(t3.id);
+
+// ── 11c. A second boundary between the transcript stamp and the session start ──
+{
+  const realNow = w.Date.now;
+  const X = T0 + 500; // whole second
+  const pB = (await tm.createTab()).panes[0];
+  const pB2 = (await tm.createTab()).panes[0];
+  tm.switchToId(t3.id);
+  w.Date.now = () => X * 1000 + 50; // the session is stamped 50 ms into second X
+  turnDone(pB); turnDone(pB2);
+  w.Date.now = realNow;
+  reading(pB, X - 1); // the /checkpoint began 10 ms earlier: whole seconds say X-1
+  check('boundary: cpt one second before the session start still fires', pB.checkpointDone === true, pB.checkpointDone);
+  reading(pB2, X - 2);
+  check('boundary: two seconds before is old', pB2.checkpointDone === false);
+}
+
+// ── 12. The CSS variable is defined once in :root (dark inherits), and the circle uses it ──
 {
   const main = readFileSync(join(repo, 'src/renderer/styles/main.css'), 'utf8');
   const darkAt = main.indexOf('prefers-color-scheme: dark');
   const rootAt = main.indexOf(':root');
   const hasVar = (s) => /--status-ckpt:\s*var\(--red\)/.test(s);
   check('--status-ckpt defined in the light :root block', rootAt >= 0 && darkAt > rootAt && hasVar(main.slice(rootAt, darkAt)));
-  check('--status-ckpt defined in the dark block', darkAt > 0 && hasVar(main.slice(darkAt, darkAt + 2500)));
+  check('--status-ckpt not redefined in the dark block (same --red in both modes)', darkAt > 0 && !/--status-ckpt/.test(main.slice(darkAt, darkAt + 2500)) && /--red:/.test(main.slice(rootAt, darkAt)) && !/--red:/.test(main.slice(darkAt)));
   const tabs = readFileSync(join(repo, 'src/renderer/styles/tabs.css'), 'utf8');
   check('the circle\'s CSS uses --status-ckpt and is not a square', /\.tab-bar-tab-indicator\.checkpoint-done\s*{[^}]*var\(--status-ckpt\)/.test(tabs) && !/\.checkpoint-done\s*{[^}]*border-radius:\s*0/.test(tabs));
 }

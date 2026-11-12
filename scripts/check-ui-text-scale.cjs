@@ -516,7 +516,8 @@ async function pageRun(BIG) {
   }
 
   // --- squeezed strip: enough tabs that every one sits at its min-width floor
-  const many = Array.from({ length: 40 }, (_, i) => ({ id: `m${i + 1}`, title: `tab number ${i + 1}`, active: false, flag: i === 3 ? 'red' : undefined }));
+  const many = Array.from({ length: 40 }, (_, i) => ({ id: `m${i + 1}`, title: `tab number ${i + 1}`, active: false, flag: i === 3 || i === 5 ? 'red' : undefined, checkpointDone: i === 4 || i === 5 }));
+  // m4 flagged, m5 red circle, m6 both (12 Nov: the two together overflowed the plain floor by ~16 px).
   const withActive = (id) => many.map((t) => ({ ...t, active: t.id === id }));
   const strip = document.querySelector('.tab-bar-tabs');
   for (const s of [1, BIG]) {
@@ -525,8 +526,9 @@ async function pageRun(BIG) {
     await frame();
     const tabEls = [...strip.querySelectorAll('.tab-bar-tab')];
     const floor = parseFloat(getComputedStyle(tabEls[0]).minWidth);
-    const atFloor = tabEls.filter((t) => Math.abs(t.getBoundingClientRect().width - floor) <= 0.5).length;
-    check(`squeezed strip x${s}: all 40 tabs sit at their ${floor}px floor`, tabEls.length === 40 && atFloor === 40, { tabs: tabEls.length, atFloor, floor });
+    const atFloor = tabEls.filter((t) => Math.abs(t.getBoundingClientRect().width - parseFloat(getComputedStyle(t).minWidth)) <= 0.5).length;
+    const both = tabEls.filter((t) => t.querySelector('.checkpoint-done') && t.querySelector('[class*="flag-"]'));
+    check(`squeezed strip x${s}: all 40 tabs sit at their own floor (${floor}px plain; a flag with the red circle has a taller one)`, tabEls.length === 40 && atFloor === 40 && both.length === 1, { tabs: tabEls.length, atFloor, floor, both: both.length });
     const spills = [];
     for (const t of tabEls) {
       const close = t.querySelector('.tab-bar-tab-close');

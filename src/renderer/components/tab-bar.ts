@@ -412,6 +412,8 @@ export class TabBar {
         el.appendChild(dot);
       }
       if (ckpt) {
+        // Two indicators need a taller floor than one (tabs.css).
+        if (shownFlag) el.classList.add('has-flag-and-ckpt');
         const dot = document.createElement('span');
         dot.className = 'tab-bar-tab-indicator checkpoint-done';
         dot.setAttribute('aria-label', 'Checkpoint finished');

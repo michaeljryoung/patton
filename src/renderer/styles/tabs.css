@@ -98,6 +98,13 @@
   position: relative;
 }
 
+/* A manual flag's square AND the red circle: a second 9 px indicator and its
+   7 px gap on the floor above (measured: the close button spilled 15.6 px at
+   x1 and 13 px at x1.5 on the plain floor). */
+.tab-bar-tab.has-flag-and-ckpt {
+  min-width: calc(72px + 20px * var(--ui-scale));
+}
+
 .tab-bar-tab + .tab-bar-tab {
   border-left: 1px solid var(--hairline);
 }

@@ -215,11 +215,14 @@ export class Pane {
   private sinceTokens: number | null = null;
   private checkpointAt: number | null = null;
   private lastCheckpointKey = '';
-  // The last `cpt` this Claude session reported (a baseline, not the display
-  // value above), and whether a /checkpoint finished since the user last
-  // looked: the tab's red circle. Both reset with the session.
-  private lastSeenCheckpointAt: number | null = null;
+  // The newest `cpt` the user has SEEN this Claude session (the tab selected
+  // while its mark was up, or a pre-session value taken as the baseline; not
+  // the display value above), whether a /checkpoint finished since he last
+  // looked (the tab's red circle), and the newest `cpt` that mark stands for.
+  // The first and the last reset with the session.
+  private ackedCheckpointAt: number | null = null;
   private _checkpointDone = false;
+  private markedCheckpointAt: number | null = null;
   // A Stop-hook message (OSC 777) arrived since the last ◐ onset: the turn
   // ended on its own, so Claude's prompt is open. A question or permission
   // dialog also shows ✳ but fires no Stop hook, so ✳ alone is not enough.
@@ -704,15 +707,24 @@ export class Pane {
   }
 
   /** A /checkpoint started in this session and its turn has now ended: a
-   *  reading whose `cpt` is new AND not older than the session (a relaunch or
-   *  `claude --resume` carries the transcript's old checkpoint, which only
-   *  becomes the baseline). Whole seconds, as the hook reports them. */
+   *  reading whose `cpt` is newer than the last one he has seen AND not older
+   *  than the session (a relaunch or `claude --resume` carries the
+   *  transcript's old checkpoint, which only becomes the baseline). Whole
+   *  seconds, as the hook reports them. Deduped on "he has seen it", not
+   *  "reported once": a checkpoint's turn can end several times (a background
+   *  task wakes Claude, its new turn clears the mark, the final Stop carries
+   *  the same `cpt`), and the mark must be up when the last one lands. */
   private noteCheckpointFinished(cpt: number | null): void {
-    if (cpt === null) return;
-    const previous = this.lastSeenCheckpointAt;
-    this.lastSeenCheckpointAt = cpt;
-    if (cpt === previous || this.claudeSessionAtMs === 0) return;
-    if (cpt < Math.floor(this.claudeSessionAtMs / 1000)) return;
+    if (cpt === null || this.claudeSessionAtMs === 0) return;
+    // `cpt` is floored to the second and the session start is stamped tens of
+    // ms after the transcript's own, so one second of slack: a session whose
+    // first command is /checkpoint must not lose to a second boundary.
+    if (cpt < Math.floor(this.claudeSessionAtMs / 1000) - 1) {
+      this.ackedCheckpointAt = Math.max(this.ackedCheckpointAt ?? -Infinity, cpt);
+      return;
+    }
+    if (cpt <= (this.ackedCheckpointAt ?? -Infinity)) return;
+    this.markedCheckpointAt = Math.max(this.markedCheckpointAt ?? -Infinity, cpt);
     if (this._checkpointDone) return;
     this._checkpointDone = true;
     rlog('info', '[CKPT] finished', { pane: this.id, cpt });
@@ -729,6 +741,12 @@ export class Pane {
   clearCheckpointDone(reason: 'selected' | 'new turn' | 'new session' | 'active tab'): void {
     if (!this._checkpointDone) return;
     this._checkpointDone = false;
+    // Seen: selecting the tab, or the mark landing on the tab he is on. A new
+    // turn or session is not him looking, so the next Stop may raise it again.
+    if ((reason === 'selected' || reason === 'active tab') && this.markedCheckpointAt !== null) {
+      this.ackedCheckpointAt = Math.max(this.ackedCheckpointAt ?? -Infinity, this.markedCheckpointAt);
+    }
+    this.markedCheckpointAt = null;
     rlog('info', '[CKPT] finished mark cleared', { pane: this.id, reason });
     this.callbacks.onCheckpointMark?.(this);
   }
@@ -856,7 +874,7 @@ export class Pane {
   /** The Claude session here may have changed: restart its clock. */
   private newClaudeSession(): void {
     this.claudeSessionAtMs = Date.now();
-    this.lastSeenCheckpointAt = null;
+    this.ackedCheckpointAt = null;
     this.clearCheckpointDone('new session');
   }
 
