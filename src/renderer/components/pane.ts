@@ -90,6 +90,8 @@ export interface PaneCallbacks {
   onStatusChange?: (pane: Pane) => void;
   /** An automatic tab flag from the pane's title (`WAKE` → yellow), or null to drop it. */
   onAutoFlag?: (pane: Pane, flag: TabFlag | null) => void;
+  /** The pane's "checkpoint finished" mark was set or cleared (checkpointDone). */
+  onCheckpointMark?: (pane: Pane) => void;
   onBroadcastWrite?: (data: string) => void;
   /** Broadcast a paste: each other pane pastes it through its own terminal,
    *  so the bracketing follows that pane's mode, not this one's. */
@@ -213,6 +215,11 @@ export class Pane {
   private sinceTokens: number | null = null;
   private checkpointAt: number | null = null;
   private lastCheckpointKey = '';
+  // The last `cpt` this Claude session reported (a baseline, not the display
+  // value above), and whether a /checkpoint finished since the user last
+  // looked: the tab's red circle. Both reset with the session.
+  private lastSeenCheckpointAt: number | null = null;
+  private _checkpointDone = false;
   // A Stop-hook message (OSC 777) arrived since the last ◐ onset: the turn
   // ended on its own, so Claude's prompt is open. A question or permission
   // dialog also shows ✳ but fires no Stop hook, so ✳ alone is not enough.
@@ -379,6 +386,7 @@ export class Pane {
     if (this.claudeWorking) return;
     this.claudeWorking = true;
     this.stopSeenSinceWork = false;
+    this.clearCheckpointDone('new turn');
     this.notifyCheckpoint();
     // A new stretch of work: the next stop is a new event, never a
     // duplicate of the last one, so it mustn't be debounced away.
@@ -691,7 +699,38 @@ export class Pane {
     rlog('info', '[CKPT] ctx', {
       pane: this.id, ctx: context.ctxTokens, since: context.sinceTokens, cpt: context.checkpointAt,
     });
+    this.noteCheckpointFinished(context.checkpointAt);
     this.notifyCheckpoint();
+  }
+
+  /** A /checkpoint started in this session and its turn has now ended: a
+   *  reading whose `cpt` is new AND not older than the session (a relaunch or
+   *  `claude --resume` carries the transcript's old checkpoint, which only
+   *  becomes the baseline). Whole seconds, as the hook reports them. */
+  private noteCheckpointFinished(cpt: number | null): void {
+    if (cpt === null) return;
+    const previous = this.lastSeenCheckpointAt;
+    this.lastSeenCheckpointAt = cpt;
+    if (cpt === previous || this.claudeSessionAtMs === 0) return;
+    if (cpt < Math.floor(this.claudeSessionAtMs / 1000)) return;
+    if (this._checkpointDone) return;
+    this._checkpointDone = true;
+    rlog('info', '[CKPT] finished', { pane: this.id, cpt });
+    this.callbacks.onCheckpointMark?.(this);
+  }
+
+  /** A checkpoint finished here and the user hasn't looked yet (red circle). */
+  get checkpointDone(): boolean {
+    return this._checkpointDone;
+  }
+
+  /** Drop the red mark: the tab was selected, a new turn began, or the Claude
+   *  session ended. A no-op when it isn't set. */
+  clearCheckpointDone(reason: 'selected' | 'new turn' | 'new session' | 'active tab'): void {
+    if (!this._checkpointDone) return;
+    this._checkpointDone = false;
+    rlog('info', '[CKPT] finished mark cleared', { pane: this.id, reason });
+    this.callbacks.onCheckpointMark?.(this);
   }
 
   /** Tell the tab when what the checkpoint clock shows has changed. A pane
@@ -817,6 +856,8 @@ export class Pane {
   /** The Claude session here may have changed: restart its clock. */
   private newClaudeSession(): void {
     this.claudeSessionAtMs = Date.now();
+    this.lastSeenCheckpointAt = null;
+    this.clearCheckpointDone('new session');
   }
 
   /** 'at-prompt' while Claude's root is done or idle with nothing blocked

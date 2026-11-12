@@ -36,6 +36,8 @@ interface TabHeaderInfo {
   project?: { name: string; defaultName: string } | null;
   active: boolean;
   awaitingInput?: boolean;
+  /** A /checkpoint finished in this tab and it hasn't been selected since. */
+  checkpointDone?: boolean;
   flag?: TabFlag | null;
   /** Set from the pane title (`WAKE` → yellow); shown only when no manual flag is. */
   autoFlag?: TabFlag | null;
@@ -63,8 +65,9 @@ function parkedText({ tasks, crons, titles }: { tasks: number; crons: number; ti
 }
 
 /** The tab's title plus whatever its dot says, e.g. "patton, waiting for you". */
-function tabLabel(tab: TabHeaderInfo, needsYou: boolean, shownFlag: TabFlag | null): string {
+function tabLabel(tab: TabHeaderInfo, needsYou: boolean, shownFlag: TabFlag | null, ckpt: boolean): string {
   const states: string[] = [];
+  if (ckpt) states.push('checkpoint finished');
   if (needsYou) states.push(tab.waitingText ? `waiting for you (${tab.waitingText})` : 'waiting for you');
   if (shownFlag) states.push(`flagged ${shownFlag}`);
   if (tab.parked && !needsYou && !shownFlag) states.push(parkedText(tab.parked).toLowerCase());
@@ -395,21 +398,32 @@ export class TabBar {
       // A flag is static, so at a glance you can tell "something just
       // happened here" from "I marked this". A hollow ring means Claude Code
       // is parked on its own background work: nothing for you yet.
+      // A finished checkpoint is a red circle (automatic, so a circle), ahead
+      // of the green dot, the ring and an automatic flag; inactive tabs only,
+      // like the green dot. A manual flag's square shows beside it.
       const needsYou = tab.awaitingInput && !tab.active;
-      const shownFlag = tab.flag ?? (needsYou ? null : tab.autoFlag) ?? null;
+      const ckpt = !!tab.checkpointDone && !tab.active;
+      const shownFlag = tab.flag ?? (needsYou || ckpt ? null : tab.autoFlag) ?? null;
       if (shownFlag) {
         const dot = document.createElement('span');
         dot.className = `tab-bar-tab-indicator flag-${shownFlag}`;
         dot.setAttribute('aria-label', `Flagged ${shownFlag}`);
         dot.setAttribute('role', 'img');
         el.appendChild(dot);
-      } else if (needsYou) {
+      }
+      if (ckpt) {
+        const dot = document.createElement('span');
+        dot.className = 'tab-bar-tab-indicator checkpoint-done';
+        dot.setAttribute('aria-label', 'Checkpoint finished');
+        dot.setAttribute('role', 'img');
+        el.appendChild(dot);
+      } else if (!shownFlag && needsYou) {
         const dot = document.createElement('span');
         dot.className = 'tab-bar-tab-indicator';
         dot.setAttribute('aria-label', 'Awaiting input');
         dot.setAttribute('role', 'img');
         el.appendChild(dot);
-      } else if (tab.parked) {
+      } else if (!shownFlag && tab.parked) {
         const ring = document.createElement('span');
         ring.className = 'tab-bar-tab-indicator parked';
         const text = parkedText(tab.parked);
@@ -423,7 +437,7 @@ export class TabBar {
       // are presentational in ARIA, so the dots' own labels never reach the
       // tab's accessible name, and the dots themselves have no tooltip. With
       // the hover card on, the card is the tooltip and the tab has no title.
-      const label = tabLabel(tab, needsYou, shownFlag);
+      const label = tabLabel(tab, needsYou, shownFlag, ckpt);
       el.setAttribute('aria-label', label);
       if (!this.hoverCard) el.title = label;
 

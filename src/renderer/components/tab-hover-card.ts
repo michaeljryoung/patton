@@ -323,6 +323,7 @@ export class TabHoverCard {
       const state = this.line('tab-hover-state', block.state);
       state.dataset.activity = block.activity;
       section.appendChild(state);
+      if (block.done) section.appendChild(this.line('tab-hover-done', block.done));
       if (block.detail) section.appendChild(this.line('tab-hover-detail', block.detail));
       if (block.tasks.length > 0) {
         const list = document.createElement('ul');

@@ -224,6 +224,14 @@ export class Tab {
         this.onStatusChanged?.();
       },
       onParked: (p, info) => this.setPaneParked(p, info),
+      onCheckpointMark: (p) => {
+        // Like the green dot, never on the tab being looked at.
+        if (p.checkpointDone && this._isActive) {
+          p.clearCheckpointDone('active tab');
+          return;
+        }
+        this.onTitleChanged?.();
+      },
       onAutoFlag: (p, flag) => this.setPaneAutoFlag(p, flag),
       onBroadcastWrite: (data) => {
         if (!this._broadcastInput) return;
@@ -289,6 +297,11 @@ export class Tab {
   /** When this pane started waiting for the user (ms), or null if it isn't. */
   awaitingSince(pane: Pane): number | null {
     return this._panesNeedingYou.get(pane) ?? null;
+  }
+
+  /** A /checkpoint finished in some pane since this tab was last selected. */
+  get checkpointDone(): boolean {
+    return this._panes.some((p) => p.checkpointDone);
   }
 
   /** Whether this pane's Claude Code session is parked on its own background work. */
@@ -752,6 +765,7 @@ export class Tab {
     this._panesNeedingYou.clear();
     this.element.style.display = 'flex';
     for (const pane of this._panes) {
+      pane.clearCheckpointDone('selected');
       pane.show();
     }
     // Deferred to ensure focus wins over xterm.js internal focus grabs from fit()

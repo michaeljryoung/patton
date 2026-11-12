@@ -1077,6 +1077,7 @@ export class TabManager {
         project: t.project ? { name: projectName(t.project), defaultName: t.project.defaultName } : null,
         active: t.id === this.activeTab?.id,
         awaitingInput: t.awaitingInput,
+        checkpointDone: t.checkpointDone,
         flag: t.flag,
         autoFlag: t.autoFlag,
         parked: t.parked,
@@ -1128,6 +1129,7 @@ export class TabManager {
           parked: c.parked,
         },
         checkpoint: pane.checkpointSource,
+        checkpointDone: pane.checkpointDone,
       };
       return { focused, input };
     });

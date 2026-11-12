@@ -30,6 +30,8 @@ export interface HoverPaneInput {
     parked: { tasks: number; crons: number; titles?: string[] } | null;
   };
   checkpoint: CheckpointSource;
+  /** A /checkpoint finished here and the tab hasn't been selected since. */
+  checkpointDone?: boolean;
 }
 
 export interface HoverBlock {
@@ -47,6 +49,8 @@ export interface HoverBlock {
   /** Parked: up to TASKS_SHOWN task titles, then "+N more". */
   tasks: string[];
   checkpoint: string | null;
+  /** "Checkpoint finished" while the tab's red circle shows for this pane. */
+  done?: string | null;
 }
 
 export const TASKS_SHOWN = 3;
@@ -149,6 +153,7 @@ export function hoverBlock(input: HoverPaneInput, now: number): HoverBlock {
     detail,
     tasks: parkedTasks(input),
     checkpoint: input.claude.activity === 'shell' ? null : checkpointLine(input.checkpoint, new Date(now)),
+    done: input.checkpointDone ? 'Checkpoint finished' : null,
   };
 }
 

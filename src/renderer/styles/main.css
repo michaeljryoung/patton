@@ -35,6 +35,9 @@
   --prompt-ready: var(--green);
   --prompt-ready-glow: rgba(18, 184, 134, 0.4);
   --parked: var(--muted);
+  /* The red circle on a tab whose /checkpoint just finished (not the manual
+   * Red flag's square). */
+  --status-ckpt: var(--red);
   --flag-green: var(--green);
   --flag-yellow: var(--amber);
   --flag-red: var(--red);
@@ -83,6 +86,7 @@
     --error-text: #ff7a87;
     --scrim: rgba(0, 0, 0, 0.55);
     --dot-edge: transparent;
+    --status-ckpt: var(--red);
     /* Rules and control borders need 3:1, not the 14:1 of full ink: 45% of ink
        mixed into the ground is 3.76 on --bg, 3.53 on --surface, 3.35 on the
        default terminal. State cues that must stay bright read --ink directly. */
@@ -917,6 +921,10 @@ select:focus-visible {
 
 .tab-hover-state {
   margin-top: 3px;
+}
+
+.tab-hover-done {
+  font-weight: 600;
 }
 
 .tab-hover-state[data-activity="waiting"],

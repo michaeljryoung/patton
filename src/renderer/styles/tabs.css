@@ -208,6 +208,13 @@
   50%      { opacity: 0.5; }
 }
 
+/* A checkpoint just finished (a circle, so not the manual Red flag's square):
+ * the pulsing dot's shape in red, until the tab is selected. */
+.tab-bar-tab-indicator.checkpoint-done {
+  background: var(--status-ckpt);
+  box-shadow: 0 0 0 1px var(--dot-edge), 0 0 6px var(--status-ckpt);
+}
+
 /* --- Manual colour flags (right-click a tab → Flag) ---
  * Same size and colours, but a square: circle = automatic status, square =
  * your own flag, ring = parked. The light-mode --dot-edge shadow follows the
