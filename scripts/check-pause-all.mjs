@@ -239,7 +239,7 @@ await wait(5);
   check('pause button exists', !!btn);
   check('pause button is the strip\'s last child (far right)', kids[kids.length - 1] === btn, kids.map((k) => k.className));
   check('pause button is right of the checkpoint clock', kids.indexOf(ck) >= 0 && kids.indexOf(ck) < kids.indexOf(btn), kids.map((k) => k.className));
-  check('label reads Pause all', btn.textContent === '⏸ Pause all', btn.textContent);
+  check('idle label is the pause icon (full words in aria-label)', btn.textContent === '⏸', btn.textContent);
   check('is a real button', btn.tagName === 'BUTTON' && btn.type === 'button');
   check('aria-label says what it does', /type pause into every Claude session/.test(btn.getAttribute('aria-label') ?? ''), btn.getAttribute('aria-label'));
   check('tooltip matches the aria-label', btn.title === btn.getAttribute('aria-label'));
@@ -305,7 +305,7 @@ await wait(300);
   check('pause: summary splits at-the-prompt from queued and names skipped tabs',
     text === 'Paused 7 Claude sessions (6 at the prompt, 1 queued behind a running turn); skipped 8: perm (waiting on you), quest (waiting on you), err (state unclear), 5 more', text);
   check('pause: after a press that sent, neither window\'s button turns to Resume all',
-    btnOf(B).textContent === '⏸ Pause all' && !btnOf(B).classList.contains('resume') && !btnOf(A).classList.contains('resume'), [btnOf(A).textContent, btnOf(B).textContent]);
+    btnOf(B).textContent === '⏸' && !btnOf(B).classList.contains('resume') && !btnOf(A).classList.contains('resume'), [btnOf(A).textContent, btnOf(B).textContent]);
   check('pause: main\'s run requests carry nothing but the request id (no action to flip)',
     runRequests.length === 2 && runRequests.every((q) => Object.keys(q).join() === 'requestId'), runRequests);
   const log = A.logs.find((l) => l.includes('[PAUSE-ALL] run'));
@@ -323,7 +323,7 @@ await wait(300);
   check('result is styled as a transient message', btn.classList.contains('reason'));
   A.tm.tabBar.showPauseResult('x'); // re-arm with a short wait for the check
   await wait(4100);
-  check('after the result: still Pause all', btn.textContent === '⏸ Pause all' && !btn.classList.contains('reason') && !btn.classList.contains('resume'), btn.textContent);
+  check('after the result: still Pause all', btn.textContent === '⏸' && !btn.classList.contains('reason') && !btn.classList.contains('resume'), btn.textContent);
   check('after the result: aria-label is still Pause all\'s', /^Pause all: type pause into every Claude session/.test(btn.getAttribute('aria-label') ?? ''), btn.getAttribute('aria-label'));
 }
 
