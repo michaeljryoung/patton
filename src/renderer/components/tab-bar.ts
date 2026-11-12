@@ -242,8 +242,8 @@ export class TabBar {
     this.container.appendChild(this.checkpointBtn);
 
     // Pause all, at the strip's far right (the checkpoint clock sits just left
-    // of it): types `pause` into every window's Claude panes. Always reads
-    // "Pause all" and every press pauses again; resume is typed by hand, tab
+    // of it): types `pause` into every window's Claude panes. Idle it is
+    // only the "⏸" icon, and every press pauses again; resume is typed by hand, tab
     // by tab. Always shown.
     this.pauseBtn = document.createElement('button');
     this.pauseBtn.type = 'button';
@@ -291,7 +291,7 @@ export class TabBar {
   }
 
   /** A press's result in the button's place for a few seconds (the caller
-   *  announces it too); the label then comes back. */
+   *  announces it too); the icon then comes back. */
   showPauseResult(text: string): void {
     if (this.pauseResultTimer) clearTimeout(this.pauseResultTimer);
     this.pauseBtn.textContent = text;
@@ -307,7 +307,9 @@ export class TabBar {
 
   private renderPauseButton(): void {
     const btn = this.pauseBtn;
-    btn.textContent = '⏸ Pause all';
+    // Idle, the button is only the icon (the strip's room is for tabs); the
+    // full words stay in the accessible name and the tooltip.
+    btn.textContent = '\u23f8';
     const label = 'Pause all: type pause into every Claude session in every window, skipping any waiting on you';
     btn.setAttribute('aria-label', label);
     btn.title = label;

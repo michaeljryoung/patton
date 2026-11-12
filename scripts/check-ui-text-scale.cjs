@@ -556,6 +556,24 @@ async function pageRun(BIG) {
     const pw = plus.getBoundingClientRect().width;
     check(`blank spacer x${s}: as wide as + (${pw.toFixed(1)}px) with 40 tabs squeezing the strip`, Math.abs(sw.width - pw) < 0.5, { spacer: sw.width, plus: pw });
     check(`blank spacer x${s}: full strip height, no-drag, default cursor`, !!space && Math.abs(sw.height - strip.getBoundingClientRect().height) <= 1 && getComputedStyle(space).webkitAppRegion === 'no-drag' && getComputedStyle(space).cursor === 'default', space && { h: sw.height, region: getComputedStyle(space).webkitAppRegion, cursor: getComputedStyle(space).cursor });
+
+    // Pause all is only an icon while idle (13 Nov: the strip's room is for tabs; the words
+    // cost ~80 px): no wider than + and 2 px, its text "⏸", the full words in aria-label
+    // and title; a press's result shows as text, then the icon comes back.
+    const pause = document.querySelector('.tab-bar-pause-all');
+    const pwid = pause.getBoundingClientRect().width;
+    check(`Pause all x${s}: idle it is the "⏸" icon, ${pwid.toFixed(1)}px against + at ${pw.toFixed(1)}px (no more than + and 2px)`, pause.textContent === '\u23f8' && pwid <= pw + 2, { text: pause.textContent, pause: pwid, plus: pw });
+    check(`Pause all x${s}: the full words stay in its aria-label and title`, /^Pause all: type pause into every Claude session/.test(pause.getAttribute('aria-label') || '') && pause.title === pause.getAttribute('aria-label'), { aria: pause.getAttribute('aria-label'), title: pause.title });
+    tabBar.constructor.PAUSE_RESULT_MS = 60;
+    const resultText = 'Paused 4 Claude sessions (2 in this window); skipped 1';
+    tabBar.showPauseResult(resultText);
+    await frame();
+    const shown = { text: pause.textContent, title: pause.title, w: pause.getBoundingClientRect().width };
+    check(`Pause all x${s}: a press's result shows as text (title holds it whole)`, shown.text === resultText && shown.title === resultText && shown.w > pwid + 40, shown);
+    await sleep(200);
+    const back = { text: pause.textContent, title: pause.title, w: pause.getBoundingClientRect().width };
+    check(`Pause all x${s}: after the result time it is the icon again, at the same width`, back.text === '\u23f8' && /^Pause all: type pause/.test(back.title) && Math.abs(back.w - pwid) < 0.5, back);
+    tabBar.constructor.PAUSE_RESULT_MS = 4000;
   }
 
   // --- a squeezed tab's label starts right after the dot and runs to the close button

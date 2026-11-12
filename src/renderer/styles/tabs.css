@@ -429,10 +429,17 @@
 }
 
 /* Pause all: the strip's far right, the checkpoint clock's look (rules
- * shared above). A long summary ("Paused 4 Claude sessions (…); skipped 2: …")
+ * shared above). Idle it is only the "⏸" icon, sized and padded like the +
+ * button (about 80 px less strip than the words); a press's result replaces
+ * it with text for a few seconds (.reason). A long summary ("Paused 4 Claude sessions (…); skipped 2: …")
  * is cut with an ellipsis; the button's title and the announcer carry it whole. */
 .tab-bar-pause-all {
   max-width: var(--pause-all-max-width);
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.tab-bar-pause-all:not(.reason) {
+  font-size: calc(14px * var(--ui-scale));
+  padding: 0 12px;
 }
