@@ -18,3 +18,22 @@ _Session 20–25 plan files, the S25 render-snapshot notes, the S20 reasoning re
 - `src/main/logger.ts` — file logger that tees `console.*` to `~/Library/Application Support/Patton/logs/main.log`. Called once from `main.ts` via `installFileLogger()`.
 - `scripts/patton-health.sh` — diagnostic script. `npm run health` or `patton-health` (shell alias) from anywhere. Greps log file + crashpad for session-20 error markers.
 - `src/main/projects.ts` (`resolveProject`: nearest git repo, linked worktrees, the top folder under ~/Projects) and `src/main/registered-projects.ts` (S50): a folder the project list registers inside a repo is its own project, not the repo's. The list-file setting is held in the module (set by `ipc-handlers.ts` at registration and in `afterSettingsSaved`); rows keep `{path, real}` resolved once per parse, the parse is cached on file, size, mtime, ctime, inode and home. Check: `node scripts/check-sub-project.mjs` (bundles the real modules against a fixture HOME; its last lines assert the `ipc-handlers.ts` wiring).
+
+## Source tree
+Moved word for word from CLAUDE.md's Architecture section (S49 slimming, 2026-11-12).
+
+```
+src/
+├── main/           # Electron main process (PTY, IPC, menus, settings store, bookmarks,
+│                   #   project board, link-open policy, Claude Code hook installer, logger)
+├── preload/        # contextBridge API (type-safe IPC bridge)
+├── renderer/       # UI components, services, styles
+│   ├── components/ # Tab, pane, terminal view, editor input, settings, command palette,
+│   │               #   bookmarks panel, project board, tab hover card, etc.
+│   ├── services/   # Tab manager, history, keybindings, program status (OSC 7501),
+│   │               #   file/OSC 8 links, sessions, project boards, renderer logger
+│   └── styles/     # CSS with design tokens + auto dark/light mode
+└── shared/         # IPC channel constants, shared TypeScript types, shortcuts
+resources/          # Shell integration scripts (zsh, bash) and the Claude Code Stop hook
+scripts/            # forge-package.sh, release, health, check-*.mjs suites
+```
