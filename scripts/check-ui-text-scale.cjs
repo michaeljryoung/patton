@@ -540,6 +540,20 @@ async function pageRun(BIG) {
       if (closeEnd > contentEnd + 0.5) spills.push({ tab: t.dataset.tabId, over: +(closeEnd - contentEnd).toFixed(1), tabW: tr.width });
     }
     check(`squeezed strip x${s}: no close button spills out of its tab's padding`, spills.length === 0, spills.slice(0, 4));
+
+    // The blank spacer beside + (12 Nov: "nowhere I can click in the top bar"): present
+    // however full the strip is, as wide as +, between + and the checkpoint clock,
+    // and no-drag so the JS drag and double-click in tab-bar.ts get the mouse.
+    // Built by the real TabBar, so this is the shipped element.
+    const space = document.querySelector('.tab-bar-drag-space');
+    const plus = document.querySelector('.tab-bar-new');
+    const clock = document.querySelector('.tab-bar-checkpoint');
+    const order = space && plus && clock && (plus.nextElementSibling === space) && (space.nextElementSibling === clock);
+    check(`blank spacer x${s}: sits between + and the checkpoint clock`, !!order);
+    const sw = space ? space.getBoundingClientRect() : { width: 0, height: 0 };
+    const pw = plus.getBoundingClientRect().width;
+    check(`blank spacer x${s}: as wide as + (${pw.toFixed(1)}px) with 40 tabs squeezing the strip`, sw.width >= pw - 0.01 && sw.width <= pw + 3, { spacer: sw.width, plus: pw });
+    check(`blank spacer x${s}: full strip height, no-drag, default cursor`, !!space && Math.abs(sw.height - strip.getBoundingClientRect().height) <= 1 && getComputedStyle(space).webkitAppRegion === 'no-drag' && getComputedStyle(space).cursor === 'default', space && { h: sw.height, region: getComputedStyle(space).webkitAppRegion, cursor: getComputedStyle(space).cursor });
   }
 
   // --- the active tab is still on screen after a size change

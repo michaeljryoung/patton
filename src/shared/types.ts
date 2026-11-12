@@ -397,6 +397,8 @@ export interface PattonAPI {
   /** This Mac's host name, to tell `file://<hostname>/…` links from remote ones. */
   getHostname: () => Promise<string>;
   moveWindowBy: (dx: number, dy: number) => void;
+  /** A double-click on empty tab-strip space: the Mac's title-bar action (zoom, minimize or nothing). */
+  titleBarDoubleClick: () => void;
   /** ⌘W on the last tab: the in-app dialog asks, then tells main's close guard. */
   closeGuard: {
     /** What closing the caller's window means; null if main can't say. */

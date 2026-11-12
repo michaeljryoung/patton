@@ -1,4 +1,4 @@
-import { ipcMain, BrowserWindow, dialog, Notification, shell, app } from 'electron';
+import { ipcMain, BrowserWindow, dialog, Notification, shell, app, systemPreferences } from 'electron';
 import { execFile } from 'node:child_process';
 import { accessSync, constants as fsConstants, existsSync, mkdirSync, readdirSync, realpathSync, statSync, unlinkSync } from 'node:fs';
 import { homedir, hostname } from 'node:os';
@@ -13,6 +13,7 @@ import * as store from './store';
 import { registerClipboardImageHandlers } from './clipboard-image';
 import { getSystemFonts } from './system-fonts';
 import { RateLimiter } from './rate-limiter';
+import { titleBarActionFor } from './title-bar-action';
 import { closePreconfirmations } from './close-preconfirm';
 import { closeSenderWindow } from './close-window';
 import { closeConfirmations } from './close-confirm';
@@ -828,7 +829,7 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
     fn('[RENDERER]', ...safe);
   });
 
-  // --- Programmatic window drag (tab bar uses this instead of -webkit-app-region) ---
+  // --- Programmatic window drag (the tab strip's empty space and its blank spacer use this instead of -webkit-app-region) ---
   ipcMain.on(IPC.WINDOW_MOVE_BY, (event, dx: number, dy: number) => {
     if (typeof dx !== 'number' || typeof dy !== 'number') return;
     if (!Number.isFinite(dx) || !Number.isFinite(dy)) return;
@@ -836,6 +837,31 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
     if (win) {
       const [x, y] = win.getPosition();
       win.setPosition(Math.round(x + dx), Math.round(y + dy));
+    }
+  });
+
+  // --- Double-click on the strip's empty space: the Mac's title-bar action ---
+  // Acts only on the SENDER's window. Reads the user's "Double-click a window's
+  // title bar to" setting (AppleActionOnDoubleClick) so Minimize / None are honoured.
+  const titleBarDoubleClickLimiter = new RateLimiter(10);
+  ipcMain.on(IPC.WINDOW_TITLE_BAR_DOUBLE_CLICK, (event) => {
+    if (!titleBarDoubleClickLimiter.allow()) return;
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win || win.isDestroyed()) return;
+    let pref: string | undefined;
+    if (process.platform === 'darwin') {
+      try {
+        pref = systemPreferences.getUserDefault('AppleActionOnDoubleClick', 'string');
+      } catch {
+        pref = undefined;
+      }
+    }
+    const action = titleBarActionFor(pref, process.platform);
+    console.info('[WINDOW] title-bar double-click', { pref, action });
+    if (action === 'minimize') win.minimize();
+    else if (action === 'zoom') {
+      if (win.isMaximized()) win.unmaximize();
+      else win.maximize();
     }
   });
 

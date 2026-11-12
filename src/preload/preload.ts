@@ -265,6 +265,7 @@ const api: PattonAPI = {
   openExternal: (url) => ipcRenderer.invoke(IPC.APP_OPEN_EXTERNAL, url),
   getHostname: () => ipcRenderer.invoke(IPC.APP_GET_HOSTNAME),
   moveWindowBy: (dx, dy) => ipcRenderer.send(IPC.WINDOW_MOVE_BY, dx, dy),
+  titleBarDoubleClick: () => ipcRenderer.send(IPC.WINDOW_TITLE_BAR_DOUBLE_CLICK),
   closeGuard: {
     info: () => ipcRenderer.invoke(IPC.WINDOW_CLOSE_INFO),
     preconfirm: () => ipcRenderer.invoke(IPC.WINDOW_PRECONFIRM_CLOSE),

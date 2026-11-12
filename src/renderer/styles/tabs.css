@@ -1,7 +1,9 @@
 /* --- Tab bar: the mock's ledger strip (variant c) ---
  * A thin surface strip with an ink rule under it; tabs are text with a vertical
- * hairline between them, the active one in bold ink. The strip drags the
- * window; the 78 px left padding clears the traffic lights, which main
+ * hairline between them, the active one in bold ink. The strip's own padding
+ * drags the window natively; the empty part of the tabs area and the blank
+ * .tab-bar-drag-space beside + do it by JS (tab-bar.ts), so they can also take
+ * a double-click. The 78 px left padding clears the traffic lights, which main
  * centres in the strip (window-manager.ts trafficLightPosition). */
 .tab-bar {
   display: flex;
@@ -316,6 +318,27 @@
 .tab-bar-new:hover {
   color: var(--ink);
   background: var(--surface-hover);
+}
+
+/* A blank place to grab or double-click the window, always right of +, as wide
+ * as + (same font and 12 px padding; the hidden "+" gives the glyph width, so
+ * the two stay equal at every Interface Text Size). Never shrinks: the tabs
+ * scroll instead. no-drag, so the mouse events reach the JS in tab-bar.ts. */
+.tab-bar-drag-space {
+  flex: 0 0 auto;
+  box-sizing: content-box;
+  height: 100%;
+  border-left: 1px solid transparent; /* the + button's hairline width, kept blank */
+  padding: 0 12px;
+  font-family: var(--font-ui);
+  font-size: calc(14px * var(--ui-scale));
+  cursor: default;
+  -webkit-app-region: no-drag;
+}
+
+.tab-bar-drag-space::before {
+  content: '+';
+  visibility: hidden;
 }
 
 /* Checkpoint clock: context used since the focused Claude session's last

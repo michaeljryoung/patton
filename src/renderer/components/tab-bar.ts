@@ -180,31 +180,17 @@ export class TabBar {
       }
     });
 
-    // Window drag from empty space in the tabs container
+    // Empty space in the tabs container moves the window like a title bar
+    // (drag, and double-click for the Mac's title-bar action). Done by JS, not
+    // by -webkit-app-region, so the mouse events still reach us.
     this.tabsContainer.addEventListener('mousedown', (e) => {
-      if (e.button !== 0) return;
       // Only handle clicks on the container itself, not on child tabs
       if ((e.target as HTMLElement).closest('.tab-bar-tab')) return;
-      let dragging = false;
-      let lastX = e.screenX;
-      let lastY = e.screenY;
-      const startX = e.screenX;
-      const startY = e.screenY;
-      const onMove = (me: MouseEvent) => {
-        if (!dragging && Math.abs(me.screenX - startX) < 5 && Math.abs(me.screenY - startY) < 5) return;
-        dragging = true;
-        const dx = me.screenX - lastX;
-        const dy = me.screenY - lastY;
-        lastX = me.screenX;
-        lastY = me.screenY;
-        window.patton.moveWindowBy(dx, dy);
-      };
-      const onUp = () => {
-        document.removeEventListener('mousemove', onMove);
-        document.removeEventListener('mouseup', onUp);
-      };
-      document.addEventListener('mousemove', onMove);
-      document.addEventListener('mouseup', onUp);
+      this.startWindowDrag(e);
+    });
+    this.tabsContainer.addEventListener('dblclick', (e) => {
+      if (e.target !== this.tabsContainer) return;
+      window.patton.titleBarDoubleClick();
     });
 
     const newBtn = document.createElement('button');
@@ -214,6 +200,17 @@ export class TabBar {
     newBtn.title = 'New Tab (Cmd+T)';
     newBtn.addEventListener('click', () => this.callbacks.onNew());
     this.container.appendChild(newBtn);
+
+    // A blank spacer as wide as the + button, always present (it never shrinks;
+    // the tabs scroll instead), so there is somewhere to grab or double-click
+    // the window even when the tabs fill the strip. Drags and double-clicks like
+    // the empty tabs area; no-drag (see tabs.css) so the events reach us.
+    const dragSpace = document.createElement('div');
+    dragSpace.className = 'tab-bar-drag-space';
+    dragSpace.setAttribute('aria-hidden', 'true');
+    dragSpace.addEventListener('mousedown', (e) => this.startWindowDrag(e));
+    dragSpace.addEventListener('dblclick', () => window.patton.titleBarDoubleClick());
+    this.container.appendChild(dragSpace);
 
     // Checkpoint clock, pinned at the strip's right end outside the scrolling
     // tabs: context used since the focused Claude session's last /checkpoint.
@@ -241,6 +238,31 @@ export class TabBar {
     });
     this.container.appendChild(this.pauseBtn);
     this.renderPauseButton();
+  }
+
+  /** Moves the window with the mouse after a 5 px threshold (left button only). */
+  private startWindowDrag(e: MouseEvent): void {
+    if (e.button !== 0) return;
+    let dragging = false;
+    let lastX = e.screenX;
+    let lastY = e.screenY;
+    const startX = e.screenX;
+    const startY = e.screenY;
+    const onMove = (me: MouseEvent) => {
+      if (!dragging && Math.abs(me.screenX - startX) < 5 && Math.abs(me.screenY - startY) < 5) return;
+      dragging = true;
+      const dx = me.screenX - lastX;
+      const dy = me.screenY - lastY;
+      lastX = me.screenX;
+      lastY = me.screenY;
+      window.patton.moveWindowBy(dx, dy);
+    };
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
   }
 
   /** A press's result in the button's place for a few seconds (the caller

@@ -74,6 +74,7 @@ export const IPC = {
   APP_OPEN_EXTERNAL: 'app:open-external',
   APP_GET_HOSTNAME: 'app:get-hostname',
   WINDOW_MOVE_BY: 'window:move-by',
+  WINDOW_TITLE_BAR_DOUBLE_CLICK: 'window:title-bar-double-click',
   // Last-tab close: what closing this window means, and the in-app dialog's
   // one-shot "already confirmed" for main's close guard (close-preconfirm.ts).
   WINDOW_CLOSE_INFO: 'window:close-info',
