@@ -223,6 +223,10 @@ const bytesByPty = (win) => {
 };
 const clearWrites = () => { for (const win of windows) win.writes.length = 0; };
 const btnOf = (win) => win.w.document.querySelector('.tab-bar-pause-all');
+// A press's result shows in a popover under the icon, not in the button (13 Nov: the words
+// made the button 360 px wide and pushed tabs off the strip).
+const resultOf = (win) => win.w.document.querySelector('.tab-bar-pause-result');
+const resultText = (win) => (resultOf(win).hidden ? null : resultOf(win).textContent);
 // A press and the stash path's 150 ms settle.
 const press = async (win) => { await win.tm.pressPauseAll(); await wait(250); };
 
@@ -301,11 +305,11 @@ await wait(300);
   check('pause: no Ctrl+S anywhere but the draft pane', A.writes.filter(([id, d]) => d.includes('\x13') && id !== a.draft.ptyId).length === 0);
   check('pause: other window\'s pane gets "pause\\r"', bytesByPty(B).get(b.done.ptyId) === 'pause\r', bytesByPty(B).get(b.done.ptyId));
   check('pause: nothing else written anywhere', wa.size === 6 && B.writes.length === 2, [[...wa.keys()], B.writes]);
-  const text = btnOf(A).textContent;
+  const text = resultText(A);
   check('pause: summary splits at-the-prompt from queued and names skipped tabs',
     text === 'Paused 7 Claude sessions (6 at the prompt, 1 queued behind a running turn); skipped 8: perm (waiting on you), quest (waiting on you), err (state unclear), 5 more', text);
   check('pause: after a press that sent, neither window\'s button turns to Resume all',
-    btnOf(B).textContent === '⏸' && !btnOf(B).classList.contains('resume') && !btnOf(A).classList.contains('resume'), [btnOf(A).textContent, btnOf(B).textContent]);
+    btnOf(B).textContent === '⏸' && resultText(B) === null && !btnOf(B).classList.contains('resume') && !btnOf(A).classList.contains('resume'), [btnOf(A).textContent, btnOf(B).textContent, resultText(B)]);
   check('pause: main\'s run requests carry nothing but the request id (no action to flip)',
     runRequests.length === 2 && runRequests.every((q) => Object.keys(q).join() === 'requestId'), runRequests);
   const log = A.logs.find((l) => l.includes('[PAUSE-ALL] run'));
@@ -320,10 +324,10 @@ await wait(300);
 // ── 3. The label returns to Pause all once the result has shown ──
 {
   const btn = btnOf(A);
-  check('result is styled as a transient message', btn.classList.contains('reason'));
+  check('result shows in the popover, the button keeps its icon', resultText(A) !== null && btn.textContent === '⏸', [resultText(A), btn.textContent]);
   A.tm.tabBar.showPauseResult('x'); // re-arm with a short wait for the check
   await wait(4100);
-  check('after the result: still Pause all', btn.textContent === '⏸' && !btn.classList.contains('reason') && !btn.classList.contains('resume'), btn.textContent);
+  check('after the result: the popover is gone and the button is still Pause all', resultText(A) === null && btn.textContent === '⏸' && !btn.classList.contains('resume'), [resultText(A), btn.textContent]);
   check('after the result: aria-label is still Pause all\'s', /^Pause all: type pause into every Claude session/.test(btn.getAttribute('aria-label') ?? ''), btn.getAttribute('aria-label'));
 }
 
@@ -347,7 +351,7 @@ await wait(300);
     !wa.has(a.draft.ptyId) && !A.writes.some(([, d]) => d.includes('\x13')), wa.get(a.draft.ptyId));
   check('second press: only those seven panes are written to', wa.size === 7 && B.writes.length === 2, [[...wa.keys()], B.writes]);
   check('second press: the clicked window\'s button still reads Pause all',
-    btnOf(B).classList.contains('reason') && btnOf(B).textContent.startsWith('Paused 8 Claude sessions') && !btnOf(B).classList.contains('resume'), btnOf(B).textContent);
+    resultText(B) !== null && resultText(B).startsWith('Paused 8 Claude sessions') && !btnOf(B).classList.contains('resume'), resultText(B));
   check('second press: main again asked every window to pause (request has only an id)',
     runRequests.length === 2 && runRequests.every((q) => Object.keys(q).join() === 'requestId'), runRequests);
 }
@@ -386,7 +390,7 @@ await wait(300);
   await press(A);
   check('rebound key: draft pane gets nothing', !bytesByPty(A).has(d.ptyId), bytesByPty(A).get(d.ptyId));
   check('rebound key: clean pane gets "pause\\r"', bytesByPty(A).get(c.ptyId) === 'pause\r');
-  check('rebound key: summary says why', btnOf(A).textContent.includes('rb-draft (draft: stash key rebound)'), btnOf(A).textContent);
+  check('rebound key: summary says why', resultText(A)?.includes('rb-draft (draft: stash key rebound)'), resultText(A));
   check('rebound key: rlog names the binding', A.logs.some((l) => l.includes('[PAUSE-ALL] run') && l.includes('ctrl+s is bound to chat:submit')));
   keybindings = KEYS_DEFAULT;
 }
@@ -401,7 +405,7 @@ await wait(300);
   clearWrites();
   await press(A);
   check('nothing ready: no writes', A.writes.length === 0 && B.writes.length === 0);
-  check('nothing ready: says so', btnOf(A).textContent === 'Nothing paused; skipped 1: new (new session)', btnOf(A).textContent);
+  check('nothing ready: says so', resultText(A) === 'Nothing paused; skipped 1: new (new session)', resultText(A));
 }
 
 // ── 9. The checkpoint button: same stash path ──
@@ -455,7 +459,7 @@ await wait(300);
   setTabs(A, [tab('tp', [p])]);
   clearWrites();
   await press(A);
-  check('title path: typed since the stop is skipped as unclear', !bytesByPty(A).has(p.ptyId) && btnOf(A).textContent.includes('tp (state unclear)'), btnOf(A).textContent);
+  check('title path: typed since the stop is skipped as unclear', !bytesByPty(A).has(p.ptyId) && resultText(A)?.includes('tp (state unclear)'), resultText(A));
   await wait(3);
   title(p, '◐ Working'); stopHook(A, p); title(p, '✳ Claude Code');
   clearWrites();

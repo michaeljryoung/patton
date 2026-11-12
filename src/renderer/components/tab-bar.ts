@@ -104,6 +104,8 @@ export class TabBar {
   private checkpointReasonTimer: ReturnType<typeof setTimeout> | null = null;
   private static readonly CHECKPOINT_REASON_MS = 4000;
   private pauseBtn: HTMLButtonElement;
+  /** The popover under the Pause all icon that carries a press's result. */
+  private pauseResultEl: HTMLDivElement;
   private pauseResultTimer: ReturnType<typeof setTimeout> | null = null;
   private static readonly PAUSE_RESULT_MS = 4000;
   private callbacks: TabBarCallbacks;
@@ -252,6 +254,15 @@ export class TabBar {
       this.callbacks.onPauseAll?.();
     });
     this.container.appendChild(this.pauseBtn);
+    // A press's result is shown in this popover (tabs.css), not in the button:
+    // the button keeps its icon size, so the tabs never move. The caller
+    // announces the text, so the popover is hidden from screen readers.
+    this.pauseResultEl = document.createElement('div');
+    this.pauseResultEl.className = 'tab-bar-pause-result';
+    this.pauseResultEl.setAttribute('aria-hidden', 'true');
+    this.pauseResultEl.hidden = true;
+    // Before the button, which stays the strip's last child; the popover is out of the flow.
+    this.container.insertBefore(this.pauseResultEl, this.pauseBtn);
     this.renderPauseButton();
   }
 
@@ -290,17 +301,17 @@ export class TabBar {
     document.addEventListener('mouseup', onUp);
   }
 
-  /** A press's result in the button's place for a few seconds (the caller
-   *  announces it too); the icon then comes back. */
+  /** A press's result in a popover under the icon for a few seconds (the
+   *  caller announces it too); the button keeps its size and its icon. */
   showPauseResult(text: string): void {
     if (this.pauseResultTimer) clearTimeout(this.pauseResultTimer);
-    this.pauseBtn.textContent = text;
-    // The strip may cut the line short (max-width, ellipsis): hover shows it whole.
+    this.pauseResultEl.textContent = text;
+    this.pauseResultEl.hidden = false;
     this.pauseBtn.title = text;
-    this.pauseBtn.classList.add('reason');
     this.pauseResultTimer = setTimeout(() => {
       this.pauseResultTimer = null;
-      this.pauseBtn.classList.remove('reason');
+      this.pauseResultEl.hidden = true;
+      this.pauseResultEl.textContent = '';
       this.renderPauseButton();
     }, TabBar.PAUSE_RESULT_MS);
   }
@@ -342,6 +353,9 @@ export class TabBar {
     const focused = document.activeElement;
     const focusedTabId = focused instanceof HTMLElement && focused.classList.contains('tab-bar-tab')
       && this.tabsContainer.contains(focused) ? focused.dataset.tabId ?? null : null;
+    // The same for a focused close button (a title tick rebuilds it too).
+    const focusedCloseTabId = focused instanceof HTMLElement && focused.classList.contains('tab-bar-tab-close')
+      && this.tabsContainer.contains(focused) ? focused.closest<HTMLElement>('.tab-bar-tab')?.dataset.tabId ?? null : null;
     this.tabsContainer.innerHTML = '';
     for (const tab of tabs) {
       const el = document.createElement('div');
@@ -596,7 +610,12 @@ export class TabBar {
     }
     this.lastActiveId = active?.id ?? null;
     this.lastTabCount = tabs.length;
-    if (focusedTabId !== null) {
+    if (focusedCloseTabId !== null) {
+      // Back on that tab's close button; its tab element when it has none now
+      // (the tab count fell to one), nothing when the tab itself is gone.
+      const tabEl = this.tabsContainer.querySelector<HTMLElement>(`.tab-bar-tab[data-tab-id="${CSS.escape(focusedCloseTabId)}"]`);
+      (tabEl?.querySelector<HTMLElement>('.tab-bar-tab-close') ?? tabEl)?.focus({ preventScroll: true });
+    } else if (focusedTabId !== null) {
       this.tabsContainer
         .querySelector<HTMLElement>(`.tab-bar-tab[data-tab-id="${CSS.escape(focusedTabId)}"]`)
         ?.focus({ preventScroll: true });

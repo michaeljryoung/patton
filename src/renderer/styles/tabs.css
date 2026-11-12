@@ -80,12 +80,14 @@
   flex: 0 1 auto;
   /* Floor = the tab's own chrome, so nothing spills into the next tab when the
      title has shrunk to nothing (the title is overflow:hidden, so it gives way
-     first): padding 12+12, dot 9 and the one 7 px gap (dot-title) = 24 + 9 + 7
-     = 40; 42 adds 2 px of slack. The close button is out of the flow (below) and
-     so is the drag grip, so neither adds anything; the floor no longer scales
-     with Interface Text Size. Not clipped with overflow, which would cut the
+     first), and the hovered close button, laid over the tab's right end, starts
+     right of the dot. The close button is 12 + 7.8 x scale px wide (its glyph
+     grows with Interface Text Size), the dot ends 22 px in (1 px border, 12
+     padding, 9 dot), so floor = 22 + 2 px clear + the button = 36 + 7.8 x scale,
+     rounded up: 44 px at x1, 8 px more per +1 of scale (48 at x1.5). The drag
+     grip is out of the flow too. Not clipped with overflow, which would cut the
      needs-you dot's 6 px glow. The hover tooltip names the tab at this width. */
-  min-width: 42px;
+  min-width: calc(44px + 8px * (var(--ui-scale) - 1));
   max-width: 220px;
   background: transparent;
   /* What the close button paints under itself, so the label's last characters
@@ -102,9 +104,9 @@
 }
 
 /* A manual flag's square AND the red circle: a second 9 px indicator and its
-   7 px gap on the floor above (42 + 16). */
+   7 px gap on the floor above (44 + 16), scaling the same way. */
 .tab-bar-tab.has-flag-and-ckpt {
-  min-width: 58px;
+  min-width: calc(60px + 8px * (var(--ui-scale) - 1));
 }
 
 .tab-bar-tab + .tab-bar-tab {
@@ -129,6 +131,12 @@
   color: var(--ink);
   font-weight: 700;
   background: var(--bg);
+  box-shadow: inset 0 -3px 0 var(--ink);
+}
+
+/* The close button paints --tab-bg over the tab's right end, bar included:
+   it carries the bar itself, so hovering the selected tab keeps all of it. */
+.tab-bar-tab.active .tab-bar-tab-close {
   box-shadow: inset 0 -3px 0 var(--ink);
 }
 
@@ -175,10 +183,15 @@
   border-width: 6px 0 6px 4px;
   background-clip: padding-box;
   -webkit-app-region: no-drag;
+  /* Invisible until its own tab is hovered, so it must not catch the pointer
+     either: its box reaches 7 px into the tab to its left and would take the
+     last 2 px of that tab's close button. */
+  pointer-events: none;
 }
 
 .tab-bar-tab:hover .tab-bar-tab-grip {
   opacity: 0.5;
+  pointer-events: auto;
 }
 
 .tab-bar-tab .tab-bar-tab-grip:hover {
@@ -301,8 +314,9 @@
      button itself has keyboard focus, laid over the tab's right end on the
      tab's own ground (--tab-bg). Hidden is opacity 0 with no pointer events,
      not display or visibility, so the Tab key still reaches it. Hit area: the
-     tab's full height by ~20-23 px wide (glyph plus 6 px each side), so it
-     stays clear of a floor-width tab's dot. */
+     tab's full height by 12 + 7.8 x scale px (glyph plus 6 px each side). The
+     tab's floor scales with the same number, so at every Interface Text Size
+     the button starts at least 2 px right of a floor tab's last dot. */
   position: absolute;
   top: 0;
   right: 0;
@@ -328,6 +342,14 @@
 .tab-bar-tab-close:focus-visible {
   opacity: 1;
   pointer-events: auto;
+}
+
+/* An open rename box reaches the tab's right end: the button must not sit on
+   top of its last letters (the pointer is still on the tab after a
+   double-click). */
+.tab-bar-tab:has(.tab-bar-tab-rename) .tab-bar-tab-close {
+  opacity: 0;
+  pointer-events: none;
 }
 
 .tab-bar-tab-close:hover {
@@ -426,8 +448,7 @@
 }
 
 /* The "why not" message shown in the clock's place after such a click. */
-.tab-bar-checkpoint.reason,
-.tab-bar-pause-all.reason {
+.tab-bar-checkpoint.reason {
   color: var(--ink);
 }
 
@@ -441,17 +462,43 @@
 }
 
 /* Pause all: the strip's far right, the checkpoint clock's look (rules
- * shared above). Idle it is only the "⏸" icon, sized and padded like the +
- * button (about 80 px less strip than the words); a press's result replaces
- * it with text for a few seconds (.reason). A long summary ("Paused 4 Claude sessions (…); skipped 2: …")
- * is cut with an ellipsis; the button's title and the announcer carry it whole. */
+ * shared above). It is only the "⏸" icon, sized and padded like the + button, and
+ * never changes size: a press's result shows in a small popover just under it
+ * (.tab-bar-pause-result), so the tabs and their dots never move. */
 .tab-bar-pause-all {
-  max-width: var(--pause-all-max-width);
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.tab-bar-pause-all:not(.reason) {
   font-size: calc(14px * var(--ui-scale));
   padding: 0 12px;
+}
+
+/* The strip is the popover's containing block: the Pause all button is its last
+   item, so right: 0 aligns the popover with the button's right edge. */
+.tab-bar {
+  position: relative;
+}
+
+.tab-bar-pause-result {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 500; /* above the terminal and its overlays, below app dialogs (900+) */
+  width: max-content;
+  max-width: min(calc(420px * var(--ui-scale)), calc(100vw - 16px));
+  box-sizing: border-box;
+  margin-top: 2px;
+  padding: 6px 10px;
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--hairline);
+  font-family: var(--font-ui);
+  font-size: var(--ui);
+  line-height: 1.4;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  /* Read-only: the terminal under it keeps taking clicks. */
+  pointer-events: none;
+  -webkit-app-region: no-drag;
+}
+
+.tab-bar-pause-result[hidden] {
+  display: none;
 }
