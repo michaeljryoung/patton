@@ -63,5 +63,19 @@ const bad = samples.filter((t) => { const r = shortTabName(t); return len(r) > 1
 check('every sample is at most 15 characters and no surrogate is split', bad.length === 0, bad);
 check('a result never ends with a space before the ellipsis', samples.every((t) => !/\s…$/u.test(shortTabName(t))));
 
+// Claude Code's state glyph is dropped: the dot shows the state, the name keeps its room
+is('✳ Repeated permission prompts', 'Repeated permi…');
+is('◐ Repeated permission prompts', 'Repeated permi…');
+is('◑ Fixing the flaky tests now', 'Fixing the…');
+is('✳ patton', 'patton');
+is('✳ abcdefghijklmnopqrstuvwxyz', 'abcdefghijklmn…');
+check('a glyph never starts a shortened name', ['✳ x'.repeat(1), '✳ ' + 'y'.repeat(40), '◐ one two three four five six'].every((t) => !/^[◐◑✳]/u.test(shortTabName(t))));
+// a huge title is cut before the word logic: right answer, and quick
+check('a 1 MB single word -> 14 characters and an ellipsis', shortTabName('x'.repeat(1_000_000)) === 'x'.repeat(14) + '…');
+check('a 1 MB run of words -> whole words', shortTabName('word '.repeat(200_000)) === 'word word word…');
+const t0 = performance.now();
+for (let i = 0; i < 5; i++) shortTabName('lorem ipsum '.repeat(100_000));
+check('a 1.2 MB title costs under 5 ms per call', (performance.now() - t0) / 5 < 5, (performance.now() - t0) / 5);
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

@@ -1,8 +1,14 @@
+import { stripClaudeGlyph } from './sessions';
+
 /** How long a tab's automatic name may be, the "…" included (Michael, 12 Nov:
  *  "it should always default to 10 to 15 characters max"). */
 export const TAB_NAME_MAX = 15;
 /** Whole words are kept only while they leave at least this many characters. */
 const TAB_NAME_MIN_WORDS = 10;
+/** Only this much of a title is looked at: a megabyte-long one would cost ~100 ms
+ *  per tab-bar update in the word and grapheme logic, and nothing past the first
+ *  few dozen characters can show. */
+const TAB_NAME_INPUT_MAX = 200;
 
 const segmenter = typeof Intl !== 'undefined' && 'Segmenter' in Intl ? new Intl.Segmenter(undefined, { granularity: 'grapheme' }) : null;
 
@@ -23,10 +29,12 @@ function trimEnd(text: string): string {
  * TAB_NAME_MAX characters including the "…". A title that fits is kept whole.
  * A longer one keeps whole words while they stay within 14 characters, and if
  * that leaves fewer than 10 characters it is cut at 14 instead, so a first
- * word of three letters doesn't leave a tab reading "Fix…".
+ * word of three letters doesn't leave a tab reading "Fix…". Claude Code's
+ * state glyph ("✳ ", "◐ ") is dropped first: the tab's dot shows the state, and
+ * the glyph would otherwise eat two of the characters.
  */
 export function shortTabName(title: string): string {
-  const full = title.trim().replace(/\s+/gu, ' ');
+  const full = stripClaudeGlyph(title.slice(0, TAB_NAME_INPUT_MAX)).trim().replace(/\s+/gu, ' ');
   const chars = glyphs(full);
   if (chars.length <= TAB_NAME_MAX) return full;
   const room = TAB_NAME_MAX - 1;

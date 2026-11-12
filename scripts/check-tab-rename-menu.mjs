@@ -146,6 +146,48 @@ key(box, 'Enter');
 check('...and commits through onRename', renames.length === 1 && renames[0][0] === 'plain' && renames[0][1] === 'by double-click', renames);
 reset();
 
+// keyboard focus: closing the box with Enter or Escape lands on that tab, not <body>
+items = openMenu('plain');
+choose(items, 'Rename Tab').click();
+box = boxes()[0];
+box.value = 'focus after enter';
+key(box, 'Enter');
+check('menu route, Enter: focus is on that tab afterwards', doc.activeElement === tabEl('plain'), doc.activeElement && doc.activeElement.tagName);
+reset();
+items = openMenu('plain');
+choose(items, 'Rename Tab').click();
+key(boxes()[0], 'Escape');
+check('menu route, Escape: focus is on that tab afterwards', doc.activeElement === tabEl('plain'), doc.activeElement && doc.activeElement.tagName);
+reset();
+fire(tabEl('plain').querySelector('.tab-bar-tab-title'), 'dblclick');
+key(boxes()[0], 'Enter');
+check('double-click route, Enter: focus is on that tab afterwards', doc.activeElement === tabEl('plain'), doc.activeElement && doc.activeElement.tagName);
+reset();
+fire(tabEl('third').querySelector('.tab-bar-tab-title'), 'dblclick');
+key(boxes()[0], 'Escape');
+check('double-click route, Escape: focus is on that tab afterwards', doc.activeElement === tabEl('third'), doc.activeElement && doc.activeElement.tagName);
+reset();
+// an update held while the box was open rebuilds the tab: focus goes to the NEW element
+fire(tabEl('plain').querySelector('.tab-bar-tab-title'), 'dblclick');
+bar.update(tabs.map((t) => ({ ...t })));
+key(boxes()[0], 'Enter');
+check('with an update held meanwhile, focus is on the rebuilt tab', doc.activeElement === tabEl('plain') && doc.activeElement.isConnected, doc.activeElement && doc.activeElement.tagName);
+reset();
+// clicking away (blur) must not pull focus back
+fire(tabEl('plain').querySelector('.tab-bar-tab-title'), 'dblclick');
+boxes()[0].blur();
+check('blur commits without stealing the focus back', boxes().length === 0 && doc.activeElement !== tabEl('plain'), doc.activeElement && doc.activeElement.tagName);
+reset();
+
+// the prefill is the tab's title now, not the one the menu captured
+items = openMenu('plain');
+bar.update(tabs.map((t) => (t.id === 'plain' ? { ...t, title: 'renamed elsewhere', autoTitle: 'renamed elsewhere', displayTitle: 'renamed elsewhe…' } : { ...t })));
+choose(items, 'Rename Tab').click();
+box = boxes()[0];
+check('the box prefills from the title as it is now', !!box && box.value === 'renamed elsewhere' && box.placeholder === 'renamed elsewhere', box && [box.value, box.placeholder]);
+reset();
+bar.update(tabs);
+
 // the project's own entry still works
 items = openMenu('proj');
 choose(items, 'Set Default Tab Name for Project').click();

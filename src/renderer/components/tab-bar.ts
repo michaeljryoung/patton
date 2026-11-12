@@ -118,6 +118,9 @@ export class TabBar {
   /** The latest window-drag press moved past the threshold (see startWindowDrag). */
   private dragMoved = false;
   private heldUpdate: TabHeaderInfo[] | null = null;
+  /** The tabs as last handed to update() (held ones included), so an action
+   *  from a menu opened earlier reads the tab as it is now. */
+  private latestTabs: TabHeaderInfo[] = [];
   private lastActiveId: string | null = null;
   private lastTabCount = 0;
   private stopScaleWatch: (() => void) | null = null;
@@ -320,6 +323,7 @@ export class TabBar {
   }
 
   update(tabs: TabHeaderInfo[]): void {
+    this.latestTabs = tabs;
     if (this.renameOpen) {
       this.heldUpdate = tabs;
       return;
@@ -509,9 +513,11 @@ export class TabBar {
               label: 'Rename Tab…',
               action: () => {
                 // The bar may have been rebuilt while the menu was open: look again.
+                // Both the span and the title it prefills are read again: a rename
+                // from another route, or a new title, may have landed since.
                 const liveTitle = this.liveTitleSpan(tab.id);
                 if (!liveTitle) return; // the tab closed meanwhile
-                this.startTabRename(liveTitle, tab);
+                this.startTabRename(liveTitle, this.currentTabInfo(tab.id) ?? tab);
               },
             },
           ] : []),
@@ -612,6 +618,11 @@ export class TabBar {
     this.hoverCard?.refresh();
   }
 
+  /** This tab's header info as of the latest update() (null once it closed). */
+  private currentTabInfo(tabId: string): TabHeaderInfo | null {
+    return this.latestTabs.find((t) => t.id === tabId) ?? null;
+  }
+
   /** The title span of this tab as it is in the bar now (null once it closed). */
   private liveTitleSpan(tabId: string): HTMLElement | null {
     return this.tabsContainer.querySelector<HTMLElement>(
@@ -644,6 +655,16 @@ export class TabBar {
     input.setAttribute('aria-label', opts.ariaLabel);
 
     let committed = false;
+    // The tab this box belongs to, to give it keyboard focus again when the box
+    // closes with focus still inside it (Enter, Escape); a click elsewhere has
+    // already moved focus on and keeps it there.
+    const tabId = titleSpan.closest<HTMLElement>('.tab-bar-tab')?.dataset.tabId ?? null;
+    const refocusTab = (hadFocus: boolean) => {
+      if (!hadFocus || tabId === null) return;
+      this.tabsContainer
+        .querySelector<HTMLElement>(`.tab-bar-tab[data-tab-id="${CSS.escape(tabId)}"]`)
+        ?.focus();
+    };
 
     // Put the title back and let updates through again. The update held while
     // the box was open is applied after any rebuild the commit itself causes.
@@ -656,18 +677,22 @@ export class TabBar {
       if (committed) return;
       committed = true;
       const name = input.value.trim();
+      const hadFocus = document.activeElement === input;
       close();
       if (name !== opts.value) {
         opts.onCommit(name);
       }
       this.applyHeldUpdate();
+      refocusTab(hadFocus);
     };
 
     const cancel = () => {
       if (committed) return;
       committed = true;
+      const hadFocus = document.activeElement === input;
       close();
       this.applyHeldUpdate();
+      refocusTab(hadFocus);
     };
 
     input.addEventListener('keydown', (e) => {
