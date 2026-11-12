@@ -848,16 +848,27 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
     if (!titleBarDoubleClickLimiter.allow()) return;
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win || win.isDestroyed()) return;
+    // Full screen has no title bar to act on: zoom would drop the window out of it.
+    if (win.isFullScreen()) {
+      console.info('[WINDOW] title-bar double-click', { action: 'none (full screen)' });
+      return;
+    }
     let pref: string | undefined;
+    let legacyMinimize: boolean | undefined;
     if (process.platform === 'darwin') {
       try {
         pref = systemPreferences.getUserDefault('AppleActionOnDoubleClick', 'string');
       } catch {
         pref = undefined;
       }
+      try {
+        legacyMinimize = systemPreferences.getUserDefault('AppleMiniaturizeOnDoubleClick', 'boolean');
+      } catch {
+        legacyMinimize = undefined;
+      }
     }
-    const action = titleBarActionFor(pref, process.platform);
-    console.info('[WINDOW] title-bar double-click', { pref, action });
+    const action = titleBarActionFor(pref, process.platform, legacyMinimize);
+    console.info('[WINDOW] title-bar double-click', { pref, legacyMinimize, action });
     if (action === 'minimize') win.minimize();
     else if (action === 'zoom') {
       if (win.isMaximized()) win.unmaximize();

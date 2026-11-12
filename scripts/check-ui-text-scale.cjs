@@ -552,7 +552,7 @@ async function pageRun(BIG) {
     check(`blank spacer x${s}: sits between + and the checkpoint clock`, !!order);
     const sw = space ? space.getBoundingClientRect() : { width: 0, height: 0 };
     const pw = plus.getBoundingClientRect().width;
-    check(`blank spacer x${s}: as wide as + (${pw.toFixed(1)}px) with 40 tabs squeezing the strip`, sw.width >= pw - 0.01 && sw.width <= pw + 3, { spacer: sw.width, plus: pw });
+    check(`blank spacer x${s}: as wide as + (${pw.toFixed(1)}px) with 40 tabs squeezing the strip`, Math.abs(sw.width - pw) < 0.5, { spacer: sw.width, plus: pw });
     check(`blank spacer x${s}: full strip height, no-drag, default cursor`, !!space && Math.abs(sw.height - strip.getBoundingClientRect().height) <= 1 && getComputedStyle(space).webkitAppRegion === 'no-drag' && getComputedStyle(space).cursor === 'default', space && { h: sw.height, region: getComputedStyle(space).webkitAppRegion, cursor: getComputedStyle(space).cursor });
   }
 

@@ -108,6 +108,8 @@ export class TabBar {
   // box mid-typing whenever any tab's title or dot changes. While a box is
   // open, the latest update is held here and applied when the box closes.
   private renameOpen = false;
+  /** The latest window-drag press moved past the threshold (see startWindowDrag). */
+  private dragMoved = false;
   private heldUpdate: TabHeaderInfo[] | null = null;
   private lastActiveId: string | null = null;
   private lastTabCount = 0;
@@ -186,10 +188,10 @@ export class TabBar {
     this.tabsContainer.addEventListener('mousedown', (e) => {
       // Only handle clicks on the container itself, not on child tabs
       if ((e.target as HTMLElement).closest('.tab-bar-tab')) return;
-      this.startWindowDrag(e);
+      this.startWindowDrag(e, { keepFocus: true });
     });
     this.tabsContainer.addEventListener('dblclick', (e) => {
-      if (e.target !== this.tabsContainer) return;
+      if (e.target !== this.tabsContainer || this.dragMoved) return;
       window.patton.titleBarDoubleClick();
     });
 
@@ -208,8 +210,11 @@ export class TabBar {
     const dragSpace = document.createElement('div');
     dragSpace.className = 'tab-bar-drag-space';
     dragSpace.setAttribute('aria-hidden', 'true');
-    dragSpace.addEventListener('mousedown', (e) => this.startWindowDrag(e));
-    dragSpace.addEventListener('dblclick', () => window.patton.titleBarDoubleClick());
+    dragSpace.addEventListener('mousedown', (e) => this.startWindowDrag(e, { keepFocus: true }));
+    dragSpace.addEventListener('dblclick', () => {
+      if (this.dragMoved) return;
+      window.patton.titleBarDoubleClick();
+    });
     this.container.appendChild(dragSpace);
 
     // Checkpoint clock, pinned at the strip's right end outside the scrolling
@@ -240,9 +245,17 @@ export class TabBar {
     this.renderPauseButton();
   }
 
-  /** Moves the window with the mouse after a 5 px threshold (left button only). */
-  private startWindowDrag(e: MouseEvent): void {
+  /** Moves the window with the mouse after a 5 px threshold (left button only).
+   *  keepFocus: the press doesn't take keyboard focus from the terminal (the
+   *  blank areas; a tab keeps its default focus behaviour). Not while a rename
+   *  box is open: the press must blur it so the name commits. A press that
+   *  moves sets dragMoved, so the dblclick of a press-release-press-drag
+   *  doesn't zoom. onClickWithoutDrag runs on release if the mouse never
+   *  passed the threshold (a tab's select-on-click). */
+  private startWindowDrag(e: MouseEvent, opts: { keepFocus?: boolean; onClickWithoutDrag?: () => void } = {}): void {
     if (e.button !== 0) return;
+    if (opts.keepFocus && !this.renameOpen) e.preventDefault();
+    this.dragMoved = false;
     let dragging = false;
     let lastX = e.screenX;
     let lastY = e.screenY;
@@ -251,6 +264,7 @@ export class TabBar {
     const onMove = (me: MouseEvent) => {
       if (!dragging && Math.abs(me.screenX - startX) < 5 && Math.abs(me.screenY - startY) < 5) return;
       dragging = true;
+      this.dragMoved = true;
       const dx = me.screenX - lastX;
       const dy = me.screenY - lastY;
       lastX = me.screenX;
@@ -260,6 +274,7 @@ export class TabBar {
     const onUp = () => {
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
+      if (!dragging) opts.onClickWithoutDrag?.();
     };
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
@@ -530,36 +545,8 @@ export class TabBar {
         // and drop the box, and dragging would move the window.
         if ((e.target as HTMLElement).closest('.tab-bar-tab-grip, .tab-bar-tab-close, .tab-bar-tab-rename')) return;
 
-        let dragging = false;
-        const startX = e.screenX;
-        const startY = e.screenY;
-        let lastX = startX;
-        let lastY = startY;
-
-        const onMove = (me: MouseEvent) => {
-          const dx = me.screenX - lastX;
-          const dy = me.screenY - lastY;
-          if (!dragging) {
-            // Start dragging only after a 5px threshold
-            if (Math.abs(me.screenX - startX) < 5 && Math.abs(me.screenY - startY) < 5) return;
-            dragging = true;
-          }
-          lastX = me.screenX;
-          lastY = me.screenY;
-          window.patton.moveWindowBy(dx, dy);
-        };
-
-        const onUp = () => {
-          document.removeEventListener('mousemove', onMove);
-          document.removeEventListener('mouseup', onUp);
-          if (!dragging) {
-            // No drag occurred — treat as click to select
-            this.callbacks.onSelect(tab.id);
-          }
-        };
-
-        document.addEventListener('mousemove', onMove);
-        document.addEventListener('mouseup', onUp);
+        // Drags the window past a 5 px threshold, selects the tab if released without moving.
+        this.startWindowDrag(e, { onClickWithoutDrag: () => this.callbacks.onSelect(tab.id) });
       });
 
       this.tabsContainer.appendChild(el);

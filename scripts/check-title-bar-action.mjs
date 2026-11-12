@@ -26,10 +26,37 @@ for (const [pref, want] of [
 ]) {
   check(`darwin, ${JSON.stringify(pref)} -> ${want}`, titleBarActionFor(pref, 'darwin'), want);
 }
+// Legacy boolean AppleMiniaturizeOnDoubleClick, consulted only when the string pref is missing/empty.
+for (const [pref, legacy, want] of [
+  [undefined, true, 'minimize'], [null, true, 'minimize'], ['', true, 'minimize'],
+  [undefined, false, 'zoom'], [undefined, undefined, 'zoom'], [undefined, null, 'zoom'],
+  ['Maximize', true, 'zoom'], ['None', true, 'none'], ['Minimize', false, 'minimize'], ['garbage', true, 'zoom'],
+]) {
+  check(`darwin, pref ${JSON.stringify(pref)}, legacy ${JSON.stringify(legacy)} -> ${want}`, titleBarActionFor(pref, 'darwin', legacy), want);
+}
+check('win32 ignores the legacy flag', titleBarActionFor(undefined, 'win32', true), 'zoom');
 for (const platform of ['win32', 'linux']) {
   for (const pref of ['Minimize', 'None', undefined, 'Maximize']) {
     check(`${platform}, ${JSON.stringify(pref)} -> zoom`, titleBarActionFor(pref, platform), 'zoom');
   }
 }
+
+// Wiring of main's handler (source regex: calling a real maximize() would show a window).
+import { readFileSync } from 'node:fs';
+const src = readFileSync(join(repo, 'src/main/ipc-handlers.ts'), 'utf8');
+const m = src.match(/ipcMain\.on\(IPC\.WINDOW_TITLE_BAR_DOUBLE_CLICK,[\s\S]*?\n {2}\}\);/);
+const h = m ? m[0] : '';
+const has = (name, re) => check(`handler wiring: ${name}`, re.test(h), true);
+has('found', /WINDOW_TITLE_BAR_DOUBLE_CLICK/);
+has('rate limited', /titleBarDoubleClickLimiter\.allow\(\)/);
+has('acts on the sender\'s window only', /BrowserWindow\.fromWebContents\(event\.sender\)/);
+check('handler wiring: never touches another window', !/getAllWindows|getFocusedWindow/.test(h), true);
+has('destroyed guard', /!win \|\| win\.isDestroyed\(\)/);
+has('full-screen guard returns early and logs', /win\.isFullScreen\(\)[\s\S]*?none \(full screen\)[\s\S]*?return;/);
+has('reads AppleActionOnDoubleClick', /getUserDefault\('AppleActionOnDoubleClick', 'string'\)/);
+has('reads AppleMiniaturizeOnDoubleClick', /getUserDefault\('AppleMiniaturizeOnDoubleClick', 'boolean'\)/);
+has('passes both to titleBarActionFor', /titleBarActionFor\(pref, process\.platform, legacyMinimize\)/);
+has('logs both values and the action', /\[WINDOW\] title-bar double-click', \{ pref, legacyMinimize, action \}/);
+check('handler wiring: full-screen check comes before the zoom', h.indexOf('isFullScreen') > 0 && h.indexOf('isFullScreen') < h.indexOf('maximize()'), true);
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
