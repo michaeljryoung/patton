@@ -458,13 +458,7 @@ export class TabBar {
       // Double-click to rename this one tab
       titleSpan.addEventListener('dblclick', (e) => {
         e.stopPropagation();
-        this.startRename(titleSpan, {
-          value: tab.title,
-          placeholder: tab.autoTitle ?? '',
-          ariaLabel: 'Rename tab',
-          maxLength: 100,
-          onCommit: (name) => this.callbacks.onRename(tab.id, name),
-        });
+        this.startTabRename(titleSpan, tab);
       });
 
       // Right-click → set/clear the colour flag, or rename the tab's project.
@@ -505,6 +499,22 @@ export class TabBar {
             },
           ] : []),
           // --- end bookmarks ---
+          // Double-click renames a tab too, but the menu is the way in from the
+          // keyboard, and Michael: "should be a rename option on tabs that arent
+          // projects when right click". A project's tabs are named for the
+          // project (the entry below), so they get no entry of their own.
+          ...(!project ? [
+            { separator: true as const },
+            {
+              label: 'Rename Tab…',
+              action: () => {
+                // The bar may have been rebuilt while the menu was open: look again.
+                const liveTitle = this.liveTitleSpan(tab.id);
+                if (!liveTitle) return; // the tab closed meanwhile
+                this.startTabRename(liveTitle, tab);
+              },
+            },
+          ] : []),
           // Unlike double-click, this names every tab in the project, now and later.
           ...(project ? [
             { separator: true as const },
@@ -513,9 +523,7 @@ export class TabBar {
               action: () => {
                 // The bar may have been rebuilt while the menu was open, so use
                 // this tab's title as it is now, not the one captured above.
-                const liveTitle = this.tabsContainer.querySelector<HTMLElement>(
-                  `.tab-bar-tab[data-tab-id="${CSS.escape(tab.id)}"] .tab-bar-tab-title`,
-                );
+                const liveTitle = this.liveTitleSpan(tab.id);
                 if (!liveTitle) return; // the tab closed meanwhile
                 this.startRename(liveTitle, {
                   value: project.name,
@@ -602,6 +610,25 @@ export class TabBar {
   /** A pane's state changed: re-read the open hover card, if any. */
   refreshHoverCard(): void {
     this.hoverCard?.refresh();
+  }
+
+  /** The title span of this tab as it is in the bar now (null once it closed). */
+  private liveTitleSpan(tabId: string): HTMLElement | null {
+    return this.tabsContainer.querySelector<HTMLElement>(
+      `.tab-bar-tab[data-tab-id="${CSS.escape(tabId)}"] .tab-bar-tab-title`,
+    );
+  }
+
+  /** Rename this one tab: the box starts at its full name, and an empty box
+   *  goes back to the automatic one. Double-click and the menu both come here. */
+  private startTabRename(titleSpan: HTMLElement, tab: TabHeaderInfo): void {
+    this.startRename(titleSpan, {
+      value: tab.title,
+      placeholder: tab.autoTitle ?? '',
+      ariaLabel: 'Rename tab',
+      maxLength: 100,
+      onCommit: (name) => this.callbacks.onRename(tab.id, name),
+    });
   }
 
   /** Swap a tab's title for an inline text box. Enter or clicking away commits,
