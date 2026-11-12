@@ -632,6 +632,107 @@ async function pageRun(BIG) {
     }
   }
   check('label layout: measurements of the 820px window at x1 (for the record)', measured.length === 6, measured);
+
+  // --- the drag grip is out of the flow, so its hit area must end where the first item
+  // (dot, else title) begins, at every text size: review of 12 Nov found the box 16.8 px wide
+  // at x1 and 20 px at x1.5 against a 12 px padding, so pressing or double-clicking the first
+  // few px of a label hit the invisible grip (no select, no rename, no window drag). For every
+  // tab: the grip box ends at or before the first item's left edge, the point at the glyph's
+  // centre is the grip (drag-reorder stays grabbable), and a point 1 px inside the first item
+  // is not.
+  barEl.style.width = '820px';
+  barEl.style.flex = 'none';
+  const gripRows = {};
+  // Earlier steps leave overlays open (command palette, context menu) that would answer every hit
+  // test: any element above the tab bar that answers is made click-through for this block.
+  const clickThrough = [];
+  const hitAt = (x, y) => {
+    for (let i = 0; i < 12; i++) {
+      const el = document.elementFromPoint(x, y);
+      if (!el || barEl.contains(el) || el === document.body || el === document.documentElement) return el;
+      el.style.pointerEvents = 'none';
+      clickThrough.push(el);
+    }
+    return null;
+  };
+  for (const s of [1, BIG]) {
+    await setScale(s);
+    tabBar.update(layoutTabs);
+    await frame();
+    const rows = [];
+    for (const t of strip.querySelectorAll('.tab-bar-tab')) {
+      const grip = t.querySelector('.tab-bar-tab-grip');
+      const first = t.querySelector('.tab-bar-tab-indicator') || t.querySelector('.tab-bar-tab-title');
+      const gr = grip.getBoundingClientRect();
+      const fr = first.getBoundingClientRect();
+      const range = document.createRange();
+      range.selectNodeContents(grip);
+      const glyph = range.getBoundingClientRect();
+      const cx = glyph.left + glyph.width / 2;
+      const cy = glyph.top + glyph.height / 2;
+      const atGlyph = hitAt(cx, cy);
+      const insideFirst = hitAt(fr.left + 1, fr.top + fr.height / 2);
+      rows.push({
+        tab: t.dataset.tabId,
+        boxRightOverFirst: +(gr.right - fr.left).toFixed(2),
+        glyphRightOverFirst: +(glyph.right - fr.left).toFixed(2),
+        boxW: +gr.width.toFixed(1), glyphW: +glyph.width.toFixed(1),
+        glyphHit: atGlyph === grip, hitWas: atGlyph && (atGlyph.className + '|' + atGlyph.tagName), pt: [+cx.toFixed(1), +cy.toFixed(1)], gbox: [gr.left, gr.top, gr.right, gr.bottom].map((v) => +v.toFixed(1)), firstHitGrip: insideFirst === grip || (insideFirst && insideFirst.closest('.tab-bar-tab-grip') !== null),
+      });
+    }
+    gripRows[s] = rows;
+    const bad = rows.filter((r) => r.boxRightOverFirst > 0.01 || r.glyphRightOverFirst > 0.01 || !r.glyphHit || r.firstHitGrip);
+    check(`drag grip x${s}: its box and glyph end before the first item, the glyph centre hits the grip, 1px inside the first item does not`, rows.length === 6 && bad.length === 0, { bad: bad.slice(0, 3), sample: rows[1] });
+  }
+  for (const el of clickThrough) el.style.pointerEvents = '';
+  check('drag grip: measurements, tab 2, x1 and x1.5 (for the record)', true, { x1: gripRows[1][1], big: gripRows[BIG][1] });
+  barEl.style.width = '';
+  barEl.style.flex = '';
+  await setScale(1);
+
+  // --- Michael's usual 13 tabs: all of them stay visible (12 Nov: asked whether squeezed tabs
+  // should show 5+ letters with the strip scrolling, their dots going off-screen, or keep every tab
+  // and dot visible with crowded tabs showing 1 to 3 letters, he chose "all tabs visible"). With a
+  // mix of dots (needs-you, a flag, the red circle, the parked ring) and one active tab, at x1 and
+  // x1.5: no horizontal scrolling, every tab and every dot inside the strip.
+  // MEASURED LIMIT: this holds only from a ~1200 px window (x1) / ~1300 px (x1.5). In the 820 px
+  // window the strip is 508 px (458 at x1.5) after the 78 px traffic-light padding, the settings
+  // button, + and the spacer, the clock and the 110 px Pause all, against 13 floors of 63 px
+  // (70 at x1.5): the strip scrolls, so 820 is not asserted. A tab at its floor shows no label
+  // at all (the floor is the chrome: 2 px left), so "at least one character" is not asserted either.
+  const thirteen = Array.from({ length: 13 }, (_, i) => ({
+    id: `k${i + 1}`,
+    title: ['Repeated permission prompts', 'Calendly personal Gmail', 'generated report build', 'Fixing the flaky test suite', 'bash', 'Refactor tab strip layout', 'wake', 'ssh prod-db', 'npm run check', 'Draft the quarterly note', 'git rebase main', 'Patton tabs', 'claude'][i],
+    active: i === 2,
+    flag: i === 3 ? 'red' : i === 6 ? 'yellow' : undefined,
+    checkpointDone: i === 5 || i === 3,
+    parked: i === 1 || i === 8 ? { tasks: 1, crons: 0 } : undefined,
+    awaitingInput: i === 0 || i === 10,
+  }));
+  for (const [winW, s] of [[1200, 1], [1300, BIG]]) {
+    barEl.style.width = `${winW}px`;
+    barEl.style.flex = 'none';
+    await setScale(s);
+    tabBar.update(thirteen);
+    await frame();
+    const sr = strip.getBoundingClientRect();
+    const rows = [];
+    for (const t of strip.querySelectorAll('.tab-bar-tab')) {
+      const tr = t.getBoundingClientRect();
+      const dot = t.querySelector('.tab-bar-tab-indicator');
+      const dr = dot ? dot.getBoundingClientRect() : null;
+      rows.push({
+        tab: t.dataset.tabId, w: +tr.width.toFixed(1),
+        inStrip: tr.left >= sr.left - 0.5 && tr.right <= sr.right + 0.5,
+        dotInTab: !dr || (dr.left >= tr.left - 0.5 && dr.right <= tr.right + 0.5 && dr.width > 0),
+        dotInStrip: !dr || (dr.left >= sr.left - 0.5 && dr.right <= sr.right + 0.5),
+              });
+    }
+    const info = { stripW: +sr.width.toFixed(1), scrollW: strip.scrollWidth, scrolls: strip.scrollWidth > strip.clientWidth + 0.5, widths: rows.map((r) => r.w) };
+    const bad = rows.filter((r) => !r.inStrip || !r.dotInTab || !r.dotInStrip);
+    check(`13 tabs in a ${winW}px window, x${s}: all fit with no scrolling, every tab and dot inside the strip`, rows.length === 13 && !info.scrolls && bad.length === 0, { bad: bad.slice(0, 4), ...info });
+  }
+  tabBar.update(withActive('m1'));
   barEl.style.width = '';
   barEl.style.flex = '';
   await setScale(1);

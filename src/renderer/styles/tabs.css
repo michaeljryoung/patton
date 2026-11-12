@@ -160,10 +160,16 @@
   left: -3px;
   top: 50%;
   transform: translateY(-50%);
-  /* Hit area ~16 x 26 px (WCAG 2.5.8 wants 24 px): a transparent border grows
-     the target; it hangs over the tab's edge and the glyph's place is unchanged. */
+  /* Hit area: a transparent border grows the target upward, downward and to the
+     left only. It must END where the first item (dot or label) begins, at the
+     tab's 12 px padding, at every Interface Text Size: a right border here made
+     the box 16.8 px wide at x1 and 20.3 px at x1.5 (the glyph grows with the
+     text), so the first few px of a label hit this invisible handle (no select,
+     no rename, no window drag). Now the box is 4 px + the glyph, from -3 px:
+     right edge at 4.8 px (x1) and 8.3 px (x1.5) -- measured in
+     check-ui-text-scale.cjs. About 11 x 26 px, the height past WCAG 2.5.8's 24. */
   border: solid transparent;
-  border-width: 6px 5px;
+  border-width: 6px 0 6px 4px;
   background-clip: padding-box;
   -webkit-app-region: no-drag;
 }

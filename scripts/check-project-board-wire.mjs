@@ -335,11 +335,18 @@ async function main() {
     rt.clearCustomTitle();
     rt.focusedPane.title = LONG;
     rt.refreshTitle();
-    rt['_project'] = { root: '/tmp/a-project-with-a-long-folder-name', defaultName: 'a-project-with-a-long-folder-name' };
-    rt.refreshTitle();
+    // The project arrives through the tab's own lookup (window.patton.projects.resolve ->
+    // setProject), not by setting its state. The lookup has no public trigger (a pane's
+    // folder change or a focus change fires it from inside), so the private method is called.
+    const resolveWas = w.patton.projects.resolve;
+    w.patton.projects.resolve = async () => ({ root: '/tmp/a-project-with-a-long-folder-name', defaultName: 'a-project-with-a-long-folder-name' });
+    rt['lookUpProject']();
+    await new Promise((r) => setTimeout(r, 0));
     check('tab names: a project\'s name is shown whole, however long', rt.title === 'a-project-with-a-long-folder-name' && rt.displayTitle === rt.title && spanOf().querySelector('.tab-bar-tab-title').textContent === rt.title, { title: rt.title, display: rt.displayTitle });
-    rt['_project'] = null;
-    rt.refreshTitle();
+    w.patton.projects.resolve = async () => null;
+    rt['lookUpProject']();
+    await new Promise((r) => setTimeout(r, 0));
+    w.patton.projects.resolve = resolveWas;
     check('tab names: leaving the project goes back to the short title', rt.displayTitle === 'Repeated permi…', rt.displayTitle);
   }
 
