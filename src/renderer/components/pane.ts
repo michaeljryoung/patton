@@ -775,7 +775,7 @@ export class Pane {
       rlog('info', '[CKPT] run skipped', { pane: this.id, reason: skip, ...(keyWhy === null ? {} : { stashKey: keyWhy }) });
       if (skip === 'menu') return 'Checkpoint: Claude may be showing a menu (a / command was typed)';
       if (skip === 'draft') return 'Checkpoint: a draft may be in Claude\'s input and Ctrl+S is not its stash key';
-      if (skip === 'stashed') return 'Checkpoint: a draft is in Claude\'s input and you have stashed text here';
+      if (skip === 'stashed') return 'Checkpoint: a draft is in Claude\'s input and another is already set aside here';
       return 'Checkpoint: something was typed since Claude stopped';
     }
     rlog('info', '[CKPT] run', { pane: this.id, stash: facts.draft });
@@ -1680,9 +1680,6 @@ export class Pane {
     for (const entry of [...this.pasteChips]) this.removePasteChip(entry);
   }
 
-  /** The user sent a message from this pane. Claude Code may take it into a turn
-   *  that is already running (the pane never goes idle, so startWork's clear never
-   *  fires), hence the clear on the send itself. */
   /** An Enter reached this pane's PTY (typed, from the empty compose box, or
    *  broadcast from another pane). While Claude waits on a permission prompt or
    *  question that Enter answers the dialog and the image is still in the draft,
@@ -1692,6 +1689,9 @@ export class Pane {
     this.clearPasteChipsOnSend('enter');
   }
 
+  /** The user sent a message from this pane. Claude Code may take it into a turn
+   *  that is already running (the pane never goes idle, so startWork's clear never
+   *  fires), hence the clear on the send itself. */
   private clearPasteChipsOnSend(reason: 'enter' | 'compose'): void {
     const count = this.pasteChips.length;
     if (count === 0) return;
