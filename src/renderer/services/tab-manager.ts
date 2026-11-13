@@ -1092,7 +1092,7 @@ export class TabManager {
 
   // ---- Checkpoint clock (services/checkpoint-clock.ts) ----
 
-  /** Settings → "Checkpoint reminder after N% of the context window". */
+  /** Settings → "Checkpoint reminder after N% of the context window since the last checkpoint". */
   setCheckpointNudgePct(pct: number): void {
     this.checkpointNudgePct = pct;
     this.updateCheckpoint();

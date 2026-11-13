@@ -200,8 +200,8 @@ export class SettingsPanel {
               <span class="settings-hint">Off: Patton reads Claude's title instead, as before v1.14. Applies to Claude sessions started after the change.</span>
             </div>
             <div class="settings-group settings-group-toggle">
-              <label class="settings-label" for="setting-checkpoint-nudge">Checkpoint reminder after <input class="settings-input settings-input-inline" id="setting-checkpoint-nudge" type="number" min="${DEFAULTS.CHECKPOINT_NUDGE_PCT_MIN}" max="${DEFAULTS.CHECKPOINT_NUDGE_PCT_MAX}" step="1" />% of the context window</label>
-              <span class="settings-hint">The clock at the right of the tab bar shows the context a Claude session has used since its last /checkpoint (needs the hook above), and turns amber and bold at this share. Click it to run /checkpoint.</span>
+              <label class="settings-label" for="setting-checkpoint-nudge">Checkpoint reminder after <input class="settings-input settings-input-inline" id="setting-checkpoint-nudge" type="number" min="${DEFAULTS.CHECKPOINT_NUDGE_PCT_MIN}" max="${DEFAULTS.CHECKPOINT_NUDGE_PCT_MAX}" step="1" />% of the context window since the last checkpoint</label>
+              <span class="settings-hint">The clock at the right of the tab bar shows the share of the context window a Claude session has used (needs the hook above), and turns amber and bold once it has grown by this share since its last /checkpoint. Click it to run /checkpoint.</span>
             </div>
           </div>
           <div class="shortcuts-section">

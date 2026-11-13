@@ -1,7 +1,10 @@
 /**
- * The checkpoint clock: how much of the context window a Claude Code session
- * has used since its last /checkpoint, shown at the right end of the tab strip
- * for the active tab's focused pane. The numbers come from Patton's Stop hook
+ * The checkpoint clock: shown at the right end of the tab strip for the active
+ * tab's focused pane. Its text is the total share of the context window the
+ * Claude Code session has used (what Claude's own status bar shows); the
+ * reminder (amber, bold) counts growth since the session's last /checkpoint,
+ * because a checkpoint doesn't lower the total, so a reminder on the total
+ * would never clear. The numbers come from Patton's Stop hook
  * (resources/claude-code-stop-hook.sh, OSC 777 `ctx=…;since=…[;cpt=…]`); this
  * file only turns them into what the strip shows.
  */
@@ -12,7 +15,7 @@ import { DEFAULTS } from '../../shared/constants';
  *  the 1M-token window. */
 export const CONTEXT_WINDOW_TOKENS = 1_000_000;
 
-/** Settings → "Checkpoint reminder after N% of the context window". */
+/** Settings → "Checkpoint reminder after N% of the context window since the last checkpoint". */
 export const DEFAULT_CHECKPOINT_NUDGE_PCT = DEFAULTS.CHECKPOINT_NUDGE_PCT;
 
 /** What a pane knows about its Claude session, for the clock. */
@@ -71,18 +74,17 @@ export function checkpointView(
   if (src.ctxTokens === null || src.sinceTokens === null) {
     parts.push('No context reading yet: it arrives when Claude next stops');
   } else {
-    const pct = percentOfWindow(src.sinceTokens);
-    text = `✓ +${pct}%`;
-    due = pct >= thresholdPct;
-    const session = `session at ${percentOfWindow(src.ctxTokens)}%`;
+    const total = percentOfWindow(src.ctxTokens);
+    const growth = percentOfWindow(src.sinceTokens);
+    text = `✓ ${total}%`;
+    due = growth >= thresholdPct;
+    parts.push(`${total}% of the context window used`);
     if (src.checkpointAt === null) {
-      parts.push('No checkpoint in this session yet', session);
+      parts.push('No checkpoint in this session yet');
     } else {
-      parts.push(
-        `${pct}% of the context window since this session's last checkpoint (${checkpointTime(src.checkpointAt, now)})`,
-        session,
-      );
+      parts.push(`+${growth}% since this session's last checkpoint (${checkpointTime(src.checkpointAt, now)})`);
     }
+    if (due) parts.push(`+${growth}% since the last checkpoint: time for one`);
   }
   parts.push('Click to run /checkpoint');
   if (!src.ready) parts.push(src.claudeWorking ? 'available when Claude stops' : "available after Claude's next reply");

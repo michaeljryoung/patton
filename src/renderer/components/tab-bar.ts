@@ -230,7 +230,8 @@ export class TabBar {
     this.container.appendChild(dragSpace);
 
     // Checkpoint clock, pinned at the strip's right end outside the scrolling
-    // tabs: context used since the focused Claude session's last /checkpoint.
+    // tabs: total context used by the focused Claude session (amber when it has
+    // grown past the reminder share since its last /checkpoint).
     // Hidden until setCheckpoint() has a Claude pane to show.
     this.checkpointBtn = document.createElement('button');
     this.checkpointBtn.type = 'button';
