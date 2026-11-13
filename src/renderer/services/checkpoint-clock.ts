@@ -84,7 +84,11 @@ export function checkpointView(
     } else {
       parts.push(`+${growth}% since this session's last checkpoint (${checkpointTime(src.checkpointAt, now)})`);
     }
-    if (due) parts.push(`+${growth}% since the last checkpoint: time for one`);
+    if (due) {
+      parts.push(src.checkpointAt === null
+        ? `${growth}% used with no checkpoint yet: time for one`
+        : `+${growth}% since the last checkpoint: time for one`);
+    }
   }
   parts.push('Click to run /checkpoint');
   if (!src.ready) parts.push(src.claudeWorking ? 'available when Claude stops' : "available after Claude's next reply");

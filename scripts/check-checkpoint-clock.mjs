@@ -44,6 +44,10 @@ v = checkpointView({ ...base, ctxTokens: 300_000, sinceTokens: 250_000, checkpoi
 check('low total, big growth: text is total', v.text === '✓ 30%', v.text);
 check('growth at/over threshold is due', v.due === true);
 check('due tooltip says why', v.label.includes('+25% since the last checkpoint: time for one'), v.label);
+{
+  const n = checkpointView({ ...base, ctxTokens: 300_000, sinceTokens: 300_000, checkpointAt: null }, 20);
+  check('due with no checkpoint: says so, no "since the last checkpoint"', n.due && n.label.includes('30% used with no checkpoint yet: time for one') && !n.label.includes('since the last checkpoint'), n.label);
+}
 
 // High total with no growth never amber
 v = checkpointView({ ...base, ctxTokens: 950_000, sinceTokens: 0, checkpointAt: at }, 20, now);
