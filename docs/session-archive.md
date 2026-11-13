@@ -724,3 +724,7 @@ _Earlier entries archived → `docs/session-archive.md` (latest trim 2026-11-12,
 - **Not yet seen live:** Pause all with a draft, the skipped panes, Resume all, the selected tab in dark mode, `wake` jumping left.
 
 _Earlier entries archived → `docs/session-archive.md` (latest trim 2026-11-12, S49)._
+
+## Decisions (S49 trim 2026-11-13)
+
+- **2026-11-11 (S49) — Pause all has no Resume all; a thumbnail clears on send.** Michael, after resuming each tab by hand left the button on Resume all: "i actually dont think we need the resume button, each tab a bit different". Supersedes S47's Resume all and Pause remaining: every press types `pause` into each pane that can take it, already-paused ones included (Claude just answers again; the scope-reminder hook keeps no state). On "thumbnail screenshots are staying at bottom after message sent": the send itself clears them (Enter, the empty box's Enter or Send, a broadcast Enter, his compose submit), except an Enter while Claude waits on a prompt, which answers the dialog and leaves the image in the draft; that exception is my call, not his words.
