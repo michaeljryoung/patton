@@ -2,9 +2,8 @@ import { Pane, type ParkedInfo } from './pane';
 import { SplitContainer } from './split-container';
 import { SearchOverlay } from './search-overlay';
 import { HistoryManager } from '../services/history-manager';
-import { projectName } from '../services/project-names';
+import { projectTitle } from '../services/project-names';
 import { rlog } from '../services/renderer-logger';
-import { formatProjectTitle } from '../services/sessions';
 import { shortTabName } from '../services/tab-name';
 import {
   splitPane as splitPaneInTree,
@@ -37,12 +36,6 @@ const PROJECT_RETRY_MS = 1500;
 /** Same project and same worktree of it. */
 function sameProject(a: ProjectInfo | null, b: ProjectInfo | null): boolean {
   return a?.root === b?.root && a?.worktree?.path === b?.worktree?.path;
-}
-
-/** A project's tab title: its name, plus the worktree for a linked worktree
- *  ("patton ⎇ feat-x"). */
-export function projectTitle(project: ProjectInfo): string {
-  return formatProjectTitle(projectName(project), project.worktree);
 }
 
 export class Tab {

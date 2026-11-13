@@ -28,6 +28,29 @@ export function resolveProject(cwd: string): ProjectInfo | null {
   return registeredSubProject(resolve(cwd), base) ?? base;
 }
 
+/** What a stored project name can be filed against: a real project root, or a
+ *  linked worktree's own folder (a name set on a worktree's tab names that
+ *  worktree, not its parent repository). */
+export interface ProjectNameTarget {
+  kind: 'root' | 'worktree';
+  /** The key in the `projectNames` map: the root or the worktree's folder. */
+  key: string;
+  /** The automatic name a stored name equal to it falls back to; null for a
+   *  worktree, whose automatic title is derived and has no name to match. */
+  defaultName: string | null;
+}
+
+/** What `key` may be named as, or null when it is neither a project root nor a
+ *  registered linked worktree's own folder (so an arbitrary path is refused). */
+export function projectNameTarget(key: string): ProjectNameTarget | null {
+  const project = resolveProject(key);
+  if (!project) return null;
+  if (project.worktree) {
+    return project.worktree.path === key ? { kind: 'worktree', key, defaultName: null } : null;
+  }
+  return project.root === key ? { kind: 'root', key, defaultName: project.defaultName } : null;
+}
+
 /** Where the registered project folders come from (the project list, each with
  *  its real path resolved ahead of time: see registered-projects.ts), set once
  *  by the IPC layer; unset = none registered. */

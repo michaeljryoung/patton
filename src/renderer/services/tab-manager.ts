@@ -8,7 +8,7 @@ import { CONFIRM_SHORTCUT_DWELL_MS, DEFAULTS } from '../../shared/constants';
 import { announce } from './announcer';
 import { rlog } from './renderer-logger';
 import { WAKE_TITLE } from './board-wake';
-import { onProjectNamesChanged, projectName, startProjectNames } from './project-names';
+import { onProjectNamesChanged, projectDisplay, projectName, projectNameKey, projectRenameFields, startProjectNames } from './project-names';
 import { hoverBlocks, type HoverBlock, type HoverPaneInput } from './tab-hover';
 import type { SessionState, RendererMode, TabFlag, WindowCloseInfo, ConfirmRequest, PauseAllReport } from '../../shared/types';
 import { runPause, emptyReport, pauseSummary, type PauseTarget } from './pause-all';
@@ -338,12 +338,14 @@ export class TabManager {
   }
 
   /** Rename the project a tab is in: every tab in that project, in every
-   *  window, shows the new name. An empty name restores the automatic one.
+   *  window, shows the new name. In a linked worktree it names that worktree
+   *  alone (the parent repository keeps its own name). An empty name restores
+   *  the automatic one.
    *  The tabs update when main broadcasts the change back. */
   renameProject(id: string, name: string): void {
     const project = this.tabs.find(t => t.id === id)?.project;
     if (!project) return;
-    window.patton.projects.setName(project.root, name).catch(console.error);
+    window.patton.projects.setName(projectNameKey(project), name).catch(console.error);
   }
 
   /** Set or clear a tab's manual colour flag. Persistence rides the existing
@@ -838,7 +840,7 @@ export class TabManager {
           paneCount: tab.panes.length,
           project,
           projectName: project ? projectName(project) : null,
-          worktree: project?.worktree ?? null,
+          worktree: project ? projectDisplay(project).worktree : null,
           cwd: pane.getCwd(),
           tabTitle: tab.title,
           hasCustomTitle: tab.hasCustomTitle,
@@ -1075,7 +1077,7 @@ export class TabManager {
         title: t.title,
         displayTitle: t.displayTitle,
         autoTitle: t.autoTitle,
-        project: t.project ? { name: projectName(t.project), defaultName: t.project.defaultName } : null,
+        project: t.project ? projectRenameFields(t.project) : null,
         active: t.id === this.activeTab?.id,
         awaitingInput: t.awaitingInput,
         checkpointDone: t.checkpointDone,

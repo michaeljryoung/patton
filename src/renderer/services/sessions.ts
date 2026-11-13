@@ -114,7 +114,7 @@ export function stateWords(s: SessionInfo, now: number): string {
 /** Everything a palette query matches against, lower-cased. */
 export function sessionSearchText(s: SessionInfo, now: number): string {
   const parts = [
-    s.projectName ?? '', s.worktree?.name ?? '', s.tabTitle, s.paneTitle,
+    s.projectName ?? '', s.worktree?.name ?? '', s.project?.worktree?.name ?? '', s.tabTitle, s.paneTitle,
     stateWords(s, now),
     // "needs you" finds every waiting, blocked or error session, under the
     // word the tab tooltip uses.

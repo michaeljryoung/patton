@@ -5,7 +5,7 @@ import { homedir, hostname } from 'node:os';
 import { basename, join } from 'node:path';
 import { IPC, uiTextScaleOf } from '../shared/constants';
 import { PtyManager } from './pty-manager';
-import { isSafeAbsolutePath, resolveProject, setRegisteredProjects } from './projects';
+import { isSafeAbsolutePath, projectNameTarget, resolveProject, setRegisteredProjects } from './projects';
 import { registeredProjects, setProjectListSetting } from './registered-projects';
 import { getHookStatus, installHook, refreshInstalledScript, removeHook, type ClaudeHookPaths } from './claude-hook';
 import { getResourcesPath } from './resources-path';
@@ -461,14 +461,18 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
       console.warn('[SECURITY] Rate limit exceeded', { channel: IPC.PROJECT_NAME_SET });
       return;
     }
-    // Names are only ever stored against a real project root, never an arbitrary path.
-    const project = resolveProject(root);
-    if (!project || project.root !== root) {
-      console.warn('[SECURITY] PROJECT_NAME_SET rejected — not a project root', { root });
+    // Names are only ever stored against a real project root or a linked
+    // worktree's own folder, never an arbitrary path.
+    const target = projectNameTarget(root);
+    if (!target) {
+      console.warn('[SECURITY] PROJECT_NAME_SET rejected — not a project root or worktree', { root });
       return;
     }
-    const names = store.setProjectName(project, name);
-    console.info('[PROJECTS] Project renamed', { root, name: names[root] ?? `${project.defaultName} (automatic)` });
+    const names = store.setProjectName(target, name);
+    console.info('[PROJECTS] Project renamed', {
+      [target.kind]: root,
+      name: names[root] ?? `${target.defaultName ?? 'worktree title'} (automatic)`,
+    });
     for (const win of BrowserWindow.getAllWindows()) {
       if (!win.isDestroyed()) win.webContents.send(IPC.PROJECT_NAMES_CHANGED, names);
     }

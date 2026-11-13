@@ -6,8 +6,8 @@ import { join } from 'node:path';
 import { homedir, userInfo } from 'node:os';
 import { DEFAULTS, isNotificationSoundType } from '../shared/constants';
 import { ALLOWED_SHELLS } from './pty-manager';
-import { cleanProjectName } from './projects';
-import type { HistoryEntry, AppSettings, WindowState, SessionState, ProjectInfo, Bookmark } from '../shared/types';
+import { cleanProjectName, type ProjectNameTarget } from './projects';
+import type { HistoryEntry, AppSettings, WindowState, SessionState, Bookmark } from '../shared/types';
 
 // Keychain-protected random encryption key for electron-store.
 // The key itself is 32 random bytes, stored in userData/key.enc encrypted by
@@ -361,30 +361,31 @@ export function setNotes(content: string): void {
   getStore().set('notes', capped);
 }
 
-// --- Project names (project root → the name its tabs show) ---
+// --- Project names (project root, or a linked worktree's folder → the name its tabs show) ---
 export function getProjectNames(): Record<string, string> {
   const names = getStore().get('projectNames', {});
   return names && typeof names === 'object' && !Array.isArray(names) ? names : {};
 }
 
 /**
- * Store the name a project's tabs show. An empty name, or the automatic one,
- * removes the entry so the project goes back to its folder-derived name. The
- * caller has already checked `project.root` is a real project root. Returns
- * the full updated map.
+ * Store the name a project's tabs show, or, for a linked worktree, the name
+ * that worktree shows alone. An empty name, or (for a project root) the
+ * automatic one, removes the entry so the tabs go back to their folder-derived
+ * name. The caller has already checked `target` with `projectNameTarget`.
+ * Returns the full updated map.
  */
-export function setProjectName(project: ProjectInfo, rawName: string): Record<string, string> {
+export function setProjectName(target: ProjectNameTarget, rawName: string): Record<string, string> {
   // The store is the trust boundary, so the name is cleaned here, not just in the UI.
   const name = cleanProjectName(rawName);
   const names = { ...getProjectNames() };
-  if (!name || name === project.defaultName) {
-    delete names[project.root];
+  if (!name || name === target.defaultName) {
+    delete names[target.key];
   } else {
-    if (names[project.root] === undefined && Object.keys(names).length >= DEFAULTS.PROJECT_NAMES_MAX) {
+    if (names[target.key] === undefined && Object.keys(names).length >= DEFAULTS.PROJECT_NAMES_MAX) {
       console.warn('[SECURITY] Project name rejected — name store full', { max: DEFAULTS.PROJECT_NAMES_MAX });
       return names;
     }
-    names[project.root] = name;
+    names[target.key] = name;
   }
   getStore().set('projectNames', names);
   return names;
