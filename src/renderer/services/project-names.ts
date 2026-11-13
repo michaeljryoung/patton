@@ -85,9 +85,11 @@ function folderName(path: string): string {
  * that would be left with nothing, keeps its whole name.
  */
 export function worktreeShortName(worktreeFolder: string, parentFolder: string): string {
-  const prefix = parentFolder.toLowerCase();
-  if (prefix && worktreeFolder.toLowerCase().startsWith(prefix)) {
-    const rest = worktreeFolder.slice(prefix.length);
+  // Compare the same slice of both, lowercased: lowercasing can change a
+  // string's length ("İ" becomes two code units), so never slice by the
+  // lowercased prefix's length.
+  if (parentFolder && worktreeFolder.slice(0, parentFolder.length).toLowerCase() === parentFolder.toLowerCase()) {
+    const rest = worktreeFolder.slice(parentFolder.length);
     if (/^[-_. ]/u.test(rest) && rest.length > 1) return rest.slice(1);
   }
   return worktreeFolder;
@@ -98,11 +100,15 @@ export function worktreeShortName(worktreeFolder: string, parentFolder: string):
  * a name of its own show their title whole; a worktree without one shows only
  * its short folder name (`worktreeShortName`), cut like a program's title
  * (`shortTabName`, 15 characters). The full "parent ⎇ folder" stays `projectTitle`,
- * for the tooltip, the screen-reader label, the hover card, the dialogs and the palette.
+ * for the palette, the screen-reader label and the dialogs; the hover card
+ * shows the project's name and the folder's path instead.
  */
 export function projectStripTitle(project: ProjectInfo): string {
   if (!project.worktree || worktreeOwnName(project) !== undefined) return projectTitle(project);
-  return shortTabName(worktreeShortName(project.worktree.name, folderName(project.root)));
+  const folder = project.worktree.name;
+  const short = shortTabName(worktreeShortName(folder, folderName(project.root)).trim());
+  // A remainder of only spaces or a state glyph shortens to nothing: keep the folder.
+  return short || shortTabName(folder) || folder;
 }
 
 /** What the "Set Default Tab Name for Project…" box starts with and shows when

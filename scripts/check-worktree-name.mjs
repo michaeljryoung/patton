@@ -295,6 +295,11 @@ check('strip: "_", "." and a space separate the prefix too', ['_', '.', ' '].eve
 check('strip: only one separator is taken off', stripOf(fake('app', 'app--beta')) === '-beta', stripOf(fake('app', 'app--beta')));
 check('strip: a prefix not followed by a separator is kept (app-x vs apple)', stripOf(fake('app', 'apple')) === 'apple', stripOf(fake('app', 'apple')));
 check('strip: an empty remainder falls back to the folder name', stripOf(fake('app', 'app-')) === 'app-' && stripOf(fake('app', 'app')) === 'app', [stripOf(fake('app', 'app-')), stripOf(fake('app', 'app'))]);
+check('strip: a whitespace-only remainder falls back to the folder name', ['app-  ', 'app-\t '].every((f) => stripOf(fake('app', f)) !== ''), ['app-  ', 'app-\t '].map((f) => stripOf(fake('app', f))));
+check('strip: a glyph-only remainder falls back to the folder name', stripOf(fake('app', 'app-\u2733')) !== '', stripOf(fake('app', 'app-\u2733')));
+check('strip: a remainder with surrounding spaces is trimmed', stripOf(fake('app', 'app-  beta ')) === 'beta', stripOf(fake('app', 'app-  beta ')));
+check('strip: a prefix whose lowercase is longer ("\u0130") keeps the rest whole', stripOf(fake('\u0130', '\u0130--a')) === '-a', stripOf(fake('\u0130', '\u0130--a')));
+check('strip: ...and shortens "\u0130stanbul-beta" under "\u0130stanbul"', stripOf(fake('\u0130stanbul', '\u0130stanbul-beta')) === 'beta', stripOf(fake('\u0130stanbul', '\u0130stanbul-beta')));
 
 // clearing restores "<parent> ⎇ <folder>"
 names({ [nv]: 'Venture' });

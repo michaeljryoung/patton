@@ -24,8 +24,9 @@ function trimEnd(text: string): string {
 }
 
 /**
- * The short name an automatic tab shows (a title the program in the pane set;
- * never a name the user typed, a project's name or its default name): at most
+ * The short name an automatic tab shows (a title the program in the pane set,
+ * or an unnamed linked worktree's folder name on the strip; never a name the
+ * user typed, a project's own name or its default name): at most
  * TAB_NAME_MAX characters including the "…". A title that fits is kept whole.
  * A longer one keeps whole words while they stay within 14 characters, and if
  * that leaves fewer than 10 characters it is cut at 14 instead, so a first

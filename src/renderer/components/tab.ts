@@ -462,8 +462,9 @@ export class Tab {
    *  name (or the user's default for it) and the board's "Projects" are shown
    *  whole; a title the program in the pane set is cut to 15 characters
    *  (tab-name.ts), and so is an unnamed linked worktree's short folder name
-   *  (project-names.ts `projectStripTitle`). `title` stays the full name for the tooltip, the screen
-   *  reader label, the hover card and the close dialogs. */
+   *  (project-names.ts `projectStripTitle`). `title` stays the full name
+   *  ("parent ⎇ folder") for the palette, the screen reader label and the close
+   *  dialogs; the hover card shows the project's name and the folder's path. */
   get displayTitle(): string {
     if (this._customTitle || this._cover) return this.title;
     if (this._project) return projectStripTitle(this._project);
