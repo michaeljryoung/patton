@@ -1,6 +1,7 @@
 import type { ProjectInfo } from '../../shared/types';
 import { rlog } from './renderer-logger';
 import { formatProjectTitle } from './sessions';
+import { shortTabName } from './tab-name';
 
 /**
  * The names the user has given projects (right-click a tab → Set Default Tab Name for Project…),
@@ -69,6 +70,39 @@ export function projectRootName(project: ProjectInfo): string {
 export function projectTitle(project: ProjectInfo): string {
   const shown = projectDisplay(project);
   return formatProjectTitle(shown.name, shown.worktree);
+}
+
+/** The last folder of a path, either separator, trailing ones ignored. */
+function folderName(path: string): string {
+  return path.split(/[\\/]+/u).filter(Boolean).pop() ?? '';
+}
+
+/**
+ * The short name of a linked worktree's folder: the folder's name with the
+ * parent repo folder's name and one following separator ("-", "_", "." or a
+ * space) taken off the front, compared case-insensitively ("next-venture-lifesci"
+ * under "next-venture" is "lifesci"). A folder that doesn't start that way, or
+ * that would be left with nothing, keeps its whole name.
+ */
+export function worktreeShortName(worktreeFolder: string, parentFolder: string): string {
+  const prefix = parentFolder.toLowerCase();
+  if (prefix && worktreeFolder.toLowerCase().startsWith(prefix)) {
+    const rest = worktreeFolder.slice(prefix.length);
+    if (/^[-_. ]/u.test(rest) && rest.length > 1) return rest.slice(1);
+  }
+  return worktreeFolder;
+}
+
+/**
+ * What the tab STRIP writes for a project's tab. A project and a worktree with
+ * a name of its own show their title whole; a worktree without one shows only
+ * its short folder name (`worktreeShortName`), cut like a program's title
+ * (`shortTabName`, 15 characters). The full "parent ⎇ folder" stays `projectTitle`,
+ * for the tooltip, the screen-reader label, the hover card, the dialogs and the palette.
+ */
+export function projectStripTitle(project: ProjectInfo): string {
+  if (!project.worktree || worktreeOwnName(project) !== undefined) return projectTitle(project);
+  return shortTabName(worktreeShortName(project.worktree.name, folderName(project.root)));
 }
 
 /** What the "Set Default Tab Name for Project…" box starts with and shows when

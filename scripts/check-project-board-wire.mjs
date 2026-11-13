@@ -343,6 +343,15 @@ async function main() {
     rt['lookUpProject']();
     await new Promise((r) => setTimeout(r, 0));
     check('tab names: a project\'s name is shown whole, however long', rt.title === 'a-project-with-a-long-folder-name' && rt.displayTitle === rt.title && spanOf().querySelector('.tab-bar-tab-title').textContent === rt.title, { title: rt.title, display: rt.displayTitle });
+    // 13 Nov: an unnamed linked worktree's tab shows only its short folder name; the title stays long.
+    w.patton.projects.resolve = async () => ({ root: '/tmp/next-venture', defaultName: 'next-venture', worktree: { name: 'next-venture-lifesci', path: '/tmp/next-venture-lifesci' } });
+    rt['lookUpProject']();
+    await new Promise((r) => setTimeout(r, 0));
+    {
+      const wel = spanOf();
+      check('tab names: an unnamed worktree tab writes only its short folder name on the strip', rt.displayTitle === 'lifesci' && wel.querySelector('.tab-bar-tab-title').textContent === 'lifesci', { display: rt.displayTitle, span: wel.querySelector('.tab-bar-tab-title').textContent });
+      check('tab names: ...its title, tooltip and accessible name stay "next-venture \u2387 next-venture-lifesci"', rt.title === 'next-venture \u2387 next-venture-lifesci' && wel.getAttribute('aria-label') === rt.title, { title: rt.title, aria: wel.getAttribute('aria-label') });
+    }
     w.patton.projects.resolve = async () => null;
     rt['lookUpProject']();
     await new Promise((r) => setTimeout(r, 0));

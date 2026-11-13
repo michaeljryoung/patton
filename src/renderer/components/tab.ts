@@ -2,7 +2,7 @@ import { Pane, type ParkedInfo } from './pane';
 import { SplitContainer } from './split-container';
 import { SearchOverlay } from './search-overlay';
 import { HistoryManager } from '../services/history-manager';
-import { projectTitle } from '../services/project-names';
+import { projectStripTitle, projectTitle } from '../services/project-names';
 import { rlog } from '../services/renderer-logger';
 import { shortTabName } from '../services/tab-name';
 import {
@@ -461,10 +461,12 @@ export class Tab {
   /** What the tab strip writes on the tab. A name the user typed, a project's
    *  name (or the user's default for it) and the board's "Projects" are shown
    *  whole; a title the program in the pane set is cut to 15 characters
-   *  (tab-name.ts). `title` stays the full name for the tooltip, the screen
+   *  (tab-name.ts), and so is an unnamed linked worktree's short folder name
+   *  (project-names.ts `projectStripTitle`). `title` stays the full name for the tooltip, the screen
    *  reader label, the hover card and the close dialogs. */
   get displayTitle(): string {
-    if (this._customTitle || this._cover || this._project) return this.title;
+    if (this._customTitle || this._cover) return this.title;
+    if (this._project) return projectStripTitle(this._project);
     return shortTabName(this.title);
   }
 

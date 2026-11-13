@@ -177,6 +177,7 @@ const bundle = await build({
   stdin: {
     contents: `export * as PN from './src/renderer/services/project-names';
 export * as SE from './src/renderer/services/sessions';
+export * as TN from './src/renderer/services/tab-name';
 export { TabBar } from './src/renderer/components/tab-bar';
 export { BookmarksPanel } from './src/renderer/components/bookmarks-panel';`,
     resolveDir: repo, loader: 'ts',
@@ -198,7 +199,7 @@ w.patton = {
 };
 w.Element.prototype.scrollIntoView = () => {};
 w.eval(bundle.outputFiles[0].text);
-const { PN, SE, TabBar, BookmarksPanel } = w.R;
+const { PN, SE, TN, TabBar, BookmarksPanel } = w.R;
 await PN.startProjectNames();
 
 // What the app does with a project, written through the real functions. The
@@ -267,6 +268,34 @@ box = openBox('sib');
 check('the real box on the unnamed sibling is empty, placeholder the automatic title', box?.value === '' && box.placeholder === 'Venture ⎇ next-venture-defence', box && [box.value, box.placeholder]);
 key(box, 'Escape');
 
+// the tab STRIP (Tab.displayTitle -> projectStripTitle): an unnamed worktree shows
+// only its short folder name; every other surface keeps the long title
+// (13 Nov: "auto names need to be even shorter so probably just the subfolder name").
+// The fallback is the code before this change, so the check can run against it.
+const shortOf = (t) => TN.shortTabName(t);
+const stripOf = (p) => (PN.projectStripTitle ? PN.projectStripTitle(p) : PN.projectTitle(p));
+const fake = (rootDir, wtDir) => ({ root: `/x/${rootDir}`, defaultName: rootDir, worktree: { name: wtDir, path: `/x/${wtDir}` } });
+names({});
+check('strip: an unnamed worktree reads only "lifesci"', stripOf(lifesciProject) === 'lifesci', stripOf(lifesciProject));
+check('strip: ...while its title (tooltip, aria, hover card, dialogs, palette) stays "venture ⎇ next-venture-lifesci"', titleOf(lifesciProject) === 'venture ⎇ next-venture-lifesci' && sessionOf(lifesciProject, '') === 'venture ⎇ next-venture-lifesci', [titleOf(lifesciProject), sessionOf(lifesciProject, '')]);
+check('strip: ...the palette still finds it by parent name and folder', ['venture', 'next-venture-lifesci'].every((t) => SE.sessionSearchText({ project: lifesciProject, projectName: 'venture', worktree: lifesciProject.worktree, tabTitle: '', paneTitle: '', state: 'idle', awaitingSince: null }, 0).includes(t)));
+check('strip: the sibling reads "defence"', stripOf(defenceProject) === 'defence', stripOf(defenceProject));
+check('strip: the rename box placeholder stays the long automatic title', fieldsOf(lifesciProject).defaultName === 'venture ⎇ next-venture-lifesci', fieldsOf(lifesciProject));
+check('strip: a user name on the PARENT does not change the short name', (names({ [nv]: 'Venture' }), stripOf(lifesciProject) === 'lifesci'), stripOf(lifesciProject));
+names({ [lifesci]: 'LifeSci' });
+check('strip: a worktree with its own name shows that name alone', stripOf(lifesciProject) === 'LifeSci', stripOf(lifesciProject));
+check('strip: a long own name is shown whole, as before', (names({ [lifesci]: 'A worktree name well past fifteen' }), stripOf(lifesciProject) === 'A worktree name well past fifteen'), stripOf(lifesciProject));
+names({});
+check('strip: a main-repo tab is unchanged', stripOf(parent) === 'venture' && stripOf({ root: '/x/a-project-with-a-long-folder-name', defaultName: 'a-project-with-a-long-folder-name' }) === 'a-project-with-a-long-folder-name');
+check('strip: a folder without the parent prefix keeps its basename', stripOf(fake('patton', 'feat-x')) === 'feat-x' && stripOf(fake('next-venture', 'worktree-short')) === 'worktree-short', [stripOf(fake('patton', 'feat-x')), stripOf(fake('next-venture', 'worktree-short'))]);
+check('strip: a long remainder is cut to 15 by the shared rule', stripOf(fake('next-venture', 'next-venture-a-very-long-worktree-folder')) === shortOf('a-very-long-worktree-folder') && shortOf('a-very-long-worktree-folder').length <= 15 && shortOf('a-very-long-worktree-folder').endsWith('…'), stripOf(fake('next-venture', 'next-venture-a-very-long-worktree-folder')));
+check('strip: a long folder without the prefix is cut to 15 too', stripOf(fake('patton', 'some-long-worktree-folder-name')).length <= 15 && stripOf(fake('patton', 'some-long-worktree-folder-name')).endsWith('…'), stripOf(fake('patton', 'some-long-worktree-folder-name')));
+check('strip: the parent prefix matches case-insensitively', stripOf(fake('Next-Venture', 'next-VENTURE-lifesci')) === 'lifesci' && stripOf(fake('next-venture', 'NEXT-VENTURE-LifeSci')) === 'LifeSci', [stripOf(fake('Next-Venture', 'next-VENTURE-lifesci')), stripOf(fake('next-venture', 'NEXT-VENTURE-LifeSci'))]);
+check('strip: "_", "." and a space separate the prefix too', ['_', '.', ' '].every((c) => stripOf(fake('app', `app${c}beta`)) === 'beta'), ['_', '.', ' '].map((c) => stripOf(fake('app', `app${c}beta`))));
+check('strip: only one separator is taken off', stripOf(fake('app', 'app--beta')) === '-beta', stripOf(fake('app', 'app--beta')));
+check('strip: a prefix not followed by a separator is kept (app-x vs apple)', stripOf(fake('app', 'apple')) === 'apple', stripOf(fake('app', 'apple')));
+check('strip: an empty remainder falls back to the folder name', stripOf(fake('app', 'app-')) === 'app-' && stripOf(fake('app', 'app')) === 'app', [stripOf(fake('app', 'app-')), stripOf(fake('app', 'app'))]);
+
 // clearing restores "<parent> ⎇ <folder>"
 names({ [nv]: 'Venture' });
 check('clearing the worktree name restores "<parent> ⎇ <folder>"', titleOf(lifesciProject) === 'Venture ⎇ next-venture-lifesci', titleOf(lifesciProject));
@@ -301,6 +330,7 @@ const src = (p) => readFileSync(join(repo, p), 'utf8');
 const tm = src('src/renderer/services/tab-manager.ts');
 check('tab-manager files a rename under projectNameKey(project)', /projects\.setName\(projectNameKey\(project\), name\)/.test(tm));
 check('tab-manager feeds the palette and the bar through project-names', /worktree: project \? projectDisplay\(project\)\.worktree : null/.test(tm) && /project: t\.project \? projectRenameFields\(t\.project\) : null/.test(tm));
+check('tab.ts writes the strip title through projectStripTitle (no copy of the rule)', /projectStripTitle\(this\._project\)/.test(src('src/renderer/components/tab.ts')) && !/worktreeShortName/.test(src('src/renderer/components/tab.ts')));
 check('tab-manager has no second copy of the rule (no project.worktree / defaultName reads)', !/project\??\.worktree\b/.test(tm) && !/\.defaultName/.test(tm));
 check('tab.ts takes its title from project-names, not its own formatting', /projectTitle \} from '\.\.\/services\/project-names'/.test(src('src/renderer/components/tab.ts')) && !/formatProjectTitle/.test(src('src/renderer/components/tab.ts')));
 const ipc = src('src/main/ipc-handlers.ts');
