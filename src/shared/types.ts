@@ -126,7 +126,9 @@ export interface SessionState {
 /** The project a terminal's folder belongs to, which names its tab. See
  *  main/projects.ts for what counts as a project. */
 export interface ProjectInfo {
-  /** Absolute path of the project folder; a name the user gives the project is stored under it. */
+  /** Absolute path of the project folder (for a linked worktree, its main repo). A name
+   *  given to the project is stored under it; a name given from a worktree's tab is
+   *  stored under `worktree.path` instead. */
   root: string;
   /** The automatic name: the last word of the folder name ("fantasy-football" → "football"). */
   defaultName: string;
@@ -295,7 +297,7 @@ export interface PattonAPI {
   projects: {
     resolve: (cwd: string) => Promise<ProjectInfo | null>;
     getNames: () => Promise<Record<string, string>>;
-    setName: (root: string, name: string) => Promise<void>;
+    setName: (rootOrWorktreePath: string, name: string) => Promise<void>;
     onNamesChanged: (callback: (names: Record<string, string>) => void) => () => void;
   };
   // --- Bookmarks ---

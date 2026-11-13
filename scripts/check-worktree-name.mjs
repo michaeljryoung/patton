@@ -10,10 +10,11 @@
 // temp repo with two linked worktrees. HOME is a temp folder; Patton's own
 // settings are never touched.
 // Renderer half: bundles the REAL project-names and tab-bar in jsdom.
-// A source assertion at the end checks tab-manager / tab / bookmarks wiring.
+// The bookmark label is checked by driving the real BookmarksPanel; a source
+// assertion at the end checks tab-manager / tab wiring.
 import { build } from 'esbuild';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -36,6 +37,8 @@ const check = (name, ok, detail) => {
 
 // ---- fixtures: a repo with two linked worktrees, a plain folder, a loose repo ----
 const work = realpathSync(mkdtempSync(join(tmpdir(), 'worktree-name-check-')));
+// Removed however the run ends (pass, a failed check, a throw, process.exit).
+process.on('exit', () => rmSync(work, { recursive: true, force: true }));
 const home = join(work, 'home');
 const userData = join(work, 'userData');
 mkdirSync(home);
@@ -174,24 +177,28 @@ const bundle = await build({
   stdin: {
     contents: `export * as PN from './src/renderer/services/project-names';
 export * as SE from './src/renderer/services/sessions';
-export { TabBar } from './src/renderer/components/tab-bar';`,
+export { TabBar } from './src/renderer/components/tab-bar';
+export { BookmarksPanel } from './src/renderer/components/bookmarks-panel';`,
     resolveDir: repo, loader: 'ts',
   },
   bundle: true, format: 'iife', globalName: 'R', platform: 'browser', write: false,
   loader: { '.css': 'empty' }, logLevel: 'silent',
 });
-const dom = new JSDOM('<!doctype html><div id="bar"></div>', { runScripts: 'outside-only', pretendToBeVisual: true });
+const dom = new JSDOM('<!doctype html><div id="bar"></div><div id="bookmarks"></div>', { runScripts: 'outside-only', pretendToBeVisual: true, url: 'http://localhost/' });
 const w = dom.window;
 const doc = w.document;
 let pushNames = () => {};
 let initialNames = {};
+const savedBookmarks = [];
 w.patton = {
   titleBarDoubleClick: () => {}, moveWindowBy: () => {}, onUiTextScale: () => () => {},
   projects: { getNames: () => Promise.resolve(initialNames), onNamesChanged: (cb) => { pushNames = cb; } },
+  bookmarks: { get: () => Promise.resolve([]), set: async (list) => { savedBookmarks.push(list); return list; }, onChanged: () => () => {} },
+  openExternal: async () => {},
 };
 w.Element.prototype.scrollIntoView = () => {};
 w.eval(bundle.outputFiles[0].text);
-const { PN, SE, TabBar } = w.R;
+const { PN, SE, TabBar, BookmarksPanel } = w.R;
 await PN.startProjectNames();
 
 // What the app does with a project, written through the real functions. The
@@ -265,6 +272,30 @@ names({ [nv]: 'Venture' });
 check('clearing the worktree name restores "<parent> ⎇ <folder>"', titleOf(lifesciProject) === 'Venture ⎇ next-venture-lifesci', titleOf(lifesciProject));
 check('...and the palette and the box agree with the tab', sessionOf(lifesciProject, '') === titleOf(lifesciProject) && fieldsOf(lifesciProject).name === '', [sessionOf(lifesciProject, ''), fieldsOf(lifesciProject)]);
 
+// the real BookmarksPanel: a bookmark from a worktree tab points at the PARENT
+// root, so it is labelled with the parent's name, never the worktree's own
+const bookmarkHost = { getTabs: () => [], getActiveTab: () => null, switchToTab() {}, createTab: async () => null, listSessions: () => [], goToSession: () => false, focusTerminal() {} };
+const bookmarkTab = (project, cwd) => ({ project, focusedPane: { getCwd: () => cwd } });
+const bookmarkFrom = async (project, cwd) => {
+  const panel = new BookmarksPanel(doc.getElementById('bookmarks'), bookmarkHost);
+  savedBookmarks.length = 0;
+  await panel.addProjectFromTab(bookmarkTab(project, cwd));
+  return savedBookmarks.at(-1)?.at(-1);
+};
+names({ [lifesci]: 'LifeSci', [nv]: 'Venture' });
+let bm = await bookmarkFrom(lifesciProject, lifesci);
+check('bookmark from a named worktree tab points at the parent root', bm?.path === nv, bm);
+check('...and is labelled with the PARENT\'s name, not the worktree\'s', bm?.label === 'Venture', bm);
+names({ [lifesci]: 'LifeSci' });
+bm = await bookmarkFrom(lifesciProject, lifesci);
+check('with the parent unnamed the label is the parent\'s automatic name', bm?.path === nv && bm?.label === 'venture', bm);
+names({ [nv]: 'Venture' });
+bm = await bookmarkFrom(lifesciProject, lifesci);
+check('an unnamed worktree: the label is the parent\'s name', bm?.path === nv && bm?.label === 'Venture', bm);
+names({ [lifesci]: 'LifeSci', [nv]: 'Venture' });
+bm = await bookmarkFrom(parent, nv);
+check('bookmark from the parent tab is labelled with its name', bm?.path === nv && bm?.label === 'Venture', bm);
+
 // ---- wiring (source assertions: TabManager needs xterm and cannot run headless) ----
 const src = (p) => readFileSync(join(repo, p), 'utf8');
 const tm = src('src/renderer/services/tab-manager.ts');
@@ -272,7 +303,6 @@ check('tab-manager files a rename under projectNameKey(project)', /projects\.set
 check('tab-manager feeds the palette and the bar through project-names', /worktree: project \? projectDisplay\(project\)\.worktree : null/.test(tm) && /project: t\.project \? projectRenameFields\(t\.project\) : null/.test(tm));
 check('tab-manager has no second copy of the rule (no project.worktree / defaultName reads)', !/project\??\.worktree\b/.test(tm) && !/\.defaultName/.test(tm));
 check('tab.ts takes its title from project-names, not its own formatting', /projectTitle \} from '\.\.\/services\/project-names'/.test(src('src/renderer/components/tab.ts')) && !/formatProjectTitle/.test(src('src/renderer/components/tab.ts')));
-check('the bookmark label uses projectName (the same rule)', /project \? projectName\(project\)/.test(src('src/renderer/components/bookmarks-panel.ts')));
 const ipc = src('src/main/ipc-handlers.ts');
 check('main gates PROJECT_NAME_SET with projectNameTarget', /projectNameTarget\(root\)/.test(ipc));
 

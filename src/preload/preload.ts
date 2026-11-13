@@ -51,7 +51,7 @@ const api: PattonAPI = {
   projects: {
     resolve: (cwd) => ipcRenderer.invoke(IPC.PROJECT_RESOLVE, cwd),
     getNames: () => ipcRenderer.invoke(IPC.PROJECT_NAMES_GET),
-    setName: (root, name) => ipcRenderer.invoke(IPC.PROJECT_NAME_SET, root, name),
+    setName: (rootOrWorktreePath, name) => ipcRenderer.invoke(IPC.PROJECT_NAME_SET, rootOrWorktreePath, name),
     onNamesChanged: (callback) => {
       const listener = (_event: Electron.IpcRendererEvent, names: Record<string, string>) => callback(names);
       ipcRenderer.on(IPC.PROJECT_NAMES_CHANGED, listener);

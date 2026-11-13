@@ -538,7 +538,8 @@ export class TabBar {
               },
             },
           ] : []),
-          // Unlike double-click, this names every tab in the project, now and later.
+          // Unlike double-click, this names every tab in the project, now and later;
+          // on a tab in a linked worktree it names that worktree alone.
           ...(project ? [
             { separator: true as const },
             {

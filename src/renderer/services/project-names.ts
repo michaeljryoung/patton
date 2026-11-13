@@ -47,13 +47,21 @@ function worktreeOwnName(project: ProjectInfo): string | undefined {
 export function projectDisplay(project: ProjectInfo): { name: string; worktree: { name: string; path: string } | null } {
   const own = worktreeOwnName(project);
   if (own !== undefined) return { name: own, worktree: null };
-  return { name: names.get(project.root) ?? project.defaultName, worktree: project.worktree ?? null };
+  return { name: projectRootName(project), worktree: project.worktree ?? null };
 }
 
 /** What a project's tabs are called: the user's name for it, else the automatic one
  *  (a worktree's own name, else its parent's; no "⎇ folder": see `projectTitle`). */
 export function projectName(project: ProjectInfo): string {
   return projectDisplay(project).name;
+}
+
+/** The name of a project's root (the main repo, for a linked worktree): the
+ *  user's name for the root, else its automatic one. Ignores any name the
+ *  worktree has of its own: use it where the thing named is the root itself
+ *  (a bookmark points at the root, so it is labelled with the root's name). */
+export function projectRootName(project: ProjectInfo): string {
+  return names.get(project.root) ?? project.defaultName;
 }
 
 /** A project's tab title: its name, plus the worktree for a linked worktree
@@ -68,7 +76,7 @@ export function projectTitle(project: ProjectInfo): string {
  *  placeholders the automatic title; a project's holds its current name. */
 export function projectRenameFields(project: ProjectInfo): { name: string; defaultName: string } {
   if (!project.worktree) return { name: projectName(project), defaultName: project.defaultName };
-  const automatic = formatProjectTitle(names.get(project.root) ?? project.defaultName, project.worktree);
+  const automatic = formatProjectTitle(projectRootName(project), project.worktree);
   return { name: worktreeOwnName(project) ?? '', defaultName: automatic };
 }
 

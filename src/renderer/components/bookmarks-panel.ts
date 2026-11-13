@@ -2,7 +2,7 @@ import { DEFAULTS } from '../../shared/constants';
 import { shortcutKeys } from '../../shared/shortcuts';
 import type { Bookmark } from '../../shared/types';
 import { announce } from '../services/announcer';
-import { projectName } from '../services/project-names';
+import { projectRootName } from '../services/project-names';
 import { openProject, type OpenProjectHost } from '../services/open-project';
 import { CLOSED_STATE, projectLiveState, type ProjectLiveState } from '../services/project-live-state';
 import { rlog } from '../services/renderer-logger';
@@ -261,7 +261,9 @@ export class BookmarksPanel {
       this.focusRow(existing.id);
       return;
     }
-    const label = (project ? projectName(project) : folderName(path)).slice(0, DEFAULTS.BOOKMARK_LABEL_MAX_CHARS);
+    // The bookmark points at the project's root, so it carries the root's name,
+    // never a name given to the linked worktree this tab happens to be in.
+    const label = (project ? projectRootName(project) : folderName(path)).slice(0, DEFAULTS.BOOKMARK_LABEL_MAX_CHARS);
     const bookmark: Bookmark = { id: newId(), kind: 'project', label, path, addedAt: Date.now() };
     const saved = await this.save([...this.bookmarks, bookmark]);
     if (saved) {
