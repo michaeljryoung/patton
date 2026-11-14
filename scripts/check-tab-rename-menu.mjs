@@ -146,6 +146,20 @@ key(box, 'Enter');
 check('...and commits through onRename', renames.length === 1 && renames[0][0] === 'plain' && renames[0][1] === 'by double-click', renames);
 reset();
 
+// 14 Nov: tabs grow to share the strip with the label centred, so the title span no longer
+// reaches the tab's ends; a double-click anywhere on the tab renames it, except on its own controls.
+fire(tabEl('third'), 'dblclick');
+check('a double-click on the tab itself (its blank part) opens the box in that tab', boxes().length === 1 && tabEl('third').contains(boxes()[0]) && boxes()[0].value === 'third', boxes().length);
+fire(tabEl('third'), 'dblclick');
+check('...a second double-click on that tab opens no second box', boxes().length === 1, boxes().length);
+fire(boxes()[0], 'dblclick');
+check('...nor does one in the box itself', boxes().length === 1, boxes().length);
+reset();
+fire(tabEl('third').querySelector('.tab-bar-tab-close'), 'dblclick');
+fire(tabEl('third').querySelector('.tab-bar-tab-grip'), 'dblclick');
+check('a double-click on the close button or the grip opens no box', !!tabEl('third').querySelector('.tab-bar-tab-close') && !!tabEl('third').querySelector('.tab-bar-tab-grip') && boxes().length === 0, boxes().length);
+reset();
+
 // keyboard focus: closing the box with Enter or Escape lands on that tab, not <body>
 items = openMenu('plain');
 choose(items, 'Rename Tab').click();

@@ -196,7 +196,9 @@ export class TabBar {
 
     // Empty space in the tabs container moves the window like a title bar
     // (drag, and double-click for the Mac's title-bar action). Done by JS, not
-    // by -webkit-app-region, so the mouse events still reach us.
+    // by -webkit-app-region, so the mouse events still reach us. Since tabs grow
+    // to share the strip (14 Nov) there is normally none left; the blank space
+    // beside + and the strip's left padding are the places that are always there.
     this.tabsContainer.addEventListener('mousedown', (e) => {
       // Only handle clicks on the container itself, not on child tabs
       if ((e.target as HTMLElement).closest('.tab-bar-tab')) return;
@@ -476,9 +478,15 @@ export class TabBar {
       titleSpan.dataset.title = shown;
       el.appendChild(titleSpan);
 
-      // Double-click to rename this one tab
-      titleSpan.addEventListener('dblclick', (e) => {
+      // Double-click anywhere on the tab renames this one tab. Tabs grow to share
+      // the strip and centre their label (tabs.css), so the title span no longer
+      // reaches the tab's ends: listening on the tab keeps the whole width live.
+      // Not the grip or the close button (their own controls), nor an open
+      // rename box (a double-click there selects a word).
+      el.addEventListener('dblclick', (e) => {
+        if ((e.target as HTMLElement).closest('.tab-bar-tab-grip, .tab-bar-tab-close, .tab-bar-tab-rename')) return;
         e.stopPropagation();
+        if (!titleSpan.isConnected) return; // a rename box already holds its place
         this.startTabRename(titleSpan, tab);
       });
 

@@ -18,6 +18,9 @@
 //    selected tab's ink bar, yields to an open rename box, and owns its last pixel; the drag grip
 //    takes the pointer only over its own tab; 13 tabs fit from 860 px (x1) / 930 px (x1.5);
 //    the active tab is still in view after a size change;
+//  - a few tabs share the whole strip: each grows by the same amount from its own width, names
+//    whole, dot and label centred; one tab alone fills it; a double-click left of a wide tab's
+//    label renames it;
 //  - the selected tab sits on the terminal's ground with a 3 px ink bar under it, and
 //    a flagged or plain tab has neither (light scheme only: the hidden window's);
 //  - the collapsed bookmarks rail's mark is centred on the header row it stood in;
@@ -847,6 +850,87 @@ async function pageRun(BIG) {
     check(`13 tabs in a ${winW}px window, x${s}: all fit with no scrolling, every tab and dot inside the strip`, ok, detail);
   }
 
+  // --- a few tabs share the whole strip (14 Nov, Michael, with a screenshot of six short tabs and
+  // half the strip empty: "When there are fewer tabs than fill the whole bar, could we make them
+  // wider? ... they use up the full width and then compress as you get more"). His six tabs, at
+  // two window widths and both text sizes: no scrolling and no empty strip (the last tab ends at
+  // the strip's right edge); every tab grew by the same amount from its own label's width (so
+  // they come out nearly equal, and no name is cut sooner than before); every name whole; the
+  // dot and label centred in the tab. One tab alone fills the strip. A double-click on the blank
+  // part of a wide tab, left of its label, opens the rename box in that tab. The crowded strip
+  // is the squeezed-strip and 13-tab blocks above, unchanged.
+  const fewTabs = [
+    { id: 'f1', title: 'WAKE', active: false, flag: 'yellow' },
+    { id: 'f2', title: 'House', active: false },
+    { id: 'f3', title: 'Roma', active: false, awaitingInput: true },
+    { id: 'f4', title: 'Foot', active: false },
+    { id: 'f5', title: 'genome', active: true },
+    { id: 'f6', title: 'Defence', active: false, parked: { tasks: 1, crons: 0 } },
+  ];
+  for (const winW of [1000, 1400]) {
+    barEl.style.width = `${winW}px`;
+    barEl.style.flex = 'none';
+    for (const s of [1, BIG]) {
+      await setScale(s);
+      tabBar.update(fewTabs);
+      await frame();
+      const tabEls = [...strip.querySelectorAll('.tab-bar-tab')];
+      // Each tab's own width (its label and chrome) with growing switched off, for the record.
+      for (const t of tabEls) t.style.flex = '0 0 auto';
+      await frame();
+      const natural = tabEls.map((t) => t.getBoundingClientRect().width);
+      for (const t of tabEls) t.style.flex = '';
+      await frame();
+      const sr = strip.getBoundingClientRect();
+      const rows = tabEls.map((t, i) => {
+        const tr = t.getBoundingClientRect();
+        const ts = getComputedStyle(t);
+        const span = t.querySelector('.tab-bar-tab-title');
+        const spr = span.getBoundingClientRect();
+        const first = (t.querySelector('.tab-bar-tab-indicator') || span).getBoundingClientRect();
+        return {
+          tab: t.dataset.tabId, w: +tr.width.toFixed(1), natural: +natural[i].toFixed(1), grew: +(tr.width - natural[i]).toFixed(1),
+          whole: span.scrollWidth <= span.clientWidth + 0.5,
+          leftRoom: +(first.left - tr.left - parseFloat(ts.paddingLeft)).toFixed(1), rightRoom: +(tr.right - parseFloat(ts.paddingRight) - spr.right).toFixed(1),
+        };
+      });
+      const last = tabEls[tabEls.length - 1].getBoundingClientRect();
+      const grows = rows.map((r) => r.grew);
+      const info = { stripW: +sr.width.toFixed(1), lastRight: +last.right.toFixed(1), stripRight: +sr.right.toFixed(1), scrolls: strip.scrollWidth > strip.clientWidth + 0.5, rows };
+      check(`few tabs (${winW}px window, x${s}): the six tabs fill the strip, the last ending at its right edge, with no scrolling`, rows.length === 6 && !info.scrolls && Math.abs(last.right - sr.right) <= 1, info);
+      check(`few tabs (${winW}px window, x${s}): every tab grew by the same amount from its own width (within 1px, more than 20px)`, Math.max(...grows) - Math.min(...grows) <= 1 && Math.min(...grows) > 20, info);
+      check(`few tabs (${winW}px window, x${s}): every name shows whole, and the dot and label sit centred (room left = room right, within 1px)`, rows.every((r) => r.whole && Math.abs(r.leftRoom - r.rightRoom) <= 1), info);
+    }
+  }
+  barEl.style.width = '1000px';
+  await setScale(1);
+  tabBar.update([{ id: 'solo', title: 'House', active: true }]);
+  await frame();
+  {
+    const sr = strip.getBoundingClientRect();
+    const tr = strip.querySelector('.tab-bar-tab').getBoundingClientRect();
+    check('one tab alone fills the strip', Math.abs(tr.left - sr.left) <= 1 && Math.abs(tr.right - sr.right) <= 1, { tab: [tr.left, tr.right], strip: [sr.left, sr.right] });
+  }
+  // A double-click left of a wide tab's label (where the title span no longer reaches) renames it.
+  barEl.style.width = '1400px';
+  tabBar.update(fewTabs);
+  await frame();
+  {
+    const roma = strip.querySelector('.tab-bar-tab[data-tab-id="f3"]');
+    const tr = roma.getBoundingClientRect();
+    const dot = roma.querySelector('.tab-bar-tab-indicator').getBoundingClientRect();
+    const x = (tr.left + parseFloat(getComputedStyle(roma).paddingLeft) + dot.left) / 2;
+    const y = tr.top + tr.height / 2;
+    const hitEl = document.elementFromPoint(x, y);
+    (hitEl || roma).dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, clientX: x, clientY: y }));
+    await frame();
+    const box = strip.querySelector('.tab-bar-tab-rename');
+    check('a double-click on the blank part of a wide tab, left of its dot, opens the rename box in that tab', hitEl === roma && !!box && roma.contains(box), { x: +x.toFixed(1), dotLeft: +dot.left.toFixed(1), hit: hitEl && hitEl.className, box: !!box, inRoma: !!box && roma.contains(box) });
+    if (box) box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    await frame();
+    check('(the rename box is closed again)', !strip.querySelector('.tab-bar-tab-rename'));
+  }
+
   // --- the close button: out of the flow, shown only over its tab (13 Nov: ~20 px a tab back).
   // Hover is real: the page asks main for a mouseMove through sendInputEvent (see electronMain).
   // (The overlays are already closed for the grip block above, which hovers too.)
@@ -878,10 +962,13 @@ async function pageRun(BIG) {
       const tr = t.getBoundingClientRect();
       const ts = getComputedStyle(t);
       const title = t.querySelector('.tab-bar-tab-title').getBoundingClientRect();
-      return { id, gap: +(tr.right - parseFloat(ts.paddingRight) - title.right).toFixed(1), ...state(id) };
+      const first = (t.querySelector('.tab-bar-tab-indicator') || t.querySelector('.tab-bar-tab-title')).getBoundingClientRect();
+      return { id, gap: +(tr.right - parseFloat(ts.paddingRight) - title.right).toFixed(1), leftGap: +(first.left - tr.left - parseFloat(ts.paddingLeft)).toFixed(1), ...state(id) };
     });
     check(`close x${s}: no tab is hovered, so no close button is visible (selected tab included), none takes a click`, rows.every((r) => r.opacity === '0' && r.events === 'none' && !r.hit), rows);
-    check(`close x${s}: without hover it takes no room: every label's right edge reaches the tab's right padding (within 2px), and the button is out of the flow`, rows.every((r) => Math.abs(r.gap) <= 2 && r.position === 'absolute'), rows);
+    // Tabs share the strip and centre their label (14 Nov), so "no room held for the button" is:
+    // as much free room right of the label as left of it (within 1px), the button out of the flow.
+    check(`close x${s}: without hover it takes no room: every label sits centred in its tab (room right of it = room left of it, within 1px), and the button is out of the flow`, rows.every((r) => Math.abs(r.gap - r.leftGap) <= 1 && r.position === 'absolute'), rows);
     const hovered = {};
     for (const id of ['h1', 'h2', 'h3']) {
       const [tx, ty] = centre(tabOf(id).querySelector('.tab-bar-tab-title'));
