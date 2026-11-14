@@ -899,7 +899,7 @@ async function pageRun(BIG) {
       const info = { stripW: +sr.width.toFixed(1), lastRight: +last.right.toFixed(1), stripRight: +sr.right.toFixed(1), scrolls: strip.scrollWidth > strip.clientWidth + 0.5, rows };
       check(`few tabs (${winW}px window, x${s}): the six tabs fill the strip, the last ending at its right edge, with no scrolling`, rows.length === 6 && !info.scrolls && Math.abs(last.right - sr.right) <= 1, info);
       check(`few tabs (${winW}px window, x${s}): every tab grew by the same amount from its own width (within 1px, more than 20px)`, Math.max(...grows) - Math.min(...grows) <= 1 && Math.min(...grows) > 20, info);
-      check(`few tabs (${winW}px window, x${s}): every name shows whole, and the dot and label sit centred (room left = room right, within 1px)`, rows.every((r) => r.whole && Math.abs(r.leftRoom - r.rightRoom) <= 1), info);
+      check(`few tabs (${winW}px window, x${s}): every name shows whole, and the dot and label sit centred (room left = room right, and half of what the tab grew, within 1.5px)`, rows.every((r) => r.whole && Math.abs(r.leftRoom - r.rightRoom) <= 1 && Math.abs(r.leftRoom - r.grew / 2) <= 1.5), info);
     }
   }
   barEl.style.width = '1000px';
@@ -930,6 +930,40 @@ async function pageRun(BIG) {
     await frame();
     check('(the rename box is closed again)', !strip.querySelector('.tab-bar-tab-rename'));
   }
+
+  // --- one long name doesn't squeeze the others (14 Nov, review of the tabs-share-the-strip change).
+  // With the old 220 px tab cap gone, a 60-character name (project names allow 60) took ~320 px
+  // and every other tab's name was cut where it had shown whole. The cap is on the label now
+  // (196 px = the old 220 px tab minus its 24 px padding). 13 tabs, one with a 60-character name:
+  // at the window widths below the OLD css (before the strip-sharing change) showed all 12 other
+  // names whole, so must this; and the long tab's label is no wider than 196 px.
+  // Measured on the old css: x1 shows all 12 whole from 1250 px (1200 cuts one), x1.5 from 1450 px (1400 cuts three).
+  const LONG_NAME_CASES = [[1300, 1], [1450, BIG]];
+  const longName = 'Quarterly permission prompt review for the Patton tab strip'.padEnd(60, '!').slice(0, 60);
+  const shortNames = ['WAKE', 'House', 'Roma', 'Foot', 'genome', 'Defence', 'Patton', 'Em&Lyra', 'AI-Brain', 'LifeSci', 'CK3', 'Audit'];
+  const longMix = [...shortNames.slice(0, 6), longName, ...shortNames.slice(6)].map((title, i) => ({ id: `m${i + 1}`, title, active: title === 'genome' }));
+  const longTabProbe = async (winW, s) => {
+    barEl.style.width = `${winW}px`;
+    barEl.style.flex = 'none';
+    await setScale(s);
+    tabBar.update(longMix);
+    await frame();
+    const rows = [...strip.querySelectorAll('.tab-bar-tab')].map((t) => {
+      const span = t.querySelector('.tab-bar-tab-title');
+      return { title: span.dataset.title || span.textContent, w: +t.getBoundingClientRect().width.toFixed(1), titleW: +span.getBoundingClientRect().width.toFixed(1), whole: span.scrollWidth <= span.clientWidth + 0.5 };
+    });
+    const shortRows = rows.filter((r) => r.title !== longName);
+    const longRow = rows.find((r) => r.title === longName);
+    return { rows: rows.length, cut: shortRows.filter((r) => !r.whole).map((r) => r.title), longTitleW: longRow && longRow.titleW, longTabW: longRow && longRow.w, scrolls: strip.scrollWidth > strip.clientWidth + 0.5 };
+  };
+  for (const [winW, s] of LONG_NAME_CASES) {
+    const r = await longTabProbe(winW, s);
+    check(`13 tabs, one named with 60 characters (${winW}px window, x${s}): all 12 other names show whole, the long tab's label is at most 196px`, r.rows === 13 && r.cut.length === 0 && r.longTitleW <= 196.5, r);
+  }
+  barEl.style.width = '1400px';
+  await setScale(1);
+  tabBar.update(fewTabs);
+  await frame();
 
   // --- the close button: out of the flow, shown only over its tab (13 Nov: ~20 px a tab back).
   // Hover is real: the page asks main for a mouseMove through sendInputEvent (see electronMain).

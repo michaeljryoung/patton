@@ -95,6 +95,8 @@ const input0 = () => doc.querySelector('.tab-bar-tab-rename');
 for (const open of doc.querySelectorAll('.tab-bar-tab-rename')) open.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
 check('(no rename box open before the next checks)', !input0());
 const before = calls.dbl;
+// a real double-click starts with presses (which clear the last drag's dragMoved)
+for (let i = 0; i < 2; i++) { fire(doc.querySelector('.tab-bar-tab-title'), 'mousedown', { screenX: 5, screenY: 5 }); fire(doc, 'mouseup', { screenX: 5, screenY: 5 }); }
 fire(doc.querySelector('.tab-bar-tab-title'), 'dblclick'); // opens the rename box
 const box = input0();
 check('a double-click on a tab title opens the rename box', !!box);
@@ -161,6 +163,33 @@ fire(space, 'mousedown', { screenX: 100, screenY: 100 });
 fire(doc, 'mouseup');
 fire(space, 'dblclick');
 check('a clean double-click right after a drag zooms again', calls.dbl === b3 + 1, calls.dbl - b3);
+
+// --- drag then rename: a tab's double-click renames it (14 Nov: anywhere on the tab), but the
+// dblclick that ends a press-release-press-drag-release is the end of a window drag, not a rename.
+{
+  const t2 = doc.querySelectorAll('.tab-bar-tab')[1];
+  const boxesIn = () => doc.querySelectorAll('.tab-bar-tab-rename').length;
+  const closeBoxes = () => { for (const open of doc.querySelectorAll('.tab-bar-tab-rename')) open.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })); };
+  closeBoxes();
+  check('(no rename box open before the tab drag-then-dblclick check)', boxesIn() === 0, boxesIn());
+  const movesBefore = calls.moves.length;
+  fire(t2, 'mousedown', { screenX: 100, screenY: 100 });
+  fire(doc, 'mouseup', { screenX: 100, screenY: 100 });
+  fire(t2, 'mousedown', { screenX: 100, screenY: 100 });
+  fire(doc, 'mousemove', { screenX: 120, screenY: 100 });
+  fire(doc, 'mouseup', { screenX: 120, screenY: 100 });
+  fire(t2, 'dblclick');
+  check('press-release-press-drag on a tab moves the window', calls.moves.length > movesBefore, calls.moves.length - movesBefore);
+  check('... and its trailing dblclick on the tab opens no rename box', boxesIn() === 0, boxesIn());
+  fire(t2, 'mousedown', { screenX: 100, screenY: 100 });
+  fire(doc, 'mouseup', { screenX: 100, screenY: 100 });
+  fire(t2, 'mousedown', { screenX: 100, screenY: 100 });
+  fire(doc, 'mouseup', { screenX: 100, screenY: 100 });
+  fire(t2, 'dblclick');
+  check('a plain double-click on the tab right after a drag still opens the rename box, in that tab', boxesIn() === 1 && t2.contains(doc.querySelector('.tab-bar-tab-rename')), boxesIn());
+  closeBoxes();
+  check('(rename box closed again)', boxesIn() === 0, boxesIn());
+}
 
 // --- tab body: click selects, press+move drags the window and does not select
 const tabNow = doc.querySelectorAll('.tab-bar-tab')[1];

@@ -83,8 +83,10 @@
      its own label's width by an equal share of the room left over, so a few tabs
      come out nearly equal and wide; once the strip is full there is no room to
      share and they shrink from their labels' widths exactly as before. Growing
-     from the label, not from 0 (equal widths), means a long name is never cut
-     sooner than it was. The label group sits in the middle of a wide tab, and
+     from the label, not from 0 (equal widths), and capping the label at 196 px
+     (.tab-bar-tab-title: the old 220 px tab minus its padding), means no name is
+     cut sooner than it was, however long another tab's name is. The label group
+     sits in the middle of a wide tab, and
      "safe" puts it back at the start should it ever not fit. No max-width. */
   flex: 1 1 auto;
   justify-content: safe center;
@@ -212,8 +214,12 @@
  * hidden lets it shrink to nothing), so a wide tab can centre the dot and
  * label together. A double-click anywhere on the tab renames it (tab-bar.ts),
  * not only on this span, which no longer reaches the tab's right end. */
+/* max-width: the old 220 px tab cap, 196 px of it label, moved onto the label so
+ * one long name (project names allow 60 characters) doesn't take room from the
+ * other tabs' names now that the tab itself has no cap. */
 .tab-bar-tab-title {
   flex: 0 1 auto;
+  max-width: 196px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

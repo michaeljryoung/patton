@@ -485,6 +485,7 @@ export class TabBar {
       // rename box (a double-click there selects a word).
       el.addEventListener('dblclick', (e) => {
         if ((e.target as HTMLElement).closest('.tab-bar-tab-grip, .tab-bar-tab-close, .tab-bar-tab-rename')) return;
+        if (this.dragMoved) return; // the end of a window drag, not a double-click
         e.stopPropagation();
         if (!titleSpan.isConnected) return; // a rename box already holds its place
         this.startTabRename(titleSpan, tab);
