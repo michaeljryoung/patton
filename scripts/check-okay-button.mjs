@@ -107,6 +107,8 @@ const exitHandlers = [];
 const resizes = [];
 let inputState = null;
 let stashKey = { ok: true };
+let stashFails = false; // the stash-key probe rejects
+let stashGate = null; // when set, the probe answers only once this promise resolves
 const CLEAN = { dirty: false, length: 0, lastInputAt: 0, slashSubmitAt: 0, userStashAt: 0, pattonStashAt: 0 };
 const setInput = (o) => { inputState = { ...CLEAN, ...o }; };
 setInput({});
@@ -123,7 +125,10 @@ w.patton = stubWith({
     inputState: () => Promise.resolve([inputState]),
     resize: (id, cols, rows) => resizes.push([id, cols, rows]),
   }),
-  pauseAll: stubWith({ stashKey: () => Promise.resolve(stashKey) }),
+  pauseAll: stubWith({
+    stashKey: () => (stashFails ? Promise.reject(new Error('stash probe failed'))
+      : stashGate ? stashGate.then(() => stashKey) : Promise.resolve(stashKey)),
+  }),
   history: stubWith({ get: () => Promise.resolve([]), add: () => Promise.resolve(), clear: () => Promise.resolve() }),
   log: { send: (_lvl, args) => logs.push(args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ')) },
 });
@@ -131,8 +136,14 @@ w.eval(bundle.outputFiles[0].text);
 const PA = w.PA;
 
 
+// A click must never reach the broadcast paths (typing into every pane of the tab).
+const broadcasts = [];
 const makePane = async () => {
-  const p = new PA.Pane({ onFocus() {}, onTitleChange() {} });
+  const p = new PA.Pane({
+    onFocus() {}, onTitleChange() {},
+    onBroadcastWrite: (d) => broadcasts.push(['write', d]),
+    onBroadcastPaste: (t) => broadcasts.push(['paste', t]),
+  });
   await p.init();
   w.document.getElementById('content').appendChild(p.element);
   return p;
@@ -144,7 +155,7 @@ const btn = (p) => p.element.querySelector('.okay-button');
 const click = (p) => btn(p).click();
 const okayLogs = (kind) => logs.filter((l) => l.includes(`[OKAY] ${kind}`));
 const sentLine = () => writes.map(([, d]) => d);
-const fresh = () => { logs.length = 0; writes.length = 0; stashKey = { ok: true }; setInput({}); };
+const fresh = () => { logs.length = 0; writes.length = 0; broadcasts.length = 0; stashFails = false; stashGate = null; stashKey = { ok: true }; setInput({}); };
 const LINE = 'Is everything going okay?';
 // Click, read what the button says once the probes have answered, then let the rest play out.
 const clickSeeing = async (p) => { click(p); await wait(SEEN_AT); return btn(p).textContent; };
@@ -163,10 +174,12 @@ const clickSeeing = async (p) => { click(p); await wait(SEEN_AT); return btn(p).
   resizes.length = 0;
   report(p, 'idle');
   check('a 7501 report from Claude Code shows the row', r.hidden === false);
+  await Promise.resolve();
   check('showing the row re-fits the terminal and tells the PTY at once', resizes.some(([id]) => id === p.ptyId), resizes);
   resizes.length = 0;
   clearReport(p);
   check('Claude going away (state=clear) hides the row', r.hidden === true);
+  await Promise.resolve();
   check('hiding it re-fits and tells the PTY too', resizes.some(([id]) => id === p.ptyId), resizes);
   report(p, 'working');
   check('Claude back: shown again', r.hidden === false);
@@ -195,6 +208,7 @@ const clickSeeing = async (p) => { click(p); await wait(SEEN_AT); return btn(p).
   const l = okayLogs('sent');
   check('one "[OKAY] sent" line, queued false, stash false', l.length === 1 && l[0].includes('"queued":false') && l[0].includes('"stash":false'), l);
   check('the button says Sent', seen === 'Sent', seen);
+  check('a click never reaches the broadcast paths (write or paste)', broadcasts.length === 0, broadcasts);
   await wait(RESULT_WAIT);
   check('...then goes back to Okay?', btn(p).textContent === 'Okay?', btn(p).textContent);
 }
@@ -218,6 +232,7 @@ const clickSeeing = async (p) => { click(p); await wait(SEEN_AT); return btn(p).
   click(p);
   await wait(500);
   check('with a draft: Ctrl+S, then the line, then Enter', JSON.stringify(sentLine()) === JSON.stringify(['\x13', LINE, '\r']), sentLine());
+  check('...and none of it is broadcast', broadcasts.length === 0, broadcasts);
   const l = okayLogs('sent');
   check('...logged with stash true', l.length === 1 && l[0].includes('"stash":true'), l);
   await wait(RESULT_WAIT);
@@ -341,6 +356,100 @@ const clickSeeing = async (p) => { click(p); await wait(SEEN_AT); return btn(p).
   p.dispose();
   await wait(RESULT_WAIT);
   check('disposing mid-result is quiet and removes the row', !p.element.isConnected);
+}
+
+// ── 3. The row follows Claude by every route ──
+{
+  // Claude detected by the title glyph alone (no 7501 report).
+  const p = await makePane();
+  const r = row(p);
+  p.terminalView.__emit('onTitleChange', 'zsh');
+  check('a title without the glyph: the row stays hidden', r.hidden === true);
+  p.terminalView.__emit('onTitleChange', '\u2733 Claude Code');
+  check('a ✳ title (Claude stopped) shows the row', r.hidden === false);
+  p.terminalView.__emit('onTitleChange', '\u25D0 working');
+  check('a ◐ title (Claude working) keeps it shown', r.hidden === false);
+  p.terminalView.__emit('onTitleChange', 'zsh');
+  check('a title without the glyph hides the row again', r.hidden === true);
+}
+
+// ── 4. A respawned shell has never run Claude ──
+{
+  const p = await makePane();
+  report(p, 'working'); report(p, 'done');
+  const r = row(p);
+  check('(setup) shown while Claude is done', r.hidden === false);
+  fresh();
+  const out = await p.respawn({});
+  check('(setup) the real respawn() ran and gave a new shell', out.newId === p.ptyId && out.newId !== out.oldId, out);
+  check('after a respawn the row is hidden (the new shell never ran Claude)', r.hidden === true);
+  btn(p).click();
+  await wait(300);
+  check('...and a click on it writes nothing to the new shell', writes.length === 0 && okayLogs('sent').length === 0, writes);
+  report(p, 'working'); report(p, 'done');
+  check('Claude running again in the new shell shows the row', r.hidden === false);
+}
+
+// ── 5. A failing probe ──
+{
+  const p = await makePane();
+  report(p, 'working'); report(p, 'done');
+  fresh();
+  stashFails = true;
+  const seen = await clickSeeing(p);
+  await wait(300);
+  check('a stash-key probe that rejects: nothing is written', writes.length === 0, writes);
+  check('...the button says it could not check', seen === "couldn't check, try again", seen);
+  const l = okayLogs('skipped');
+  check('...logged "[OKAY] skipped" with reason error and the error text', l.length === 1 && l[0].includes('"reason":"error"') && l[0].includes('stash probe failed'), l);
+  await wait(RESULT_WAIT);
+  check('...and the button recovers to Okay?', btn(p).textContent === 'Okay?', btn(p).textContent);
+  fresh();
+  click(p);
+  await wait(400);
+  check('...and works again afterwards', sentLine().filter((d) => d === LINE).length === 1, sentLine());
+  await wait(RESULT_WAIT);
+}
+
+// ── 6. The row hides while the ask is in flight ──
+{
+  const p = await makePane();
+  report(p, 'working'); report(p, 'done');
+  fresh();
+  let release;
+  stashGate = new Promise((res) => { release = res; });
+  click(p);
+  await wait(SEEN_AT);
+  clearReport(p); // Claude leaves while the probes are out: the row hides
+  release();
+  await wait(300);
+  check('an ask whose row hid mid-flight shows no late result', btn(p).textContent === 'Okay?', btn(p).textContent);
+  report(p, 'working'); report(p, 'done');
+  fresh();
+  click(p);
+  await wait(400);
+  check('...and the row is free for a new ask when Claude is back', sentLine().filter((d) => d === LINE).length === 1, sentLine());
+  await wait(RESULT_WAIT);
+}
+
+// ── 7. One resize, not two, when compose-first starts or ends with Claude ──
+{
+  const p = await makePane();
+  p.setComposeFirst(true, null);
+  resizes.length = 0;
+  report(p, 'idle');
+  await wait(20);
+  check('(setup) compose-first engaged with Claude', p.composeFirstEngaged === true && row(p).hidden === false);
+  check('Claude starting under compose-first: the row adds no PTY resize of its own (the resize observer sends the one final size)',
+    resizes.length === 0, resizes);
+  clearReport(p);
+  await wait(20);
+  check('(setup) compose-first released', p.composeFirstEngaged === false && row(p).hidden === true);
+  check('Claude leaving under compose-first: no resize of the row\'s own either', resizes.length === 0, resizes);
+  p.setComposeFirst(false, null);
+  report(p, 'idle');
+  await wait(20);
+  check('without compose-first the row still re-fits the PTY once', resizes.length === 1, resizes);
 }
 
 finished = true;

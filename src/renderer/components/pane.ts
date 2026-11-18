@@ -24,9 +24,9 @@ import { paneActivity, type PaneActivity } from '../services/pane-activity';
 import { turnEndSignal, verdictAfterRootChange, verdictAfterChildren, type HookVerdict } from '../services/turn-end';
 
 import type { ITheme } from '@xterm/xterm';
-import type { TabFlag, UnsentInputState } from '../../shared/types';
+import type { StashKeyVerdict, TabFlag, UnsentInputState } from '../../shared/types';
 import type { PauseInput } from '../services/pause-all';
-import { OKAY_PROMPT, okayAnnouncement, okayButtonText, okayDecision, okayRowVisible } from '../services/okay-ask';
+import { OKAY_ERROR_WORDS, OKAY_PROMPT, okayAnnouncement, okayButtonText, okayDecision, okayRowVisible } from '../services/okay-ask';
 import { OkayRow } from './okay-row';
 
 /** Background work a parked Claude Code session is waiting on: from the Stop
@@ -930,11 +930,39 @@ export class Pane {
     this.queueSubmit('pause', false, { stashFirst: opts.stash, scroll: false, origin: 'patton' });
   }
 
+  /** Claude isn't running in this pane any more: the shell is back at its
+   *  prompt, or the pane's shell was replaced (respawn) and the new one has
+   *  never run it. Drops every sign of the old session, the Okay? row with it. */
+  private claudeGone(reason: 'shell-prompt' | 'respawn'): void {
+    this.resetProgramStatus('shell-prompt');
+    this.claudeWorking = false;
+    if (this.claudeActive) this.newClaudeSession();
+    this.claudeActive = false;
+    this.stopSeenSinceWork = false;
+    this.notifyCheckpoint();
+    this.syncComposeFirst(reason);
+    this.cancelClaudeStop();
+    if (this.takeVerdict()) rlog('info', '[DOT] Hook verdict dropped: ' + (reason === 'respawn' ? 'respawn' : 'shell prompt'), { pane: this.id });
+    this.setParked(null);
+    this.clearPasteChips();
+  }
+
   /** Show the Okay? row only while Claude Code runs here with a live shell. */
   private syncOkayRow(): void {
     if (!this.okayRow) return; // before the constructor has built it
     const live = this.ptyId !== null && !this._ptyExited;
-    if (this.okayRow.setVisible(okayRowVisible(this._claudeActive, live))) this.refitTerminal();
+    if (!this.okayRow.setVisible(okayRowVisible(this._claudeActive, live))) return;
+    // Re-fit and tell the PTY now rather than on the resize observer's 100 ms
+    // debounce. But Claude starting or leaving usually engages or releases the
+    // compose-first box in the same synchronous run (syncComposeFirst follows
+    // the claudeActive change), which moves the terminal's height too: one
+    // refit for both, left to the observer, not a SIGWINCH at the row's
+    // height and another at the final one.
+    const composeAtShow = this.composeFirstEngaged;
+    queueMicrotask(() => {
+      if (this.composeFirstEngaged !== composeAtShow) return; // the observer's refit covers both
+      this.refitTerminal();
+    });
   }
 
   /** The Okay? button's click: ask Claude "Is everything going okay?" by the
@@ -942,7 +970,16 @@ export class Pane {
    *  words, or null when the session changed under the await (nothing sent). */
   private async askOkay(): Promise<string | null> {
     const ptyId = this.ptyId;
-    const [input, key] = await Promise.all([this.readInputState(), window.patton.pauseAll.stashKey()]);
+    let input: UnsentInputState | null;
+    let key: StashKeyVerdict;
+    try {
+      [input, key] = await Promise.all([this.readInputState(), window.patton.pauseAll.stashKey()]);
+    } catch (error) {
+      // Nothing is known about the input line, so nothing is typed.
+      rlog('warn', '[OKAY] skipped', { pane: this.id, reason: 'error', error: String(error) });
+      announce(`Not sent: ${OKAY_ERROR_WORDS}`);
+      return OKAY_ERROR_WORDS;
+    }
     if (this.ptyId !== ptyId || ptyId === null || this.disposed) {
       rlog('info', '[OKAY] skipped', { pane: this.id, reason: 'session-changed' });
       return null;
@@ -1225,6 +1262,9 @@ export class Pane {
       window.patton.pty.destroy(newId);
       throw new Error('Pane closed while its shell was being replaced');
     }
+    // The new shell has never run Claude: the old session's state goes first,
+    // so the Okay? row hides before the pane points at the new shell.
+    this.claudeGone('respawn');
     this.ptyId = newId;
     this.ptyExited = false;
     this.newClaudeSession();
@@ -1539,19 +1579,7 @@ export class Pane {
         // The shell is back at its prompt, so Claude isn't running here any
         // more — even if it quit mid-work and left a ◐ title behind. Without
         // this, the next `claude` launch's first ✳ would read as a stop.
-        if (state === 'prompt') {
-          this.resetProgramStatus('shell-prompt');
-          this.claudeWorking = false;
-          if (this.claudeActive) this.newClaudeSession();
-          this.claudeActive = false;
-          this.stopSeenSinceWork = false;
-          this.notifyCheckpoint();
-          this.syncComposeFirst('shell-prompt');
-          this.cancelClaudeStop();
-          if (this.takeVerdict()) rlog('info', '[DOT] Hook verdict dropped: shell prompt', { pane: this.id });
-          this.setParked(null);
-          this.clearPasteChips();
-        }
+        if (state === 'prompt') this.claudeGone('shell-prompt');
       }),
     );
 

@@ -263,13 +263,17 @@
 }
 
 /* The Okay? row: a slim row of its own under a Claude pane's terminal, the
- * button at its left (Michael, 18 Nov 2026). One terminal line tall; shown only
- * while Claude Code runs in the pane (components/okay-row.ts). */
+ * button at its left (Michael, 18 Nov 2026: "one line shorter"). About 1.2
+ * terminal lines at UI scale 1 and 20 px at 1.1 (check-ui-text-scale.cjs measures
+ * it); it grows with the UI text scale. Shown only while Claude Code runs in the
+ * pane (components/okay-row.ts). min-width: 0 lets the button shrink in a pane
+ * narrower than its words. */
 .okay-row {
   display: flex;
   flex-direction: row;
   align-items: center;
-  padding: 2px 12px;
+  min-width: 0;
+  padding: 1px 12px;
   border-top: 1px solid var(--hairline);
   background: var(--bg);
   flex-shrink: 0;
@@ -280,14 +284,18 @@
 }
 
 .okay-button {
-  padding: 1px 10px;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 0 10px;
   border: 1px solid var(--hairline);
   border-radius: 0;
   background: var(--bg);
   color: var(--ink);
   font-family: var(--font-ui);
   font-size: var(--ui);
-  line-height: 1.2;
+  line-height: 1.1;
   white-space: nowrap;
   cursor: pointer;
 }

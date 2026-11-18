@@ -459,6 +459,37 @@ async function pageRun(BIG) {
       check(`the Okay? word fits its button at x${BIG} (no clipping)`, ob.scrollWidth <= ob.clientWidth + 1 && ob.scrollHeight <= ob.clientHeight + 1, { sw: ob.scrollWidth, cw: ob.clientWidth, sh: ob.scrollHeight, ch: ob.clientHeight });
     }
     check('the Okay? row sits at the left, button first', okay.button.getBoundingClientRect().left - okay.element.getBoundingClientRect().left < 24, okay.button.getBoundingClientRect().left);
+
+    // The row is slim ("one line shorter"): measured at 1, Michael's own 1.1 and 1.5.
+    // Why: the 23 px row at x1 (1.5 terminal lines) was not shorter than a line to his eye.
+    const heights = {};
+    for (const s of [1, 1.1, BIG]) {
+      await setScale(s);
+      heights[s] = Math.round(okay.element.getBoundingClientRect().height * 10) / 10;
+    }
+    check('the Okay? row is at most 20.5 px tall at Michael\'s x1.1 (measured px by scale: ' + JSON.stringify(heights) + ')', heights[1.1] <= 20.5, heights);
+    await setScale(1);
+    check('the Okay? button is at least 15 px tall at x1', okay.button.getBoundingClientRect().height >= 15, okay.button.getBoundingClientRect().height);
+
+    // The longest result word in a pane narrower than the button: the row must not spill past
+    // the pane's edge (the button shortens with an ellipsis; its full text is in the announcer and title).
+    const narrow = document.createElement('div');
+    narrow.style.cssText = 'width:120px;display:flex;flex-direction:column;position:absolute;left:0;top:0';
+    const row2 = new U.OkayRow(async () => null);
+    row2.setVisible(true);
+    row2.button.textContent = 'draft: stash key rebound';
+    narrow.appendChild(row2.element);
+    document.body.appendChild(narrow);
+    for (const s of [1, BIG]) {
+      await setScale(s);
+      const nr = narrow.getBoundingClientRect(), br = row2.button.getBoundingClientRect(), rr = row2.element.getBoundingClientRect();
+      check(`a long result word stays inside a 120 px pane at x${s} (button right ${br.right.toFixed(1)}, pane right ${nr.right.toFixed(1)})`,
+        br.right <= nr.right + 0.5 && rr.right <= nr.right + 0.5 && row2.element.scrollWidth <= row2.element.clientWidth + 1,
+        { button: br.right, row: rr.right, pane: nr.right, sw: row2.element.scrollWidth, cw: row2.element.clientWidth });
+    }
+    narrow.remove();
+    row2.dispose();
+    await setScale(BIG);
   }
 
   // --- every text element scales by exactly BIG, except the terminal and the compose textarea

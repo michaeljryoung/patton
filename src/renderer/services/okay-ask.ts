@@ -23,6 +23,8 @@ export const OKAY_PROMPT = 'Is everything going okay?';
 export const OKAY_LABEL = 'Okay?';
 /** How long the button shows what happened before it goes back to OKAY_LABEL. */
 export const OKAY_RESULT_MS = 3000;
+/** What the button says when the probes before a send failed (nothing was typed). */
+export const OKAY_ERROR_WORDS = "couldn't check, try again";
 
 export type OkayDecision =
   | { kind: 'send'; /** behind a running turn rather than at the prompt */ queued: boolean; /** Ctrl+S first */ stash: boolean }
