@@ -71,21 +71,21 @@ ctxwant() { printf '{"terminalSequence":"\\u001b]777;patton;ctx%s\\u0007"}' "$1"
 PARSER=jq
 check "ctx: no checkpoint (since = ctx)" "$(stopwant ';ctx=2305;since=2305')" "$(ctxjson "$TD/none.jsonl" "$BOTH")"
 check "ctx: checkpoint turn, then work (quoted tag, skill line ignored)" \
-  "$(stopwant ";ctx=300001;since=49991;cpt=$CPT")" "$(ctxjson "$TD/after.jsonl" "$BOTH")"
+  "$(stopwant ";ctx=300001;since=49991;cpt=$CPT;cpd=$CPT")" "$(ctxjson "$TD/after.jsonl" "$BOTH")"
 check "ctx: compact boundary after the checkpoint (since = ctx)" \
-  "$(stopwant ";ctx=50001;since=50001;cpt=$CPT")" "$(ctxjson "$TD/compact.jsonl" "$BOTH")"
+  "$(stopwant ";ctx=50001;since=50001;cpt=$CPT;cpd=$CPT")" "$(ctxjson "$TD/compact.jsonl" "$BOTH")"
 check "ctx: task notification ends the checkpoint turn" \
-  "$(stopwant ";ctx=500000;since=100000;cpt=$CPT")" "$(ctxjson "$TD/taskn.jsonl" "$BOTH")"
+  "$(stopwant ";ctx=500000;since=100000;cpt=$CPT;cpd=$CPT")" "$(ctxjson "$TD/taskn.jsonl" "$BOTH")"
 check "ctx: compact after the turn, ctx below the old baseline" \
-  "$(stopwant ";ctx=90000;since=90000;cpt=$CPT")" "$(ctxjson "$TD/below.jsonl" "$BOTH")"
+  "$(stopwant ";ctx=90000;since=90000;cpt=$CPT;cpd=$CPT")" "$(ctxjson "$TD/below.jsonl" "$BOTH")"
 check "ctx: ctx below the baseline with no compact line (since = ctx)" \
-  "$(stopwant ";ctx=100000;since=100000;cpt=$CPT")" "$(ctxjson "$TD/drop.jsonl" "$BOTH")"
+  "$(stopwant ";ctx=100000;since=100000;cpt=$CPT;cpd=$CPT")" "$(ctxjson "$TD/drop.jsonl" "$BOTH")"
 check "ctx: stop of the checkpoint turn itself (since 0)" \
-  "$(stopwant ";ctx=400000;since=0;cpt=$CPT")" "$(ctxjson "$TD/current.jsonl" "$BOTH")"
+  "$(stopwant ";ctx=400000;since=0;cpt=$CPT;cpd=$CPT")" "$(ctxjson "$TD/current.jsonl" "$BOTH")"
 check "ctx: missing transcript (as before)" "$(stopwant '')" "$(ctxjson "$TD/nope.jsonl" "$BOTH")"
 check "ctx: empty transcript (as before)" "$(stopwant '')" "$(ctxjson "$TD/empty.jsonl" "$BOTH")"
 check "ctx: no task fields (ctx message only)" \
-  "$(ctxwant ";ctx=300001;since=49991;cpt=$CPT")" "$(ctxjson "$TD/after.jsonl" '')"
+  "$(ctxwant ";ctx=300001;since=49991;cpt=$CPT;cpd=$CPT")" "$(ctxjson "$TD/after.jsonl" '')"
 check "ctx: no task fields, missing transcript (nothing)" "" "$(ctxjson "$TD/nope.jsonl" '')"
 PARSER=osascript
 check "ctx: osascript fallback leaves the ctx fields out" "$(stopwant '')" "$(ctxjson "$TD/after.jsonl" "$BOTH")"
@@ -97,13 +97,65 @@ ATTACH='{"type":"attachment","attachment":{"type":"queued_command","origin":{"ki
 PEER='{"type":"user","message":{"role":"user","content":"hello from a peer"},"origin":{"kind":"peer"}}'
 { human hi; u 10 100000 0; echo "$SKILLCALL"; u 1 250000 0; human next; u 1 300000 0; } > "$TD/skill.jsonl"
 check "ctx: model-invoked checkpoint (Skill tool_use) is a start, turn ends at the next human prompt" \
-  "$(stopwant ";ctx=300001;since=50000;cpt=$CPT")" "$(ctxjson "$TD/skill.jsonl" "$BOTH")"
+  "$(stopwant ";ctx=300001;since=50000;cpt=$CPT;cpd=$CPT")" "$(ctxjson "$TD/skill.jsonl" "$BOTH")"
 { echo "$CKPT"; u 0 400000 0; echo "$ATTACH"; u 0 500000 0; echo "$PEER"; u 0 600000 0; } > "$TD/attach.jsonl"
 check "ctx: attachment with an origin and a peer message don't end the turn" \
-  "$(stopwant ";ctx=600000;since=0;cpt=$CPT")" "$(ctxjson "$TD/attach.jsonl" "$BOTH")"
+  "$(stopwant ";ctx=600000;since=0;cpt=$CPT;cpd=$CPT")" "$(ctxjson "$TD/attach.jsonl" "$BOTH")"
 { echo "$CKPT"; u 0 400000 0; human next; u 0 450000 0; for i in $(seq 1 30); do echo "$QUOTED"; done; u 0 480000 0; } > "$TD/flood.jsonl"
 check "ctx: 30 tool results quoting the tag don't push the checkpoint out of the window" \
-  "$(stopwant ";ctx=480000;since=80000;cpt=$CPT")" "$(ctxjson "$TD/flood.jsonl" "$BOTH")"
+  "$(stopwant ";ctx=480000;since=80000;cpt=$CPT;cpd=$CPT")" "$(ctxjson "$TD/flood.jsonl" "$BOTH")"
+# When the checkpoint finished (cpd) and when it was cut off (18 Nov 2026).
+ONE=',"background_tasks":[{"id":"a1","type":"subagent","status":"running"}],"session_crons":[]'
+CRON=',"background_tasks":[],"session_crons":[{"id":"c1","schedule":"*/5 * * * *","recurring":true,"prompt":"p"}]'
+stopwantN() { printf '{"terminalSequence":"\\u001b]777;patton;stop;tasks=%s;crons=%s%s\\u0007"}' "$1" "$2" "$3"; }
+INTR='{"type":"user","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user]"}]},"timestamp":"2026-10-11T04:50:00.000Z"}'
+INTRT='{"type":"user","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user for tool use]"}]},"timestamp":"2026-10-11T04:50:00.000Z"}'
+INTRS='{"type":"user","message":{"role":"user","content":"[Request interrupted by user]"},"timestamp":"2026-10-11T04:50:00.000Z"}'
+COMMIT1='{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"b","name":"Bash","input":{"command":"python3 ~/.claude/scripts/checkpoint-commit.py --session 3","description":"Commit"}}]},"timestamp":"2026-10-11T04:55:00.000Z"}'
+COMMIT2='{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"b","name":"Bash","input":{"command":"cd /x; PATTON_NO_INSTALL=1 python3 /abs/checkpoint-commit.py","description":"Commit"}}]},"timestamp":"2026-10-11T04:55:00.000Z"}'
+EARLY='{"type":"user","message":{"role":"user","content":"<command-message>checkpoint</command-message>\n<command-name>/checkpoint</command-name>"},"timestamp":"2026-10-11T03:00:00.000Z","origin":{"kind":"human"}}'
+EARLYT=1791687600
+# Lines that must NOT count as an interrupt or a commit step.
+NI_TEXT='{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"[Request interrupted by user] is what Claude Code writes"}]},"timestamp":"2026-10-11T04:50:00.000Z"}'
+NI_RESULT='{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t","content":"[Request interrupted by user]"}]},"timestamp":"2026-10-11T04:50:00.000Z"}'
+NI_SIDE='{"type":"user","isSidechain":true,"message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user]"}]},"timestamp":"2026-10-11T04:50:00.000Z"}'
+NC_QUOTE='{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"b","name":"Bash","input":{"command":"python3 -c \"print('"'"'checkpoint-commit.py'"'"' in cmd)\"","description":"x"}}]},"timestamp":"2026-10-11T04:55:00.000Z"}'
+NC_PATH='{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"b","name":"Bash","input":{"command":"wc -l ~/.claude/scripts/checkpoint-commit.py\n# then checkpoint-commit.py runs","description":"x"}}]},"timestamp":"2026-10-11T04:55:00.000Z"}'
+NC_DQUOTE='{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"b","name":"Bash","input":{"command":"grep -c \"checkpoint-commit.py\" notes.txt","description":"x"}}]},"timestamp":"2026-10-11T04:55:00.000Z"}'
+check "cpd: start, Stop with its own task running: cpt, no cpd" \
+  "$(stopwantN 1 0 ";ctx=400000;since=0;cpt=$CPT")" "$(ctxjson "$TD/current.jsonl" "$ONE")"
+check "cpd: same file, Stop with no task: cpd" \
+  "$(stopwant ";ctx=400000;since=0;cpt=$CPT;cpd=$CPT")" "$(ctxjson "$TD/current.jsonl" "$BOTH")"
+check "cpd: a cron alone doesn't hold it back" \
+  "$(stopwantN 0 1 ";ctx=400000;since=0;cpt=$CPT;cpd=$CPT")" "$(ctxjson "$TD/current.jsonl" "$CRON")"
+{ echo "$CKPT"; u 0 400000 0; echo "$INTR"; human next; u 0 450000 0; } > "$TD/cut.jsonl"
+check "cut off: start then interrupt, no earlier checkpoint: no cpt, no cpd" \
+  "$(stopwant ";ctx=450000;since=450000")" "$(ctxjson "$TD/cut.jsonl" "$BOTH")"
+check "cut off: ctx message only, no cpt" "$(ctxwant ";ctx=450000;since=450000")" "$(ctxjson "$TD/cut.jsonl" '')"
+{ echo "$CKPT"; u 0 400000 0; echo "$INTRT"; human next; u 0 450000 0; } > "$TD/cut-tool.jsonl"
+check "cut off: the 'for tool use' interrupt" \
+  "$(stopwant ";ctx=450000;since=450000")" "$(ctxjson "$TD/cut-tool.jsonl" "$BOTH")"
+{ echo "$CKPT"; u 0 400000 0; echo "$INTRS"; human next; u 0 450000 0; } > "$TD/cut-str.jsonl"
+check "cut off: an interrupt as string content" \
+  "$(stopwant ";ctx=450000;since=450000")" "$(ctxjson "$TD/cut-str.jsonl" "$BOTH")"
+{ echo "$EARLY"; u 0 100000 0; human x; u 0 200000 0; cat "$TD/cut.jsonl"; } > "$TD/fallback.jsonl"
+check "cut off: falls back to the earlier finished checkpoint (cpt, cpd, since)" \
+  "$(stopwant ";ctx=450000;since=350000;cpt=$EARLYT;cpd=$EARLYT")" "$(ctxjson "$TD/fallback.jsonl" "$BOTH")"
+{ echo "$CKPT"; u 0 400000 0; echo "$INTR"; human "go on"; echo "$COMMIT1"; u 0 450000 0; } > "$TD/resumed.jsonl"
+check "not cut off: interrupt, then the commit step" \
+  "$(stopwant ";ctx=450000;since=50000;cpt=$CPT;cpd=$CPT")" "$(ctxjson "$TD/resumed.jsonl" "$BOTH")"
+{ echo "$CKPT"; u 0 400000 0; echo "$COMMIT2"; echo "$INTR"; human next; u 0 450000 0; } > "$TD/late-intr.jsonl"
+check "not cut off: commit step, then an interrupt" \
+  "$(stopwant ";ctx=450000;since=50000;cpt=$CPT;cpd=$CPT")" "$(ctxjson "$TD/late-intr.jsonl" "$BOTH")"
+{ echo "$CKPT"; u 0 400000 0; echo "$NI_TEXT"; echo "$NI_RESULT"; echo "$NI_SIDE"; human next; u 0 450000 0; } > "$TD/not-intr.jsonl"
+check "not interrupts: assistant text, tool result, sidechain line" \
+  "$(stopwant ";ctx=450000;since=50000;cpt=$CPT;cpd=$CPT")" "$(ctxjson "$TD/not-intr.jsonl" "$BOTH")"
+{ echo "$CKPT"; u 0 400000 0; echo "$INTR"; echo "$NC_QUOTE"; echo "$NC_DQUOTE"; echo "$NC_PATH"; human next; u 0 450000 0; } > "$TD/not-commit.jsonl"
+check "not commit steps: the script's name quoted, given to wc, in a comment" \
+  "$(stopwant ";ctx=450000;since=450000")" "$(ctxjson "$TD/not-commit.jsonl" "$BOTH")"
+{ echo "$EARLY"; u 0 100000 0; echo "$INTR"; human x; cat "$TD/current.jsonl"; } > "$TD/later-ok.jsonl"
+check "a cut-off earlier start doesn't affect a later finished one" \
+  "$(stopwant ";ctx=400000;since=0;cpt=$CPT;cpd=$CPT")" "$(ctxjson "$TD/later-ok.jsonl" "$BOTH")"
 EVIL="$TD/x;touch pwned|"
 cp "$TD/after.jsonl" "$EVIL"
 ( cd "$TD" && printf '%s' "$(ctxjson "$EVIL" "$BOTH")" | bash "$HOOK" >/dev/null 2>&1 )
@@ -143,12 +195,14 @@ if command -v node >/dev/null 2>&1; then
       const t = (s) => JSON.stringify(m.parsePattonOsc(s));
       const cases = [
         ["patton;stop;tasks=1;crons=2", "{\"kind\":\"stop\",\"tasks\":1,\"crons\":2,\"context\":null}"],
-        ["patton;stop;tasks=0;crons=0;ctx=5;since=3;cpt=9", "{\"kind\":\"stop\",\"tasks\":0,\"crons\":0,\"context\":{\"ctxTokens\":5,\"sinceTokens\":3,\"checkpointAt\":9}}"],
-        ["patton;stop;tasks=0;crons=0;ctx=5;since=3;future=abc;x", "{\"kind\":\"stop\",\"tasks\":0,\"crons\":0,\"context\":{\"ctxTokens\":5,\"sinceTokens\":3,\"checkpointAt\":null}}"],
-        ["patton;stop;tasks=0;crons=0;ctx=5;since=3;cpt=oops", "{\"kind\":\"stop\",\"tasks\":0,\"crons\":0,\"context\":{\"ctxTokens\":5,\"sinceTokens\":3,\"checkpointAt\":null}}"],
+        ["patton;stop;tasks=0;crons=0;ctx=5;since=3;cpt=9", "{\"kind\":\"stop\",\"tasks\":0,\"crons\":0,\"context\":{\"ctxTokens\":5,\"sinceTokens\":3,\"checkpointAt\":9,\"checkpointDoneAt\":null}}"],
+        ["patton;stop;tasks=0;crons=0;ctx=5;since=3;cpt=9;cpd=9", "{\"kind\":\"stop\",\"tasks\":0,\"crons\":0,\"context\":{\"ctxTokens\":5,\"sinceTokens\":3,\"checkpointAt\":9,\"checkpointDoneAt\":9}}"],
+        ["patton;ctx;ctx=5;since=3;cpt=9;cpd=1234567890123", "{\"kind\":\"ctx\",\"context\":{\"ctxTokens\":5,\"sinceTokens\":3,\"checkpointAt\":9,\"checkpointDoneAt\":null}}"],
+        ["patton;stop;tasks=0;crons=0;ctx=5;since=3;future=abc;x", "{\"kind\":\"stop\",\"tasks\":0,\"crons\":0,\"context\":{\"ctxTokens\":5,\"sinceTokens\":3,\"checkpointAt\":null,\"checkpointDoneAt\":null}}"],
+        ["patton;stop;tasks=0;crons=0;ctx=5;since=3;cpt=oops", "{\"kind\":\"stop\",\"tasks\":0,\"crons\":0,\"context\":{\"ctxTokens\":5,\"sinceTokens\":3,\"checkpointAt\":null,\"checkpointDoneAt\":null}}"],
         ["patton;stop;tasks=0;crons=0;ctx=bad;since=3", "{\"kind\":\"stop\",\"tasks\":0,\"crons\":0,\"context\":null}"],
         ["patton;stop;tasks=0;crons=0;zzz", "{\"kind\":\"stop\",\"tasks\":0,\"crons\":0,\"context\":null}"],
-        ["patton;ctx;ctx=5;since=3;new=1", "{\"kind\":\"ctx\",\"context\":{\"ctxTokens\":5,\"sinceTokens\":3,\"checkpointAt\":null}}"],
+        ["patton;ctx;ctx=5;since=3;new=1", "{\"kind\":\"ctx\",\"context\":{\"ctxTokens\":5,\"sinceTokens\":3,\"checkpointAt\":null,\"checkpointDoneAt\":null}}"],
         ["patton;ctx;ctx=5", "null"],
         ["patton;stop;tasks=x;crons=0", "null"],
       ];
