@@ -20,7 +20,8 @@
 // several Stop readings rises only at the Stop with no task left, and stays up
 // until the tab is seen (then only a newer cpd raises it); the 13 Nov sequence
 // (red at a parked Stop, tab selected, green at the real finish) now ends red;
-// an interrupted checkpoint (cpt, never cpd) never rises; a second-boundary slack at the session start; the CSS variable
+// an interrupted checkpoint (cpt, never cpd) never rises; a finish held back by
+// background work is logged once per cpt; a second-boundary slack at the session start; the CSS variable
 // is defined in :root.
 // Run: JSDOM_DIR=<a folder whose node_modules has jsdom> node scripts/check-checkpoint-done.mjs
 import { build } from 'esbuild';
@@ -352,6 +353,31 @@ tm.switchToId(t3.id);
   check('interrupted: never raises the mark', pI.checkpointDone === false && countFinished(pI) === 0, countFinished(pI));
   reading(pI, T0 + 80, 0); // resumed later and finished: cpd arrives
   check('interrupted, then finished: rises then', pI.checkpointDone === true && countFinished(pI) === 1, countFinished(pI));
+}
+
+// ── 11b4. A finish held back by background work is logged once per cpt ──
+{
+  const tH = await tm.createTab();
+  const pH = tH.panes[0];
+  tm.switchToId(t3.id);
+  turnDone(pH);
+  const held = () => countFor('[CKPT] finish held', pH);
+  reading(pH, T0 + 90, 2); // tasks running: cpt, no cpd
+  check('held: logged at a Stop with tasks and no cpd', held() === 1 && logs.some((l) => l.includes('[CKPT] finish held') && l.includes(`"cpt":${T0 + 90}`) && l.includes('"tasks":2')), logs.filter((l) => l.includes('finish held')));
+  reading(pH, T0 + 90, 1);
+  check('held: the same cpt again is not logged again', held() === 1, held());
+  reading(pH, T0 + 90, 0); // the finish: cpd, tasks = 0
+  check('held: not logged at the tasks = 0 Stop', held() === 1 && pH.checkpointDone === true, held());
+  reading(pH, T0 + 91, 3, T0 + 91); // tasks running but cpd present (tasks unknown to the hook)
+  check('held: not logged when cpd is present', held() === 1, held());
+  reading(pH, T0 + 92, 0, null); // tasks = 0, no cpd (cut off): not a hold
+  check('held: not logged when tasks = 0', held() === 1, held());
+  reading(pH, T0 + 89, 2); // older than the one marked
+  check('held: not logged for a cpt older than the marked one', held() === 1, held());
+  reading(pH, T0 + 93, 2);
+  check('held: a newer cpt is logged once more', held() === 2, held());
+  tm.switchToId(tH.id);
+  tm.switchToId(t3.id);
 }
 
 // ── 11c. A second boundary between the transcript stamp and the session start ──

@@ -63,6 +63,10 @@
 #                cat or wc) doesn't: every one of 253 real runs in his
 #                transcripts matched and none of 5 mentions did (18 Nov 2026),
 #                where "after any whitespace" took a heredoc comment as a run.
+#                It counts only once its own tool_result (same tool_use_id)
+#                has come back without `"is_error": true`: a refused or failed
+#                commit, or one still running, rescues nothing (the review of
+#                18 Nov 2026 found 2 refused commit steps among the 253 runs).
 # All three are non-sidechain, non-meta lines. Why (Michael, 18 Nov 2026: "the
 # red dot for checkpointing isn't working very well. Sometimes it's going
 # green rather than red, and other times it's going red when it hasn't
@@ -148,7 +152,9 @@ context_fields() { # transcript path, tasks in flight ("" = unknown) -> ";ctx=C;
   # The current /checkpoint (see the header): "<line> <unix seconds or
   # empty>". perl collects candidates in groups, one per start candidate (the
   # last 20 groups), each with its first few interrupt and commit-step
-  # candidates; jq checks each form properly and walks them in order. Start:
+  # candidates and the tool results carrying a candidate's tool_use id (every
+  # id string in the candidate line, so a superset of the ids jq accepts);
+  # jq checks each form properly and walks them in order. Start:
   # for the prompt, origin human (an older line with no origin counts when its
   # content is a plain string) and the tag in its own text; for the tool call,
   # a non-sidechain assistant tool_use block. The tag also turns up quoted in
@@ -156,25 +162,44 @@ context_fields() { # transcript path, tasks in flight ("" = unknown) -> ";ctx=C;
   # window). The file is read through `<`, never as a perl argument (perl's
   # magic open would run a path ending in `|`).
   cp=$("$PERL" -ne '
-      next if index($_, q("type":"tool_result")) >= 0;
+      # A group: s start line, i interrupts, c commit candidates, e turn
+      # ended, r results, ids the commit candidates tool_use ids, o lines.
+      if (index($_, q("type":"tool_result")) >= 0) {
+        # A commit candidate`s own result (jq checks the id and is_error);
+        # every other tool result is skipped.
+        if (@g && $g[-1]{r} < 8) {
+          for my $id (keys %{$g[-1]{ids}}) {
+            if (index($_, qq("tool_use_id":"$id")) >= 0) { $g[-1]{r}++; push @{$g[-1]{o}}, "$.:$_"; last }
+          }
+        }
+        next;
+      }
       if ((index($_, q(<command-name>/checkpoint</command-name>)) >= 0 && index($_, q("type":"user")) >= 0)
           || (index($_, q("skill":"checkpoint")) >= 0 && index($_, q("name":"Skill")) >= 0)) {
-        push @g, ["$.:$_", 0, 0, 0]; shift @g if @g > 20; next;
+        push @g, {s => "$.:$_", i => 0, c => 0, e => 0, r => 0, ids => {}, o => []}; shift @g if @g > 20; next;
       }
       next unless @g;
       if (index($_, q("type":"user")) >= 0 && index($_, q("origin":{"kind":"human")) >= 0) {
         # The turn ended: one marker for jq; later interrupts belong to other turns.
-        unless ($g[-1][3]) { $g[-1][3] = 1; push @{$g[-1]}, "$.:\"HUMAN\"\n" }
-      } elsif (!$g[-1][3] && index($_, q([Request interrupted by user)) >= 0 && index($_, q("type":"user")) >= 0
+        unless ($g[-1]{e}) { $g[-1]{e} = 1; push @{$g[-1]{o}}, "$.:\"HUMAN\"\n" }
+      } elsif (!$g[-1]{e} && index($_, q([Request interrupted by user)) >= 0 && index($_, q("type":"user")) >= 0
           && (index($_, q("text":"[Request interrupted by user)) >= 0
               || index($_, q("content":"[Request interrupted by user)) >= 0)) {
-        if ($g[-1][1] < 4) { $g[-1][1]++; push @{$g[-1]}, "$.:$_" }
+        if ($g[-1]{i} < 4) { $g[-1]{i}++; push @{$g[-1]{o}}, "$.:$_" }
       } elsif (index($_, q(checkpoint-commit.py)) >= 0 && index($_, q("name":"Bash")) >= 0
-          && /(?:"command":"|[;&|]|\\n)(?:\s|\\[nt])*(?:[A-Za-z_]\w*=\S*(?:\s|\\[nt])+)*(?:(?:\S*\/)?python[0-9.]*(?:\s|\\[nt])+(?:-\S+(?:\s|\\[nt])+)*)?(?:\S*\/)?checkpoint-commit\.py/) {
-        if ($g[-1][2] < 4) { $g[-1][2]++; push @{$g[-1]}, "$.:$_" }
+          && /(?:"command":"|[;&|]|\\n)(?:\s|\\[nrt])*(?:[A-Za-z_]\w*=\S*(?:\s|\\[nrt])+)*(?:(?:\S*\/)?python[0-9.]*(?:\s|\\[nrt])+(?:-\S+(?:\s|\\[nrt])+)*)?(?:\S*\/)?checkpoint-commit\.py/) {
+        if ($g[-1]{c} < 4) {
+          $g[-1]{c}++; push @{$g[-1]{o}}, "$.:$_";
+          $g[-1]{ids}{$1} = 1 while /"id":"([^"\\]+)"/g;
+        }
       }
-      END { for $x (@g) { print @{$x}[0], @{$x}[4 .. $#{$x}] } }' < "$t" | "$JQ" -R -n -r '
+      END { for $x (@g) { print $x->{s}, @{$x->{o}} } }' < "$t" | "$JQ" -R -n -r '
     def text_of: if type == "string" then [.] else [.[]? | select(.type? == "text") | .text | strings] end;
+    def commit_ids($o):
+      $o.message.content[]? | select(.type? == "tool_use" and .name? == "Bash"
+        and ((.input.command? // "") | strings
+             | test("(^|[;&|\\n])\\s*([A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*((\\S*/)?python[0-9.]*\\s+(-\\S+\\s+)*)?(\\S*/)?checkpoint-commit\\.py")))
+      | .id | strings;
     def kind($o):
       if ($o.isMeta == true) or ($o.isSidechain == true) then null
       elif ($o.type == "user"
@@ -185,26 +210,31 @@ context_fields() { # transcript path, tasks in flight ("" = unknown) -> ";ctx=C;
             and any($o.message.content[]?; .type? == "tool_use" and .name? == "Skill" and (.input.skill? // null) == "checkpoint"))
         then "start"
       elif $o.type == "user"
-           and (any($o.message.content | if type == "array" then .[] else empty end; .type? == "tool_result") | not)
+           and any($o.message.content | if type == "array" then .[] else empty end; .type? == "tool_result")
+        then "result"
+      elif $o.type == "user"
            and any($o.message.content | text_of | .[]; startswith("[Request interrupted by user"))
         then "interrupt"
-      elif $o.type == "assistant"
-           and any($o.message.content[]?; .type? == "tool_use" and .name? == "Bash"
-                   and ((.input.command? // "") | strings
-                        | test("(^|[;&|\\n])\\s*([A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*((\\S*/)?python[0-9.]*\\s+(-\\S+\\s+)*)?(\\S*/)?checkpoint-commit\\.py")))
+      elif $o.type == "assistant" and ([commit_ids($o)] | length > 0)
         then "commit"
       else null end;
     reduce (inputs
             | (index(":")) as $i | .[:$i] as $n | (.[$i+1:] | fromjson?) as $o
             | (if $o == "HUMAN" then "human" else (try kind($o) catch null) end) as $k | select($k != null)
             | {n: $n, k: $k,
-               ts: ((try ($o.timestamp | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601 | floor | tostring) catch "") // "")})
+               ts: ((try ($o.timestamp | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601 | floor | tostring) catch "") // ""),
+               ids: (if $k == "commit" then [commit_ids($o)]
+                     elif $k == "result" then [$o.message.content[] | select(.type? == "tool_result" and .is_error != true) | .tool_use_id | strings]
+                     else [] end)})
       as $x ([];
-        if $x.k == "start" then . + [{n: $x.n, ts: $x.ts, cut: false, commit: false, ended: false}]
+        if $x.k == "start" then . + [{n: $x.n, ts: $x.ts, cut: false, commit: false, ended: false, pend: []}]
         elif length == 0 then .
         elif $x.k == "human" then .[-1].ended = true
         elif $x.k == "interrupt" then (if .[-1].commit or .[-1].ended then . else .[-1].cut = true end)
-        else .[-1].commit = true | .[-1].cut = false end)
+        elif $x.k == "commit" then .[-1].pend += $x.ids
+        # A commit step counts once its own result has come back without an error.
+        elif (.[-1].pend as $p | any($x.ids[]; . as $id | any($p[]; . == $id))) then .[-1].commit = true | .[-1].cut = false
+        else . end)
     | map(select(.cut | not)) | last // empty | .n + " " + .ts' 2>/dev/null)
 
   base=0; ts=""

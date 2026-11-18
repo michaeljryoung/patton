@@ -113,6 +113,12 @@ INTRT='{"type":"user","message":{"role":"user","content":[{"type":"text","text":
 INTRS='{"type":"user","message":{"role":"user","content":"[Request interrupted by user]"},"timestamp":"2026-10-11T04:50:00.000Z"}'
 COMMIT1='{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"b","name":"Bash","input":{"command":"python3 ~/.claude/scripts/checkpoint-commit.py --session 3","description":"Commit"}}]},"timestamp":"2026-10-11T04:55:00.000Z"}'
 COMMIT2='{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"b","name":"Bash","input":{"command":"cd /x; PATTON_NO_INSTALL=1 python3 /abs/checkpoint-commit.py","description":"Commit"}}]},"timestamp":"2026-10-11T04:55:00.000Z"}'
+# A commit step's own result (tool_use id "b"): success, refused, failed.
+COMMITOK='{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"b","content":"OK committed"}]},"timestamp":"2026-10-11T04:55:10.000Z"}'
+COMMITNO='{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"b","is_error":true,"content":"The user doesn'"'"'t want to proceed with this tool use."}]},"timestamp":"2026-10-11T04:55:10.000Z"}'
+COMMITERR='{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"b","is_error":true,"content":"Exit code 1\nFAIL"}]},"timestamp":"2026-10-11T04:55:10.000Z"}'
+OTHEROK='{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"zz","content":"OK"}]},"timestamp":"2026-10-11T04:55:10.000Z"}'
+COMMITCR='{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"b","name":"Bash","input":{"command":"cd /x;\rcheckpoint-commit.py","description":"Commit"}}]},"timestamp":"2026-10-11T04:55:00.000Z"}'
 EARLY='{"type":"user","message":{"role":"user","content":"<command-message>checkpoint</command-message>\n<command-name>/checkpoint</command-name>"},"timestamp":"2026-10-11T03:00:00.000Z","origin":{"kind":"human"}}'
 EARLYT=1791687600
 # Lines that must NOT count as an interrupt or a commit step.
@@ -141,12 +147,27 @@ check "cut off: an interrupt as string content" \
 { echo "$EARLY"; u 0 100000 0; human x; u 0 200000 0; cat "$TD/cut.jsonl"; } > "$TD/fallback.jsonl"
 check "cut off: falls back to the earlier finished checkpoint (cpt, cpd, since)" \
   "$(stopwant ";ctx=450000;since=350000;cpt=$EARLYT;cpd=$EARLYT")" "$(ctxjson "$TD/fallback.jsonl" "$BOTH")"
-{ echo "$CKPT"; u 0 400000 0; echo "$INTR"; human "go on"; echo "$COMMIT1"; u 0 450000 0; } > "$TD/resumed.jsonl"
+{ echo "$CKPT"; u 0 400000 0; echo "$INTR"; human "go on"; echo "$COMMIT1"; echo "$COMMITOK"; u 0 450000 0; } > "$TD/resumed.jsonl"
 check "not cut off: interrupt, then the commit step" \
   "$(stopwant ";ctx=450000;since=50000;cpt=$CPT;cpd=$CPT")" "$(ctxjson "$TD/resumed.jsonl" "$BOTH")"
-{ echo "$CKPT"; u 0 400000 0; echo "$COMMIT2"; echo "$INTR"; human next; u 0 450000 0; } > "$TD/late-intr.jsonl"
+{ echo "$CKPT"; u 0 400000 0; echo "$COMMIT2"; echo "$COMMITOK"; echo "$INTR"; human next; u 0 450000 0; } > "$TD/late-intr.jsonl"
 check "not cut off: commit step, then an interrupt" \
   "$(stopwant ";ctx=450000;since=50000;cpt=$CPT;cpd=$CPT")" "$(ctxjson "$TD/late-intr.jsonl" "$BOTH")"
+{ echo "$CKPT"; u 0 400000 0; echo "$COMMIT1"; echo "$COMMITNO"; echo "$INTRT"; human next; u 0 450000 0; } > "$TD/refused.jsonl"
+check "cut off: commit step refused (is_error result), then the interrupt" \
+  "$(stopwant ";ctx=450000;since=450000")" "$(ctxjson "$TD/refused.jsonl" "$BOTH")"
+{ echo "$CKPT"; u 0 400000 0; echo "$COMMIT1"; echo "$COMMITERR"; echo "$INTR"; human next; u 0 450000 0; } > "$TD/commit-err.jsonl"
+check "cut off: commit step failed (non-zero exit, is_error), then an interrupt" \
+  "$(stopwant ";ctx=450000;since=450000")" "$(ctxjson "$TD/commit-err.jsonl" "$BOTH")"
+{ echo "$CKPT"; u 0 400000 0; echo "$COMMIT1"; echo "$OTHEROK"; echo "$INTR"; human next; u 0 450000 0; } > "$TD/commit-pending.jsonl"
+check "cut off: commit step with no result of its own yet (another id's result), then an interrupt" \
+  "$(stopwant ";ctx=450000;since=450000")" "$(ctxjson "$TD/commit-pending.jsonl" "$BOTH")"
+{ echo "$CKPT"; u 0 400000 0; echo "$COMMIT1"; echo "$COMMITERR"; u 0 450000 0; } > "$TD/commit-err-noint.jsonl"
+check "no interrupt: a failed commit step doesn't stop cpd" \
+  "$(stopwant ";ctx=450000;since=0;cpt=$CPT;cpd=$CPT")" "$(ctxjson "$TD/commit-err-noint.jsonl" "$BOTH")"
+{ echo "$CKPT"; u 0 400000 0; echo "$COMMITCR"; echo "$COMMITOK"; echo "$INTR"; human next; u 0 450000 0; } > "$TD/commit-cr.jsonl"
+check "not cut off: a commit step after a carriage return (perl prefilter keeps \\r)" \
+  "$(stopwant ";ctx=450000;since=50000;cpt=$CPT;cpd=$CPT")" "$(ctxjson "$TD/commit-cr.jsonl" "$BOTH")"
 { echo "$CKPT"; u 0 400000 0; echo "$NI_TEXT"; echo "$NI_RESULT"; echo "$NI_SIDE"; human next; u 0 450000 0; } > "$TD/not-intr.jsonl"
 check "not interrupts: assistant text, tool result, sidechain line" \
   "$(stopwant ";ctx=450000;since=50000;cpt=$CPT;cpd=$CPT")" "$(ctxjson "$TD/not-intr.jsonl" "$BOTH")"

@@ -225,6 +225,9 @@ export class Pane {
   private ackedCheckpointAt: number | null = null;
   private _checkpointDone = false;
   private markedCheckpointAt: number | null = null;
+  // The `cpt` whose finish was last logged as held back by background work
+  // (one `[CKPT] finish held` line per checkpoint); reset with the session.
+  private heldLoggedCheckpointAt: number | null = null;
   // A Stop-hook message (OSC 777) arrived since the last ◐ onset: the turn
   // ended on its own, so Claude's prompt is open. A question or permission
   // dialog also shows ✳ but fires no Stop hook, so ✳ alone is not enough.
@@ -892,6 +895,7 @@ export class Pane {
   private newClaudeSession(): void {
     this.claudeSessionAtMs = Date.now();
     this.ackedCheckpointAt = null;
+    this.heldLoggedCheckpointAt = null;
     this.clearCheckpointDone('new session');
   }
 
@@ -1008,8 +1012,23 @@ export class Pane {
     this.stopSeenAtMs = Date.now();
     this.lastSignalAtMs = this.stopSeenAtMs;
     if (state.kind === 'stop') this.handleHookStop(state.tasks, state.crons);
+    if (state.kind === 'stop' && state.context) this.noteFinishHeld(state.tasks, state.context);
     if (state.context) this.handleContextReading(state.context);
     else this.notifyCheckpoint();
+  }
+
+  /** Log only: a Stop whose new checkpoint (`cpt` from this session, newer
+   *  than any he has seen or that is marked) came without `cpd` because its
+   *  own background work is still running, so the red circle waits for a
+   *  later Stop. Once per `cpt`, so main.log shows how often a finish is held. */
+  private noteFinishHeld(tasks: number, context: ContextReading): void {
+    const cpt = context.checkpointAt;
+    if (tasks <= 0 || cpt === null || context.checkpointDoneAt !== null || this.claudeSessionAtMs === 0) return;
+    if (cpt < Math.floor(this.claudeSessionAtMs / 1000) - 1) return;
+    if (cpt <= Math.max(this.ackedCheckpointAt ?? -Infinity, this.markedCheckpointAt ?? -Infinity)) return;
+    if (cpt === this.heldLoggedCheckpointAt) return;
+    this.heldLoggedCheckpointAt = cpt;
+    rlog('info', '[CKPT] finish held', { pane: this.id, cpt, tasks });
   }
 
   /** Remove and return the stored verdict, stopping its expiry timer. */
