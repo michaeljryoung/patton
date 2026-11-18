@@ -211,16 +211,16 @@ export class Pane {
   private static readonly PARKED_DRAIN_SETTLE_MS = 4000;
   private static readonly IGNORED_LOG_INTERVAL_MS = 5000;
   // The checkpoint clock's reading for this Claude session (Stop hook, OSC 777
-  // `ctx=…;since=…[;cpt=…]`); null until the first one, and cleared when
+  // `ctx=…;since=…[;cpt=…][;cpd=…]`); null until the first one, and cleared when
   // Claude stops running here. See services/checkpoint-clock.ts.
   private ctxTokens: number | null = null;
   private sinceTokens: number | null = null;
   private checkpointAt: number | null = null;
   private lastCheckpointKey = '';
-  // The newest `cpt` the user has SEEN this Claude session (the tab selected
-  // while its mark was up, or a pre-session value taken as the baseline; not
-  // the display value above), whether a /checkpoint finished since he last
-  // looked (the tab's red circle), and the newest `cpt` that mark stands for.
+  // The newest finished checkpoint (`cpd`) the user has SEEN this Claude
+  // session (the tab selected while its mark was up, or a pre-session value
+  // taken as the baseline; not the clock's `cpt` above), whether a /checkpoint finished since he last
+  // looked (the tab's red circle), and the newest `cpd` that mark stands for.
   // The first and the last reset with the session.
   private ackedCheckpointAt: number | null = null;
   private _checkpointDone = false;
@@ -713,33 +713,38 @@ export class Pane {
     this.checkpointAt = context.checkpointAt;
     rlog('info', '[CKPT] ctx', {
       pane: this.id, ctx: context.ctxTokens, since: context.sinceTokens, cpt: context.checkpointAt,
+      cpd: context.checkpointDoneAt,
     });
-    this.noteCheckpointFinished(context.checkpointAt);
+    // `cpt` drives the clock and hover card; the red circle follows `cpd`.
+    this.noteCheckpointFinished(context.checkpointDoneAt);
     this.notifyCheckpoint();
   }
 
-  /** A /checkpoint started in this session and its turn has now ended: a
-   *  reading whose `cpt` is newer than the last one he has seen AND not older
-   *  than the session (a relaunch or `claude --resume` carries the
-   *  transcript's old checkpoint, which only becomes the baseline). Whole
-   *  seconds, as the hook reports them. Deduped on "he has seen it", not
-   *  "reported once": a checkpoint's turn can end several times (a background
-   *  task wakes Claude, its new turn clears the mark, the final Stop carries
-   *  the same `cpt`), and the mark must be up when the last one lands. */
-  private noteCheckpointFinished(cpt: number | null): void {
-    if (cpt === null || this.claudeSessionAtMs === 0) return;
-    // `cpt` is floored to the second and the session start is stamped tens of
+  /** A /checkpoint in this session has finished: the hook reports `cpd` (the
+   *  checkpoint's start time) only at a Stop with none of its own background
+   *  work in flight, and never for a checkpoint that was interrupted before
+   *  its commit step, so the first Stop after a start no longer counts as its
+   *  finish (18 Nov 2026: red too early, then green at the real finish). Only
+   *  a `cpd` newer than the last one he has seen AND not older than the
+   *  session counts (a relaunch or `claude --resume` carries the transcript's
+   *  old checkpoint, which only becomes the baseline). Whole seconds, as the
+   *  hook reports them. Deduped on "he has seen it", not "reported once": a
+   *  finished checkpoint's mark can be cleared by a new turn and the next
+   *  Stop carries the same `cpd`, and the mark must come back then. */
+  private noteCheckpointFinished(cpd: number | null): void {
+    if (cpd === null || this.claudeSessionAtMs === 0) return;
+    // `cpd` is floored to the second and the session start is stamped tens of
     // ms after the transcript's own, so one second of slack: a session whose
     // first command is /checkpoint must not lose to a second boundary.
-    if (cpt < Math.floor(this.claudeSessionAtMs / 1000) - 1) {
-      this.ackedCheckpointAt = Math.max(this.ackedCheckpointAt ?? -Infinity, cpt);
+    if (cpd < Math.floor(this.claudeSessionAtMs / 1000) - 1) {
+      this.ackedCheckpointAt = Math.max(this.ackedCheckpointAt ?? -Infinity, cpd);
       return;
     }
-    if (cpt <= (this.ackedCheckpointAt ?? -Infinity)) return;
-    this.markedCheckpointAt = Math.max(this.markedCheckpointAt ?? -Infinity, cpt);
+    if (cpd <= (this.ackedCheckpointAt ?? -Infinity)) return;
+    this.markedCheckpointAt = Math.max(this.markedCheckpointAt ?? -Infinity, cpd);
     if (this._checkpointDone) return;
     this._checkpointDone = true;
-    rlog('info', '[CKPT] finished', { pane: this.id, cpt });
+    rlog('info', '[CKPT] finished', { pane: this.id, cpd });
     this.callbacks.onCheckpointMark?.(this);
   }
 

@@ -299,7 +299,7 @@ export class TerminalView {
     //    "needs you".
     //  - `notify;title;body` (rxvt/urxvt convention) is a notification, the
     //    same as a free-text OSC 9.
-    //  - `patton;ctx;ctx=C;since=S[;cpt=T]` is the same hook's context reading
+    //  - `patton;ctx;ctx=C;since=S[;cpt=T][;cpd=T]` is the same hook's context reading
     //    for the checkpoint clock, sent alone when the hook has no verdict
     //    (the stop message carries the same fields when it does).
     // Anything else is ignored but consumed.

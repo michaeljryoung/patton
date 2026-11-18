@@ -5,7 +5,7 @@
  * reminder (amber, bold) counts growth since the session's last /checkpoint,
  * because a checkpoint doesn't lower the total, so a reminder on the total
  * would never clear. The numbers come from Patton's Stop hook
- * (resources/claude-code-stop-hook.sh, OSC 777 `ctx=…;since=…[;cpt=…]`); this
+ * (resources/claude-code-stop-hook.sh, OSC 777 `ctx=…;since=…[;cpt=…][;cpd=…]`); this
  * file only turns them into what the strip shows.
  */
 import { DEFAULTS } from '../../shared/constants';

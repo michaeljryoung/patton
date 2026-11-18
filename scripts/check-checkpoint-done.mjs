@@ -6,15 +6,21 @@
 // and overlays stubbed). Readings arrive as the Stop hook's OSC 777 text
 // through the real parsePattonOsc, Claude's state as OSC 7501 bodies, so the
 // dot is asserted from the tab strip's DOM.
-// Covers: a new `cpt` after the session start marks the pane, logs once and
+// Since 18 Nov 2026 the mark follows `cpd` (the hook's "this checkpoint has
+// finished": sent only at a Stop with no background task of its own, never for
+// an interrupted checkpoint), not `cpt` (its start); `reading` below sends
+// `cpd` exactly when the hook would (tasks = 0) unless told otherwise.
+// Covers: a new `cpd` after the session start marks the pane, logs once and
 // shows the red circle above green; the same `cpt` again does nothing; a first
 // reading with an old `cpt` (resume/relaunch) does nothing and a first reading
 // after the start fires; selecting the tab clears it; a new turn clears it; a
 // new Claude session clears it and resets the baseline; a split tab shows red
 // for either pane and one selection clears both; the circle sits beside a
 // manual Red flag's square; an active tab never shows it; a checkpoint whose turn spans
-// several Stop readings stays up until the tab is seen (then only a newer cpt
-// raises it); a second-boundary slack at the session start; the CSS variable
+// several Stop readings rises only at the Stop with no task left, and stays up
+// until the tab is seen (then only a newer cpd raises it); the 13 Nov sequence
+// (red at a parked Stop, tab selected, green at the real finish) now ends red;
+// an interrupted checkpoint (cpt, never cpd) never rises; a second-boundary slack at the session start; the CSS variable
 // is defined in :root.
 // Run: JSDOM_DIR=<a folder whose node_modules has jsdom> node scripts/check-checkpoint-done.mjs
 import { build } from 'esbuild';
@@ -135,8 +141,8 @@ const ROOT = (state) => `state=${state}:app=claude-code`;
 const NOW = () => Math.floor(Date.now() / 1000);
 // Fixed readings, so "the same cpt again" really is the same number.
 const T0 = NOW() + 1000; // after any session start in this run
-const reading = (p, cpt, tasks = 0) => view(p).__emit('onPattonState', PA.parsePattonOsc(
-  `patton;stop;tasks=${tasks};crons=0;ctx=50000;since=20000${cpt === null ? '' : `;cpt=${cpt}`}`));
+const reading = (p, cpt, tasks = 0, cpd = tasks === 0 ? cpt : null) => view(p).__emit('onPattonState', PA.parsePattonOsc(
+  `patton;stop;tasks=${tasks};crons=0;ctx=50000;since=20000${cpt === null ? '' : `;cpt=${cpt}`}${cpd === null ? '' : `;cpd=${cpd}`}`));
 // A Claude session that has run a turn and is at its prompt.
 const turnDone = (p) => { report(p, ROOT('working')); report(p, ROOT('done')); };
 const countFor = (needle, pane) => logs.filter((l) => l.includes(needle) && l.includes(`"pane":"${pane.id}"`)).length;
@@ -161,7 +167,7 @@ await wait(1100); // the settle that raises the green dot is longer; the mark is
 reading(p1, T0 + 1);
 check('flag set on the pane', p1.checkpointDone === true);
 check('tab reports it', t1.checkpointDone === true);
-check('logged once: [CKPT] finished', countFinished(p1) === 1 && logs.some((l) => l.includes('[CKPT] finished {') && l.includes('"cpt"')), logs.filter((l) => l.includes('finished')));
+check('logged once: [CKPT] finished', countFinished(p1) === 1 && logs.some((l) => l.includes('[CKPT] finished {') && l.includes('"cpd"')), logs.filter((l) => l.includes('finished')));
 check('dot is the red circle (class checkpoint-done, not a flag-* square)', JSON.stringify(dotsOf(t1)) === '["checkpoint-done"]', dotsOf(t1));
 check('dot has an aria-label', tabEl(t1).querySelector('.checkpoint-done')?.getAttribute('aria-label') === 'Checkpoint finished');
 check('tab label says checkpoint finished', /checkpoint finished/.test(labelOf(t1)), labelOf(t1));
@@ -269,38 +275,38 @@ tm.switchToId(t1.id);
 tm.switchToId(t3.id);
 check('active tab: nothing shows up later on switching away', !t3.checkpointDone);
 
-// ── 11b. A checkpoint whose turn spans several Stop readings stays up until seen ──
+// ── 11b. A checkpoint whose turn spans several Stop readings: red only when its own work is done ──
 const tM = await tm.createTab();
 const pM = tM.panes[0];
 tm.switchToId(t3.id);
 turnDone(pM);
-reading(pM, T0 + 60, 5); // Stop with background tasks still running
-check('multi-Stop: first Stop raises the mark', pM.checkpointDone === true && countFinished(pM) === 1);
+reading(pM, T0 + 60, 5); // Stop with its background tasks still running: cpt, no cpd
+check('multi-Stop: a Stop with tasks running does not raise the mark', pM.checkpointDone === false && countFinished(pM) === 0);
+check('multi-Stop: but the clock already has the checkpoint', pM.checkpointSource.checkpointAt === T0 + 60);
 report(pM, ROOT('working')); // a background task wakes Claude
-check('multi-Stop: the wake-up turn clears it', pM.checkpointDone === false);
 report(pM, ROOT('done'));
-reading(pM, T0 + 60, 0); // the final Stop carries the same cpt
-check('multi-Stop: the final Stop (same cpt, tasks=0) leaves the mark up', pM.checkpointDone === true && countFinished(pM) === 2, countFinished(pM));
+reading(pM, T0 + 60, 0); // the final Stop: cpd
+check('multi-Stop: the final Stop (tasks=0, cpd) raises the mark', pM.checkpointDone === true && countFinished(pM) === 1, countFinished(pM));
 reading(pM, T0 + 60, 0);
-check('multi-Stop: a repeat while up logs nothing more', countFinished(pM) === 2);
+check('multi-Stop: a repeat while up logs nothing more', countFinished(pM) === 1);
 tm.switchToId(tM.id);
 check('multi-Stop: selecting the tab clears it', pM.checkpointDone === false);
 tm.switchToId(t3.id);
 reading(pM, T0 + 60, 0);
-check('seen: a later Stop with the same cpt does not raise it', pM.checkpointDone === false && countFinished(pM) === 2);
+check('seen: a later Stop with the same cpd does not raise it', pM.checkpointDone === false && countFinished(pM) === 1);
 reading(pM, T0 + 61, 0);
-check('seen: a later NEW cpt does', pM.checkpointDone === true && countFinished(pM) === 3);
+check('seen: a later NEW cpd does', pM.checkpointDone === true && countFinished(pM) === 2);
 tm.switchToId(tM.id);
 tm.switchToId(t3.id);
 reading(pM, T0 + 59, 0); // a /resume-like reading older than what he has seen
-check('seen: an in-session cpt older than the acked one does not', pM.checkpointDone === false && countFinished(pM) === 3);
+check('seen: an in-session cpd older than the acked one does not', pM.checkpointDone === false && countFinished(pM) === 2);
 // The active-tab guard consumes a mark as "seen" too.
 tm.switchToId(tM.id);
 reading(pM, T0 + 62, 0);
 check('active tab: consumed mark is acked', pM.checkpointDone === false);
 tm.switchToId(t3.id);
 reading(pM, T0 + 62, 0);
-check('active tab: the same cpt later does not raise it', pM.checkpointDone === false && countFinished(pM) === 4, countFinished(pM));
+check('active tab: the same cpd later does not raise it', pM.checkpointDone === false && countFinished(pM) === 3, countFinished(pM));
 // A new turn that clears the mark is not "seen": the next Stop raises it again.
 reading(pM, T0 + 63, 0);
 report(pM, ROOT('working'));
@@ -309,6 +315,44 @@ reading(pM, T0 + 63, 0);
 check('unseen: a mark cleared by a new turn comes back on the next Stop', pM.checkpointDone === true);
 tm.switchToId(tM.id);
 tm.switchToId(t3.id);
+
+// ── 11b2. The 13 Nov sequence: parked Stop, tab selected, then the real finish ──
+// main.log: red at a Stop with tasks=1, the tab selected 50 s later, the
+// commit and the final Stop (tasks=0, same checkpoint) two minutes after,
+// which showed green. Now the parked Stop carries no cpd, so the selection
+// acks nothing and the final Stop raises red.
+{
+  const tN = await tm.createTab();
+  const pN = tN.panes[0];
+  tm.switchToId(t3.id);
+  turnDone(pN);
+  reading(pN, T0 + 70, 1);
+  check('13 Nov: the parked Stop (tasks=1) shows no red', pN.checkpointDone === false && !dotsOf(tN).includes('checkpoint-done'), dotsOf(tN));
+  tm.switchToId(tN.id); // he looks at the tab while it is parked
+  tm.switchToId(t3.id);
+  report(pN, ROOT('working')); // the task's result wakes Claude; it commits
+  report(pN, ROOT('done'));
+  reading(pN, T0 + 70, 0);
+  check('13 Nov: the real finish (tasks=0, cpd) raises red', pN.checkpointDone === true && countFinished(pN) === 1, countFinished(pN));
+  await wait(1100);
+  check('13 Nov: red, not green, on the strip', JSON.stringify(dotsOf(tN)) === '["checkpoint-done"]', dotsOf(tN));
+}
+
+// ── 11b3. An interrupted checkpoint: cpt keeps coming, cpd never does ──
+{
+  const tI = await tm.createTab();
+  const pI = tI.panes[0];
+  tm.switchToId(t3.id);
+  turnDone(pI);
+  reading(pI, T0 + 80, 0, null); // interrupted, he talks about something else
+  reading(pI, T0 + 80, 1, null);
+  report(pI, ROOT('working'));
+  report(pI, ROOT('done'));
+  reading(pI, T0 + 80, 0, null);
+  check('interrupted: never raises the mark', pI.checkpointDone === false && countFinished(pI) === 0, countFinished(pI));
+  reading(pI, T0 + 80, 0); // resumed later and finished: cpd arrives
+  check('interrupted, then finished: rises then', pI.checkpointDone === true && countFinished(pI) === 1, countFinished(pI));
+}
 
 // ── 11c. A second boundary between the transcript stamp and the session start ──
 {
