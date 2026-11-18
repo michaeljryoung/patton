@@ -153,6 +153,12 @@ check "not interrupts: assistant text, tool result, sidechain line" \
 { echo "$CKPT"; u 0 400000 0; echo "$INTR"; echo "$NC_QUOTE"; echo "$NC_DQUOTE"; echo "$NC_PATH"; human next; u 0 450000 0; } > "$TD/not-commit.jsonl"
 check "not commit steps: the script's name quoted, given to wc, in a comment" \
   "$(stopwant ";ctx=450000;since=450000")" "$(ctxjson "$TD/not-commit.jsonl" "$BOTH")"
+{ echo "$CKPT"; u 0 400000 0; human next; u 0 420000 0; echo "$INTR"; human x; u 0 450000 0; } > "$TD/intr-later.jsonl"
+check "not cut off: an interrupt after the checkpoint's turn ended (next human prompt)" \
+  "$(stopwant ";ctx=450000;since=50000;cpt=$CPT;cpd=$CPT")" "$(ctxjson "$TD/intr-later.jsonl" "$BOTH")"
+{ echo "$CKPT"; u 0 400000 0; echo "$TASKN"; u 0 410000 0; echo "$INTR"; human next; u 0 450000 0; } > "$TD/intr-taskn.jsonl"
+check "cut off: an interrupt in a task-notification turn before the next human prompt" \
+  "$(stopwant ";ctx=450000;since=450000")" "$(ctxjson "$TD/intr-taskn.jsonl" "$BOTH")"
 { echo "$EARLY"; u 0 100000 0; echo "$INTR"; human x; cat "$TD/current.jsonl"; } > "$TD/later-ok.jsonl"
 check "a cut-off earlier start doesn't affect a later finished one" \
   "$(stopwant ";ctx=400000;since=0;cpt=$CPT;cpd=$CPT")" "$(ctxjson "$TD/later-ok.jsonl" "$BOTH")"

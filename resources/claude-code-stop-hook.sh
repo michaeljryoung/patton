@@ -40,9 +40,14 @@
 # A checkpoint START is the user line carrying
 # `<command-name>/checkpoint</command-name>` (a human prompt) or an assistant
 # `tool_use` of the Skill tool with skill "checkpoint" (the model invoked it).
-# A start is CUT OFF when an INTERRUPT follows it before the next start (or
-# the end of the file) and no COMMIT STEP does in that same span (an interrupt
-# after the commit step doesn't count: the commit landed). The current
+# A start is CUT OFF when an INTERRUPT lands inside its own turn (after the
+# start and before the next human prompt, a `user` line with origin human;
+# task-notification turns before that prompt still count as its turn) and no
+# COMMIT STEP comes anywhere between the start and the next start (or the end
+# of the file): an interrupt after the commit step doesn't count, the commit
+# landed, and an interrupt resumed into a commit is rescued. An unrelated
+# interrupt hours later, in a project that checkpoints without
+# checkpoint-commit.py, doesn't cancel a finished checkpoint. The current
 # checkpoint is the last start that isn't cut off; none left: no checkpoint.
 #   interrupt    a `user` line, not a tool result, whose text (string content
 #                or its text blocks) begins "[Request interrupted by user"
@@ -154,10 +159,13 @@ context_fields() { # transcript path, tasks in flight ("" = unknown) -> ";ctx=C;
       next if index($_, q("type":"tool_result")) >= 0;
       if ((index($_, q(<command-name>/checkpoint</command-name>)) >= 0 && index($_, q("type":"user")) >= 0)
           || (index($_, q("skill":"checkpoint")) >= 0 && index($_, q("name":"Skill")) >= 0)) {
-        push @g, ["$.:$_", 0, 0]; shift @g if @g > 20; next;
+        push @g, ["$.:$_", 0, 0, 0]; shift @g if @g > 20; next;
       }
       next unless @g;
-      if (index($_, q([Request interrupted by user)) >= 0 && index($_, q("type":"user")) >= 0
+      if (index($_, q("type":"user")) >= 0 && index($_, q("origin":{"kind":"human")) >= 0) {
+        # The turn ended: one marker for jq; later interrupts belong to other turns.
+        unless ($g[-1][3]) { $g[-1][3] = 1; push @{$g[-1]}, "$.:\"HUMAN\"\n" }
+      } elsif (!$g[-1][3] && index($_, q([Request interrupted by user)) >= 0 && index($_, q("type":"user")) >= 0
           && (index($_, q("text":"[Request interrupted by user)) >= 0
               || index($_, q("content":"[Request interrupted by user)) >= 0)) {
         if ($g[-1][1] < 4) { $g[-1][1]++; push @{$g[-1]}, "$.:$_" }
@@ -165,7 +173,7 @@ context_fields() { # transcript path, tasks in flight ("" = unknown) -> ";ctx=C;
           && /(?:"command":"|[;&|]|\\n)(?:\s|\\[nt])*(?:[A-Za-z_]\w*=\S*(?:\s|\\[nt])+)*(?:(?:\S*\/)?python[0-9.]*(?:\s|\\[nt])+(?:-\S+(?:\s|\\[nt])+)*)?(?:\S*\/)?checkpoint-commit\.py/) {
         if ($g[-1][2] < 4) { $g[-1][2]++; push @{$g[-1]}, "$.:$_" }
       }
-      END { for $x (@g) { print @{$x}[0], @{$x}[3 .. $#{$x}] } }' < "$t" | "$JQ" -R -n -r '
+      END { for $x (@g) { print @{$x}[0], @{$x}[4 .. $#{$x}] } }' < "$t" | "$JQ" -R -n -r '
     def text_of: if type == "string" then [.] else [.[]? | select(.type? == "text") | .text | strings] end;
     def kind($o):
       if ($o.isMeta == true) or ($o.isSidechain == true) then null
@@ -188,13 +196,14 @@ context_fields() { # transcript path, tasks in flight ("" = unknown) -> ";ctx=C;
       else null end;
     reduce (inputs
             | (index(":")) as $i | .[:$i] as $n | (.[$i+1:] | fromjson?) as $o
-            | (try kind($o) catch null) as $k | select($k != null)
+            | (if $o == "HUMAN" then "human" else (try kind($o) catch null) end) as $k | select($k != null)
             | {n: $n, k: $k,
                ts: ((try ($o.timestamp | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601 | floor | tostring) catch "") // "")})
       as $x ([];
-        if $x.k == "start" then . + [{n: $x.n, ts: $x.ts, cut: false, commit: false}]
+        if $x.k == "start" then . + [{n: $x.n, ts: $x.ts, cut: false, commit: false, ended: false}]
         elif length == 0 then .
-        elif $x.k == "interrupt" then (if .[-1].commit then . else .[-1].cut = true end)
+        elif $x.k == "human" then .[-1].ended = true
+        elif $x.k == "interrupt" then (if .[-1].commit or .[-1].ended then . else .[-1].cut = true end)
         else .[-1].commit = true | .[-1].cut = false end)
     | map(select(.cut | not)) | last // empty | .n + " " + .ts' 2>/dev/null)
 
