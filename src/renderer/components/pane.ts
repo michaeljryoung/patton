@@ -26,6 +26,8 @@ import { turnEndSignal, verdictAfterRootChange, verdictAfterChildren, type HookV
 import type { ITheme } from '@xterm/xterm';
 import type { TabFlag, UnsentInputState } from '../../shared/types';
 import type { PauseInput } from '../services/pause-all';
+import { OKAY_PROMPT, okayAnnouncement, okayButtonText, okayDecision, okayRowVisible } from '../services/okay-ask';
+import { OkayRow } from './okay-row';
 
 /** Background work a parked Claude Code session is waiting on: from the Stop
  *  hook (tasks + crons), or from OSC 7501 child records (tasks + their titles,
@@ -123,7 +125,7 @@ export class Pane {
   private disposables: (() => void)[] = [];
   private resizeTimer: ReturnType<typeof setTimeout> | null = null;
   private callbacks: PaneCallbacks;
-  private ptyExited = false;
+  private _ptyExited = false;
   private _isFocused = false;
   private pasteDialog: PasteDialog;
   private contextMenu: ContextMenu;
@@ -167,7 +169,7 @@ export class Pane {
   // (◐ ◑ ✳) has been seen since the shell's last prompt: Claude Code is
   // running in this pane, so image pastes go to it as Ctrl+V (it reads the
   // clipboard itself) instead of as a file path.
-  private claudeActive = false;
+  private _claudeActive = false;
   // Claude Code's own status (OSC 7501, services/program-status.ts). Once a
   // pane has had a report, it is the only source: Claude stops putting its
   // glyph in the title, so the title path stands aside, and the Stop hook's
@@ -267,6 +269,16 @@ export class Pane {
   private static readonly COMPOSE_FIRST_MAX_FRACTION = 0.4; // of the pane's height
   private static readonly COMPOSE_FIRST_MIN_PX = 60;
   private static readonly COMPOSE_DEFAULT_MAX_PX = 200;
+
+  // claudeActive and ptyExited decide whether the Okay? row shows, so every
+  // change goes through these setters and none can miss syncOkayRow().
+  private get claudeActive(): boolean { return this._claudeActive; }
+  private set claudeActive(v: boolean) { this._claudeActive = v; this.syncOkayRow(); }
+  private get ptyExited(): boolean { return this._ptyExited; }
+  private set ptyExited(v: boolean) { this._ptyExited = v; this.syncOkayRow(); }
+
+  // --- The Okay? row under the terminal (services/okay-ask.ts) ---
+  private okayRow!: OkayRow;
 
   // --- Pasted-image thumbnails (see pasteImage) ---
   private static readonly PASTE_CHIP_TTL_MS = 10 * 60 * 1000;
@@ -918,6 +930,36 @@ export class Pane {
     this.queueSubmit('pause', false, { stashFirst: opts.stash, scroll: false, origin: 'patton' });
   }
 
+  /** Show the Okay? row only while Claude Code runs here with a live shell. */
+  private syncOkayRow(): void {
+    if (!this.okayRow) return; // before the constructor has built it
+    const live = this.ptyId !== null && !this._ptyExited;
+    if (this.okayRow.setVisible(okayRowVisible(this._claudeActive, live))) this.refitTerminal();
+  }
+
+  /** The Okay? button's click: ask Claude "Is everything going okay?" by the
+   *  same rules as Pause all (services/okay-ask.ts). Resolves to the button's
+   *  words, or null when the session changed under the await (nothing sent). */
+  private async askOkay(): Promise<string | null> {
+    const ptyId = this.ptyId;
+    const [input, key] = await Promise.all([this.readInputState(), window.patton.pauseAll.stashKey()]);
+    if (this.ptyId !== ptyId || ptyId === null || this.disposed) {
+      rlog('info', '[OKAY] skipped', { pane: this.id, reason: 'session-changed' });
+      return null;
+    }
+    const decision = okayDecision(this.pauseInput(input), key);
+    if (decision.kind === 'send') {
+      rlog('info', '[OKAY] sent', { pane: this.id, queued: decision.queued, stash: decision.stash });
+      this.queueSubmit(OKAY_PROMPT, false, { stashFirst: decision.stash, origin: 'patton' });
+    } else {
+      rlog('info', '[OKAY] skipped', {
+        pane: this.id, reason: decision.reason, ...('why' in key ? { stashKey: key.why } : {}),
+      });
+    }
+    announce(okayAnnouncement(decision));
+    return okayButtonText(decision);
+  }
+
   /** A Claude Code Stop-hook message (OSC 777): the turn ended on its own. */
   private handlePattonState(state: PattonState): void {
     this.stopSeenSinceWork = true;
@@ -1024,6 +1066,9 @@ export class Pane {
     this.terminalContainer = document.createElement('div');
     this.terminalContainer.className = 'terminal-container';
     this.element.appendChild(this.terminalContainer);
+
+    this.okayRow = new OkayRow(() => this.askOkay());
+    this.element.appendChild(this.okayRow.element);
 
     this.pasteStrip = document.createElement('div');
     this.pasteStrip.className = 'paste-strip';
@@ -1727,6 +1772,12 @@ export class Pane {
   private setPasteStripVisible(visible: boolean): void {
     if (this.pasteStrip.hidden === !visible) return;
     this.pasteStrip.hidden = !visible;
+    this.refitTerminal();
+  }
+
+  /** A row under the terminal appeared or went: re-fit and tell the PTY now,
+   *  rather than on the resize observer's 100 ms debounce. */
+  private refitTerminal(): void {
     if (this.disposed) return;
     this.terminalView.fit();
     if (this.ptyId !== null) {
@@ -2123,6 +2174,7 @@ export class Pane {
     this.disposed = true;
     if (this.resizeTimer) clearTimeout(this.resizeTimer);
     this.clearPasteChips();
+    this.okayRow.dispose();
     for (const d of this.disposables) d();
     if (this.ptyId !== null && !this.ptyExited) {
       window.patton.pty.destroy(this.ptyId);

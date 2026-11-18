@@ -262,6 +262,45 @@
   display: none;
 }
 
+/* The Okay? row: a slim row of its own under a Claude pane's terminal, the
+ * button at its left (Michael, 18 Nov 2026). One terminal line tall; shown only
+ * while Claude Code runs in the pane (components/okay-row.ts). */
+.okay-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  padding: 2px 12px;
+  border-top: 1px solid var(--hairline);
+  background: var(--bg);
+  flex-shrink: 0;
+}
+
+.okay-row[hidden] {
+  display: none;
+}
+
+.okay-button {
+  padding: 1px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: var(--ui);
+  line-height: 1.2;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.okay-button:hover {
+  background: var(--surface-hover);
+}
+
+.okay-button:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
 .paste-strip:not([hidden]) + .editor-container:not(.collapsed) {
   border-top: none;
   padding-top: 0;

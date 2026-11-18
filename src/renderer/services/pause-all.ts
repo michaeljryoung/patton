@@ -90,7 +90,7 @@ export function pauseSkipReason(i: PauseInput, key: StashKeyVerdict): PauseSkipR
 }
 
 /** The word goes in behind a running turn rather than at the prompt. */
-function isQueued(i: PauseInput): boolean {
+export function isQueued(i: PauseInput): boolean {
   return i.source === '7501' ? i.root === 'working' : i.working;
 }
 

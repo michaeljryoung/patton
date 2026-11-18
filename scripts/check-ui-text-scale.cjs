@@ -82,7 +82,8 @@ async function nodeRunner() {
         import { SearchOverlay } from './src/renderer/components/search-overlay';
         import { EditorInput } from './src/renderer/components/editor-input';
         import { ContextMenu } from './src/renderer/components/context-menu';
-        (window as any).__ui = { Terminal, SearchAddon, applyUiTextScale, TabBar, ProjectBoard, SettingsPanel, BookmarksPanel, CommandPalette, ConfirmDialog, SearchOverlay, EditorInput, ContextMenu };
+        import { OkayRow } from './src/renderer/components/okay-row';
+        (window as any).__ui = { Terminal, SearchAddon, applyUiTextScale, TabBar, ProjectBoard, SettingsPanel, BookmarksPanel, CommandPalette, ConfirmDialog, SearchOverlay, EditorInput, ContextMenu, OkayRow };
       `,
     },
     bundle: true, platform: 'browser', format: 'iife', outfile: path.join(outDir, 'page.js'),
@@ -343,6 +344,12 @@ async function pageRun(BIG) {
   new U.EditorInput(compose, { onSubmit: noop, onInterrupt: noop, onHistoryUp: () => null, onHistoryDown: () => null, onTab: noop }, 14);
   surfaces.compose = compose;
 
+  // The Okay? row under a Claude pane's terminal: the real component, shown.
+  const okay = new U.OkayRow(async () => null);
+  okay.setVisible(true);
+  content.appendChild(okay.element);
+  surfaces.okay = okay.element;
+
   const term = new U.Terminal({ fontSize: 14, rows: 4, cols: 40 });
   const termEl = document.createElement('div');
   termEl.className = 'terminal-container';
@@ -437,6 +444,21 @@ async function pageRun(BIG) {
   for (const v of one.values()) surfaceCounts[v.surface] = (surfaceCounts[v.surface] || 0) + 1;
   for (const name of ['tabbar', 'board', 'settings', 'bookmarks', 'palette', 'confirm', 'search', 'compose', 'menu', 'hover']) {
     check(`measured: the ${name} surface has text on screen (${surfaceCounts[name] || 0})`, (surfaceCounts[name] || 0) >= 2, surfaceCounts);
+  }
+
+  // --- the Okay? row: its button is measured (one text element, so outside the list above), scales
+  // with the setting and its word fits inside it at both sizes
+  {
+    const ob = okay.button;
+    const a = one.get([...one.keys()].find((k) => one.get(k).el === ob));
+    const b = big.get([...big.keys()].find((k) => big.get(k).el === ob));
+    check('measured: the Okay? button is on screen at x1 and x' + BIG, Boolean(a && b && a.surface === 'okay'), { a: a && a.surface, b: b && b.surface });
+    if (a && b) {
+      check(`the Okay? button's text scales by x${BIG}`, Math.abs(b.fs - a.fs * BIG) < 0.02, { at1: a.fs, atBig: b.fs });
+      check(`the Okay? button grows with its text (${a.h.toFixed(1)} -> ${b.h.toFixed(1)} px) and the row with it`, b.h > a.h + (b.fs - a.fs) * 0.9 - 0.1 && okay.element.getBoundingClientRect().height >= b.h, { h1: a.h, hBig: b.h });
+      check(`the Okay? word fits its button at x${BIG} (no clipping)`, ob.scrollWidth <= ob.clientWidth + 1 && ob.scrollHeight <= ob.clientHeight + 1, { sw: ob.scrollWidth, cw: ob.clientWidth, sh: ob.scrollHeight, ch: ob.clientHeight });
+    }
+    check('the Okay? row sits at the left, button first', okay.button.getBoundingClientRect().left - okay.element.getBoundingClientRect().left < 24, okay.button.getBoundingClientRect().left);
   }
 
   // --- every text element scales by exactly BIG, except the terminal and the compose textarea
