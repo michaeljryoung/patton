@@ -796,6 +796,26 @@ await section(async () => {
   closeMenus();
 });
 
+// ── 9. discardTab placing the selected tab into a folded group unfolds it ──
+await section(async () => {
+  const tm = await makeWindow(['X', 'Y', 'Z']);
+  const g = tm.addTabToNewGroup(idOf(tm, 'X'));
+  tm.renameGroup(g, 'Games');
+  tm.addTabToGroup(idOf(tm, 'Y'), g);
+  // A tile's open still in flight: the board tab X's group folds meanwhile,
+  // then the opened tab P (selected on creation) takes X's place.
+  const p = await tm.createTab();
+  tm.renameTab(p.id, 'P');
+  tm.foldGroup(g);
+  repairMark = logs.length;
+  const n = logs.length;
+  tm.discardTab(idOf(tm, 'X'), p.id);
+  check('discard: the placed tab is selected, in Games, and Games unfolds', active(tm) === 'P' && JSON.stringify(groups(tm)) === JSON.stringify([{ name: 'Games', folded: false, tabs: 'P Y' }]), { active: active(tm), groups: groups(tm) });
+  check('discard: the selected tab is on the strip', strip(tm).split(' ').includes('P'), strip(tm));
+  check('discard: the unfold is logged as a jump', logsSince(n, '[GROUP] unfolded').some((l) => l.data?.groupId === g && l.data?.reason === 'jump'), logsSince(n, '[GROUP] unfolded'));
+  invariant(tm, 'discard into a folded group, selected');
+});
+
 // SECTIONS
 
 check('script reached its end', true);

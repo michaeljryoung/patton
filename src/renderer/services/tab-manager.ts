@@ -578,8 +578,12 @@ export class TabManager {
       this.tabs.splice(this.tabs.indexOf(placed), 1);
       this.tabs.splice(Math.min(idx, this.tabs.length), 0, placed);
       // The placed tab takes the board's place in its group too.
-      if (discardedGroup !== null && this.groups.has(discardedGroup)) {
-        this.groupOfTab.set(placed.id, discardedGroup);
+      const group = discardedGroup !== null ? this.groups.get(discardedGroup) : undefined;
+      if (group) {
+        this.groupOfTab.set(placed.id, group.id);
+        // The group may have folded while the tile's open was in flight: the
+        // placed tab is selected, so its group unfolds rather than hide it.
+        if (placed === this.activeTab) this.unfoldGroup(group, 'jump');
       } else {
         this.groupOfTab.delete(placed.id);
       }
