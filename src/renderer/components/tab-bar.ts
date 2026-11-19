@@ -1,18 +1,20 @@
 import { ContextMenu } from './context-menu';
-import { announce } from '../services/announcer';
 import { onUiTextScaleApplied } from '../services/ui-text-scale';
 import { DEFAULTS } from '../../shared/constants';
 import type { TabFlag } from '../../shared/types';
 import type { CheckpointView } from '../services/checkpoint-clock';
 import type { HoverBlock } from '../services/tab-hover';
 import { TabHoverCard } from './tab-hover-card';
-import { GROUP_NAME_MAX, stateOf, strongestState, type StrongestState } from '../services/tab-groups';
+import { GROUP_NAME_MAX, stateOf, stepMove, strongestState, type StrongestState } from '../services/tab-groups';
 
 export interface TabBarCallbacks {
   onSelect: (id: string) => void;
   onClose: (id: string) => void;
   onNew: () => void;
   onReorder: (fromId: string, toId: string) => void;
+  /** Tab menu → Move Left (-1) / Move Right (1): one step on the strip
+   *  (services/tab-groups.ts stepMove), announced by the caller. */
+  onMoveStep?: (id: string, dir: -1 | 1) => void;
   onSettings: () => void;
   onRename: (id: string, name: string) => void;
   onRenameProject: (id: string, name: string) => void;
@@ -444,13 +446,14 @@ export class TabBar {
     btn.title = label;
   }
 
-  /** The tab next to this one in the strip (-1 left, 1 right), or null at an end. */
-  private neighbourId(tabId: string, dir: -1 | 1): string | null {
-    const ids = Array.from(this.tabsContainer.querySelectorAll<HTMLElement>('.tab-bar-tab'))
-      .map((el) => el.dataset.tabId);
-    const idx = ids.indexOf(tabId);
-    if (idx === -1) return null;
-    return ids[idx + dir] ?? null;
+  /** Whether Move Left (-1) / Move Right (1) would change anything for this
+   *  tab, by the same rule TabManager applies (stepMove), on the latest tabs. */
+  private canMoveStep(tabId: string, dir: -1 | 1): boolean {
+    const tabs = this.latestTabs;
+    const item = tabs.find((t) => t.id === tabId);
+    if (!item) return false;
+    const folded = new Set(this.latestGroups.filter((g) => g.folded).map((g) => g.id));
+    return stepMove(tabs, item, dir, (t) => t.groupId ?? null, (g) => folded.has(g)) !== null;
   }
 
   update(tabs: TabHeaderInfo[], groups: TabGroupHeader[] = []): void {
@@ -644,14 +647,11 @@ export class TabBar {
           { separator: true as const },
           ...([-1, 1] as const).map((dir) => ({
             label: dir < 0 ? 'Move Left' : 'Move Right',
-            disabled: this.neighbourId(tab.id, dir) === null,
-            action: () => {
-              // The bar may have been rebuilt while the menu was open: look again.
-              const neighbour = this.neighbourId(tab.id, dir);
-              if (!neighbour) return;
-              this.callbacks.onReorder(tab.id, neighbour);
-              announce(`${tab.title} moved ${dir < 0 ? 'left' : 'right'}`);
-            },
+            disabled: !this.canMoveStep(tab.id, dir),
+            // One step on the strip (into, out of or past a group, else a
+            // swap); TabManager looks again, as the bar may have been rebuilt
+            // while the menu was open, and announces what happened.
+            action: () => this.callbacks.onMoveStep?.(tab.id, dir),
           })),
           // --- Tab groups ---
           ...this.groupMenuItems(tab.id),

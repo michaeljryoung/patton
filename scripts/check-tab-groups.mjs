@@ -14,7 +14,8 @@
 // join/leave rule and a drop on a chip; wake moving the whole group; discardTab's
 // inheritance; the folded chip's strongest-state rank; session save/restore
 // (names, folds, order, broken run repaired, the active tab's group unfolded, an
-// old session without groups); main's sanitising; the [GROUP] log lines.
+// old session without groups); main's sanitising; the [GROUP] log lines;
+// Move Left / Move Right taking exactly one step (into, out of, past a group).
 // Run: JSDOM_DIR=<a folder whose node_modules has jsdom> node scripts/check-tab-groups.mjs
 //   jsdom is not a project dependency: install it in a scratch folder.
 import { build } from 'esbuild';
@@ -681,6 +682,118 @@ await section(async () => {
   const over = tm.addTabToNewGroup(idOf(tm, 'T50'));
   check('cap: a 51st group is refused, the tab stays ungrouped', over === null && tm.getTabGroups().length === 50, over);
   invariant(tm, 'the group cap');
+});
+
+// ── 8. Move Left / Move Right from the tab menu: exactly one step ──
+// (a) a group's edge tab steps out of it, in place; (b) an ungrouped tab steps
+// into an open group beside it, in place; (c) a folded group beside it is
+// jumped whole; (d) otherwise a swap (inside a group, staying in it). Disabled
+// only where nothing would change.
+const menuItemsNow = () => [...doc.querySelectorAll('.context-menu-overlay.visible .context-menu-item')];
+const closeMenus = () => {
+  for (const o of doc.querySelectorAll('.context-menu-overlay.visible')) o.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+};
+function tabMenu(tm, name) {
+  closeMenus();
+  const el = tm.bar.querySelector(`.tab-bar-tab[data-tab-id="${idOf(tm, name)}"]`);
+  if (!el) throw new Error(`tab ${name} not on the strip`);
+  el.dispatchEvent(new w.MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2, clientX: 20, clientY: 20 }));
+  return menuItemsNow();
+}
+const menuItem = (items, label) => items.find((i) => i.querySelector('.context-menu-label')?.textContent.trim() === label || i.textContent.trim() === label);
+const isDisabled = (item) => !!item && item.classList.contains('disabled');
+// Every announcement (the announcer's live regions; their text clears itself).
+const announced = [];
+new w.MutationObserver((records) => {
+  for (const r of records) {
+    const el = r.target.nodeType === 1 ? r.target : r.target.parentElement;
+    if (el?.getAttribute?.('role') === 'status' && el.hasAttribute('aria-live') && el.textContent) announced.push(el.textContent);
+  }
+}).observe(doc.body, { childList: true, characterData: true, subtree: true });
+/** Move a tab by its menu; returns what was announced. */
+async function menuMove(tm, name, dir) {
+  const item = menuItem(tabMenu(tm, name), dir < 0 ? 'Move Left' : 'Move Right');
+  if (!item) throw new Error('no Move item');
+  const n = announced.length;
+  item.dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+  await tick(40);
+  closeMenus();
+  return announced.slice(n).join(' | ');
+}
+/** "A B C D E F" with C D in group Mid (folded when asked; A selected). */
+async function midWindow(names, members, { folded = false } = {}) {
+  const tm = await makeWindow(names);
+  const g = tm.addTabToNewGroup(idOf(tm, members[0]));
+  tm.renameGroup(g, 'Mid');
+  for (const m of members.slice(1)) tm.addTabToGroup(idOf(tm, m), g);
+  tm.switchToId(idOf(tm, names[0]));
+  if (folded) tm.foldGroup(g);
+  repairMark = logs.length;
+  return tm;
+}
+const groupLine = (tm) => groups(tm).map((g) => `${g.name}${g.folded ? '(folded)' : ''}:${g.tabs}`).join(' | ');
+await section(async () => {
+  // (c) over a folded group, both ways: the group untouched.
+  let tm = await midWindow(['A', 'B', 'C', 'D', 'E', 'F'], ['C', 'D'], { folded: true });
+  let said = await menuMove(tm, 'B', 1);
+  check('move: Move Right on B past folded Mid gives "A [Mid] B E F"', order(tm) === 'A C D B E F' && groupLine(tm) === 'Mid(folded):C D' && strip(tm) === 'A B E F', { order: order(tm), groups: groupLine(tm) });
+  check('move: the jump over a folded group is announced with its name', /B moved right past Mid/.test(said), said);
+  invariant(tm, 'Move Right over a folded group');
+  said = await menuMove(tm, 'B', -1);
+  check('move: Move Left on B jumps back before folded Mid', order(tm) === 'A B C D E F' && groupLine(tm) === 'Mid(folded):C D', { order: order(tm), groups: groupLine(tm) });
+  tm = await midWindow(['A', 'B', 'C', 'D', 'E', 'F'], ['C', 'D'], { folded: true });
+  await menuMove(tm, 'E', -1);
+  check('move: Move Left on E past folded Mid gives "A B E [Mid] F"', order(tm) === 'A B E C D F' && groupLine(tm) === 'Mid(folded):C D', { order: order(tm), groups: groupLine(tm) });
+  invariant(tm, 'Move Left over a folded group');
+  // A folded group at the far right: jumped to the very end.
+  tm = await midWindow(['A', 'B', 'C', 'D'], ['C', 'D'], { folded: true });
+  check('move: Move Right is enabled before a folded group at the end', !isDisabled(menuItem(tabMenu(tm, 'B'), 'Move Right')));
+  await menuMove(tm, 'B', 1);
+  check('move: Move Right past a folded group at the end lands last', order(tm) === 'A C D B' && groupLine(tm) === 'Mid(folded):C D', order(tm));
+  closeMenus();
+});
+await section(async () => {
+  // (a) out of an open group at its edges, in place.
+  let tm = await midWindow(['A', 'B', 'C', 'D', 'E', 'F'], ['C', 'D']);
+  let said = await menuMove(tm, 'D', 1);
+  check('move: Move Right on a group\'s last tab takes it out, in place', order(tm) === 'A B C D E F' && groupLine(tm) === 'Mid:C', { order: order(tm), groups: groupLine(tm) });
+  check('move: stepping out is announced', /D moved out of Mid/.test(said), said);
+  invariant(tm, 'Move Right out of a group');
+  tm = await midWindow(['A', 'B', 'C', 'D', 'E', 'F'], ['C', 'D']);
+  await menuMove(tm, 'C', -1);
+  check('move: Move Left on a group\'s first tab takes it out, in place (before the chip)', order(tm) === 'A B C D E F' && groupLine(tm) === 'Mid:D', { order: order(tm), groups: groupLine(tm) });
+  const stripEls = Array.from(tm.bar.querySelectorAll('.tab-bar-tab, .tab-bar-group-chip')).map((el) => (el.classList.contains('tab-bar-group-chip') ? '[Mid]' : nameOf(tm, el.dataset.tabId))).join(' ');
+  check('move: the strip reads "A B C [Mid] D E F"', stripEls === 'A B C [Mid] D E F', stripEls);
+  // A one-tab group: stepping out ends the group.
+  tm = await midWindow(['A', 'B', 'C'], ['C']);
+  check('move: Move Right on a one-tab group at the end is enabled', !isDisabled(menuItem(tabMenu(tm, 'C'), 'Move Right')));
+  await menuMove(tm, 'C', 1);
+  check('move: Move Right on a one-tab group\'s tab takes it out and the group goes', order(tm) === 'A B C' && groups(tm).length === 0, { order: order(tm), groups: groupLine(tm) });
+  // (b) into an open group beside it, in place.
+  tm = await midWindow(['A', 'B', 'C', 'D', 'E', 'F'], ['C', 'D']);
+  said = await menuMove(tm, 'B', 1);
+  check('move: Move Right on B into open Mid makes it the first tab, in place', order(tm) === 'A B C D E F' && groupLine(tm) === 'Mid:B C D', { order: order(tm), groups: groupLine(tm) });
+  check('move: stepping in is announced', /B moved into Mid/.test(said), said);
+  invariant(tm, 'Move Right into a group');
+  tm = await midWindow(['A', 'B', 'C', 'D', 'E', 'F'], ['C', 'D']);
+  await menuMove(tm, 'E', -1);
+  check('move: Move Left on E into open Mid makes it the last tab, in place', order(tm) === 'A B C D E F' && groupLine(tm) === 'Mid:C D E', { order: order(tm), groups: groupLine(tm) });
+  invariant(tm, 'Move Left into a group');
+  // (d) swaps: inside a group it stays in; outside, plain.
+  tm = await midWindow(['A', 'B', 'C', 'D', 'E', 'F'], ['C', 'D', 'E']);
+  await menuMove(tm, 'C', 1);
+  check('move: Move Right inside a group swaps and stays in', order(tm) === 'A B D C E F' && groupLine(tm) === 'Mid:D C E', { order: order(tm), groups: groupLine(tm) });
+  await menuMove(tm, 'C', -1);
+  check('move: Move Left inside a group swaps and stays in', order(tm) === 'A B C D E F' && groupLine(tm) === 'Mid:C D E', { order: order(tm), groups: groupLine(tm) });
+  said = await menuMove(tm, 'A', 1);
+  check('move: an ungrouped swap', order(tm) === 'B A C D E F' && groupLine(tm) === 'Mid:C D E', order(tm));
+  check('move: a swap is announced as "moved right"', /A moved right$/.test(said), said);
+  invariant(tm, 'swaps');
+  // Disabled only when nothing would change.
+  check('move: Move Left disabled on the first ungrouped tab', isDisabled(menuItem(tabMenu(tm, 'B'), 'Move Left')));
+  check('move: Move Right disabled on the last ungrouped tab', isDisabled(menuItem(tabMenu(tm, 'F'), 'Move Right')));
+  check('move: Move Left enabled on a group\'s first tab', !isDisabled(menuItem(tabMenu(tm, 'C'), 'Move Left')));
+  closeMenus();
 });
 
 // SECTIONS

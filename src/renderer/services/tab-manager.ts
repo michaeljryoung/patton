@@ -15,7 +15,7 @@ import { runPause, emptyReport, pauseSummary, type PauseTarget } from './pause-a
 import { orderSessions, sessionNeedsYou, stripClaudeGlyph, type SessionInfo, type SessionStatus } from './sessions';
 import type { ITheme } from '@xterm/xterm';
 import {
-  cleanGroupName, moveGroupFirst, nearestVisible, newGroupId, placeAfterGroup, repairRuns, takeOutOfGroup,
+  cleanGroupName, moveGroupFirst, nearestVisible, newGroupId, placeAfterGroup, repairRuns, stepMove, takeOutOfGroup,
   visibleItems, MAX_GROUPS, type TabGroup,
 } from './tab-groups';
 
@@ -110,6 +110,7 @@ export class TabManager {
       onClose: (id) => { this.confirmAndCloseTab(id).catch(console.error); },
       onNew: () => { this.userNewTab().catch(console.error); },
       onReorder: (fromId, toId) => this.reorder(fromId, toId),
+      onMoveStep: (id, dir) => this.moveTabStep(id, dir),
       onSettings: () => options?.onSettings?.(),
       onRename: (id, name) => this.renameTab(id, name),
       onRenameProject: (id, name) => this.renameProject(id, name),
@@ -421,6 +422,32 @@ export class TabManager {
       else this.groupOfTab.set(moved.id, targetGroup);
       rlog('info', '[GROUP] tab moved between groups', { tabId: moved.id, from: fromGroup, to: targetGroup, by: 'reorder' });
     }
+    this.updateTabBar();
+  }
+
+  /** Tab menu → Move Left (-1) / Move Right (1): exactly one step on the
+   *  strip (tab-groups.ts stepMove): out of a group at its edge, into an open
+   *  group beside it, past a folded group whole, else a swap. Drag-and-drop
+   *  keeps reorder()'s rule. Announced; nothing happens where nothing would change. */
+  moveTabStep(id: string, dir: -1 | 1): void {
+    const tab = this.tabs.find((t) => t.id === id);
+    if (!tab) return;
+    const step = stepMove(this.tabs, tab, dir, this.groupOf, (g) => this.groups.get(g)?.folded === true);
+    if (!step) return;
+    const from = this.groupOf(tab);
+    this.setTabOrder(step.list);
+    if (step.group === null) this.groupOfTab.delete(tab.id);
+    else this.groupOfTab.set(tab.id, step.group);
+    if (from !== step.group) {
+      rlog('info', '[GROUP] tab moved between groups', { tabId: tab.id, from, to: step.group, by: 'move-step' });
+    }
+    const way = dir < 0 ? 'left' : 'right';
+    const group = step.groupId !== null ? this.groups.get(step.groupId) : undefined;
+    const label = group ? this.groupLabel(group) : 'its group';
+    if (step.kind === 'into') announce(`${tab.title} moved into ${label}`);
+    else if (step.kind === 'out-of') announce(`${tab.title} moved out of ${label}`);
+    else if (step.kind === 'past') announce(`${tab.title} moved ${way} past ${label}`);
+    else announce(`${tab.title} moved ${way}`);
     this.updateTabBar();
   }
 

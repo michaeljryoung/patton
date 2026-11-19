@@ -60,6 +60,52 @@ export function takeOutOfGroup<T>(list: readonly T[], item: T, groupOf: GroupOf<
   return placeAfterGroup(list, item, groupId, groupOf);
 }
 
+/** What one Move Left / Move Right step does to a tab (see stepMove). */
+export interface StepMove<T> {
+  /** The new order. */
+  list: T[];
+  /** The moved tab's group afterwards (null = ungrouped). */
+  group: string | null;
+  /** swap: traded places with its neighbour (inside a group, staying in it);
+   *  into / out-of: joined or left a group without moving; past: jumped over
+   *  a folded group whole. */
+  kind: 'swap' | 'into' | 'out-of' | 'past';
+  /** The group stepped into, out of or past (null for a swap). */
+  groupId: string | null;
+}
+
+/** One Move Left (-1) / Move Right (1) step from the tab menu, exactly one
+ *  place on the strip: a group's edge tab steps out of its group in place; an
+ *  ungrouped tab next to an open group steps into it in place (its first tab
+ *  moving right, its last moving left); next to a folded group it jumps the
+ *  whole group, which stays as it is; otherwise it swaps with its neighbour.
+ *  null when the step would change nothing (an ungrouped tab at an end). */
+export function stepMove<T>(list: readonly T[], item: T, dir: -1 | 1, groupOf: GroupOf<T>, isFolded: (groupId: string) => boolean): StepMove<T> | null {
+  const at = list.indexOf(item);
+  if (at === -1) return null;
+  const own = groupOf(item);
+  const next: T | undefined = list[at + dir];
+  const swap = (): T[] => {
+    const out = list.slice();
+    out[at] = out[at + dir];
+    out[at + dir] = item;
+    return out;
+  };
+  if (own !== null) {
+    if (next === undefined || groupOf(next) !== own) return { list: list.slice(), group: null, kind: 'out-of', groupId: own };
+    return { list: swap(), group: own, kind: 'swap', groupId: null };
+  }
+  if (next === undefined) return null;
+  const nextGroup = groupOf(next);
+  if (nextGroup === null) return { list: swap(), group: null, kind: 'swap', groupId: null };
+  if (!isFolded(nextGroup)) return { list: list.slice(), group: nextGroup, kind: 'into', groupId: nextGroup };
+  const out = list.slice();
+  out.splice(at, 1);
+  if (dir > 0) out.splice(lastIndexOf(out, nextGroup, groupOf) + 1, 0, item);
+  else out.splice(out.findIndex((x) => groupOf(x) === nextGroup), 0, item);
+  return { list: out, group: null, kind: 'past', groupId: nextGroup };
+}
+
 /** Make every group one unbroken run: the first run of each group stays where
  *  it is and any straggler later in the list moves to follow it (order kept).
  *  `moved` counts the stragglers moved (0 = the list was already sound). */
