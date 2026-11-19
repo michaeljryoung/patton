@@ -547,8 +547,10 @@ export class TabBar {
       el.addEventListener('drop', (e) => {
         e.preventDefault();
         el.classList.remove('drag-over');
+        // Only a drag that began on this strip's grip counts: tab ids repeat
+        // across windows, so foreign text must not move this window's tab.
         const fromId = e.dataTransfer!.getData('text/plain');
-        if (fromId && fromId !== tab.id) {
+        if (fromId && fromId === this.draggedId && fromId !== tab.id) {
           this.callbacks.onReorder(fromId, tab.id);
         }
       });
@@ -875,7 +877,7 @@ export class TabBar {
       e.preventDefault();
       chip.classList.remove('drag-over');
       const fromId = e.dataTransfer?.getData('text/plain');
-      if (!fromId) return;
+      if (!fromId || fromId !== this.draggedId) return; // a drag from another window or plain text
       const tab = this.currentTabInfo(fromId);
       if (tab && tab.groupId !== group.id) this.callbacks.onAddToGroup?.(fromId, group.id);
     });

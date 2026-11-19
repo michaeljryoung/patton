@@ -494,9 +494,13 @@ await section(async () => {
   invariant(tm, 'reorder between groups');
 
   // A tab dropped on a chip joins that group (the real TabBar's drop handler).
-  const drop = new w.Event('drop', { bubbles: true, cancelable: true });
-  Object.defineProperty(drop, 'dataTransfer', { value: { getData: () => idOf(tm, 'C'), dropEffect: '' } });
-  chip(tm, g).dispatchEvent(drop);
+  // The drag starts on the tab's grip, as a real one does (the strip honours only its own drags).
+  const dt = { data: {}, setData(k, v) { this.data[k] = v; }, getData(k) { return this.data[k] ?? ''; }, effectAllowed: '', dropEffect: '', setDragImage() {} };
+  const dragEv = (type) => { const e = new w.Event(type, { bubbles: true, cancelable: true }); Object.defineProperty(e, 'dataTransfer', { value: dt }); return e; };
+  const grip = tm.bar.querySelector(`.tab-bar-tab[data-tab-id="${idOf(tm, 'C')}"] .tab-bar-tab-grip`);
+  grip.dispatchEvent(dragEv('dragstart'));
+  chip(tm, g).dispatchEvent(dragEv('drop'));
+  grip.dispatchEvent(dragEv('dragend'));
   check('drop on a chip: the tab joins that group after its last tab', order(tm) === 'D A E B C' && groups(tm).length === 1 && groups(tm)[0].tabs === 'D A E B C', { order: order(tm), groups: groups(tm) });
   invariant(tm, 'drop on a chip');
 });

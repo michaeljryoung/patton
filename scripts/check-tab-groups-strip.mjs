@@ -505,7 +505,7 @@ await section('9. The list under a folded chip', 12, async () => {
 });
 
 // ============ 10. Drop on a chip ============
-await section('10. Drop on a chip', 4, async () => {
+await section('10. Drop on a chip', 9, async () => {
   draw();
   clear();
   const grip = tabEl('a').querySelector('.tab-bar-tab-grip');
@@ -526,6 +526,31 @@ await section('10. Drop on a chip', 4, async () => {
   chip('g2').dispatchEvent(dragEv('drop'));
   grip2.dispatchEvent(dragEv('dragend'));
   check('a tab dropped on its own group\'s chip calls nothing', callsOf('addToGroup').length === 0, calls);
+
+  // A drag that began elsewhere (another window's tab-3, or plain text) carries text/plain too: it must do nothing here.
+  clear();
+  const foreign = (type, text) => { const e = new w.Event(type, { bubbles: true, cancelable: true }); Object.defineProperty(e, 'dataTransfer', { value: { getData: () => text, setData() {}, dropEffect: '' } }); return e; };
+  let threw = null;
+  try {
+    chip('g2').dispatchEvent(foreign('drop', 'a'));
+    tabEl('b').dispatchEvent(foreign('drop', 'a'));
+    tabEl('b').dispatchEvent(foreign('drop', 'g2a'));
+  } catch (e) { threw = e; }
+  check('a foreign drop on a chip calls no callback and throws nothing', callsOf('addToGroup').length === 0 && !threw, { calls, threw: String(threw) });
+  check('a foreign drop on a tab calls no callback (no reorder, no regroup)', callsOf('reorder').length === 0 && callsOf('addToGroup').length === 0, calls);
+  // A foreign drop that arrives while a local drag is in flight but names another tab is foreign too.
+  const gripB = tabEl('g2a').querySelector('.tab-bar-tab-grip');
+  dt.data = {};
+  gripB.dispatchEvent(dragEv('dragstart'));
+  chip('g1').dispatchEvent(foreign('drop', 'b'));
+  check('...even mid-drag, data that is not the dragged tab is refused', callsOf('addToGroup').length === 0, calls);
+  clear();
+  tabEl('b').dispatchEvent(dragEv('drop'));
+  check('a drop on a tab after a grip dragstart still calls onReorder(dragged, target)', JSON.stringify(callsOf('reorder')) === JSON.stringify([['reorder', 'g2a', 'b']]), calls);
+  gripB.dispatchEvent(dragEv('dragend'));
+  clear();
+  tabEl('b').dispatchEvent(foreign('drop', 'g2a'));
+  check('after dragend, a drop reading like a tab id does nothing', callsOf('reorder').length === 0, calls);
 });
 
 await section('11. Focus: a chip click keeps the terminal\'s focus; a folded tab\'s focus goes to its chip', 6, async () => {
