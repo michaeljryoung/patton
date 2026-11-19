@@ -4,7 +4,8 @@
 // look, the folded chip (members gone, count, ONE indicator by rank), click /
 // drag / double-click, the keyboard (Enter, Space, menu key, Shift+F10, arrows),
 // aria, the tab menu's group entries and the chip menu, the name box, the list
-// under a folded chip, and a tab dropped on a chip.
+// under a folded chip (kept inside the window), a tab dropped on a chip, and
+// focus: a chip press keeps the terminal's, a folded tab's goes to its chip.
 // Run: JSDOM_DIR=<a folder whose node_modules has jsdom> node scripts/check-tab-groups-strip.mjs
 import { build } from 'esbuild';
 import { createRequire } from 'node:module';
@@ -561,6 +562,42 @@ await section('11. Focus: a chip click keeps the terminal\'s focus; a folded tab
   fold('g2');
   check('a focused close button of a tab hidden by a fold hands focus to the chip', onClose && doc.activeElement === chip('g2'), { onClose, active: doc.activeElement?.className });
   draw();
+});
+
+await section('12. The folded chip\'s list stays inside the window\'s right edge', 3, async () => {
+  fold('g1');
+  const realRect = w.Element.prototype.getBoundingClientRect;
+  const realWidth = w.innerWidth;
+  let chipLeft = 900;
+  const rect = (left, width, top, height) => ({ left, right: left + width, width, top, bottom: top + height, height, x: left, y: top, toJSON() {} });
+  w.Element.prototype.getBoundingClientRect = function () {
+    if (this.classList?.contains('tab-bar-group-chip')) return rect(chipLeft, 90, 0, 30);
+    if (this.classList?.contains('tab-bar-group-list')) return rect(0, 300, 0, 80);
+    return realRect.call(this);
+  };
+  Object.defineProperty(w, 'innerWidth', { value: 1000, configurable: true });
+  try {
+    fire(chip('g1'), 'mouseenter', { bubbles: false });
+    l = list();
+    const left = parseFloat(l?.style.left ?? 'NaN');
+    check('a list under a chip near the right edge is pulled in (300 px list, 1000 px window: left <= 696)', left <= 696 && left >= 4, l?.style.left);
+    fire(chip('g1'), 'mouseleave', { bubbles: false });
+    await sleep(260);
+    chipLeft = 50;
+    fire(chip('g1'), 'mouseenter', { bubbles: false });
+    check('...one with room still sits at its chip\'s left', list()?.style.left === '50px', list()?.style.left);
+    fire(chip('g1'), 'mouseleave', { bubbles: false });
+    await sleep(260);
+    chipLeft = -20;
+    fire(chip('g1'), 'mouseenter', { bubbles: false });
+    check('...and never left of 4 px', list()?.style.left === '4px', list()?.style.left);
+    fire(chip('g1'), 'mouseleave', { bubbles: false });
+    await sleep(260);
+  } finally {
+    w.Element.prototype.getBoundingClientRect = realRect;
+    Object.defineProperty(w, 'innerWidth', { value: realWidth, configurable: true });
+    draw();
+  }
 });
 
 bar.dispose();

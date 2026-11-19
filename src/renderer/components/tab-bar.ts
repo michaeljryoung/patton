@@ -976,6 +976,10 @@ export class TabBar {
     });
     list.addEventListener('mouseleave', () => this.scheduleHideGroupList());
     this.container.appendChild(list);
+    // Under its chip, but inside the window: a chip near the right end would
+    // otherwise draw a list that runs off it (measured once it is in the page).
+    const maxLeft = window.innerWidth - list.getBoundingClientRect().width - 4;
+    list.style.left = `${Math.max(4, Math.min(rect.left, maxLeft))}px`;
     this.groupListEl = list;
     this.groupListFor = groupId;
   }
