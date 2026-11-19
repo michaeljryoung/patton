@@ -971,7 +971,10 @@ export class TabBar {
       list.appendChild(row);
     }
     const rect = chip.getBoundingClientRect();
-    list.style.left = `${Math.max(4, rect.left)}px`;
+    // Measured at the window's left edge, where it has all the room it wants:
+    // placed at the chip first, a browser squeezes it to the space right of the
+    // chip and the clamp below would see a narrow list and leave it there.
+    list.style.left = '0px';
     list.style.top = `${rect.bottom}px`;
     list.addEventListener('mouseenter', () => {
       if (this.groupListTimer) { clearTimeout(this.groupListTimer); this.groupListTimer = null; }

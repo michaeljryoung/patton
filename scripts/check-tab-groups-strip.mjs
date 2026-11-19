@@ -589,7 +589,7 @@ await section('11. Focus: a chip click keeps the terminal\'s focus; a folded tab
   draw();
 });
 
-await section('12. The folded chip\'s list stays inside the window\'s right edge', 3, async () => {
+await section('12. The folded chip\'s list stays inside the window\'s right edge', 4, async () => {
   fold('g1');
   const realRect = w.Element.prototype.getBoundingClientRect;
   const realWidth = w.innerWidth;
@@ -597,7 +597,11 @@ await section('12. The folded chip\'s list stays inside the window\'s right edge
   const rect = (left, width, top, height) => ({ left, right: left + width, width, top, bottom: top + height, height, x: left, y: top, toJSON() {} });
   w.Element.prototype.getBoundingClientRect = function () {
     if (this.classList?.contains('tab-bar-group-chip')) return rect(chipLeft, 90, 0, 30);
-    if (this.classList?.contains('tab-bar-group-list')) return rect(0, 300, 0, 80);
+    // jsdom does no layout: squeeze like a browser, where an absolutely placed box is as wide as the room right of its left (up to its natural 300 px).
+    if (this.classList?.contains('tab-bar-group-list')) {
+      const at = parseFloat(this.style.left) || 0;
+      return rect(at, Math.min(300, w.innerWidth - at), 0, 80);
+    }
     return realRect.call(this);
   };
   Object.defineProperty(w, 'innerWidth', { value: 1000, configurable: true });
@@ -606,6 +610,7 @@ await section('12. The folded chip\'s list stays inside the window\'s right edge
     l = list();
     const left = parseFloat(l?.style.left ?? 'NaN');
     check('a list under a chip near the right edge is pulled in (300 px list, 1000 px window: left <= 696)', left <= 696 && left >= 4, l?.style.left);
+    check('...to exactly the window\'s edge less 4 px (measured at its natural width, not squeezed to the room left of the chip)', left === 696, l?.style.left);
     fire(chip('g1'), 'mouseleave', { bubbles: false });
     await sleep(260);
     chipLeft = 50;
