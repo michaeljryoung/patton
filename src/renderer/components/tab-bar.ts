@@ -222,6 +222,11 @@ export class TabBar {
   private groupListFor: string | null = null;
   private groupListTimer: ReturnType<typeof setTimeout> | null = null;
   private static readonly GROUP_LIST_HIDE_MS = 150;
+  /** The strip's last press was a key, not the pointer. A chip focused that
+   *  way is focus-visible and shows its list; one focused by a click (or given
+   *  focus back after the rebuild that click's fold caused) does not, so the
+   *  list closes once the pointer leaves. */
+  private keyboardModality = false;
 
   constructor(container: HTMLElement, callbacks: TabBarCallbacks) {
     this.container = container;
@@ -257,6 +262,8 @@ export class TabBar {
     // hijack arrow keys inside rename inputs or unrelated UI).
     // A group's chip is in the same arrow-key run (focus moves to it, but it is
     // never selected); Enter or Space on it folds or unfolds the group.
+    this.tabsContainer.addEventListener('keydown', () => { this.keyboardModality = true; }, true);
+    this.tabsContainer.addEventListener('mousedown', () => { this.keyboardModality = false; }, true);
     this.tabsContainer.addEventListener('keydown', (e) => {
       const target = e.target as HTMLElement;
       const isChip = target.classList.contains('tab-bar-group-chip');
@@ -819,6 +826,9 @@ export class TabBar {
     chip.addEventListener('mousedown', (e) => {
       if (e.button !== 0) return;
       if ((e.target as HTMLElement).closest('.tab-bar-tab-rename')) return;
+      // A press beside an open name box only leaves the box (its blur commits
+      // the name): it doesn't fold the group as well.
+      if (this.renameOpen) return;
       this.startWindowDrag(e, { onClickWithoutDrag: () => this.callbacks.onToggleGroup?.(group.id, 'click') });
     });
     // Two clicks fold and unfold; never the window's title-bar zoom.
@@ -861,10 +871,10 @@ export class TabBar {
       if (tab && tab.groupId !== group.id) this.callbacks.onAddToGroup?.(fromId, group.id);
     });
 
-    // The list of a folded group's tabs: on hover, and on keyboard focus.
+    // The list of a folded group's tabs: on hover, and on keyboard focus (focus-visible: a click's focus doesn't count).
     chip.addEventListener('mouseenter', () => this.showGroupList(group.id));
     chip.addEventListener('mouseleave', () => this.scheduleHideGroupList());
-    chip.addEventListener('focus', () => this.showGroupList(group.id));
+    chip.addEventListener('focus', () => { if (this.keyboardModality) this.showGroupList(group.id); });
     chip.addEventListener('blur', () => this.scheduleHideGroupList());
     return chip;
   }
@@ -967,7 +977,7 @@ export class TabBar {
       this.groupListTimer = null;
       // Still over the chip or the list, or the chip has keyboard focus: keep it.
       const chip = this.groupListFor ? this.chipEl(this.groupListFor) : null;
-      if (chip && (hovered(chip) || document.activeElement === chip)) return;
+      if (chip && (hovered(chip) || (document.activeElement === chip && this.keyboardModality))) return;
       if (this.groupListEl && hovered(this.groupListEl)) return;
       this.hideGroupList();
     }, TabBar.GROUP_LIST_HIDE_MS);
