@@ -23,6 +23,9 @@
 //    label renames it;
 //  - the selected tab sits on the terminal's ground with a 3 px ink bar under it, and
 //    a flagged or plain tab has neither (light scheme only: the hidden window's);
+//  - tab groups: at x1, x1.1 and x1.5 an open group's chip sits left of its first tab at the strip's height, its
+//    label whole (60 characters stop at 140px x scale), a 2 px top line on chip and member tabs (the selected one keeps its
+//    3 px bar), the chip never grows; a folded chip fits name, count and indicator and the other tabs widen (light only);
 //  - the collapsed bookmarks rail's mark is centred on the header row it stood in;
 //  - every text box taller than its text grew with the text (a fixed height shows up as no growth);
 //  - the real preload hands the renderer the launch scale synchronously (additionalArguments);
@@ -1259,6 +1262,121 @@ async function pageRun(BIG) {
   const dragged = getComputedStyle(tabEl('t1')).boxShadow;
   check('dragging over the selected tab keeps its bar beside the drop line', dragged.includes(bar) && dragged.split('inset').length - 1 === 2, { boxShadow: dragged });
   tabEl('t1').classList.remove('drag-over');
+
+  // --- tab groups (19 Nov 2026, the approved "ink" look): the chip beside its tabs, at x1, x1.1
+  // and x1.5, light scheme (the hidden window's; it has no dark emulation). An open group's chip
+  // sits immediately left of its first tab at the strip's height, its label whole (a 60-character
+  // name stops at 140px x scale with an ellipsis), a 2 px ink line along the top of the chip and
+  // of every member tab (a plain tab has none; the selected member keeps its 3 px bottom bar too).
+  // A folded chip carries its name, the count and one indicator without clipping, its tabs leave
+  // the strip and the others widen into the room. The chip never grows with spare room.
+  {
+    const TOP = `${inkColour} 0px 2px 0px 0px inset`;
+    const TOP_AND_BAR = `${TOP}, ${inkColour} 0px -3px 0px 0px inset`;
+    const colourOf = (v) => { const d = document.createElement('div'); d.style.background = `var(${v})`; document.body.appendChild(d); const c = getComputedStyle(d).backgroundColor; d.remove(); return c; };
+    const GREY = colourOf('--grey');
+    const MUTED = colourOf('--muted');
+    const LONG = 'Quarterly planning and research notes for the long project ahead of us';
+    const gTabs = (done) => [
+      { id: 'p1', title: 'before', active: false },
+      { id: 'g1', title: 'one', active: true, groupId: 'gA' },
+      { id: 'g2', title: 'two', active: false, groupId: 'gA', awaitingInput: true, checkpointDone: done },
+      { id: 'p2', title: 'after', active: false },
+    ];
+    const chipOf = () => strip.querySelector('.tab-bar-group-chip');
+    const widthOf = (id) => strip.querySelector(`.tab-bar-tab[data-tab-id="${id}"]`)?.getBoundingClientRect().width;
+    for (const s of [1, 1.1, BIG]) {
+      const tag = `group chip x${s}`;
+      await setScale(s);
+      barEl.style.width = '1000px';
+      barEl.style.flex = 'none';
+
+      // Open, short name.
+      tabBar.update(gTabs(false), [{ id: 'gA', name: 'Games', folded: false }]);
+      await frame();
+      const chip = chipOf();
+      const stripH = strip.clientHeight;
+      const members = ['g1', 'g2'].map((id) => strip.querySelector(`.tab-bar-tab[data-tab-id="${id}"]`));
+      const cr = chip ? chip.getBoundingClientRect() : { left: 0, right: 0, height: 0 };
+      const firstR = members[0].getBoundingClientRect();
+      const nameEl = chip && chip.querySelector('.tab-bar-group-name');
+      const place = { chipRight: +cr.right.toFixed(1), firstLeft: +firstR.left.toFixed(1), chipH: +cr.height.toFixed(1), stripH, tabH: +firstR.height.toFixed(1), next: chip && chip.nextElementSibling && chip.nextElementSibling.dataset.tabId };
+      check(`${tag}: an open group's chip sits immediately left of its first tab (no gap), at the strip's height`,
+        chip && Math.abs(cr.right - firstR.left) <= 1 && place.next === 'g1' && Math.abs(cr.height - stripH) <= 1 && Math.abs(cr.height - firstR.height) <= 1 && Math.abs(cr.top - firstR.top) <= 1, place);
+      check(`${tag}: a short name shows whole (scrollWidth <= clientWidth) and the chip does not clip its content`,
+        nameEl && nameEl.scrollWidth <= nameEl.clientWidth + 0.5 && chip.scrollWidth <= chip.clientWidth + 0.5 && nameEl.textContent === 'Games',
+        { name: nameEl && [nameEl.scrollWidth, nameEl.clientWidth], chip: [chip && chip.scrollWidth, chip && chip.clientWidth] });
+      const chipCs = chip && getComputedStyle(chip);
+      const nameCs = nameEl && getComputedStyle(nameEl);
+      const chev = chip && chip.querySelector('.tab-bar-group-chevron');
+      const chevR = chev ? chev.getBoundingClientRect() : { left: 0 };
+      const nameR = nameEl ? nameEl.getBoundingClientRect() : { right: 0 };
+      const look = chipCs && { size: nameCs.fontSize, transform: nameCs.textTransform, weight: nameCs.fontWeight, grow: chipCs.flexGrow, shrink: chipCs.flexShrink, bg: chipCs.backgroundColor, grey: GREY, ink: nameCs.color,
+        padLeft: +(chevR.left - cr.left).toFixed(1), padRight: +(cr.right - nameR.right).toFixed(1), gap: +(nameR.left - chev.getBoundingClientRect().right).toFixed(1) };
+      check(`${tag}: the label is bold uppercase ${(10.5 * s).toFixed(2)}px ink on the grey ground, with room round it, and the chip does not grow or shrink`,
+        chipCs && Math.abs(parseFloat(nameCs.fontSize) - 10.5 * s) <= 0.05 && nameCs.textTransform === 'uppercase' && Number(nameCs.fontWeight) >= 700 && chipCs.flexGrow === '0' && chipCs.flexShrink === '0'
+          && chipCs.backgroundColor === GREY && nameCs.color === inkColour && look.padLeft >= 8 && look.padRight >= 10 && look.gap >= 5 * s - 0.5, look);
+      const sh = Object.fromEntries(['p1', 'g1', 'g2', 'p2'].map((id) => [id, getComputedStyle(strip.querySelector(`.tab-bar-tab[data-tab-id="${id}"]`)).boxShadow]));
+      check(`${tag}: a 2px ink line along the top of the chip and of each member tab; the selected member keeps its 3px bottom bar too; a plain tab has neither`,
+        chipCs && chipCs.boxShadow === TOP && sh.g2 === TOP && sh.g1 === TOP_AND_BAR && sh.p1 === 'none' && sh.p2 === 'none', { chip: chipCs && chipCs.boxShadow, ...sh });
+      const closeShadow = getComputedStyle(members[1].querySelector('.tab-bar-tab-close')).boxShadow;
+      check(`${tag}: a member tab's close button carries the top line too (its own paint would cut the line)`, closeShadow === TOP, { closeShadow });
+
+      // Open, 60-character name: the label stops at 140px x scale with an ellipsis.
+      const sixty = LONG.slice(0, 60);
+      tabBar.update(gTabs(false), [{ id: 'gA', name: sixty, folded: false }]);
+      await frame();
+      const longName = chipOf().querySelector('.tab-bar-group-name');
+      const longCs = getComputedStyle(longName);
+      check(`${tag}: a 60-character name ellipsizes at 140px x scale (${(140 * s).toFixed(0)}px)`,
+        sixty.length === 60 && longName.scrollWidth > longName.clientWidth + 1 && Math.abs(longName.clientWidth - 140 * s) <= 1 && longCs.textOverflow === 'ellipsis' && longCs.overflow === 'hidden',
+        { len: sixty.length, scroll: longName.scrollWidth, client: longName.clientWidth, want: 140 * s, overflow: longCs.overflow, textOverflow: longCs.textOverflow });
+
+      // The chip does not grow when the strip has spare room.
+      tabBar.update(gTabs(false), [{ id: 'gA', name: 'Games', folded: false }]);
+      await frame();
+      const narrowW = chipOf().getBoundingClientRect().width;
+      const tabAt1000 = widthOf('p1');
+      barEl.style.width = '1500px';
+      await frame();
+      const wideW = chipOf().getBoundingClientRect().width;
+      const tabAt1500 = widthOf('p1');
+      barEl.style.width = '1000px';
+      await frame();
+      check(`${tag}: the chip does not grow when the strip has spare room (the tabs do)`, Math.abs(wideW - narrowW) <= 0.5 && tabAt1500 > tabAt1000 + 20, { narrowW, wideW, tabAt1000, tabAt1500 });
+      const openP1 = widthOf('p1');
+      const openP2 = widthOf('p2');
+
+      // Folded: name, count and one indicator fit; the members leave the strip; the others widen.
+      tabBar.update(gTabs(true), [{ id: 'gA', name: 'Games', folded: true }]);
+      await frame();
+      const fc = chipOf();
+      const kids = fc ? [...fc.children] : [];
+      const fcr = fc ? fc.getBoundingClientRect() : { left: 0, right: 0 };
+      const outside = kids.filter((k) => { const r = k.getBoundingClientRect(); return r.left < fcr.left - 0.5 || r.right > fcr.right + 0.5; }).length;
+      const count = fc && fc.querySelector('.tab-bar-group-count');
+      const fname = fc && fc.querySelector('.tab-bar-group-name');
+      const indicators = fc ? [...fc.querySelectorAll('.tab-bar-tab-indicator')] : [];
+      const foldInfo = { cls: fc && fc.className, chip: fc && [fc.scrollWidth, fc.clientWidth], name: fname && [fname.scrollWidth, fname.clientWidth], outside, count: count && count.textContent, indicators: indicators.map((i) => i.className), kids: kids.map((k) => k.className) };
+      check(`${tag}: a folded chip shows the name, the count (2) and ONE indicator (the red circle, the strongest), with nothing clipped or outside the chip`,
+        fc && fc.classList.contains('folded') && count && count.textContent === '2' && fname.scrollWidth <= fname.clientWidth + 0.5
+          && fc.scrollWidth <= fc.clientWidth + 0.5 && outside === 0 && indicators.length === 1 && indicators[0].classList.contains('checkpoint-done')
+          && fcr.height <= strip.clientHeight + 1 && fname.getBoundingClientRect().height < 2 * parseFloat(getComputedStyle(fname).fontSize)
+          && getComputedStyle(count).color === MUTED && kids.slice(1).every((k, i) => k.getBoundingClientRect().left - kids[i].getBoundingClientRect().right >= 5 * s - 0.5), foldInfo);
+      const gone = !strip.querySelector('.tab-bar-tab[data-tab-id="g1"]') && !strip.querySelector('.tab-bar-tab[data-tab-id="g2"]');
+      const foldP1 = widthOf('p1');
+      const foldP2 = widthOf('p2');
+      const lastR = [...strip.querySelectorAll('.tab-bar-tab')].pop().getBoundingClientRect();
+      const stripR = strip.getBoundingClientRect();
+      check(`${tag}: folding takes its tabs out of the strip and the remaining tabs widen into the freed room, still ending at the strip's right edge`,
+        gone && foldP1 > openP1 + 10 && foldP2 > openP2 + 10 && Math.abs(lastR.right - stripR.right) <= 1 && !(strip.scrollWidth > strip.clientWidth + 0.5),
+        { gone, openP1, foldP1, openP2, foldP2, lastRight: lastR.right, stripRight: stripR.right });
+    }
+    barEl.style.width = '1000px';
+    await setScale(1);
+    tabBar.update(tabs);
+    await frame();
+  }
 
   return { checks, table, surfaces: surfaceCounts };
 }
