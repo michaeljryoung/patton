@@ -843,6 +843,32 @@ await section(async () => {
   check('...Enter after the dwell closes the group', order(tm) === 'A D' && !dialogVisible(), order(tm));
 });
 
+// ── 11. Folding twice while the fold's new tab is still opening opens one tab ──
+// (The review's minor 4 feared two. It holds without a guard: createTab puts the
+// new tab in the order before its first await, so the second fold finds it as
+// a visible tab outside the group and moves the selection there.)
+await section(async () => {
+  const tm = await makeWindow(['A', 'B']);
+  const g = tm.addTabToNewGroup(idOf(tm, 'A'));
+  tm.addTabToGroup(idOf(tm, 'B'), g);
+  tm.switchToId(idOf(tm, 'A'));
+  repairMark = logs.length;
+  const n = logs.length;
+  tm.toggleGroupFolded(g, 'click');
+  tm.toggleGroupFolded(g, 'click'); // the second click, before the new tab is there
+  await until(() => tm.getTabs().length >= 3);
+  await tick(50);
+  check('two quick folds of a group holding every tab open ONE new tab', tm.userNewCalls === 1 && tm.getTabs().length === 3, { calls: tm.userNewCalls, order: order(tm) });
+  check('...and the group ends folded, the new tab selected', groups(tm)[0]?.folded === true && active(tm) === 'new1', { groups: groups(tm), active: active(tm) });
+  check('...folded logged once', logsSince(n, '[GROUP] folded').length === 1, logsSince(n, '[GROUP] folded').length);
+  invariant(tm, 'a double fold');
+  // Once it has finished, a later fold (after unfolding) works as before.
+  tm.toggleGroupFolded(g, 'click');
+  tm.switchToId(idOf(tm, 'A'));
+  tm.toggleGroupFolded(g, 'click');
+  check('...a later fold still moves the selection (to new1)', groups(tm)[0]?.folded === true && active(tm) === 'new1' && tm.userNewCalls === 1, { groups: groups(tm), active: active(tm) });
+});
+
 // SECTIONS
 
 check('script reached its end', true);
