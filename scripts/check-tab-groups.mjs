@@ -816,6 +816,33 @@ await section(async () => {
   invariant(tm, 'discard into a folded group, selected');
 });
 
+// ── 10. ⌘W never answers the Close Group dialog (only its button, or Enter after the dwell) ──
+await section(async () => {
+  const tm = await makeWindow(['A', 'B', 'C', 'D']);
+  repairMark = logs.length;
+  const g = tm.addTabToNewGroup(idOf(tm, 'B'));
+  tm.addTabToGroup(idOf(tm, 'C'), g);
+  tm.renameGroup(g, 'Games');
+  tm.switchToId(idOf(tm, 'A'));
+  const asking = tm.closeGroup(g);
+  await until(dialogVisible);
+  await tick(350); // past every dwell
+  await tm.closeActivePane(); // ⌘W
+  await tick(20);
+  check('⌘W with Close Group up: the dialog stays, nothing closed', dialogVisible() && order(tm) === 'A B C D' && groups(tm)[0]?.tabs === 'B C', { visible: dialogVisible(), order: order(tm), groups: groups(tm) });
+  check('...and ⌘W did not start a close of the selected tab either', byName(tm, 'A') !== undefined && dialogText('.confirm-dialog-title') === 'Close 2 tabs in “Games”?', dialogText('.confirm-dialog-title'));
+  doc.querySelector('.confirm-dialog-overlay.visible .confirm-dialog-cancel')?.click();
+  const answered = await Promise.race([asking.then(() => 'done'), tick(500).then(() => 'hung')]);
+  check('...Cancel still answers it', answered === 'done' && order(tm) === 'A B C D', { answered, order: order(tm) });
+  // Enter on the focused confirm button after the dwell still closes.
+  const closing = tm.closeGroup(g);
+  await until(dialogVisible);
+  await tick(350);
+  doc.querySelector('.confirm-dialog-overlay.visible .confirm-dialog-confirm').dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  await Promise.race([closing, tick(1000)]);
+  check('...Enter after the dwell closes the group', order(tm) === 'A D' && !dialogVisible(), order(tm));
+});
+
 // SECTIONS
 
 check('script reached its end', true);

@@ -855,7 +855,9 @@ export class TabManager {
       confirmLabel: 'Close Group',
       cancelLabel: 'Cancel',
       defaultFocus: 'confirm',
-      shortcutConfirms: true,
+      // Opened from a menu, not by ⌘W: a ⌘W while it is up is swallowed, so
+      // only its button (or Enter after the dwell) closes the group.
+      shortcutIgnored: true,
       confirmDwellMs: CONFIRM_SHORTCUT_DWELL_MS,
     });
     rlog('info', '[CLOSE] confirm answered', { kind: 'group', ok, by: this.confirmDialog.lastAnswer });

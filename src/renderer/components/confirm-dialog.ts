@@ -24,6 +24,13 @@ export interface ConfirmOptions {
    */
   shortcutDwellMs?: number;
   /**
+   * When true, the shortcut (⌘W, via `confirmByShortcut()`) is swallowed while
+   * this dialog is open: it neither confirms it nor starts a fresh close. For
+   * a dialog no shortcut opened (Close Group, from a menu), where ⌘W pressed
+   * by habit must not end every shell in the group. Overrides `shortcutConfirms`.
+   */
+  shortcutIgnored?: boolean;
+  /**
    * Enter on the confirm button and a click on it are ignored until the dialog
    * has been up this many ms (Esc / Cancel work at once). The quit / close
    * dialogs use it so an Enter already in flight when the dialog appears, or a
@@ -73,6 +80,7 @@ export class ConfirmDialog {
   private releaseFocusTrap: (() => void) | null = null;
   private shortcutConfirms = false;
   private shortcutDwellMs = 0;
+  private shortcutIgnored = false;
   private confirmDwellMs = 0;
   private shownAt = 0;
   /** How the most recent dialog was answered; null before the first. */
@@ -156,6 +164,7 @@ export class ConfirmDialog {
     openSlot.dialog = this;
     this.shortcutConfirms = opts.shortcutConfirms === true;
     this.shortcutDwellMs = opts.shortcutDwellMs ?? 0;
+    this.shortcutIgnored = opts.shortcutIgnored === true;
     this.confirmDwellMs = opts.confirmDwellMs ?? 0;
     this.shownAt = performance.now();
 
@@ -190,6 +199,7 @@ export class ConfirmDialog {
    * fresh close; false when no shortcut-confirming dialog is open.
    */
   confirmByShortcut(): boolean {
+    if (this.resolve && this.shortcutIgnored) return true;
     if (!this.resolve || !this.shortcutConfirms) return false;
     if (performance.now() - this.shownAt < this.shortcutDwellMs) return true;
     this.finish(true, 'cmd-w');
