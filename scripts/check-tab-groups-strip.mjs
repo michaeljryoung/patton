@@ -39,7 +39,8 @@ const w = dom.window;
 const doc = w.document;
 let zooms = 0;
 let windowMoves = 0;
-w.patton = { titleBarDoubleClick: () => { zooms++; }, moveWindowBy: () => { windowMoves++; }, onUiTextScale: () => () => {} };
+let windowDx = 0;
+w.patton = { titleBarDoubleClick: () => { zooms++; }, moveWindowBy: (dx) => { windowMoves++; windowDx += dx; }, onUiTextScale: () => () => {} };
 w.Element.prototype.scrollIntoView = () => {};
 w.eval(bundle.outputFiles[0].text);
 
@@ -524,6 +525,42 @@ await section('10. Drop on a chip', 4, async () => {
   chip('g2').dispatchEvent(dragEv('drop'));
   grip2.dispatchEvent(dragEv('dragend'));
   check('a tab dropped on its own group\'s chip calls nothing', callsOf('addToGroup').length === 0, calls);
+});
+
+await section('11. Focus: a chip click keeps the terminal\'s focus; a folded tab\'s focus goes to its chip', 6, async () => {
+  draw();
+  clear();
+  // One drag, not two: the strip's own blank-space handler must not start a
+  // second window drag under the chip's.
+  windowDx = 0;
+  fire(chip('g1'), 'mousedown', { screenX: 100, screenY: 100 });
+  fire(doc, 'mousemove', { screenX: 120, screenY: 100 });
+  fire(doc, 'mousemove', { screenX: 140, screenY: 100 });
+  fire(doc, 'mouseup', { screenX: 140, screenY: 100 });
+  check('a 40 px drag on a chip moves the window 40 px (one drag, not two)', windowDx === 40, windowDx);
+  clear();
+  // A press that is default-prevented never takes focus (the blank strip's rule).
+  const pressed = !fire(chip('g1'), 'mousedown', { screenX: 50, screenY: 50 });
+  fire(doc, 'mouseup', { screenX: 50, screenY: 50 });
+  check('a press on a chip is default-prevented, so focus stays in the terminal', pressed);
+  check('...and still folds the group', callsOf('toggleGroup').length === 1, calls);
+  // The name box still takes a press (a caret click).
+  choose(openChipMenu('g1'), 'Rename Group…').click();
+  box = nameBox();
+  check('a press inside the open name box is not prevented', !!box && fire(box, 'mousedown', { screenX: 50, screenY: 50 }) === true);
+  fire(doc, 'mouseup', { screenX: 50, screenY: 50 });
+  key(box, 'Escape');
+  draw();
+  // A focused tab whose group folds: focus goes to the group's chip.
+  tabEl('g1b').focus();
+  fold('g1');
+  check('a focused tab hidden by a fold hands focus to its chip', doc.activeElement === chip('g1'), doc.activeElement?.className);
+  draw();
+  tabEl('g2a').querySelector('.tab-bar-tab-close')?.focus();
+  const onClose = doc.activeElement?.classList.contains('tab-bar-tab-close');
+  fold('g2');
+  check('a focused close button of a tab hidden by a fold hands focus to the chip', onClose && doc.activeElement === chip('g2'), { onClose, active: doc.activeElement?.className });
+  draw();
 });
 
 bar.dispose();

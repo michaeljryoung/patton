@@ -318,7 +318,8 @@ export class TabBar {
     // beside + and the strip's left padding are the places that are always there.
     this.tabsContainer.addEventListener('mousedown', (e) => {
       // Only handle clicks on the container itself, not on child tabs
-      if ((e.target as HTMLElement).closest('.tab-bar-tab')) return;
+      // (a chip runs its own drag: two would move the window twice as far)
+      if ((e.target as HTMLElement).closest('.tab-bar-tab, .tab-bar-group-chip')) return;
       this.startWindowDrag(e, { keepFocus: true });
     });
     this.tabsContainer.addEventListener('dblclick', (e) => {
@@ -757,15 +758,20 @@ export class TabBar {
     }
     this.lastActiveId = active?.id ?? null;
     this.lastTabCount = tabs.length;
+    // A focused tab now inside a folded group is off the strip: its chip
+    // takes the focus rather than the page's body.
+    const chipOfHidden = (tabId: string): HTMLElement | null => {
+      const groupId = tabs.find((t) => t.id === tabId)?.groupId;
+      return groupId && groupById.get(groupId)?.folded ? this.chipEl(groupId) : null;
+    };
     if (focusedCloseTabId !== null) {
       // Back on that tab's close button; its tab element when it has none now
       // (the tab count fell to one), nothing when the tab itself is gone.
       const tabEl = this.tabsContainer.querySelector<HTMLElement>(`.tab-bar-tab[data-tab-id="${CSS.escape(focusedCloseTabId)}"]`);
-      (tabEl?.querySelector<HTMLElement>('.tab-bar-tab-close') ?? tabEl)?.focus({ preventScroll: true });
+      (tabEl?.querySelector<HTMLElement>('.tab-bar-tab-close') ?? tabEl ?? chipOfHidden(focusedCloseTabId))?.focus({ preventScroll: true });
     } else if (focusedTabId !== null) {
-      this.tabsContainer
-        .querySelector<HTMLElement>(`.tab-bar-tab[data-tab-id="${CSS.escape(focusedTabId)}"]`)
-        ?.focus({ preventScroll: true });
+      (this.tabsContainer.querySelector<HTMLElement>(`.tab-bar-tab[data-tab-id="${CSS.escape(focusedTabId)}"]`)
+        ?? chipOfHidden(focusedTabId))?.focus({ preventScroll: true });
     } else if (focusedGroupId !== null) {
       this.chipEl(focusedGroupId)?.focus({ preventScroll: true });
     }
@@ -829,7 +835,10 @@ export class TabBar {
       // A press beside an open name box only leaves the box (its blur commits
       // the name): it doesn't fold the group as well.
       if (this.renameOpen) return;
-      this.startWindowDrag(e, { onClickWithoutDrag: () => this.callbacks.onToggleGroup?.(group.id, 'click') });
+      // keepFocus: the press doesn't take focus from the terminal, as the
+      // strip's blank space doesn't (a fold that moves no selection never
+      // refocuses the terminal).
+      this.startWindowDrag(e, { keepFocus: true, onClickWithoutDrag: () => this.callbacks.onToggleGroup?.(group.id, 'click') });
     });
     // Two clicks fold and unfold; never the window's title-bar zoom.
     chip.addEventListener('dblclick', (e) => e.stopPropagation());
