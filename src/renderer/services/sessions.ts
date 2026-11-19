@@ -24,8 +24,12 @@ export type SessionStatus = PaneActivity;
 export interface SessionInfo {
   tabId: string;
   paneId: string;
-  /** 1-based position in the tab bar. */
+  /** 1-based position among the tabs on the strip, as ⌘1–9 count them
+   *  (0 for a tab inside a folded group). */
   tabIndex: number;
+  /** The folded group the tab is inside ("Unnamed" for an unnamed one), shown
+   *  instead of a number; absent or null when the tab is on the strip. */
+  foldedGroup?: string | null;
   /** Panes in the tab, so a split can say which pane this is. */
   paneCount: number;
   project: ProjectInfo | null;

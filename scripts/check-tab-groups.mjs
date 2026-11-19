@@ -94,7 +94,8 @@ const M = await import(pathToFileURL(join(work, 'main.mjs')).href);
 await build({
   stdin: {
     contents: `export { TabManager } from './services/tab-manager';
-export { strongestState, stateOf, repairRuns, runsAreSound, cleanGroupName } from './services/tab-groups';`,
+export { strongestState, stateOf, repairRuns, runsAreSound, cleanGroupName } from './services/tab-groups';
+export { sessionPaletteActions } from './services/session-palette';`,
     resolveDir: join(repo, 'src', 'renderer'), loader: 'ts',
   },
   bundle: true, format: 'cjs', platform: 'browser', outfile: join(work, 'renderer.cjs'),
@@ -867,6 +868,32 @@ await section(async () => {
   tm.switchToId(idOf(tm, 'A'));
   tm.toggleGroupFolded(g, 'click');
   check('...a later fold still moves the selection (to new1)', groups(tm)[0]?.folded === true && active(tm) === 'new1' && tm.userNewCalls === 1, { groups: groups(tm), active: active(tm) });
+});
+
+// ── 12. The session palette's tab number matches ⌘1–9; a folded tab names its group ──
+await section(async () => {
+  const tm = await makeWindow(['A', 'B', 'C', 'D', 'E']);
+  const g = tm.addTabToNewGroup(idOf(tm, 'B'));
+  tm.addTabToGroup(idOf(tm, 'C'), g);
+  tm.renameGroup(g, 'Games');
+  const u = tm.addTabToNewGroup(idOf(tm, 'E'));
+  tm.switchToId(idOf(tm, 'A'));
+  tm.foldGroup(g);
+  tm.foldGroup(u);
+  const actions = G.sessionPaletteActions(tm.listSessions(), Date.now());
+  const whereOf = (name) => {
+    const a = actions.find((x) => x.action.startsWith(`session:${idOf(tm, name)}:`));
+    return a?.ariaLabel?.split(', ').slice(-1)[0];
+  };
+  tm.switchToIndex(1); // ⌘2
+  check('palette: D reads "tab 2", the tab ⌘2 selects', whereOf('D') === 'tab 2' && active(tm) === 'D', { where: whereOf('D'), active: active(tm) });
+  check('palette: A reads "tab 1"', whereOf('A') === 'tab 1', whereOf('A'));
+  check('palette: a tab in a folded group names it ("Games group")', whereOf('B') === 'Games group' && whereOf('C') === 'Games group', [whereOf('B'), whereOf('C')]);
+  check('palette: a tab in a folded unnamed group reads "Unnamed group"', whereOf('E') === 'Unnamed group', whereOf('E'));
+  tm.toggleGroupFolded(g, 'click');
+  const open = G.sessionPaletteActions(tm.listSessions(), Date.now());
+  const cWhere = open.find((x) => x.action.startsWith(`session:${idOf(tm, 'C')}:`))?.ariaLabel?.split(', ').slice(-1)[0];
+  check('palette: unfolded, C reads "tab 3" again', cWhere === 'tab 3', cWhere);
 });
 
 // SECTIONS

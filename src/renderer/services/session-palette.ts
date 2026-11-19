@@ -13,7 +13,9 @@ export function sessionPaletteActions(sessions: SessionInfo[], now: number): Pal
   return sessions.map((s) => {
     const name = sessionName(s);
     const label = `${name} · ${stateWords(s, now)}`;
-    const where = s.paneCount > 1 ? `tab ${s.tabIndex}, split` : `tab ${s.tabIndex}`;
+    // ⌘1–9's number, or the folded group a tab is hidden in.
+    const place = s.foldedGroup ? `${s.foldedGroup} group` : `tab ${s.tabIndex}`;
+    const where = s.paneCount > 1 ? `${place}, split` : place;
     const detail = s.paneTitle && s.paneTitle !== name ? s.paneTitle : where;
     return {
       label,

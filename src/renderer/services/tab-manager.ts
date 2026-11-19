@@ -1229,7 +1229,14 @@ export class TabManager {
    */
   listSessions(): SessionInfo[] {
     const sessions: SessionInfo[] = [];
-    this.tabs.forEach((tab, index) => {
+    // Numbered as ⌘1–9 count: visible tabs only; a tab in a folded group
+    // names its group instead.
+    let visibleCount = 0;
+    this.tabs.forEach((tab) => {
+      const visible = this.isTabVisible(tab);
+      if (visible) visibleCount++;
+      const groupId = visible ? null : this.groupOf(tab);
+      const hiddenIn = groupId !== null ? this.groups.get(groupId) : undefined;
       for (const pane of tab.panes) {
         const project = tab.paneProject(pane);
         const dotSince = tab.awaitingSince(pane);
@@ -1246,7 +1253,8 @@ export class TabManager {
         sessions.push({
           tabId: tab.id,
           paneId: pane.id,
-          tabIndex: index + 1,
+          tabIndex: visible ? visibleCount : 0,
+          foldedGroup: hiddenIn ? this.groupLabel(hiddenIn) : null,
           paneCount: tab.panes.length,
           project,
           projectName: project ? projectName(project) : null,
