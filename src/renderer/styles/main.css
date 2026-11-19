@@ -15,6 +15,7 @@
   --surface-hover: #eceef2;
   --muted: #596170;
   --grey: #e3e6ec;
+  --grey-hover: #d5d9e1; /* a tab group's chip under the pointer */
   --thumb: #848b97;
   --hairline: var(--ink);
   --focus: #2f6bff;
@@ -79,6 +80,7 @@
     --surface-hover: #1f2228;
     --muted: #8b95a5;
     --grey: #2a2f37;
+    --grey-hover: #353b45;
     --thumb: #636c7a;
     --focus: #7aa2ff;
     --error-text: #ff7a87;

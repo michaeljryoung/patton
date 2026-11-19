@@ -6,6 +6,7 @@ import type { TabFlag } from '../../shared/types';
 import type { CheckpointView } from '../services/checkpoint-clock';
 import type { HoverBlock } from '../services/tab-hover';
 import { TabHoverCard } from './tab-hover-card';
+import { GROUP_NAME_MAX, stateOf, strongestState, type StrongestState } from '../services/tab-groups';
 
 export interface TabBarCallbacks {
   onSelect: (id: string) => void;
@@ -25,6 +26,26 @@ export interface TabBarCallbacks {
    *  first), or null if the tab is gone. Given = the card is on, and tabs
    *  carry no native `title` tooltip (it would cover the card). */
   describeTab?: (id: string) => HoverBlock[] | null;
+  // --- Tab groups (services/tab-groups.ts; TabManager keeps the rules) ---
+  /** Tab menu → Add Tab to New Group: returns the new group's id (null: none made). */
+  onNewGroup?: (tabId: string) => string | null;
+  /** Tab menu → Add to <group>, or a tab dropped on a group's chip. */
+  onAddToGroup?: (tabId: string, groupId: string) => void;
+  onRemoveFromGroup?: (tabId: string) => void;
+  onRenameGroup?: (groupId: string, name: string) => void;
+  /** Fold an open group, unfold a folded one. */
+  onToggleGroup?: (groupId: string, reason: 'click' | 'menu') => void;
+  onNewTabInGroup?: (groupId: string) => void;
+  onUngroup?: (groupId: string) => void;
+  onCloseGroup?: (groupId: string) => void;
+}
+
+/** A tab group as the strip draws it. */
+export interface TabGroupHeader {
+  id: string;
+  /** '' = unnamed: the chip reads "N tabs". */
+  name: string;
+  folded: boolean;
 }
 
 interface TabHeaderInfo {
@@ -50,6 +71,8 @@ interface TabHeaderInfo {
   parked?: { tasks: number; crons: number; titles?: string[] } | null;
   /** Why the tab needs you (Claude Code's own status report), plain text. */
   waitingText?: string | null;
+  /** The tab group it is in, if any (a group's tabs are one unbroken run). */
+  groupId?: string | null;
 }
 
 /** Task titles listed in the parked tooltip before "and N more". */
@@ -76,6 +99,68 @@ function tabLabel(tab: TabHeaderInfo, needsYou: boolean, shownFlag: TabFlag | nu
   if (shownFlag) states.push(`flagged ${shownFlag}`);
   if (tab.parked && !needsYou && !shownFlag) states.push(parkedText(tab.parked).toLowerCase());
   return states.length > 0 ? `${tab.title}, ${states.join(', ')}` : tab.title;
+}
+
+/** What a state means, in a screen reader's label (plural forms for counts). */
+function stateNote(s: StrongestState, count = 1): string {
+  if (s.kind === 'checkpoint') return `${count} checkpoint${count === 1 ? '' : 's'} finished`;
+  if (s.kind === 'needs-you') return `${count} waiting for you`;
+  if (s.kind === 'flag') return `${count} flagged ${s.flag}`;
+  return `${count} waiting on background work`;
+}
+
+/** Whether the pointer is over this element (false where :hover isn't known). */
+function hovered(el: Element): boolean {
+  try {
+    return el.matches(':hover');
+  } catch {
+    return false;
+  }
+}
+
+/** One indicator for a state: the same element and classes a tab's dot uses. */
+function indicatorFor(s: StrongestState): HTMLElement {
+  const dot = document.createElement('span');
+  dot.setAttribute('role', 'img');
+  if (s.kind === 'checkpoint') {
+    dot.className = 'tab-bar-tab-indicator checkpoint-done';
+    dot.setAttribute('aria-label', 'Checkpoint finished');
+  } else if (s.kind === 'needs-you') {
+    dot.className = 'tab-bar-tab-indicator';
+    dot.setAttribute('aria-label', 'Awaiting input');
+  } else if (s.kind === 'flag') {
+    dot.className = `tab-bar-tab-indicator flag-${s.flag}`;
+    dot.setAttribute('aria-label', `Flagged ${s.flag}`);
+  } else {
+    dot.className = 'tab-bar-tab-indicator parked';
+    dot.setAttribute('aria-label', 'Waiting on its own background work');
+  }
+  return dot;
+}
+
+/** "Games group, 3 tabs, folded, 1 checkpoint finished, 1 waiting for you". */
+function chipLabel(group: TabGroupHeader, members: TabHeaderInfo[]): string {
+  const parts = [`${group.name || 'Unnamed'} group`, `${members.length} ${members.length === 1 ? 'tab' : 'tabs'}`, group.folded ? 'folded' : 'open'];
+  if (group.folded) {
+    // Each tab counted once, by its own strongest state, in the chip's rank order.
+    const order: string[] = [];
+    const counts = new Map<string, { s: StrongestState; n: number }>();
+    for (const tab of members) {
+      const s = stateOf(tab);
+      if (!s) continue;
+      const key = s.kind === 'flag' ? `flag-${s.flag}` : s.kind;
+      const entry = counts.get(key);
+      if (entry) entry.n++;
+      else { counts.set(key, { s, n: 1 }); order.push(key); }
+    }
+    const rank = (k: string) => (k === 'checkpoint' ? 0 : k === 'needs-you' ? 1 : k.startsWith('flag-') ? 2 : 3);
+    order.sort((a, b) => rank(a) - rank(b));
+    for (const key of order) {
+      const { s, n } = counts.get(key)!;
+      parts.push(stateNote(s, n));
+    }
+  }
+  return parts.join(', ');
 }
 
 interface RenameOptions {
@@ -127,6 +212,16 @@ export class TabBar {
   private lastTabCount = 0;
   private stopScaleWatch: (() => void) | null = null;
   private hoverCard: TabHoverCard | null = null;
+  /** The groups as last handed to update() (held ones included). */
+  private latestGroups: TabGroupHeader[] = [];
+  private heldGroups: TabGroupHeader[] | null = null;
+  /** Opens each chip's context menu (mouse and keyboard). */
+  private chipMenuOpeners = new WeakMap<HTMLElement, (x: number, y: number, viaKeyboard: boolean) => void>();
+  /** The list under a folded chip (hover or keyboard focus), and which group it lists. */
+  private groupListEl: HTMLDivElement | null = null;
+  private groupListFor: string | null = null;
+  private groupListTimer: ReturnType<typeof setTimeout> | null = null;
+  private static readonly GROUP_LIST_HIDE_MS = 150;
 
   constructor(container: HTMLElement, callbacks: TabBarCallbacks) {
     this.container = container;
@@ -160,10 +255,13 @@ export class TabBar {
     // Arrow keys move focus between tabs and activate them; Home/End jump
     // to the ends. Only fires when a tab already has focus (so we don't
     // hijack arrow keys inside rename inputs or unrelated UI).
+    // A group's chip is in the same arrow-key run (focus moves to it, but it is
+    // never selected); Enter or Space on it folds or unfolds the group.
     this.tabsContainer.addEventListener('keydown', (e) => {
       const target = e.target as HTMLElement;
-      if (!target.classList.contains('tab-bar-tab')) return;
-      const tabEls = Array.from(this.tabsContainer.querySelectorAll<HTMLElement>('.tab-bar-tab'));
+      const isChip = target.classList.contains('tab-bar-group-chip');
+      if (!target.classList.contains('tab-bar-tab') && !isChip) return;
+      const tabEls = Array.from(this.tabsContainer.querySelectorAll<HTMLElement>('.tab-bar-tab, .tab-bar-group-chip'));
       if (tabEls.length === 0) return;
       const currentIdx = tabEls.indexOf(target);
       if (currentIdx === -1) return;
@@ -172,7 +270,13 @@ export class TabBar {
       if (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) {
         e.preventDefault();
         const rect = target.getBoundingClientRect();
-        this.tabMenuOpeners.get(target)?.(rect.left + 12, rect.bottom, true);
+        (isChip ? this.chipMenuOpeners : this.tabMenuOpeners).get(target)?.(rect.left + 12, rect.bottom, true);
+        return;
+      }
+      if (isChip && (e.key === 'Enter' || e.key === ' ')) {
+        e.preventDefault();
+        const groupId = target.dataset.groupId;
+        if (groupId) this.callbacks.onToggleGroup?.(groupId, 'click');
         return;
       }
       let nextIdx: number | null = null;
@@ -183,6 +287,10 @@ export class TabBar {
       if (nextIdx === null) return;
       e.preventDefault();
       const nextEl = tabEls[nextIdx];
+      if (nextEl.classList.contains('tab-bar-group-chip')) {
+        nextEl.focus();
+        return;
+      }
       const nextId = nextEl.dataset.tabId;
       if (nextId) {
         this.callbacks.onSelect(nextId);
@@ -338,13 +446,19 @@ export class TabBar {
     return ids[idx + dir] ?? null;
   }
 
-  update(tabs: TabHeaderInfo[]): void {
+  update(tabs: TabHeaderInfo[], groups: TabGroupHeader[] = []): void {
     this.latestTabs = tabs;
+    this.latestGroups = groups;
     if (this.renameOpen) {
       this.heldUpdate = tabs;
+      this.heldGroups = groups;
       return;
     }
     this.heldUpdate = null;
+    this.heldGroups = null;
+    const groupById = new Map(groups.map((g) => [g.id, g]));
+    const membersOf = (groupId: string) => tabs.filter((t) => t.groupId === groupId);
+    const chipsDrawn = new Set<string>();
     // The strip scrolls sideways (hidden scrollbar) and is rebuilt on every
     // update, which empties it and resets scrollLeft: keep the position, and
     // bring the active tab into view when it is a different tab or the count
@@ -359,11 +473,23 @@ export class TabBar {
     // The same for a focused close button (a title tick rebuilds it too).
     const focusedCloseTabId = focused instanceof HTMLElement && focused.classList.contains('tab-bar-tab-close')
       && this.tabsContainer.contains(focused) ? focused.closest<HTMLElement>('.tab-bar-tab')?.dataset.tabId ?? null : null;
+    // The same for a group's chip.
+    const focusedGroupId = focused instanceof HTMLElement && focused.classList.contains('tab-bar-group-chip')
+      && this.tabsContainer.contains(focused) ? focused.dataset.groupId ?? null : null;
     this.tabsContainer.innerHTML = '';
     for (const tab of tabs) {
+      // A chip sits immediately left of its group's tabs; a folded group's tabs
+      // stay off the strip.
+      const group = tab.groupId ? groupById.get(tab.groupId) : undefined;
+      if (group && !chipsDrawn.has(group.id)) {
+        chipsDrawn.add(group.id);
+        this.tabsContainer.appendChild(this.buildChip(group, membersOf(group.id)));
+      }
+      if (group?.folded) continue;
       const el = document.createElement('div');
-      el.className = `tab-bar-tab${tab.active ? ' active' : ''}`;
+      el.className = `tab-bar-tab${tab.active ? ' active' : ''}${group ? ' in-group' : ''}`;
       el.dataset.tabId = tab.id;
+      if (group) el.dataset.groupId = group.id;
 
       // --- Accessibility ---
       el.setAttribute('role', 'tab');
@@ -466,7 +592,8 @@ export class TabBar {
       // are presentational in ARIA, so the dots' own labels never reach the
       // tab's accessible name, and the dots themselves have no tooltip. With
       // the hover card on, the card is the tooltip and the tab has no title.
-      const label = tabLabel(tab, needsYou, shownFlag, ckpt);
+      const label = tabLabel(tab, needsYou, shownFlag, ckpt)
+        + (group ? `, in ${group.name ? `${group.name} group` : 'unnamed group'}` : '');
       el.setAttribute('aria-label', label);
       if (!this.hoverCard) el.title = label;
 
@@ -519,6 +646,8 @@ export class TabBar {
               announce(`${tab.title} moved ${dir < 0 ? 'left' : 'right'}`);
             },
           })),
+          // --- Tab groups ---
+          ...this.groupMenuItems(tab.id),
           // --- Bookmarks ---
           ...(this.callbacks.onBookmarkProject ? [
             { separator: true as const },
@@ -630,8 +759,239 @@ export class TabBar {
       this.tabsContainer
         .querySelector<HTMLElement>(`.tab-bar-tab[data-tab-id="${CSS.escape(focusedTabId)}"]`)
         ?.focus({ preventScroll: true });
+    } else if (focusedGroupId !== null) {
+      this.chipEl(focusedGroupId)?.focus({ preventScroll: true });
     }
     this.hoverCard?.afterUpdate();
+    this.refreshGroupList();
+  }
+
+  // --- Tab groups ---
+
+  /** The chip element of a group as the strip is now (null if not drawn). */
+  private chipEl(groupId: string): HTMLElement | null {
+    return this.tabsContainer.querySelector<HTMLElement>(`.tab-bar-group-chip[data-group-id="${CSS.escape(groupId)}"]`);
+  }
+
+  private currentGroup(groupId: string): TabGroupHeader | null {
+    return this.latestGroups.find((g) => g.id === groupId) ?? null;
+  }
+
+  /** A group's chip: grey, its name in ink (or "N tabs" when unnamed), a
+   *  chevron, and when folded the tab count and the strongest indicator of its
+   *  tabs. A click that doesn't drag folds or unfolds it; a drag moves the
+   *  window, as a tab's body does. */
+  private buildChip(group: TabGroupHeader, members: TabHeaderInfo[]): HTMLElement {
+    const chip = document.createElement('div');
+    chip.className = `tab-bar-group-chip${group.folded ? ' folded' : ''}`;
+    chip.dataset.groupId = group.id;
+    chip.setAttribute('role', 'button');
+    chip.setAttribute('tabindex', '-1');
+    chip.setAttribute('aria-expanded', String(!group.folded));
+    chip.setAttribute('aria-label', chipLabel(group, members));
+    // An open chip may have its name cut short: the tooltip has it whole. A
+    // folded chip has its list instead (a tooltip would cover it).
+    if (!group.folded && group.name) chip.title = group.name;
+
+    const chevron = document.createElement('span');
+    chevron.className = 'tab-bar-group-chevron';
+    chevron.setAttribute('aria-hidden', 'true');
+    chevron.textContent = group.folded ? '▸' : '▾';
+    chip.appendChild(chevron);
+
+    const name = document.createElement('span');
+    name.className = `tab-bar-group-name${group.name ? '' : ' unnamed'}`;
+    name.textContent = group.name || `${members.length} ${members.length === 1 ? 'tab' : 'tabs'}`;
+    chip.appendChild(name);
+
+    if (group.folded) {
+      if (group.name) {
+        const count = document.createElement('span');
+        count.className = 'tab-bar-group-count';
+        count.setAttribute('aria-hidden', 'true');
+        count.textContent = String(members.length);
+        chip.appendChild(count);
+      }
+      const strongest = strongestState(members);
+      if (strongest) chip.appendChild(indicatorFor(strongest));
+    }
+
+    chip.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+      if ((e.target as HTMLElement).closest('.tab-bar-tab-rename')) return;
+      this.startWindowDrag(e, { onClickWithoutDrag: () => this.callbacks.onToggleGroup?.(group.id, 'click') });
+    });
+    // Two clicks fold and unfold; never the window's title-bar zoom.
+    chip.addEventListener('dblclick', (e) => e.stopPropagation());
+
+    const showMenu = (x: number, y: number, viaKeyboard: boolean): void => {
+      this.hideGroupList();
+      const now = this.currentGroup(group.id);
+      if (!now) return;
+      this.contextMenu.show(x, y, [
+        { label: 'Rename Group…', action: () => this.startGroupRename(group.id) },
+        { label: now.folded ? 'Unfold Group' : 'Fold Group', action: () => this.callbacks.onToggleGroup?.(group.id, 'menu') },
+        { label: 'New Tab in Group', action: () => this.callbacks.onNewTabInGroup?.(group.id) },
+        { separator: true as const },
+        { label: 'Ungroup', action: () => this.callbacks.onUngroup?.(group.id) },
+        { label: 'Close Group…', action: () => this.callbacks.onCloseGroup?.(group.id) },
+      ], chip, viaKeyboard);
+    };
+    this.chipMenuOpeners.set(chip, showMenu);
+    chip.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      showMenu(e.clientX, e.clientY, false);
+    });
+
+    // A tab dropped on the chip joins the group (as "Add to").
+    chip.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+      this.tabsContainer.querySelectorAll('.drag-over').forEach((el) => el.classList.remove('drag-over'));
+      if (this.draggedId) chip.classList.add('drag-over');
+    });
+    chip.addEventListener('dragleave', () => chip.classList.remove('drag-over'));
+    chip.addEventListener('drop', (e) => {
+      e.preventDefault();
+      chip.classList.remove('drag-over');
+      const fromId = e.dataTransfer?.getData('text/plain');
+      if (!fromId) return;
+      const tab = this.currentTabInfo(fromId);
+      if (tab && tab.groupId !== group.id) this.callbacks.onAddToGroup?.(fromId, group.id);
+    });
+
+    // The list of a folded group's tabs: on hover, and on keyboard focus.
+    chip.addEventListener('mouseenter', () => this.showGroupList(group.id));
+    chip.addEventListener('mouseleave', () => this.scheduleHideGroupList());
+    chip.addEventListener('focus', () => this.showGroupList(group.id));
+    chip.addEventListener('blur', () => this.scheduleHideGroupList());
+    return chip;
+  }
+
+  /** The tab menu's group section: Add Tab to New Group, Add to <each other
+   *  group>, and Remove from Group when the tab is in one. */
+  private groupMenuItems(tabId: string): ({ label: string; action: () => void } | { separator: true })[] {
+    if (!this.callbacks.onNewGroup) return [];
+    const tab = this.currentTabInfo(tabId);
+    const own = tab?.groupId ?? null;
+    const items: ({ label: string; action: () => void } | { separator: true })[] = [{ separator: true }];
+    items.push({
+      label: 'Add Tab to New Group',
+      action: () => {
+        const groupId = this.callbacks.onNewGroup?.(tabId) ?? null;
+        if (groupId !== null) this.startGroupRename(groupId, true);
+      },
+    });
+    for (const group of this.latestGroups) {
+      if (group.id === own) continue;
+      items.push({
+        label: `Add to ${group.name || 'Unnamed Group'}`,
+        action: () => this.callbacks.onAddToGroup?.(tabId, group.id),
+      });
+    }
+    if (own !== null) {
+      items.push({ label: 'Remove from Group', action: () => this.callbacks.onRemoveFromGroup?.(tabId) });
+    }
+    return items;
+  }
+
+  /** The name box on a group's chip: Enter or a click away commits, Escape
+   *  cancels (a new group stays unnamed), an empty box means unnamed. */
+  startGroupRename(groupId: string, isNew = false): void {
+    const chip = this.chipEl(groupId);
+    const nameSpan = chip?.querySelector<HTMLElement>('.tab-bar-group-name');
+    const group = this.currentGroup(groupId);
+    if (!chip || !nameSpan || !group || this.renameOpen) return;
+    this.startRename(nameSpan, {
+      value: group.name,
+      placeholder: isNew ? 'Name this group' : 'Unnamed',
+      ariaLabel: 'Group name',
+      maxLength: GROUP_NAME_MAX,
+      onCommit: (name) => this.callbacks.onRenameGroup?.(groupId, name),
+    });
+  }
+
+  /** Show the list under a folded group's chip (nothing for an open group). */
+  private showGroupList(groupId: string): void {
+    if (this.groupListTimer) { clearTimeout(this.groupListTimer); this.groupListTimer = null; }
+    const group = this.currentGroup(groupId);
+    const chip = this.chipEl(groupId);
+    if (!group || !group.folded || !chip || this.renameOpen) { this.hideGroupList(); return; }
+    if (this.groupListFor === groupId && this.groupListEl) return;
+    this.hideGroupList();
+    const list = document.createElement('div');
+    list.className = 'tab-bar-group-list';
+    // The chip's label already says what is inside; this list is for the pointer.
+    list.setAttribute('aria-hidden', 'true');
+    for (const tab of this.latestTabs.filter((t) => t.groupId === groupId)) {
+      const row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'tab-bar-group-list-row';
+      row.tabIndex = -1;
+      row.dataset.tabId = tab.id;
+      const s = stateOf(tab);
+      if (s) row.appendChild(indicatorFor(s));
+      else {
+        const gap = document.createElement('span');
+        gap.className = 'tab-bar-group-list-nodot';
+        row.appendChild(gap);
+      }
+      const title = document.createElement('span');
+      title.className = 'tab-bar-group-list-title';
+      title.textContent = tab.title;
+      row.appendChild(title);
+      // Opening a tab inside unfolds its group (TabManager.switchToId).
+      row.addEventListener('mousedown', (e) => e.preventDefault());
+      row.addEventListener('click', () => {
+        this.hideGroupList();
+        this.callbacks.onSelect(tab.id);
+      });
+      list.appendChild(row);
+    }
+    const rect = chip.getBoundingClientRect();
+    list.style.left = `${Math.max(4, rect.left)}px`;
+    list.style.top = `${rect.bottom}px`;
+    list.addEventListener('mouseenter', () => {
+      if (this.groupListTimer) { clearTimeout(this.groupListTimer); this.groupListTimer = null; }
+    });
+    list.addEventListener('mouseleave', () => this.scheduleHideGroupList());
+    this.container.appendChild(list);
+    this.groupListEl = list;
+    this.groupListFor = groupId;
+  }
+
+  private scheduleHideGroupList(): void {
+    if (this.groupListTimer) clearTimeout(this.groupListTimer);
+    this.groupListTimer = setTimeout(() => {
+      this.groupListTimer = null;
+      // Still over the chip or the list, or the chip has keyboard focus: keep it.
+      const chip = this.groupListFor ? this.chipEl(this.groupListFor) : null;
+      if (chip && (hovered(chip) || document.activeElement === chip)) return;
+      if (this.groupListEl && hovered(this.groupListEl)) return;
+      this.hideGroupList();
+    }, TabBar.GROUP_LIST_HIDE_MS);
+  }
+
+  private hideGroupList(): void {
+    if (this.groupListTimer) { clearTimeout(this.groupListTimer); this.groupListTimer = null; }
+    this.groupListEl?.remove();
+    this.groupListEl = null;
+    this.groupListFor = null;
+  }
+
+  /** After a rebuild: the list goes if its group unfolded or went, and is
+   *  drawn again (rows and place) if it is still folded. */
+  private refreshGroupList(): void {
+    const groupId = this.groupListFor;
+    if (groupId === null) return;
+    const group = this.currentGroup(groupId);
+    const hidePending = this.groupListTimer !== null;
+    this.hideGroupList();
+    if (!group?.folded) return;
+    this.showGroupList(groupId);
+    // The pointer was already on its way out: keep that going.
+    if (hidePending) this.scheduleHideGroupList();
   }
 
   private revealTab(id: string): void {
@@ -690,9 +1050,13 @@ export class TabBar {
     // The tab this box belongs to, to give it keyboard focus again when the box
     // closes with focus still inside it (Enter, Escape); a click elsewhere has
     // already moved focus on and keeps it there.
-    const tabId = titleSpan.closest<HTMLElement>('.tab-bar-tab')?.dataset.tabId ?? null;
+    // A group's chip takes a name box the same way (its name span).
+    const chipGroupId = titleSpan.closest<HTMLElement>('.tab-bar-group-chip')?.dataset.groupId ?? null;
+    const tabId = chipGroupId === null ? titleSpan.closest<HTMLElement>('.tab-bar-tab')?.dataset.tabId ?? null : null;
     const refocusTab = (hadFocus: boolean) => {
-      if (!hadFocus || tabId === null) return;
+      if (!hadFocus) return;
+      if (chipGroupId !== null) { this.chipEl(chipGroupId)?.focus(); return; }
+      if (tabId === null) return;
       this.tabsContainer
         .querySelector<HTMLElement>(`.tab-bar-tab[data-tab-id="${CSS.escape(tabId)}"]`)
         ?.focus();
@@ -736,6 +1100,7 @@ export class TabBar {
     input.addEventListener('click', (e) => e.stopPropagation());
 
     this.renameOpen = true;
+    this.hideGroupList();
     titleSpan.replaceWith(input);
     input.select();
     input.focus();
@@ -744,7 +1109,7 @@ export class TabBar {
   /** Apply the update held back while a rename box was open, if it is still
    *  pending (a commit that renamed something has usually rebuilt the bar already). */
   private applyHeldUpdate(): void {
-    if (this.heldUpdate) this.update(this.heldUpdate);
+    if (this.heldUpdate) this.update(this.heldUpdate, this.heldGroups ?? this.latestGroups);
   }
 
   /** Show the checkpoint clock for the focused pane, or hide it (null). */
@@ -790,6 +1155,7 @@ export class TabBar {
     if (this.checkpointReasonTimer) clearTimeout(this.checkpointReasonTimer);
     if (this.pauseResultTimer) clearTimeout(this.pauseResultTimer);
     this.hoverCard?.dispose();
+    this.hideGroupList();
     this.contextMenu.dispose();
     this.container.innerHTML = '';
   }

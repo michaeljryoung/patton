@@ -7,6 +7,7 @@ import { homedir, userInfo } from 'node:os';
 import { DEFAULTS, isNotificationSoundType } from '../shared/constants';
 import { ALLOWED_SHELLS } from './pty-manager';
 import { cleanProjectName, type ProjectNameTarget } from './projects';
+import { sanitiseSessionGroups } from './session-groups';
 import type { HistoryEntry, AppSettings, WindowState, SessionState, Bookmark } from '../shared/types';
 
 // Keychain-protected random encryption key for electron-store.
@@ -460,7 +461,12 @@ export function setSession(session: SessionState | null): void {
     if (!tab.tree || !isValidTreeNode(tab.tree)) return;
   }
 
-  getStore().set('session', session);
+  // Tab groups: bad group data is dropped, never the session (session-groups.ts).
+  const { session: clean, report } = sanitiseSessionGroups(session);
+  if (report.droppedGroups > 0 || report.droppedTabRefs > 0) {
+    console.warn('[GROUP] session group data dropped', report);
+  }
+  getStore().set('session', clean);
 }
 
 export function setWindowState(state: WindowState): void {

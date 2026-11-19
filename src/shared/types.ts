@@ -116,11 +116,22 @@ export interface SessionTabState {
   flag?: TabFlag;
   tree: SessionTreeNode;
   focusedPaneIndex: number;
+  /** The tab group it was in (an id in SessionState.groups), if any. */
+  groupId?: string;
+}
+
+/** A tab group as saved: its tabs carry its id (SessionTabState.groupId). */
+export interface SessionGroupState {
+  id: string;
+  name: string;
+  folded: boolean;
 }
 
 export interface SessionState {
   tabs: SessionTabState[];
   activeTabIndex: number;
+  /** Tab groups (19 Nov 2026); absent in sessions saved before them. */
+  groups?: SessionGroupState[];
 }
 
 /** The project a terminal's folder belongs to, which names its tab. See

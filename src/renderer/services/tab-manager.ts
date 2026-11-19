@@ -10,10 +10,17 @@ import { rlog } from './renderer-logger';
 import { WAKE_TITLE } from './board-wake';
 import { onProjectNamesChanged, projectDisplay, projectName, projectNameKey, projectRenameFields, startProjectNames } from './project-names';
 import { hoverBlocks, type HoverBlock, type HoverPaneInput } from './tab-hover';
-import type { SessionState, RendererMode, TabFlag, WindowCloseInfo, ConfirmRequest, PauseAllReport } from '../../shared/types';
+import type { SessionState, SessionTabState, RendererMode, TabFlag, WindowCloseInfo, ConfirmRequest, PauseAllReport } from '../../shared/types';
 import { runPause, emptyReport, pauseSummary, type PauseTarget } from './pause-all';
 import { orderSessions, sessionNeedsYou, stripClaudeGlyph, type SessionInfo, type SessionStatus } from './sessions';
 import type { ITheme } from '@xterm/xterm';
+import {
+  cleanGroupName, moveGroupFirst, nearestVisible, newGroupId, placeAfterGroup, repairRuns, takeOutOfGroup,
+  visibleItems, MAX_GROUPS, type TabGroup,
+} from './tab-groups';
+
+/** Why a group unfolded, as the `[GROUP] unfolded` log line names it. */
+export type GroupUnfoldReason = 'click' | 'menu' | 'jump' | 'add' | 'new-tab' | 'restore';
 
 interface ClosedPaneState {
   cwd: string;
@@ -68,6 +75,18 @@ export class TabManager {
   // Told about every tab that leaves the window, however it went.
   private tabClosedListeners: ((tab: Tab) => void)[] = [];
   // --- end project board ---
+  // --- Tab groups (services/tab-groups.ts) ---
+  // This window's groups, and which group each tab is in. A group's tabs are
+  // always one unbroken run in `this.tabs`; a group with no tabs is deleted.
+  private groups = new Map<string, TabGroup>();
+  private groupOfTab = new Map<string, string>();
+  private readonly groupOf = (tab: Tab): string | null => this.groupOfTab.get(tab.id) ?? null;
+  /** Shown on the strip: not in a folded group. */
+  private readonly isTabVisible = (tab: Tab): boolean => {
+    const groupId = this.groupOf(tab);
+    return groupId === null || this.groups.get(groupId)?.folded !== true;
+  };
+  // --- end tab groups ---
 
   constructor(
     tabBarContainer: HTMLElement,
@@ -98,6 +117,15 @@ export class TabManager {
       onCheckpoint: () => { void this.runCheckpoint(); },
       onPauseAll: () => { void this.pressPauseAll(); },
       describeTab: (id) => this.describeTab(id),
+      // --- Tab groups ---
+      onNewGroup: (tabId) => this.addTabToNewGroup(tabId),
+      onAddToGroup: (tabId, groupId) => this.addTabToGroup(tabId, groupId),
+      onRemoveFromGroup: (tabId) => this.removeTabFromGroup(tabId),
+      onRenameGroup: (groupId, name) => this.renameGroup(groupId, name),
+      onToggleGroup: (groupId, reason) => this.toggleGroupFolded(groupId, reason),
+      onNewTabInGroup: (groupId) => { this.newTabInGroup(groupId).catch(console.error); },
+      onUngroup: (groupId) => this.ungroup(groupId),
+      onCloseGroup: (groupId) => { this.closeGroup(groupId).catch(console.error); },
       // --- Bookmarks ---
       onBookmarkProject: (id) => {
         const tab = this.tabs.find(t => t.id === id);
@@ -295,7 +323,16 @@ export class TabManager {
 
   switchToId(id: string): void {
     const tab = this.tabs.find(t => t.id === id);
-    if (!tab || tab === this.activeTab) return;
+    if (!tab) return;
+    // Any jump to a tab inside a folded group (the hover list, the palette, a
+    // bookmark, a board tile) unfolds the group first.
+    const groupId = this.groupOf(tab);
+    const group = groupId !== null ? this.groups.get(groupId) : undefined;
+    if (group?.folded) {
+      this.unfoldGroup(group, 'jump');
+      if (tab === this.activeTab) { this.updateTabBar(); return; }
+    }
+    if (tab === this.activeTab) return;
 
     if (this.activeTab) {
       this.activeTab.hide();
@@ -306,24 +343,32 @@ export class TabManager {
     this.updateTabBar();
   }
 
+  /** ⌘1–9: counts only the tabs on the strip (not those in a folded group). */
   switchToIndex(index: number): void {
-    if (index >= 0 && index < this.tabs.length) {
-      this.switchToId(this.tabs[index].id);
+    const visible = visibleItems(this.tabs, this.isTabVisible);
+    if (index >= 0 && index < visible.length) {
+      this.switchToId(visible[index].id);
     }
   }
 
+  /** ⌘⇧] / ⌘⇧[: the next or previous tab on the strip, skipping folded groups. */
   nextTab(): void {
-    if (this.tabs.length <= 1 || !this.activeTab) return;
-    const idx = this.tabs.indexOf(this.activeTab);
-    const nextIdx = (idx + 1) % this.tabs.length;
-    this.switchToId(this.tabs[nextIdx].id);
+    this.stepTab(1);
   }
 
   prevTab(): void {
-    if (this.tabs.length <= 1 || !this.activeTab) return;
-    const idx = this.tabs.indexOf(this.activeTab);
-    const prevIdx = (idx - 1 + this.tabs.length) % this.tabs.length;
-    this.switchToId(this.tabs[prevIdx].id);
+    this.stepTab(-1);
+  }
+
+  private stepTab(dir: 1 | -1): void {
+    if (!this.activeTab) return;
+    const visible = visibleItems(this.tabs, this.isTabVisible);
+    if (visible.length === 0) return;
+    const idx = visible.indexOf(this.activeTab);
+    if (idx === -1) { this.switchToId(visible[0].id); return; }
+    if (visible.length <= 1) return;
+    const nextIdx = (idx + dir + visible.length) % visible.length;
+    this.switchToId(visible[nextIdx].id);
   }
 
   /** Name one tab. An empty name forgets it, so the tab follows its project's
@@ -364,8 +409,18 @@ export class TabManager {
     const toIdx = this.tabs.findIndex(t => t.id === toId);
     if (fromIdx === -1 || toIdx === -1 || fromIdx === toIdx) return;
 
+    // The moved tab takes the group of the tab it was dropped on (Move Left /
+    // Move Right come here too): a grouped target means joining that group,
+    // an ungrouped one leaving any group.
+    const targetGroup = this.groupOf(this.tabs[toIdx]);
     const [moved] = this.tabs.splice(fromIdx, 1);
     this.tabs.splice(toIdx, 0, moved);
+    const fromGroup = this.groupOf(moved);
+    if (targetGroup !== fromGroup) {
+      if (targetGroup === null) this.groupOfTab.delete(moved.id);
+      else this.groupOfTab.set(moved.id, targetGroup);
+      rlog('info', '[GROUP] tab moved between groups', { tabId: moved.id, from: fromGroup, to: targetGroup, by: 'reorder' });
+    }
     this.updateTabBar();
   }
 
@@ -382,6 +437,15 @@ export class TabManager {
     }
     if (this.wakeTabIds.has(tab.id)) return;
     this.wakeTabIds.add(tab.id);
+    // In a group, the whole group goes to the far left, its order and fold kept.
+    const groupId = this.groupOf(tab);
+    if (groupId !== null) {
+      const first = this.tabs.findIndex((t) => this.groupOf(t) === groupId);
+      if (first <= 0) return;
+      this.setTabOrder(moveGroupFirst(this.tabs, groupId, this.groupOf));
+      rlog('info', '[GROUP] wake moved', { groupId, tabId: tab.id, from: first });
+      return;
+    }
     const from = this.tabs.indexOf(tab);
     if (from <= 0) return;
     this.tabs.splice(from, 1);
@@ -410,8 +474,21 @@ export class TabManager {
     }
 
     if (this.activeTab?.id === id) {
-      const newIdx = Math.min(idx, this.tabs.length - 1);
-      this.switchToId(this.tabs[newIdx].id);
+      // The nearest tab on the strip (right first), never one inside a folded group.
+      const next = nearestVisible(this.tabs, idx, idx - 1, this.isTabVisible);
+      if (next !== -1) {
+        this.switchToId(this.tabs[next].id);
+      } else {
+        // Every tab left is in a folded group: open a new one rather than unfold.
+        this.activeTab = null;
+        this.updateTabBar();
+        this.userNewTab().catch((err) => {
+          console.error('New tab after closing the selected tab failed:', err);
+          if (!this.activeTab && this.tabs.length > 0) {
+            this.switchToId(this.tabs[Math.min(idx, this.tabs.length - 1)].id);
+          }
+        });
+      }
     } else {
       this.updateTabBar();
     }
@@ -424,6 +501,7 @@ export class TabManager {
     tab.dispose();
     this.tabs.splice(idx, 1);
     this.wakeTabIds.delete(tab.id);
+    this.groupOfTab.delete(tab.id);
     for (const listener of this.tabClosedListeners) {
       try {
         listener(tab);
@@ -465,15 +543,25 @@ export class TabManager {
     if (!tab || this.tabs.length <= 1) return false;
     const idx = this.tabs.indexOf(tab);
     const wasActive = this.activeTab === tab;
+    const discardedGroup = this.groupOf(tab);
     this.removeTab(tab);
 
     const placed = placeTabId ? this.tabs.find(t => t.id === placeTabId) : undefined;
     if (placed) {
       this.tabs.splice(this.tabs.indexOf(placed), 1);
       this.tabs.splice(Math.min(idx, this.tabs.length), 0, placed);
+      // The placed tab takes the board's place in its group too.
+      if (discardedGroup !== null && this.groups.has(discardedGroup)) {
+        this.groupOfTab.set(placed.id, discardedGroup);
+      } else {
+        this.groupOfTab.delete(placed.id);
+      }
     }
     if (wasActive) {
-      const next = placed ?? this.tabs[Math.min(idx, this.tabs.length - 1)];
+      // The nearest tab on the strip, as closing a tab picks (a folded group's
+      // tab only if nothing else is left: switchToId unfolds it).
+      const visibleIdx = nearestVisible(this.tabs, idx, idx - 1, this.isTabVisible);
+      const next = placed ?? (visibleIdx !== -1 ? this.tabs[visibleIdx] : this.tabs[Math.min(idx, this.tabs.length - 1)]);
       this.switchToId(next.id);
     } else {
       this.updateTabBar();
@@ -481,6 +569,295 @@ export class TabManager {
     return true;
   }
   // --- end project board ---
+
+  // --- Tab groups ---
+  /** A group's spoken and announced name: its own, or "Unnamed". */
+  private groupLabel(group: TabGroup): string {
+    return group.name || 'Unnamed';
+  }
+
+  private groupMembers(groupId: string): Tab[] {
+    return this.tabs.filter((t) => this.groupOf(t) === groupId);
+  }
+
+  /** Replace the tab order in place (other code may hold `this.tabs`). */
+  private setTabOrder(order: Tab[]): void {
+    this.tabs.splice(0, this.tabs.length, ...order);
+  }
+
+  /** Keep the group rules true before every redraw: memberships of tabs that
+   *  are gone are forgotten, broken runs repaired (none expected outside a
+   *  restore, so a repair is logged), and groups with no tabs deleted. */
+  private normaliseGroups(): void {
+    if (this.groups.size === 0 && this.groupOfTab.size === 0) return;
+    const ids = new Set(this.tabs.map((t) => t.id));
+    for (const [tabId, groupId] of this.groupOfTab) {
+      if (!ids.has(tabId) || !this.groups.has(groupId)) this.groupOfTab.delete(tabId);
+    }
+    const { list, moved } = repairRuns(this.tabs, this.groupOf);
+    if (moved > 0) {
+      this.setTabOrder(list);
+      rlog('warn', '[GROUP] broken run repaired', { moved });
+    }
+    const used = new Set(this.groupOfTab.values());
+    for (const groupId of [...this.groups.keys()]) {
+      if (!used.has(groupId)) {
+        this.groups.delete(groupId);
+        rlog('info', '[GROUP] emptied', { groupId });
+      }
+    }
+  }
+
+  /** This window's groups in strip order, with their tabs (checks and callers). */
+  getTabGroups(): { id: string; name: string; folded: boolean; tabIds: string[] }[] {
+    const order: string[] = [];
+    for (const tab of this.tabs) {
+      const groupId = this.groupOf(tab);
+      if (groupId !== null && !order.includes(groupId)) order.push(groupId);
+    }
+    return order.flatMap((groupId) => {
+      const group = this.groups.get(groupId);
+      return group ? [{ ...group, tabIds: this.groupMembers(groupId).map((t) => t.id) }] : [];
+    });
+  }
+
+  /** Tab menu → Add Tab to New Group: a group holding this tab where it is (a
+   *  tab already in a group first leaves it). Returns the new group's id, so
+   *  the strip can open the name box on its chip at once. */
+  addTabToNewGroup(tabId: string): string | null {
+    const tab = this.tabs.find((t) => t.id === tabId);
+    if (!tab) return null;
+    if (this.groups.size >= MAX_GROUPS) {
+      announce(`A window holds at most ${MAX_GROUPS} groups.`);
+      return null;
+    }
+    if (this.groupOf(tab) !== null) {
+      this.setTabOrder(takeOutOfGroup(this.tabs, tab, this.groupOf));
+      this.groupOfTab.delete(tab.id);
+    }
+    const id = newGroupId();
+    this.groups.set(id, { id, name: '', folded: false });
+    this.groupOfTab.set(tab.id, id);
+    rlog('info', '[GROUP] created', { groupId: id, tabId });
+    announce(`New group made with ${tab.title}`);
+    this.updateTabBar();
+    return id;
+  }
+
+  /** Add to an existing group: the tab goes after the group's last tab. Into
+   *  a folded group it disappears, except the selected tab, whose group unfolds. */
+  addTabToGroup(tabId: string, groupId: string): void {
+    const tab = this.tabs.find((t) => t.id === tabId);
+    const group = this.groups.get(groupId);
+    if (!tab || !group || this.groupOf(tab) === groupId) return;
+    this.setTabOrder(placeAfterGroup(this.tabs, tab, groupId, this.groupOf));
+    this.groupOfTab.set(tab.id, groupId);
+    rlog('info', '[GROUP] tab added', { groupId, tabId });
+    if (group.folded && tab === this.activeTab) this.unfoldGroup(group, 'add');
+    announce(`${tab.title} added to ${this.groupLabel(group)} group`);
+    this.updateTabBar();
+  }
+
+  /** Tab menu → Remove from Group: the tab lands just after the group. */
+  removeTabFromGroup(tabId: string): void {
+    const tab = this.tabs.find((t) => t.id === tabId);
+    const groupId = tab ? this.groupOf(tab) : null;
+    if (!tab || groupId === null) return;
+    this.setTabOrder(takeOutOfGroup(this.tabs, tab, this.groupOf));
+    this.groupOfTab.delete(tab.id);
+    rlog('info', '[GROUP] tab removed', { groupId, tabId });
+    const group = this.groups.get(groupId);
+    announce(`${tab.title} removed from ${group ? this.groupLabel(group) : 'its'} group`);
+    this.updateTabBar();
+  }
+
+  /** Name a group (trimmed, 60 characters at most; '' = unnamed). */
+  renameGroup(groupId: string, name: string): void {
+    const group = this.groups.get(groupId);
+    if (!group) return;
+    const clean = cleanGroupName(name);
+    if (clean === group.name) return;
+    group.name = clean;
+    rlog('info', '[GROUP] named', { groupId, length: clean.length });
+    this.updateTabBar();
+  }
+
+  /** Chip click, Enter/Space, or its menu: fold an open group, unfold a folded one. */
+  toggleGroupFolded(groupId: string, reason: 'click' | 'menu'): void {
+    const group = this.groups.get(groupId);
+    if (!group) return;
+    if (group.folded) {
+      this.unfoldGroup(group, reason);
+      this.updateTabBar();
+    } else {
+      this.foldGroup(groupId);
+    }
+  }
+
+  /** Unfold without redrawing (the caller redraws). */
+  private unfoldGroup(group: TabGroup, reason: GroupUnfoldReason): void {
+    if (!group.folded) return;
+    group.folded = false;
+    rlog('info', '[GROUP] unfolded', { groupId: group.id, reason });
+    if (reason === 'click' || reason === 'menu') announce(`${this.groupLabel(group)} group unfolded`);
+  }
+
+  /** Fold a group: its tabs leave the strip. Folding the group that holds the
+   *  selected tab selects the nearest tab on the strip outside it (right of
+   *  the group first, then left), or opens a new tab if there is none. */
+  foldGroup(groupId: string): void {
+    const group = this.groups.get(groupId);
+    if (!group || group.folded) return;
+    const members = this.groupMembers(groupId);
+    const finish = (movedSelection: string | false) => {
+      group.folded = true;
+      rlog('info', '[GROUP] folded', { groupId, tabs: members.length, movedSelection });
+      announce(`${this.groupLabel(group)} group folded, ${members.length} ${members.length === 1 ? 'tab' : 'tabs'}`);
+    };
+    if (!this.activeTab || !members.includes(this.activeTab)) {
+      finish(false);
+      this.updateTabBar();
+      return;
+    }
+    const first = this.tabs.indexOf(members[0]);
+    const last = this.tabs.indexOf(members[members.length - 1]);
+    const next = nearestVisible(this.tabs, last + 1, first - 1, (t) => this.groupOf(t) !== groupId && this.isTabVisible(t));
+    if (next !== -1) {
+      finish(next > last ? 'right' : 'left');
+      this.switchToId(this.tabs[next].id);
+      return;
+    }
+    // Nothing else on the strip: a new tab first (the group stays open while
+    // it opens, so the selected tab is never hidden), then fold.
+    this.userNewTab().then(() => {
+      if (this.groups.get(groupId) !== group || group.folded) return;
+      if (this.activeTab && this.groupOf(this.activeTab) === groupId) return;
+      finish('new-tab');
+      this.updateTabBar();
+    }).catch((err) => console.error('New tab before folding failed:', err));
+  }
+
+  /** Chip menu → Ungroup: the chip goes, the tabs stay where they are. */
+  ungroup(groupId: string): void {
+    const group = this.groups.get(groupId);
+    if (!group) return;
+    const members = this.groupMembers(groupId);
+    for (const tab of members) this.groupOfTab.delete(tab.id);
+    this.groups.delete(groupId);
+    rlog('info', '[GROUP] ungrouped', { groupId, tabs: members.length });
+    announce(`${this.groupLabel(group)} group ungrouped`);
+    this.updateTabBar();
+  }
+
+  /** Chip menu → New Tab in Group: a tab opened as ⌘T opens one (so the
+   *  project board shows), put after the group's last tab, in the group,
+   *  which unfolds; the new tab is selected. */
+  async newTabInGroup(groupId: string): Promise<void> {
+    if (!this.groups.has(groupId)) return;
+    const tab = await this.userNewTab();
+    const group = this.groups.get(groupId);
+    if (!group || !this.tabs.includes(tab)) return;
+    this.setTabOrder(placeAfterGroup(this.tabs, tab, groupId, this.groupOf));
+    this.groupOfTab.set(tab.id, groupId);
+    rlog('info', '[GROUP] tab added', { groupId, tabId: tab.id, by: 'new-tab' });
+    this.unfoldGroup(group, 'new-tab');
+    if (this.activeTab !== tab) this.switchToId(tab.id);
+    else this.updateTabBar();
+  }
+
+  /** Chip menu → Close Group…: asks once, in the app, then closes every tab
+   *  in the group without asking per tab. A group holding every tab of the
+   *  window opens a new tab first, so the window stays. */
+  async closeGroup(groupId: string): Promise<void> {
+    const group = this.groups.get(groupId);
+    if (!group) return;
+    const members = this.groupMembers(groupId);
+    if (members.length === 0) return;
+    const claude = members.reduce((n, t) => n + t.panes.filter((p) => p.claudeState.active).length, 0);
+    const ok = await this.confirmGroupClose(group, members.length, claude);
+    if (!ok) return;
+    // The group as it is now: tabs may have closed or moved while the dialog was up.
+    const closing = members.filter((t) => this.tabs.includes(t) && this.groupOf(t) === groupId);
+    if (closing.length === 0) return;
+    if (this.tabs.every((t) => closing.includes(t))) {
+      try {
+        await this.userNewTab();
+      } catch (err) {
+        console.error('New tab before closing the group failed:', err);
+      }
+      if (this.tabs.every((t) => closing.includes(t))) {
+        rlog('warn', '[GROUP] close stopped: no other tab to keep the window', { groupId });
+        return;
+      }
+    } else if (this.activeTab && closing.includes(this.activeTab)) {
+      const first = this.tabs.indexOf(closing[0]);
+      const last = this.tabs.indexOf(closing[closing.length - 1]);
+      const next = nearestVisible(this.tabs, last + 1, first - 1, (t) => !closing.includes(t) && this.isTabVisible(t));
+      if (next !== -1) {
+        this.switchToId(this.tabs[next].id);
+      } else {
+        try {
+          await this.userNewTab();
+        } catch (err) {
+          console.error('New tab before closing the group failed:', err);
+        }
+      }
+    }
+    for (const tab of closing) {
+      if (this.tabs.includes(tab) && this.tabs.length > 1) await this.closeById(tab.id);
+    }
+    rlog('info', '[GROUP] closed', { groupId, tabs: closing.length });
+    announce(`Closed ${closing.length} ${closing.length === 1 ? 'tab' : 'tabs'} in ${this.groupLabel(group)} group`);
+  }
+
+  /** The one in-app question Close Group asks (the close dialogs' look and keys). */
+  private async confirmGroupClose(group: TabGroup, tabs: number, claude: number): Promise<boolean> {
+    const where = group.name ? `“${group.name}”` : 'this group';
+    const tabsText = `${tabs} ${tabs === 1 ? 'tab' : 'tabs'}`;
+    const claudeText = claude > 0
+      ? ` ${claude} Claude ${claude === 1 ? 'session ends' : 'sessions end'} with them.`
+      : '';
+    rlog('info', '[CLOSE] confirm shown', { kind: 'group', defaultFocus: 'confirm', tabs, claude });
+    const ok = await this.confirmDialog.confirm({
+      title: `Close ${tabsText} in ${where}?`,
+      message: `Closing the group ends the shell in each of its tabs and any process running inside them.${claudeText}`,
+      confirmLabel: 'Close Group',
+      cancelLabel: 'Cancel',
+      defaultFocus: 'confirm',
+      shortcutConfirms: true,
+      confirmDwellMs: CONFIRM_SHORTCUT_DWELL_MS,
+    });
+    rlog('info', '[CLOSE] confirm answered', { kind: 'group', ok, by: this.confirmDialog.lastAnswer });
+    return ok;
+  }
+
+  /** Rebuild the saved groups after a restore: memberships to groups that
+   *  exist, broken runs repaired, empty groups dropped, and a folded group
+   *  holding the tab about to be selected unfolded. */
+  private restoreGroups(session: SessionState, savedGroupOf: Map<Tab, string>, target: Tab | null): void {
+    const saved = Array.isArray(session.groups) ? session.groups : [];
+    const valid = new Map<string, TabGroup>();
+    for (const g of saved) {
+      if (!g || typeof g.id !== 'string' || typeof g.name !== 'string' || valid.has(g.id)) continue;
+      valid.set(g.id, { id: g.id, name: cleanGroupName(g.name), folded: g.folded === true });
+    }
+    let members = 0;
+    for (const [tab, groupId] of savedGroupOf) {
+      const group = valid.get(groupId);
+      if (!group || !this.tabs.includes(tab)) continue;
+      if (!this.groups.has(groupId)) this.groups.set(groupId, group);
+      this.groupOfTab.set(tab.id, groupId);
+      members++;
+    }
+    if (this.groups.size === 0) return;
+    const { list, moved } = repairRuns(this.tabs, this.groupOf);
+    if (moved > 0) this.setTabOrder(list);
+    const targetGroup = target ? this.groupOf(target) : null;
+    const group = targetGroup !== null ? this.groups.get(targetGroup) : undefined;
+    if (group?.folded) this.unfoldGroup(group, 'restore');
+    rlog('info', '[GROUP] restored', { groups: this.groups.size, tabs: members, repaired: moved });
+  }
+  // --- end tab groups ---
 
   async closeActiveTab(): Promise<void> {
     if (this.activeTab) {
@@ -902,10 +1279,20 @@ export class TabManager {
 
   async saveSession(): Promise<void> {
     try {
-      const results = await Promise.allSettled(this.tabs.map(t => t.serializeTree()));
-      const tabStates = results
-        .filter((r): r is PromiseFulfilledResult<ReturnType<Tab['serializeTree']> extends Promise<infer T> ? T : never> => r.status === 'fulfilled')
-        .map(r => r.value);
+      const tabs = [...this.tabs];
+      const results = await Promise.allSettled(tabs.map(t => t.serializeTree()));
+      const tabStates: SessionTabState[] = [];
+      const usedGroups = new Set<string>();
+      results.forEach((r, i) => {
+        if (r.status !== 'fulfilled') return;
+        const groupId = this.groupOf(tabs[i]);
+        if (groupId !== null && this.groups.has(groupId)) {
+          usedGroups.add(groupId);
+          tabStates.push({ ...r.value, groupId });
+        } else {
+          tabStates.push(r.value);
+        }
+      });
       if (tabStates.length === 0) {
         console.warn('Failed to save session: no tabs serialized successfully');
         return;
@@ -916,6 +1303,8 @@ export class TabManager {
         tabs: tabStates,
         activeTabIndex: Math.min(Math.max(0, activeIdx), tabStates.length - 1),
       };
+      const groups = [...this.groups.values()].filter((g) => usedGroups.has(g.id));
+      if (groups.length > 0) session.groups = groups.map((g) => ({ id: g.id, name: g.name, folded: g.folded }));
       await window.patton.session.set(session);
     } catch (err) {
       console.warn('Failed to save session:', err);
@@ -931,9 +1320,11 @@ export class TabManager {
 
       const savedActive = Math.max(0, Math.min(session.activeTabIndex, session.tabs.length - 1));
       let startupTab: Tab | null = null;
+      const savedGroupOf = new Map<Tab, string>();
       for (const [index, tabState] of session.tabs.entries()) {
         try {
           const tab = await Tab.createFromSession(tabState);
+          if (typeof tabState.groupId === 'string') savedGroupOf.set(tab, tabState.groupId);
           if (startupCommand && index === savedActive) {
             tab.markStartupPane();
             startupTab = tab;
@@ -996,11 +1387,11 @@ export class TabManager {
       // in the pane that was given FORCE_HYPERLINK, even if a tab before it
       // failed to restore and shifted the indexes).
       const activeIdx = Math.min(session.activeTabIndex, this.tabs.length - 1);
-      if (startupTab && this.tabs.includes(startupTab)) {
-        this.switchToId(startupTab.id);
-      } else if (this.tabs.length > 0) {
-        this.switchToId(this.tabs[Math.max(0, activeIdx)].id);
-      }
+      const target = startupTab && this.tabs.includes(startupTab)
+        ? startupTab
+        : (this.tabs.length > 0 ? this.tabs[Math.max(0, activeIdx)] : null);
+      this.restoreGroups(session, savedGroupOf, target);
+      if (target) this.switchToId(target.id);
 
       // Clear saved session after restore attempt
       await window.patton.session.set(null);
@@ -1071,8 +1462,10 @@ export class TabManager {
   }
 
   private updateTabBar(): void {
+    this.normaliseGroups();
     this.tabBar.update(
       this.tabs.map(t => ({
+        groupId: this.groupOf(t),
         id: t.id,
         title: t.title,
         displayTitle: t.displayTitle,
@@ -1086,6 +1479,7 @@ export class TabManager {
         parked: t.parked,
         waitingText: t.waitingText,
       })),
+      [...this.groups.values()].map((g) => ({ ...g })),
     );
     // Every tab change funnels through here, so the bookmarks sidebar hears it too.
     this.onTabsChanged?.();
