@@ -86,7 +86,8 @@ async function nodeRunner() {
         import { EditorInput } from './src/renderer/components/editor-input';
         import { ContextMenu } from './src/renderer/components/context-menu';
         import { OkayRow } from './src/renderer/components/okay-row';
-        (window as any).__ui = { Terminal, SearchAddon, applyUiTextScale, TabBar, ProjectBoard, SettingsPanel, BookmarksPanel, CommandPalette, ConfirmDialog, SearchOverlay, EditorInput, ContextMenu, OkayRow };
+        import { COMPOSE_ASIDE_LABEL, COMPOSE_ASIDE_HINT, COMPOSE_SEND_HELD_LABEL } from './src/renderer/services/compose-aside';
+        (window as any).__ui = { Terminal, SearchAddon, applyUiTextScale, TabBar, ProjectBoard, SettingsPanel, BookmarksPanel, CommandPalette, ConfirmDialog, SearchOverlay, EditorInput, ContextMenu, OkayRow, COMPOSE_ASIDE_LABEL, COMPOSE_ASIDE_HINT, COMPOSE_SEND_HELD_LABEL };
       `,
     },
     bundle: true, platform: 'browser', format: 'iife', outfile: path.join(outDir, 'page.js'),
@@ -1376,6 +1377,85 @@ async function pageRun(BIG) {
     await setScale(1);
     tabBar.update(tabs);
     await frame();
+  }
+
+  // --- the compose box steps aside without moving anything (compose box, D2/D3): an engaged box
+  // (class compose-first, as Pane sets it) is measured normal, aside for a question ('blocked'),
+  // aside for a menu, and during the "Answer above first" flash, with a one-line and a three-line
+  // draft, at x1, Michael's x1.1 and x1.5. Why: a height change resizes the terminal, which makes
+  // Claude Code redraw its prompt, and a textarea width change reflows the draft. The states are
+  // driven the way Pane drives them: class `aside` on the container + EditorInput.setAside /
+  // flashAsideLabel with the labels and words from services/compose-aside.
+  {
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'position:absolute;left:0;top:0;width:640px;z-index:-1';
+    const box = document.createElement('div');
+    box.className = 'editor-container compose-first';
+    wrap.appendChild(box);
+    document.body.appendChild(wrap);
+    const ei = new U.EditorInput(box, { onSubmit: noop, onInterrupt: noop, onHistoryUp: () => null, onHistoryDown: () => null, onTab: noop }, 14);
+    const LABELS = [...Object.values(U.COMPOSE_ASIDE_LABEL), U.COMPOSE_SEND_HELD_LABEL];
+    ei.reserveSlotWidthFor(['Send', ...LABELS]);
+    const slot = box.querySelector('.editor-send-slot');
+    const sendBtn = box.querySelector('.editor-send');
+    const lab = box.querySelector('.editor-aside-label');
+    const ta = box.querySelector('.editor-textarea');
+    const round = (n) => Math.round(n * 100) / 100;
+    const stateNames = ['normal', 'blocked', 'menu', 'flash'];
+    const goTo = async (name) => {
+      ei.setAside(null);
+      box.classList.remove('aside');
+      if (name === 'blocked' || name === 'flash') { box.classList.add('aside'); ei.setAside({ label: U.COMPOSE_ASIDE_LABEL.blocked, title: U.COMPOSE_ASIDE_HINT.blocked }); }
+      if (name === 'menu') { box.classList.add('aside'); ei.setAside({ label: U.COMPOSE_ASIDE_LABEL.menu, title: U.COMPOSE_ASIDE_HINT.menu }); }
+      if (name === 'flash') ei.flashAsideLabel(U.COMPOSE_SEND_HELD_LABEL, 60000); // cleared by the next setAside
+      await frame();
+    };
+    const wanted = { blocked: U.COMPOSE_ASIDE_LABEL.blocked, menu: U.COMPOSE_ASIDE_LABEL.menu, flash: U.COMPOSE_SEND_HELD_LABEL };
+    const measured = {};
+    for (const s of [1, 1.1, BIG]) {
+      await setScale(s);
+      const tag = 'x' + s;
+      measured[tag] = {};
+      for (const [draftName, draft] of [['one-line', 'a one-line draft'], ['three-line', 'first line\nsecond line\nthird line']]) {
+        ei.setValue(draft);
+        await frame();
+        const rows = {};
+        for (const name of stateNames) {
+          await goTo(name);
+          const lr = lab.getBoundingClientRect();
+          const natural = (() => { const rg = document.createRange(); rg.selectNodeContents(lab); return rg.getBoundingClientRect().width; })();
+          const lcs = getComputedStyle(lab);
+          rows[name] = {
+            h: round(box.getBoundingClientRect().height), taW: round(ta.getBoundingClientRect().width), slotW: round(slot.getBoundingClientRect().width),
+            text: lab.textContent, labelVisible: lcs.visibility, labelSw: lab.scrollWidth, labelCw: lab.clientWidth,
+            fitsBox: natural + parseFloat(lcs.paddingLeft) + parseFloat(lcs.paddingRight) + 2 <= lr.width + 0.5, ellipsis: lcs.textOverflow,
+            sendVisible: getComputedStyle(sendBtn).visibility, sendFits: sendBtn.getBoundingClientRect().width <= slot.getBoundingClientRect().width + 0.5,
+            cls: box.className + '/' + slot.className,
+          };
+        }
+        measured[tag][draftName] = rows;
+        const same = (key) => stateNames.every((n) => rows[n][key] === rows.normal[key]);
+        check(`compose box at ${tag}, ${draftName} draft: the container is ${rows.normal.h} px tall in every state (${stateNames.map((n) => rows[n].h).join(' / ')} px: normal / aside question / aside menu / "Answer above first")`, same('h'), rows);
+        check(`compose box at ${tag}, ${draftName} draft: the textarea is ${rows.normal.taW} px wide in every state (${stateNames.map((n) => rows[n].taW).join(' / ')} px)`, same('taW'), rows);
+        check(`compose box at ${tag}, ${draftName} draft: Send's slot keeps one width, ${rows.normal.slotW} px, across the four states (${stateNames.map((n) => rows[n].slotW).join(' / ')} px)`, same('slotW'), rows);
+        check(`compose box at ${tag}, ${draftName} draft: the states are the ones driven (class aside on the container and slot, the right label shown, Send hidden when aside)`,
+          !rows.normal.cls.includes(' aside') && rows.normal.sendVisible === 'visible' && rows.normal.text === ''
+          && ['blocked', 'menu', 'flash'].every((n) => / aside/.test(rows[n].cls.split('/')[0]) && /aside/.test(rows[n].cls.split('/')[1]) && rows[n].sendVisible === 'hidden' && rows[n].labelVisible === 'visible' && rows[n].text === wanted[n])
+          && /flash/.test(rows.flash.cls.split('/')[1]), rows);
+        check(`compose box at ${tag}, ${draftName} draft: Send and each label ("${LABELS.join('", "')}") fit the slot whole, no clipping, no ellipsis`,
+          rows.normal.sendFits && ['blocked', 'menu', 'flash'].every((n) => rows[n].labelSw <= rows[n].labelCw + 1 && rows[n].fitsBox && rows[n].ellipsis !== 'ellipsis'), rows);
+      }
+    }
+    // A three-line draft is taller than a one-line one (the draft's rows are really measured), at every scale.
+    for (const s of [1, 1.1, BIG]) {
+      const m = measured['x' + s];
+      check(`compose box at x${s}: the three-line draft's box is taller than the one-line draft's (${m['three-line'].normal.h} vs ${m['one-line'].normal.h} px)`, m['three-line'].normal.h > m['one-line'].normal.h + 10, m);
+    }
+    ei.setAside(null);
+    wrap.remove();
+    ei.dispose && ei.dispose();
+    await setScale(BIG);
+    window.__composeLayout = measured; // the measured px, for the run's log
   }
 
   return { checks, table, surfaces: surfaceCounts };
