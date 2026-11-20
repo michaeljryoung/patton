@@ -858,6 +858,84 @@ const newPane = async () => {
     check('8.5 under: the box takes no overlay colour', bg() === '', bg());
     p.dispose();
   }
+
+  // 8.6 D8: the 400 ms count from the FIRST miss of a run, not from the last
+  // match. A still screen takes no readings, so the last match can be old.
+  const MID1 = `\x1b[2J\x1b[1;1H\r\n${RULE}\r\n`; // a redraw chunk that ends mid-redraw
+  const MID2 = `❯ \r\n${RULE}\x1b[3;3H`; // the rest of it
+  for (const gapMs of [410, 5000]) {
+    const p = await newPane();
+    await feed(p, FOUND);
+    await settleSwitch(p);
+    logs.length = 0; resizes.length = 0;
+    advance(gapMs); // a still screen: no writes
+    await feed(p, MID1); // the first miss
+    check(`8.6 still ${gapMs} ms, then a mid-redraw miss: not lost at the first miss`,
+      placement(p) === 'over' && places().length === 0, places());
+    advance(30);
+    await feed(p, MID2); // the redraw completes: found and empty again
+    advance(1200);
+    check(`8.6 ...the redraw done 30 ms later: still over, no change, no refit`,
+      placement(p) === 'over' && places().length === 0 && resizes.length === 0, { pl: places(), resizes });
+    p.dispose();
+  }
+
+  // 8.7 A pane resized after 5 s idle: xterm reflows before Claude redraws.
+  {
+    const p = await newPane();
+    await feed(p, FOUND);
+    await settleSwitch(p);
+    logs.length = 0; resizes.length = 0;
+    advance(5000);
+    term(p).resize(90, 30);
+    await frames();
+    check('8.7 resized after 5 s idle (the bar not yet redrawn): not lost at once',
+      placement(p) === 'over' && places().length === 0, places());
+    p.dispose();
+  }
+
+  // 8.8 A genuine loss after a still screen still goes under, once the miss
+  // has lasted 400 ms.
+  {
+    const p = await newPane();
+    await feed(p, FOUND);
+    await settleSwitch(p);
+    advance(5000);
+    logs.length = 0;
+    await feed(p, LOST);
+    advance(390);
+    check('8.8 5 s still, then the bar gone: still over at 390 ms of misses', placement(p) === 'over' && places().length === 0, places());
+    advance(20);
+    const pl = places();
+    check('8.8 ...under at 410 ms of misses, reason lost',
+      placement(p) === 'under' && pl.length === 1 && pl[0].reason === 'lost', pl);
+    p.dispose();
+  }
+
+  // 8.9 His own moves never wait for the once-a-second rule: the box closed
+  // and reopened (or the setting off and on) 0.2 s after a reading put it under.
+  for (const how of ['reopen', 'setting']) {
+    const p = await newPane();
+    await feed(p, FOUND);
+    await settleSwitch(p);
+    await feed(p, LOST);
+    advance(410);
+    check(`8.9 (${how} setup) a reading put the box under`, placement(p) === 'under', places());
+    advance(200);
+    logs.length = 0;
+    if (how === 'reopen') {
+      p.setComposeFirst(false, null);
+      p.setComposeFirst(true, null);
+    } else {
+      p.setComposeOverBar(false);
+      p.setComposeOverBar(true);
+    }
+    await feed(p, FOUND);
+    const last = places().filter((d) => d.placement === 'over');
+    check(`8.9 ${how} 0.2 s after: over at once, reason found`,
+      placement(p) === 'over' && last.length === 1 && last[0].reason === 'found', places());
+    p.dispose();
+  }
 }
 
 finished = true;

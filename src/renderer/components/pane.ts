@@ -323,6 +323,11 @@ export class Pane {
   // The last reading that found Claude's bar empty: its absolute row and when.
   private barRow = -1;
   private barLastMatchMs: number | null = null;
+  // When the current run of counting misses began (null: no run). D8: the
+  // 400 ms before `under` count from the first miss, never from the last
+  // match, since a still screen takes no readings and the last match may be
+  // seconds old. Cleared on a match, when an aside ends and on disengage.
+  private barMissSinceMs: number | null = null;
   // The reason a lost bar logs: 'aside-end' while the 400 ms after an aside
   // runs (D10), otherwise 'lost'.
   private barLostReason: 'lost' | 'aside-end' = 'lost';
@@ -2244,6 +2249,7 @@ export class Pane {
   setComposeOverBar(enabled: boolean): void {
     if (enabled === this.composeOverBarSetting) return;
     this.composeOverBarSetting = enabled;
+    this.composeSwitchMs = -Infinity; // his own move: never waits
     rlog('info', '[COMPOSE] over-bar setting', { pane: this.id, enabled });
     if (!enabled) {
       this.clearBarLostTimer();
@@ -2582,6 +2588,7 @@ export class Pane {
     if (reading.found && reading.empty) {
       this.barRow = reading.row;
       this.barLastMatchMs = Date.now();
+      this.barMissSinceMs = null;
       this.barLostReason = 'lost';
       this.barWaitHoldsText = false;
       this.clearBarLostTimer();
@@ -2627,7 +2634,10 @@ export class Pane {
       this.barLost();
       return;
     }
-    const left = Math.max(this.barLastMatchMs, ownEnd) + COMPOSE_BAR_LOST_MS - now;
+    // The run starts at its first counting miss: a miss has to persist
+    // COMPOSE_BAR_LOST_MS, whatever the age of the last match.
+    if (this.barMissSinceMs === null) this.barMissSinceMs = now;
+    const left = this.barMissSinceMs + COMPOSE_BAR_LOST_MS - now;
     if (left <= 0) this.barLost();
     else this.armBarLostTimer(left);
   }
@@ -2810,6 +2820,7 @@ export class Pane {
     }
     if (this.composePlacement !== 'under') {
       this.barLastMatchMs = Date.now();
+      this.barMissSinceMs = null;
       this.barLostReason = 'aside-end';
     }
     this.scheduleBarReading();
@@ -2824,6 +2835,7 @@ export class Pane {
 
   private engageComposeFirst(reason: string): void {
     this.composeFirstEngaged = true;
+    this.composeSwitchMs = -Infinity; // his own move: the first reading never waits
     this.syncOkayRow(false); // D11: Okay? moves into the box
     this.syncPasteChipViews(false); // D14: the thumbnails too
     this.composeHandedOff = false;
@@ -2865,6 +2877,8 @@ export class Pane {
     // Closed, the box starts again from `under` until a reading matches.
     this.setComposePlacement('under', 'disengage');
     this.barLastMatchMs = null;
+    this.barMissSinceMs = null;
+    this.composeSwitchMs = -Infinity; // his own move: the next reading never waits
     this.clearBarLostTimer();
     if (hadFocus) this.terminalView.focus();
   }
@@ -2875,6 +2889,7 @@ export class Pane {
       this.composeHandedOff = true;
       rlog('info', '[COMPOSE] handoff', { pane: this.id, key, route: 'focus' });
     }
+    this.composeSwitchMs = -Infinity; // his own move: the return never waits
     // D9: handed off, the box goes under so he sees Claude's bar too; the
     // focusin of its return reads the bar again. D10: not while placement is
     // frozen (an aside, or Claude asking): the box stays where it is, hidden,
