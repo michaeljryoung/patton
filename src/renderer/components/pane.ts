@@ -37,6 +37,7 @@ import {
 import { readClaudeBar, type BarMissReason } from '../services/claude-bar';
 import {
   COMPOSE_BAR_LOST_MS, COMPOSE_BAR_NOT_FOUND_LOG_MS, COMPOSE_OVERLAY_MAX_FRACTION, COMPOSE_OWN_TYPING_MS,
+  COMPOSE_REFIT_SETTLE_MS, COMPOSE_SWITCH_MIN_MS,
   barRowsInView, placementForReading,
   type ComposePlacement, type ComposePlacementReason,
 } from '../services/compose-placement';
@@ -333,6 +334,14 @@ export class Pane {
   // Okay? ask): readings within COMPOSE_OWN_TYPING_MS of it never count
   // toward the lost wait (D9 as amended).
   private composeOwnTypingMs = -Infinity;
+  // D9, no loop: when Patton last refitted the terminal for a change between
+  // `under` and the overlays (readings within COMPOSE_REFIT_SETTLE_MS don't
+  // count toward the lost wait), and when a reading last made such a change
+  // (the next waits COMPOSE_SWITCH_MIN_MS).
+  private composeRefitMs = -Infinity;
+  private composeSwitchMs = -Infinity;
+  // What the overlay was last laid out from (see layoutComposeOverlay).
+  private overlayLayoutKey = '';
   private barNotFoundLoggedMs = 0;
   private barLostTimer: ReturnType<typeof setTimeout> | null = null;
   private barReadFrame: number | null = null;
@@ -1992,12 +2001,25 @@ export class Pane {
    */
   private async pasteImage(source: 'paste' | 'menu' | 'ctrl-v-key' | 'compose'): Promise<void> {
     if (this.ptyId === null || this.disposed) return;
+    // Claude asks something (the live 7501 fact, as sends use): a Ctrl+V now
+    // would reach the question's own input. Nothing is written and no chip is
+    // made; a Ctrl+V he typed has already reached the pty, so only its chip is
+    // skipped.
+    if (this.claudeActive && this.claudeAsksNow()) {
+      this.holdImagePaste(source);
+      return;
+    }
     try {
       const sendCtrlV = this.claudeActive;
       const image = await window.patton.clipboard.readImage(!sendCtrlV);
       if (!image || this.disposed || this.ptyId === null) return;
       let route: 'ctrl-v' | 'path';
       if (sendCtrlV) {
+        // The read took a moment: Claude may have started asking meanwhile.
+        if (this.claudeAsksNow()) {
+          this.holdImagePaste(source);
+          return;
+        }
         route = 'ctrl-v';
         if (source !== 'ctrl-v-key') window.patton.pty.write(this.ptyId, '\x16');
       } else {
@@ -2012,6 +2034,15 @@ export class Pane {
     } catch (err) {
       rlog('warn', '[PASTE] image paste failed', { pane: this.id, error: String(err) });
     }
+  }
+
+  /** An image paste refused while Claude asks: the box's Send slot says so
+   *  like a held send (its live region announces it); with no box engaged the
+   *  announcer does. */
+  private holdImagePaste(source: 'paste' | 'menu' | 'ctrl-v-key' | 'compose'): void {
+    if (this.composeFirstEngaged) this.editorInput.flashAsideLabel(COMPOSE_SEND_HELD_LABEL, COMPOSE_SEND_HELD_MS);
+    else announce(`${COMPOSE_SEND_HELD_LABEL}: image not pasted`);
+    rlog('info', '[PASTE] image held', { pane: this.id, source });
   }
 
   private addPasteChip(dataUrl: string, width: number, height: number): void {
@@ -2050,7 +2081,9 @@ export class Pane {
     });
 
     this.pasteChips.push(entry);
-    while (this.pasteChips.length > Pane.PASTE_CHIP_MAX) this.removePasteChip(this.pasteChips[0]);
+    // Engaged, the chip is the only sign of the image in Claude's message: no
+    // eviction (D14); the box's "+N" counts the ones beyond those it shows.
+    while (!this.composeFirstEngaged && this.pasteChips.length > Pane.PASTE_CHIP_MAX) this.removePasteChip(this.pasteChips[0]);
     this.pasteStrip.appendChild(chip);
     this.syncPasteChipViews();
   }
@@ -2457,6 +2490,8 @@ export class Pane {
   private wireComposePlacement(): void {
     this.element.dataset.composePlacement = this.composePlacement;
     const term = this.terminalView.terminal;
+    // The theme or the OS light/dark mode changed the terminal's background.
+    this.disposables.push(this.terminalView.onFrameColor(() => this.applyOverlayColor()));
     const subs = [
       term.onWriteParsed(() => this.scheduleBarReading()),
       term.onScroll(() => this.scheduleBarReading()),
@@ -2551,8 +2586,20 @@ export class Pane {
       this.barWaitHoldsText = false;
       this.clearBarLostTimer();
     }
+    if (step.reason !== 'setting' && step.reason !== 'handoff' && !this.switchMayHappen(step.placement)) return;
     this.setComposePlacement(step.placement, step.reason);
-    this.layoutComposeOverlay();
+    this.layoutComposeOverlay(false); // a found-and-empty reading mostly changes nothing
+  }
+
+  /** D9, no loop: a reading changes the placement across `under` and the
+   *  overlays at most once per COMPOSE_SWITCH_MIN_MS. Too soon: false, and a
+   *  timer takes a fresh reading when the time is up, which decides again. */
+  private switchMayHappen(next: ComposePlacement): boolean {
+    if ((this.composePlacement === 'under') === (next === 'under')) return true;
+    const wait = this.composeSwitchMs + COMPOSE_SWITCH_MIN_MS - Date.now();
+    if (wait <= 0) return true;
+    this.armBarLostTimer(wait);
+    return false;
   }
 
   /** A reading with no empty bar (it missed the bar, or the bar holds text):
@@ -2564,7 +2611,8 @@ export class Pane {
    *  takes a fresh reading, which decides. */
   private noteBarNotEmpty(why: BarMissReason | 'holds-text'): void {
     const now = Date.now();
-    const ownEnd = this.composeOwnTypingMs + COMPOSE_OWN_TYPING_MS;
+    // Readings in the window after this pane's own typing or its own refit don't count.
+    const ownEnd = Math.max(this.composeOwnTypingMs + COMPOSE_OWN_TYPING_MS, this.composeRefitMs + COMPOSE_REFIT_SETTLE_MS);
     if (now < ownEnd) {
       this.armBarLostTimer(ownEnd - now);
       return;
@@ -2606,6 +2654,7 @@ export class Pane {
    *  minute per pane. */
   private barLost(): void {
     if (this.composePlacement === 'under') return;
+    if (!this.switchMayHappen('under')) return;
     if (this.barWaitHoldsText) {
       this.setComposePlacement('under', 'holds-text');
       return;
@@ -2640,8 +2689,19 @@ export class Pane {
     if (next === 'under') this.clearComposeOverlayStyle();
     else this.layoutComposeOverlay();
     this.syncComposeAsideLook();
-    if ((from === 'under') !== (next === 'under')) this.refitTerminal();
-    this.editorInput.refreshSize(); // the height cap differs between under and the overlays
+    // The height cap differs between under and the overlays: apply it before
+    // the refit, so a long draft refits once (a box that changes height after
+    // the refit would make the resize observer refit again).
+    this.editorInput.refreshSize();
+    if ((from === 'under') !== (next === 'under')) {
+      const now = Date.now();
+      this.composeRefitMs = now;
+      // Only a change a reading made counts toward the once-a-second rule: his
+      // own moves (the hand-off, the setting, closing the box) break any chain.
+      const byReading = reason === 'found' || reason === 'holds-text' || reason === 'lost' || reason === 'aside-end';
+      this.composeSwitchMs = byReading ? now : -Infinity;
+      this.refitTerminal();
+    }
   }
 
   /** xterm's cell height in CSS px: the render service sets `.xterm-screen`'s
@@ -2662,16 +2722,27 @@ export class Pane {
 
   /** Lay the overlay on xterm's grid: left and right on the grid's edges,
    *  its bottom on the bottom of row R+1 ('over') or of the last row ('dock'),
-   *  three rows tall at least, growing upward to a third of the pane. */
-  private layoutComposeOverlay(): void {
+   *  three rows tall at least, growing upward to a third of the pane. `force`
+   *  false (a bar reading that found the bar empty again): nothing is measured
+   *  when the bar's row, the viewport, the rows, the box's height, the pane's
+   *  size and the font are the same as at the last layout. */
+  private layoutComposeOverlay(force = true): void {
     if (this.composePlacement === 'under') return;
     const screen = this.terminalScreen();
     const rows = this.terminalView.terminal.rows;
     if (!screen || !rows) return;
+    const term = this.terminalView.terminal;
+    const key = [
+      this.composePlacement, this.barRow, term.buffer.active.viewportY, rows, this.editorContainer.offsetHeight,
+      this.element.clientWidth, this.element.clientHeight, term.options.fontSize, term.options.fontFamily,
+      term.options.lineHeight,
+    ].join('|');
+    if (!force && key === this.overlayLayoutKey) return;
     const sr = screen.getBoundingClientRect();
     const pr = this.element.getBoundingClientRect();
     const cellH = sr.height / rows;
     if (cellH <= 0 || pr.height <= 0) return; // hidden tab: show() lays it out again
+    this.overlayLayoutKey = key;
     const viewportY = this.terminalView.terminal.buffer.active.viewportY;
     const lastRow = this.composePlacement === 'over' ? this.barRow + 1 - viewportY : rows - 1;
     const bottomEdge = sr.top - pr.top + (lastRow + 1) * cellH;
@@ -2681,12 +2752,19 @@ export class Pane {
     st.bottom = `${pr.height - bottomEdge}px`;
     st.minHeight = `${3 * cellH}px`;
     st.maxHeight = `${Math.floor(pr.height * COMPOSE_OVERLAY_MAX_FRACTION)}px`;
-    // Opaque in the terminal's own background (terminal-view.ts sets
-    // --term-bg on the terminal's container, not on the pane).
+    this.applyOverlayColor();
+    this.placePasteStrip();
+  }
+
+  /** Opaque in the terminal's own background: terminal-view.ts sets --term-bg
+   *  on the terminal's container (not on the pane), so the overlay takes a
+   *  copy, laid out again whenever the theme or the OS light/dark mode moves it. */
+  private applyOverlayColor(): void {
+    if (this.composePlacement === 'under') return;
+    const st = this.editorContainer.style;
     const termBg = this.terminalContainer.style.getPropertyValue('--term-bg');
     if (termBg) st.setProperty('--term-bg', termBg);
     else st.removeProperty('--term-bg');
-    this.placePasteStrip();
   }
 
   /** In the overlays the paste strip sits on the box's top edge (D12). */
@@ -2703,6 +2781,7 @@ export class Pane {
   }
 
   private clearComposeOverlayStyle(): void {
+    this.overlayLayoutKey = '';
     const st = this.editorContainer.style;
     st.left = st.width = st.bottom = st.minHeight = st.maxHeight = '';
     st.removeProperty('--term-bg');
@@ -2984,6 +3063,12 @@ export class Pane {
 
   setRenderer(mode: 'webgl' | 'dom'): void {
     this.terminalView.setUseWebgl(mode === 'webgl');
+    // The renderer owns the cell metrics the overlay is laid on: lay it out
+    // again now and once the new renderer has drawn (D9).
+    this.layoutComposeOverlay();
+    if (this.composePlacement !== 'under') {
+      requestAnimationFrame(() => { if (!this.disposed) this.layoutComposeOverlay(); });
+    }
   }
 
   getScrollbackContent(): string {

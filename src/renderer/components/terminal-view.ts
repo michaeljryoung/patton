@@ -124,6 +124,7 @@ export class TerminalView {
   private osc9Listeners: (() => void)[] = [];
   private pattonStateListeners: ((state: PattonState) => void)[] = [];
   private programStatusListeners: ((event: ProgramStatusEvent) => void)[] = [];
+  private frameColorListeners: (() => void)[] = [];
   private webglAddon: WebglAddon | null = null;
   // When false, the WebGL renderer is never (re)loaded and the terminal renders
   // via xterm's DOM renderer — which has no GPU glyph atlas and so is immune to
@@ -730,6 +731,16 @@ export class TerminalView {
   private syncFrameColor(theme: ITheme): void {
     if (theme.background) this.container.style.setProperty('--term-bg', theme.background);
     else this.container.style.removeProperty('--term-bg');
+    for (const cb of this.frameColorListeners) cb();
+  }
+
+  /** The frame colour (--term-bg on the container) changed: a theme was
+   *  applied, or the OS light/dark mode moved the default theme. */
+  onFrameColor(callback: () => void): () => void {
+    this.frameColorListeners.push(callback);
+    return () => {
+      this.frameColorListeners = this.frameColorListeners.filter(l => l !== callback);
+    };
   }
 
   setCustomTheme(theme: ITheme | null): void {

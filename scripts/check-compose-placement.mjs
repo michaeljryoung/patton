@@ -221,6 +221,14 @@ const feeder = (p, name) => {
   };
 };
 
+/** A second passes (the once-a-second rule, D9) and a harmless write makes a
+ *  reading, so the last empty-bar match is fresh when the next step starts. */
+const settleSwitch = async (p) => {
+  advance(1000);
+  await write(term(p), '\x1b[0m');
+  await frames();
+};
+
 const newPane = async () => {
   timers = [];
   const p = new PA.Pane({ onFocus() {}, onTitleChange() {} });
@@ -252,6 +260,7 @@ const newPane = async () => {
   // D9 as amended: text in Claude's bar (typed there, not sent from the box)
   // moves the box under only once 400 ms pass with no empty-bar reading.
   logs.length = 0; resizes.length = 0;
+  await settleSwitch(p); // D9: a reading changes under <-> over at most once a second
   await f.to('typed');
   check('1.2 typed text in Claude\'s bar: still over at first', placement(p) === 'over' && places().length === 0, places());
   advance(390);
@@ -265,11 +274,13 @@ const newPane = async () => {
     !logs.some((l) => l.tag === '[COMPOSE] bar not found'), logs.map((l) => l.tag));
 
   logs.length = 0;
+  advance(1000); // D9: a reading changes under <-> over at most once a second
   await f.to('cleared');
   pl = places();
   check('1.3 cleared: over again, reason found', placement(p) === 'over' && pl.length === 1 && pl[0].reason === 'found', pl);
 
   logs.length = 0;
+  await settleSwitch(p); // D9: a reading changes under <-> over at most once a second
   await f.to('wrapped');
   check('1.4 wrapped input (no match): the last good position is kept at first', placement(p) === 'over', places());
   advance(390);
@@ -286,6 +297,7 @@ const newPane = async () => {
   advance(500);
   check('1.5 multi-line input: under', placement(p) === 'under', places());
   logs.length = 0;
+  advance(1000); // D9: a reading changes under <-> over at most once a second
   await f.to('cleared2');
   pl = places();
   check('1.6 cleared again: over, reason found', placement(p) === 'over' && pl.length === 1 && pl[0].reason === 'found', pl);
@@ -315,11 +327,13 @@ const newPane = async () => {
     placement(p) === 'under' && pl.length === 1 && pl[0].reason === 'aside-end', pl);
   logs.length = 0;
   state(p, 'idle');
+  advance(1000); // D9: a reading changes under <-> over at most once a second
   await f.to('question-cancelled');
   pl = places();
   check('1.9 question cancelled, bar back: over, reason found', placement(p) === 'over' && pl.length === 1 && pl[0].reason === 'found', pl);
 
   logs.length = 0;
+  advance(1000); // D9: a reading changes under <-> over at most once a second
   await f.to('history');
   advance(500);
   pl = places();
@@ -327,6 +341,7 @@ const newPane = async () => {
   await f.to('slash');
   check('1.13 `/` in Claude\'s bar: under', placement(p) === 'under', places());
   logs.length = 0;
+  advance(1000); // D9: a reading changes under <-> over at most once a second
   await f.to('end');
   check('1.14 end (cleared): over', placement(p) === 'over' && places().length === 1, places());
 
@@ -741,6 +756,108 @@ const newPane = async () => {
   check('7.3 ...then text typed after them: under after the 400 ms wait, reason holds-text',
     placement(p) === 'under' && pl.length === 1 && pl[0].reason === 'holds-text', pl);
   p.dispose();
+}
+
+// ── 8. fixes after review: no loop (D9), a draft refits once, the overlay's colour ──
+{
+  const RULE = '─'.repeat(fixture.cols);
+  const FOUND = `\x1b[2J\x1b[1;1H\r\n${RULE}\r\n❯ \r\n${RULE}\x1b[3;3H`; // an empty bar, the cursor on it
+  const LOST = '\x1b[2J\x1b[1;1Hsome output, no bar'; // the cursor on a plain row
+  const feed = async (p, data) => { await write(term(p), data); await frames(); };
+
+  // 8.1 A bar missing right after the placement's own refit: Claude's redraw
+  // after the resize. Readings in the 500 ms after it don't count toward the 400 ms wait.
+  {
+    const p = await newPane();
+    await feed(p, FOUND);
+    check('8.1 (setup) bar found: over, refitted once', placement(p) === 'over' && resizes.length === 1, { pl: places(), resizes });
+    logs.length = 0;
+    await feed(p, LOST);
+    advance(450);
+    check('8.1 under->over, then the bar missing for 450 ms right after the refit: no flip back',
+      placement(p) === 'over' && places().length === 0, places());
+    advance(500); // 950 ms after the refit: the wait (from 500 ms on) is up, but a change waits for its second
+    check('8.1 ...and at 950 ms still over: a change due sooner waits for the second to pass',
+      placement(p) === 'over' && places().length === 0, places());
+    advance(100);
+    const pl = places();
+    check('8.1 ...decided again at 1 s: the bar is still missing, so under, reason lost',
+      placement(p) === 'under' && pl.length === 1 && pl[0].reason === 'lost', pl);
+    p.dispose();
+  }
+
+  // 8.2 Under -> over also waits: found again 100 ms after going under.
+  {
+    const p = await newPane();
+    await feed(p, FOUND);
+    await settleSwitch(p); // a second on, the last match fresh
+    await feed(p, LOST);
+    advance(410);
+    check('8.2 (setup) over -> under after the refit window and the second', placement(p) === 'under', places());
+    logs.length = 0;
+    await feed(p, FOUND);
+    check('8.2 the bar found again 0 ms after going under: still under (a change waits for the second)',
+      placement(p) === 'under' && places().length === 0, places());
+    advance(960); // 970 ms after going under
+    check('8.2 ...still under at 970 ms', placement(p) === 'under', places());
+    advance(40);
+    const pl = places();
+    check('8.2 ...over at 1 s from a fresh reading, no further write needed, reason found',
+      placement(p) === 'over' && pl.length === 1 && pl[0].reason === 'found', pl);
+    p.dispose();
+  }
+
+  // 8.3 Five lost/found cycles in 2 s: at most two changes.
+  {
+    const p = await newPane();
+    await feed(p, FOUND);
+    logs.length = 0;
+    for (let i = 0; i < 5; i++) {
+      await feed(p, LOST);
+      advance(410);
+      await feed(p, FOUND);
+    }
+    check('8.3 five forced lost/found cycles in 2 s: at most two changes', places().length <= 2, places());
+    p.dispose();
+  }
+
+  // 8.4 Going under with a long draft: the box's height cap is applied before
+  // the refit, so the terminal refits once (the resize observer would refit
+  // again for a box that changed height after it).
+  {
+    const p = await newPane();
+    await feed(p, FOUND);
+    const order = [];
+    const refresh = p.editorInput.refreshSize.bind(p.editorInput);
+    p.editorInput.refreshSize = () => { order.push('refresh'); refresh(); };
+    const fit = view(p).fit;
+    view(p).fit = () => { order.push('fit'); fit(); };
+    p.editorInput.setValue(Array.from({ length: 12 }, (_, i) => `draft line ${i + 1}`).join('\n'));
+    order.length = 0;
+    p.setComposeOverBar(false);
+    check('8.4 over -> under with a long draft: refreshSize before the one refit',
+      placement(p) === 'under' && order.filter((x) => x === 'fit').length === 1 && order.indexOf('refresh') !== -1
+      && order.indexOf('refresh') < order.indexOf('fit'), order);
+    p.dispose();
+  }
+
+  // 8.5 The overlay's colour follows a theme or OS light/dark change at once.
+  {
+    const p = await newPane();
+    await feed(p, FOUND);
+    const bg = () => p.editorContainer.style.getPropertyValue('--term-bg');
+    p.terminalContainer.style.setProperty('--term-bg', '#123456');
+    view(p).__emit('onFrameColor');
+    check('8.5 the terminal frame colour changes while over: the box has the new colour at once', bg() === '#123456', bg());
+    p.terminalContainer.style.setProperty('--term-bg', '#fafafa');
+    view(p).__emit('onFrameColor');
+    check('8.5 ...and again', bg() === '#fafafa', bg());
+    p.setComposeOverBar(false);
+    p.terminalContainer.style.setProperty('--term-bg', '#000000');
+    view(p).__emit('onFrameColor');
+    check('8.5 under: the box takes no overlay colour', bg() === '', bg());
+    p.dispose();
+  }
 }
 
 finished = true;

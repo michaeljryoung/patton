@@ -341,6 +341,12 @@ async function pageRun(SCALES) {
     else check(`${label}: contents need more than three rows, so the box grows upward to fit them (D12)`, Math.abs(b.height - need) <= 1 && b.top < wantTop, d);
     check(`${label}: left and right on the grid's edges (1 px)`,
       Math.abs(b.left - g.screen.left) <= 1 && Math.abs(b.right - g.screen.right) <= 1, d);
+    // D10: the overlay's sizes and visibility change at once, no 0.2 s transition.
+    const instant = ['min-height', 'max-height', 'opacity'].every((prop) =>
+      !cs.transitionProperty.split(',').some((t) => ['all', prop].includes(t.trim()))
+      || cs.transitionDuration.split(',').every((t) => parseFloat(t) === 0));
+    check(`${label}: min-height, max-height and opacity change at once (no transition)`, instant,
+      { property: cs.transitionProperty, duration: cs.transitionDuration });
     return { g, b, d, fits, need };
   }
 
@@ -471,6 +477,41 @@ async function pageRun(SCALES) {
     okayInBox(`${at} steps/idle`);
     measures.push(`${at} idle: cell ${r1(idle.g.cellH)} px; box ${r1(idle.b.height)} px = ${r1(idle.b.height / idle.g.cellH)} rows (contents need ${r1(idle.need)} px, ${idle.fits ? 'fit' : 'do not fit'} in 3 rows); box top ${r1(idle.b.top)} vs row R-1 ${r1(idle.g.top(bar.R - 1))}, bottom ${r1(idle.b.bottom)} vs ${r1(idle.g.top(bar.R + 2))}; pane ${r1(pane.element.getBoundingClientRect().height)} px, terminal ${term().cols}x${term().rows}`);
 
+    // Review fixes. (a) The overlay's colour follows a theme change at once.
+    const frameBg = () => {
+      const probe = document.createElement('div');
+      probe.style.background = 'var(--term-bg)';
+      q('.terminal-container').appendChild(probe);
+      const c = getComputedStyle(probe).backgroundColor;
+      probe.remove();
+      return c;
+    };
+    pane.setTerminalTheme({ background: '#123456', foreground: '#ffffff' });
+    check(`${at} theme changed while over: the box's background is the new one at once`,
+      getComputedStyle(box()).backgroundColor === 'rgb(18, 52, 86)', { box: getComputedStyle(box()).backgroundColor });
+    pane.setTerminalTheme(null);
+    check(`${at} theme reset: the box follows the terminal's frame colour again`,
+      getComputedStyle(box()).backgroundColor === frameBg(), { box: getComputedStyle(box()).backgroundColor, frame: frameBg() });
+    // (b) A reading that finds the bar where it was measures nothing.
+    {
+      const screen = q('.xterm-screen');
+      const orig = screen.getBoundingClientRect.bind(screen);
+      let measured = 0;
+      screen.getBoundingClientRect = () => { measured++; return orig(); };
+      for (let i = 0; i < 5; i++) { await write('\x1b[0m'); await frame(); }
+      delete screen.getBoundingClientRect;
+      check(`${at} five readings of the unchanged empty bar lay the overlay out no more`, measured === 0, { measured });
+    }
+    // (c) Switching the renderer lays the overlay out again.
+    {
+      const want = parseFloat(box().style.bottom);
+      box().style.bottom = `${want + 37}px`;
+      pane.setRenderer('dom');
+      await settle(120);
+      check(`${at} renderer switched: the overlay laid out again`, Math.abs(parseFloat(box().style.bottom) - want) <= 0.5,
+        { bottom: box().style.bottom, want });
+    }
+
     // 2. A long draft grows the box upward, capped at a third of the pane.
     const paneH = pane.element.getBoundingClientRect().height;
     await typeDraft(Array.from({ length: 7 }, (_, i) => `draft line ${i + 1}`).join('\n'));
@@ -503,11 +544,11 @@ async function pageRun(SCALES) {
     // 4. under when Claude's bar holds text or isn't found; over again once cleared.
     for (const [mark, clearMark] of [['typed', 'cleared'], ['wrapped', null], ['multiline', 'cleared2']]) {
       await f.to(mark);
-      await settle(650);
+      await settle(1150); // the 400 ms wait, then D9's once-a-second rule
       underGeometry(`${at} steps/${mark} (after the 400 ms wait)`);
       if (clearMark) {
         await f.to(clearMark);
-        await settle(450);
+        await settle(1150);
         bar = findBar();
         if (bar && bar.empty) overGeometry(`${at} steps/${clearMark}: over again`, bar.R);
         else check(`${at} steps/${clearMark}: Claude's bar found on screen`, false, bar);
@@ -577,6 +618,13 @@ async function pageRun(SCALES) {
     cs = getComputedStyle(box());
     if (!typeHere) check(`${at} menu aside: "Type here" shown`, false, { found: Boolean(pane.element.querySelector('.compose-type-here')), opacity: cs.opacity, placement: place() });
     else {
+      const rgb = (css) => (css.match(/[\d.]+/g) || []).slice(0, 3).map(Number);
+      const lum = (c) => { const [r, g, b] = c.map((v) => { const x = v / 255; return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4; }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+      const hereBorder = rgb(getComputedStyle(typeHere).borderTopColor);
+      const ground = rgb(getComputedStyle(typeHere).backgroundColor);
+      const [hi, lo] = [lum(hereBorder), lum(ground)].sort((a, b) => b - a);
+      const ratio = (hi + 0.05) / (lo + 0.05);
+      check(`${at} "Type here" border has 3:1 against its ground (a control's border, main.css)`, ratio >= 3, { border: hereBorder, ground, ratio: r1(ratio) });
       const c = noteInCorner(`${at} type here`, typeHere);
       check(`${at} menu aside: "Type here" shown inside the pane's bottom-right corner, the box hidden`, c.ok && cs.opacity === '0', { ...c.d, opacity: cs.opacity });
     }

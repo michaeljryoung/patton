@@ -35,6 +35,16 @@ export const COMPOSE_BAR_LOST_MS = 400;
  *  and the box must not jump under the terminal and back (D9 as amended). */
 export const COMPOSE_OWN_TYPING_MS = 1500;
 
+/** D9, no loop: a change between `under` and the overlays refits the terminal
+ *  and Claude redraws; readings in this long after Patton's own refit never
+ *  count toward the lost wait. */
+export const COMPOSE_REFIT_SETTLE_MS = 500;
+
+/** D9, no loop: a pane changes between `under` and the overlays on a reading
+ *  at most once in this long (a change due sooner waits, then is decided
+ *  again from a fresh reading). */
+export const COMPOSE_SWITCH_MIN_MS = 1000;
+
 /** `[COMPOSE] bar not found` at most this often per pane. */
 export const COMPOSE_BAR_NOT_FOUND_LOG_MS = 60_000;
 

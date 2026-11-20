@@ -105,6 +105,9 @@ const dom = new JSDOM('<!doctype html><body><div id="content"></div></body>', {
 const w = dom.window;
 w.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
 let ptySeq = 0;
+let reads = 0;
+let readGate = null;
+const IMAGE = { dataUrl: 'data:image/png;base64,AAAA', width: 800, height: 600 };
 w.patton = stubWith({
   pty: stubWith({
     create: () => Promise.resolve(++ptySeq),
@@ -116,6 +119,8 @@ w.patton = stubWith({
     onExit: () => () => {},
   }),
   history: stubWith({ get: () => Promise.resolve([]), add: () => Promise.resolve(), clear: () => Promise.resolve() }),
+  // Section 7: the clipboard holds an image; a test may hold the read back.
+  clipboard: stubWith({ readImage: () => { reads++; return readGate ?? Promise.resolve(IMAGE); } }),
   log: { send: (_lvl, args) => logs.push(args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ')) },
 });
 w.eval(bundle.outputFiles[0].text);
@@ -354,6 +359,73 @@ const submit = async (p, origin) => {
   check('6.9 ...and its timer still clears it', chips(off) === 0);
   off.dispose();
   PA.Pane.PASTE_CHIP_TTL_MS = ttl;
+}
+
+// ── 6b. D14: no eviction while the box is engaged ──
+{
+  const sized = (p, n) => { for (let i = 0; i < n; i++) p.addPasteChip('data:image/png;base64,AAAA', 100 + i, 100); };
+  const p = await makePane();
+  p.setComposeFirst(true, null);
+  report(p, 'idle');
+  sized(p, 8);
+  const more = p.editorContainer.querySelector('.compose-images-more');
+  check('6.10 eight images with the box engaged: none evicted, "+5" past the three shown',
+    chips(p) === 8 && more?.textContent === '+5', { chips: chips(p), more: more?.textContent });
+  p.dispose();
+  const off = await makePane();
+  report(off, 'idle');
+  sized(off, 8);
+  // A control: the strip keeps the newest six, as before.
+  check('6.10 the box off: the oldest are still evicted past six (control)', chips(off) === 6, chips(off));
+  off.dispose();
+}
+
+// ── 7. Image paste while Claude asks ──
+{
+  const announced = () => [...w.document.body.children].filter((el) => el.getAttribute('aria-live') === 'polite')
+    .map((el) => el.textContent).join('|');
+  const ctrlV = () => writes.filter(([, d]) => d === '\x16').length;
+  const p = await makePane();
+  p.setComposeFirst(true, null);
+  report(p, 'idle');
+  w.document.body.appendChild(p.element);
+  report(p, 'blocked');
+  reads = 0; writes.length = 0;
+  await p.pasteImage('paste');
+  check('7.1 Claude asks: a paste writes no Ctrl+V and makes no chip', ctrlV() === 0 && chips(p) === 0 && reads === 0, { ctrlV: ctrlV(), chips: chips(p), reads });
+  check('7.1 ...and says why in the Send slot, its live region reading it',
+    p.editorContainer.querySelector('.editor-aside-label')?.textContent === 'Answer above first'
+    && p.editorContainer.querySelector('[aria-live]')?.textContent === 'Answer above first',
+    { label: p.editorContainer.querySelector('.editor-aside-label')?.textContent });
+  await p.pasteImage('compose');
+  await p.pasteImage('menu');
+  check('7.2 the box\'s paste and the menu\'s too', ctrlV() === 0 && chips(p) === 0);
+  await p.pasteImage('ctrl-v-key');
+  check('7.3 a Ctrl+V typed in the terminal (already at the pty): no chip either', chips(p) === 0 && ctrlV() === 0);
+  // It starts to ask while the clipboard is being read.
+  report(p, 'idle');
+  readGate = new Promise((r) => { w.__release = () => r(IMAGE); });
+  const pending = p.pasteImage('paste');
+  report(p, 'blocked');
+  w.__release();
+  await pending;
+  readGate = null;
+  check('7.4 Claude began to ask while the image was being read: nothing written, no chip', ctrlV() === 0 && chips(p) === 0, { ctrlV: ctrlV(), chips: chips(p) });
+  // Answered: the same paste goes through.
+  report(p, 'idle');
+  await p.pasteImage('paste');
+  check('7.5 not asking (control): Ctrl+V written and the chip made', ctrlV() === 1 && chips(p) === 1, { ctrlV: ctrlV(), chips: chips(p) });
+  p.dispose();
+
+  // No box engaged: the announcer says it.
+  const q = await makePane();
+  report(q, 'idle');
+  report(q, 'blocked');
+  writes.length = 0;
+  await q.pasteImage('paste');
+  await wait(60); // the announcer sets its text on the next frame
+  check('7.6 box not engaged: refused, and announced', ctrlV() === 0 && chips(q) === 0 && /not pasted/.test(announced()), { announced: announced() });
+  q.dispose();
 }
 
 finished = true;
