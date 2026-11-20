@@ -12,7 +12,8 @@
  *   rule Pause all's `menu` fact uses: a picker such as /model may be open.
  * The box is dimmed, its draft kept, and the keyboard goes to the terminal
  * (for 'blocked', only once the box has had no keydown for
- * COMPOSE_TYPING_GRACE_MS, so a word being typed is never cut in two).
+ * COMPOSE_TYPING_GRACE_MS, so a word being typed is never cut in two, and
+ * never later than COMPOSE_TYPING_GRACE_MAX_MS after the aside began).
  */
 import type { BlockedKind, ProgramRecord } from './program-status';
 
@@ -24,6 +25,10 @@ export const COMPOSE_ASIDE_HOLD_MS = 250;
 /** While the box has had a keydown this recently, a 'blocked' aside dims it
  *  at once but leaves the keyboard in it until it has been quiet this long. */
 export const COMPOSE_TYPING_GRACE_MS = 1000;
+
+/** However steady his typing, a 'blocked' aside moves the keyboard at most
+ *  this long after it began (keys hammered into the dimmed box never keep it). */
+export const COMPOSE_TYPING_GRACE_MAX_MS = 3000;
 
 /** The full words while the box is aside: the label's title, and what the
  *  live region announces. */
@@ -38,17 +43,22 @@ export const COMPOSE_ASIDE_LABEL: Readonly<Record<ComposeAsideReason, string>> =
   menu: 'Menu above',
 };
 
-/** Enter (or Send) in a box aside for 'blocked' sends nothing: the label
+/** Enter (or Send) in a box while Claude asks sends nothing, from the first
+ *  report on (the 250 ms hold or not): the label
  *  reads this for COMPOSE_SEND_HELD_MS and the draft stays. */
 export const COMPOSE_SEND_HELD_LABEL = 'Answer above first';
 export const COMPOSE_SEND_HELD_MS = 1500;
 
 /** How long a 'blocked' aside waits before moving the keyboard to the
  *  terminal: 0 unless the box has it and had a keydown within
- *  COMPOSE_TYPING_GRACE_MS, else what is left of that grace. */
-export function composeKeyboardWaitMs(boxHasKeyboard: boolean, nowMs: number, lastBoxKeydownMs: number): number {
+ *  COMPOSE_TYPING_GRACE_MS, else what is left of that grace, never past
+ *  COMPOSE_TYPING_GRACE_MAX_MS from `asideAtMs` (when the aside began). */
+export function composeKeyboardWaitMs(
+  boxHasKeyboard: boolean, nowMs: number, lastBoxKeydownMs: number, asideAtMs: number,
+): number {
   if (!boxHasKeyboard || lastBoxKeydownMs <= 0) return 0;
-  const left = lastBoxKeydownMs + COMPOSE_TYPING_GRACE_MS - nowMs;
+  const until = Math.min(lastBoxKeydownMs + COMPOSE_TYPING_GRACE_MS, asideAtMs + COMPOSE_TYPING_GRACE_MAX_MS);
+  const left = until - nowMs;
   return left > 0 ? left : 0;
 }
 

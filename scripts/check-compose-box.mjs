@@ -760,8 +760,8 @@ const insertTextCommand = (cmd, _ui, val) => {
   sendBtn(p).click();
   keyIn(p, 'Enter', { metaKey: true });
   await flush(); advance(20); await flush();
-  check('Send and ⌘Enter are held too: nothing written, draft kept, two more held lines',
-    writes.length === 0 && p.editorInput.getValue() === 'my reply' && ofTag('send held').length === 3, { writes, held: ofTag('send held').length });
+  check('Send and ⌘Enter are held too: nothing written, draft kept, one more held line (one a second at most)',
+    writes.length === 0 && p.editorInput.getValue() === 'my reply' && ofTag('send held').length === 2, { writes, held: ofTag('send held') });
   state(p, 'working');
   keyIn(p, 'Enter');
   await flush(); advance(20); await flush();
@@ -873,6 +873,219 @@ const insertTextCommand = (cmd, _ui, val) => {
   clip.writeText = realWrite;
   delete doc.execCommand;
   w.__selection = '';
+  drop(p);
+}
+
+// ── 8. Second review fixes (S56) ──
+const ptyWrites = () => writes.filter(([, d]) => typeof d === 'string');
+{
+  // 8.1 Enter 100 ms after a permission prompt appears, before the 250 ms
+  // hold: nothing is sent (it would approve the default option).
+  const p = await engagedPane();
+  boxEl(p).focus();
+  p.editorInput.setValue('please run the tests');
+  state(p, 'blocked', 'permission');
+  advance(100);
+  writes.length = 0;
+  keyIn(p, 'Enter');
+  await flush(); advance(20); await flush();
+  check('Enter 100 ms into a permission prompt (not yet aside) writes nothing', writes.length === 0, writes);
+  check('...keeps the draft', p.editorInput.getValue() === 'please run the tests', p.editorInput.getValue());
+  check('...and flashes "Answer above first" in Send\'s slot before the box is dimmed',
+    !isAside(p) && labelText(p) === 'Answer above first' && liveEl(p).textContent === 'Answer above first',
+    { aside: isAside(p), label: labelText(p), live: liveEl(p).textContent });
+  check('...logged as [COMPOSE] send held', ofTag('send held').length === 1, ofTag('send held'));
+  drop(p);
+}
+{
+  const p = await engagedPane();
+  boxEl(p).focus();
+  p.editorInput.setValue('a draft');
+  state(p, 'blocked', 'question');
+  advance(50);
+  writes.length = 0;
+  sendBtn(p).click();
+  keyIn(p, 'Enter', { metaKey: true });
+  await flush(); advance(20); await flush();
+  check('Send and ⌘Enter 50 ms into a question write nothing, the draft kept',
+    writes.length === 0 && p.editorInput.getValue() === 'a draft', writes);
+  state(p, 'working');
+  advance(1600);
+  check('the question ends inside the hold: after the flash the slot shows Send again, the live region empty',
+    labelText(p) === null && liveEl(p).textContent === '', { label: labelText(p), live: liveEl(p).textContent });
+  keyIn(p, 'Enter');
+  await flush(); advance(20); await flush();
+  check('...and Enter sends the draft', writes.some(([, d]) => String(d).includes('a draft')), writes);
+  drop(p);
+}
+{
+  // A background task's question holds sends the same way.
+  const p = await engagedPane();
+  boxEl(p).focus();
+  p.editorInput.setValue('to the task');
+  childBlocked(p, 't1', 'permission');
+  advance(100);
+  writes.length = 0;
+  keyIn(p, 'Enter');
+  await flush(); advance(20); await flush();
+  check('Enter 100 ms into a background task\'s permission prompt writes nothing', writes.length === 0, writes);
+  drop(p);
+}
+{
+  // 8.2 The typing grace is capped at 3000 ms from the aside's start.
+  const p = await engagedPane();
+  boxEl(p).focus();
+  p.editorInput.setValue('draft');
+  keyIn(p, 'x');
+  state(p, 'blocked', 'permission');
+  advance(250); // the hold completes: aside, keyboard move deferred
+  const t0 = now;
+  let movedAt = null;
+  for (let t = 0; t < 10000 && movedAt === null; t += 100) {
+    if (boxHasKeyboard(p)) keyIn(p, '1');
+    advance(100);
+    if (!boxHasKeyboard(p)) movedAt = now - t0;
+  }
+  check('a key every 100 ms into the dimmed box: the keyboard still moves, 3000 ms after the aside began',
+    movedAt === 3000 && termHasKeyboard(p) && isAside(p), { movedAt });
+  const k = ofTag('aside keyboard');
+  check('...logged once as [COMPOSE] aside keyboard {afterMs: 3000}', k.length === 1 && k[0].afterMs === 3000, k);
+  drop(p);
+}
+{
+  // 8.3 A click into the box during the grace keeps the keyboard there.
+  const p = await engagedPane();
+  boxEl(p).focus();
+  p.editorInput.setValue('draft');
+  keyIn(p, 'x');
+  state(p, 'blocked', 'permission');
+  advance(300); // aside, the move pending
+  view(p).focus(); // he clicked the terminal
+  advance(100);
+  mouseDown(boxEl(p));
+  boxEl(p).focus(); // then clicked the dimmed box again, no typing
+  advance(3000);
+  check('a click into the box while the keyboard move is pending: the box keeps the keyboard, still dimmed',
+    boxHasKeyboard(p) && isAside(p), { box: boxHasKeyboard(p), aside: isAside(p) });
+  check('...logged as [COMPOSE] aside keyboard kept {reason: click}, no move logged',
+    ofTag('aside keyboard kept').length === 1 && ofTag('aside keyboard kept')[0].reason === 'click'
+      && ofTag('aside keyboard').length === 0, logs.map((l) => l.tag));
+  writes.length = 0;
+  keyIn(p, 'Enter');
+  await flush(); advance(20); await flush();
+  check('...and Enter there is still held', writes.length === 0 && p.editorInput.getValue() === 'draft', writes);
+  drop(p);
+}
+{
+  // 8.4 While Claude asks, the empty box forwards nothing to Claude.
+  const forwarded = async (p, keys) => {
+    writes.length = 0;
+    for (const [key, init] of keys) keyIn(p, key, init);
+    await flush(); advance(20); await flush();
+    return ptyWrites().map(([, d]) => d);
+  };
+  const keys = [['Enter'], ['ArrowDown'], ['ArrowUp'], ['Tab'], ['Tab', { shiftKey: true }], ['PageDown'], ['Home']];
+  const p = await engagedPane();
+  boxEl(p).focus();
+  state(p, 'blocked', 'permission');
+  advance(100);
+  const early = await forwarded(p, keys);
+  check('empty box, 100 ms into a permission prompt: Enter, arrows, Tab, Shift+Tab, PageDown, Home write nothing',
+    early.length === 0, early);
+  advance(300);
+  boxEl(p).focus(); // aside; he clicked back into the box
+  const late = await forwarded(p, keys);
+  check('...nor once the box is aside', late.length === 0, late);
+  keyIn(p, 'Escape');
+  await flush(); advance(20); await flush();
+  check('...Esc in the empty box sends no ESC to Claude (it hands the keyboard to the terminal)',
+    ptyWrites().length === 0 && termHasKeyboard(p), ptyWrites());
+  check('...the keys stayed in the box: nothing logged as a pty hand-off',
+    !ofTag('handoff').some((d) => d.route === 'pty'), ofTag('handoff'));
+  state(p, 'working');
+  boxEl(p).focus();
+  const after = await forwarded(p, [['ArrowDown']]);
+  check('once answered, an empty box forwards ArrowDown again', after.length === 1 && after[0] === '\x1b[B', after);
+  drop(p);
+}
+{
+  // A menu aside keeps forwarding (D3).
+  const p = await engagedPane();
+  await sendFromBox(p, '/model');
+  check('(setup) a `/model` from the box: aside for a menu', isAside(p) && labelText(p) === 'Menu above');
+  boxEl(p).focus();
+  writes.length = 0;
+  keyIn(p, 'ArrowDown');
+  keyIn(p, 'Enter');
+  await flush();
+  const d = ptyWrites().map(([, x]) => x);
+  check('a menu aside still forwards ArrowDown and Enter from the empty box', d.includes('\x1b[B') && d.includes('\r'), d);
+  drop(p);
+}
+{
+  // 8.5 The deferred move checks, when it fires, that the pane may take the keyboard.
+  const p = await engagedPane();
+  boxEl(p).focus();
+  p.editorInput.setValue('typing');
+  keyIn(p);
+  state(p, 'blocked', 'question');
+  advance(300);
+  p.element.style.display = 'none';
+  const before = view(p).__focusCalls;
+  advance(3000);
+  check('pane hidden during the deferral: the terminal is not focused when it fires',
+    view(p).__focusCalls === before && ofTag('aside keyboard').length === 0, { calls: view(p).__focusCalls - before });
+  check('...logged as [COMPOSE] aside keyboard dropped {onScreen: false}',
+    ofTag('aside keyboard dropped').some((d) => d.onScreen === false), ofTag('aside keyboard dropped'));
+  p.element.style.display = '';
+  drop(p);
+}
+{
+  const p = await engagedPane();
+  boxEl(p).focus();
+  p.editorInput.setValue('typing');
+  keyIn(p);
+  state(p, 'blocked', 'question');
+  advance(300);
+  p.setFocused(false); // another pane of the tab became the focused one
+  boxEl(p).focus();
+  const before = view(p).__focusCalls;
+  advance(3000);
+  check('pane no longer its tab\'s focused pane: the deferred move does nothing',
+    view(p).__focusCalls === before && ofTag('aside keyboard').length === 0, { calls: view(p).__focusCalls - before });
+  drop(p);
+}
+{
+  // 8.6 A held Enter's key repeat logs once a second, with a count.
+  const p = await engagedPane();
+  state(p, 'blocked', 'question');
+  advance(300);
+  boxEl(p).focus();
+  p.editorInput.setValue('x');
+  for (let i = 0; i < 30; i++) { keyIn(p, 'Enter', { repeat: true }); advance(33); }
+  await flush();
+  const h1 = ofTag('send held');
+  check('30 repeated Enters in 1 s: one [COMPOSE] send held line', h1.length === 1 && h1[0].held === 1, h1);
+  advance(100);
+  keyIn(p, 'Enter');
+  const h2 = ofTag('send held');
+  check('...the next line, a second on, counts the 30 held since', h2.length === 2 && h2[1].held === 30, h2);
+  drop(p);
+}
+{
+  // 8.7 After the flash, the live region reads the aside words again.
+  const p = await engagedPane();
+  state(p, 'blocked', 'question');
+  advance(300);
+  boxEl(p).focus();
+  p.editorInput.setValue('x');
+  keyIn(p, 'Enter');
+  check('(setup) the flash: label and live region read "Answer above first"',
+    labelText(p) === 'Answer above first' && liveEl(p).textContent === 'Answer above first');
+  advance(1600);
+  check('after the flash the live region reads the question words again, the label "Answer above"',
+    liveEl(p).textContent === ASIDE_BLOCKED && labelText(p) === 'Answer above',
+    { label: labelText(p), live: liveEl(p).textContent });
   drop(p);
 }
 

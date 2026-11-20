@@ -286,6 +286,11 @@ export class Pane {
   // the terminal once a 'blocked' aside finds him mid-typing (D2).
   private composeLastKeydownMs = 0;
   private composeKeyboardTimer: ReturnType<typeof setTimeout> | null = null;
+  // Sends held while Claude asks: `[COMPOSE] send held` at most once a
+  // second, carrying how many were held since the last line (key repeat).
+  private composeHeldSince = 0;
+  private composeHeldLoggedMs = 0;
+  private static readonly COMPOSE_HELD_LOG_MS = 1000;
   private static readonly COMPOSE_FIRST_PLACEHOLDER =
     'Message Claude · Enter sends · Shift+Enter newline · Esc interrupts';
   private static readonly COMPOSE_FIRST_MAX_FRACTION = 0.4; // of the pane's height
@@ -1237,6 +1242,13 @@ export class Pane {
     this.terminalContainer.addEventListener('mousedown', terminalMouseDown, true);
     this.disposables.push(() => this.terminalContainer.removeEventListener('mousedown', terminalMouseDown, true));
     const editorMouseDown = () => {
+      // D2: a click in the box while a question's keyboard move is pending
+      // means he chose the box: the move is dropped for this aside spell (the
+      // box stays dimmed and sends stay held while Claude asks).
+      if (this.composeAside === 'blocked' && this.composeKeyboardTimer !== null) {
+        this.clearComposeKeyboardTimer();
+        rlog('info', '[COMPOSE] aside keyboard kept', { pane: this.id, reason: 'click' });
+      }
       // D3: a click in the box ends a menu aside and takes the keyboard.
       if (this.composeAside === 'menu') {
         this.composeMenuPending = false;
@@ -1691,10 +1703,12 @@ export class Pane {
   /** Send a line from the box. False when it was held back (the draft stays). */
   private handleSubmit(command: string): boolean {
     // Claude is asking something above: a line typed now would land in the
-    // question's own input, so nothing is sent until it is answered.
-    if (this.composeAside === 'blocked') {
+    // question's own input (and its Enter pick the default option), so
+    // nothing is sent until it is answered. From the first report, not only
+    // once the box has stepped aside after the 250 ms hold.
+    if (this.composeAside === 'blocked' || (this.composeFirstEngaged && this.claudeAsksNow())) {
       this.editorInput.flashAsideLabel(COMPOSE_SEND_HELD_LABEL, COMPOSE_SEND_HELD_MS);
-      rlog('info', '[COMPOSE] send held', { pane: this.id });
+      this.logComposeSendHeld();
       return false;
     }
     if (this.ptyId === null) return true;
@@ -1708,6 +1722,25 @@ export class Pane {
     }
     this.historyManager.resetCursor();
     return true;
+  }
+
+  /** `[COMPOSE] send held {pane, held}`, at most once per COMPOSE_HELD_LOG_MS
+   *  (a held Enter repeats ~30 times a second); `held` counts the sends held
+   *  since the last line, this one included. */
+  private logComposeSendHeld(): void {
+    this.composeHeldSince++;
+    const now = Date.now();
+    if (now - this.composeHeldLoggedMs < Pane.COMPOSE_HELD_LOG_MS) return;
+    rlog('info', '[COMPOSE] send held', { pane: this.id, held: this.composeHeldSince });
+    this.composeHeldLoggedMs = now;
+    this.composeHeldSince = 0;
+  }
+
+  /** Claude Code waits on him right now (7501: the root or a background task
+   *  `blocked`), from the first report, without the box's 250 ms hold. */
+  private claudeAsksNow(): boolean {
+    if (!this.statusReporting) return false;
+    return composeBlockedFact(this.programStatus.root, this.programStatus.children()).blocked;
   }
 
   /** Delay between Ctrl+S (stash) and the word, so Claude Code has emptied
@@ -1808,6 +1841,8 @@ export class Pane {
 
   private handleTab(): void {
     if (this.ptyId === null) return;
+    // D2: while Claude asks, the box's Tab stays in the box (forwardEmptyBoxKey).
+    if (this.composeFirstEngaged && this.claudeAsksNow()) return;
     window.patton.pty.write(this.ptyId, '\t');
   }
 
@@ -2079,7 +2114,7 @@ export class Pane {
     // Mid-typing, a question dims the box at once but leaves the keyboard in
     // it until he pauses (a menu aside follows his own Enter, so never waits).
     const waitMs = reason === 'blocked'
-      ? composeKeyboardWaitMs(boxHadKeyboard, Date.now(), this.composeLastKeydownMs) : 0;
+      ? composeKeyboardWaitMs(boxHadKeyboard, Date.now(), this.composeLastKeydownMs, this.composeAsideAtMs) : 0;
     rlog('info', '[COMPOSE] aside', {
       pane: this.id, reason, ...(reason === 'blocked' ? { kind } : {}), ...(waitMs > 0 ? { deferredMs: waitMs } : {}),
     });
@@ -2093,14 +2128,22 @@ export class Pane {
 
   /** The deferred move of a 'blocked' aside: once the box has been quiet for
    *  COMPOSE_TYPING_GRACE_MS, the keyboard goes to the terminal; a keydown in
-   *  the meantime pushes it back. Only while still aside with the box holding
-   *  the keyboard. */
+   *  the meantime pushes it back, up to COMPOSE_TYPING_GRACE_MAX_MS from the
+   *  aside's start. Only while still aside with the box holding the keyboard,
+   *  in a pane on screen that may take it (its tab's focused pane, no
+   *  overlay); otherwise the move is dropped. */
   private armComposeKeyboardTimer(ms: number): void {
     this.clearComposeKeyboardTimer();
     this.composeKeyboardTimer = setTimeout(() => {
       this.composeKeyboardTimer = null;
       if (this.disposed || this.composeAside !== 'blocked' || !this.editorInput.hasFocus()) return;
-      const left = composeKeyboardWaitMs(true, Date.now(), this.composeLastKeydownMs);
+      if (!this.isOnScreen() || !this.canTakeKeyboard()) {
+        rlog('info', '[COMPOSE] aside keyboard dropped', {
+          pane: this.id, onScreen: this.isOnScreen(), focused: this._isFocused,
+        });
+        return;
+      }
+      const left = composeKeyboardWaitMs(true, Date.now(), this.composeLastKeydownMs, this.composeAsideAtMs);
       if (left > 0) {
         this.armComposeKeyboardTimer(left);
         return;
@@ -2108,6 +2151,16 @@ export class Pane {
       rlog('info', '[COMPOSE] aside keyboard', { pane: this.id, afterMs: Date.now() - this.composeAsideAtMs });
       this.terminalView.focus();
     }, ms);
+  }
+
+  /** The pane is in the document and neither it nor an ancestor (its tab)
+   *  is display:none. */
+  private isOnScreen(): boolean {
+    if (!this.element.isConnected) return false;
+    for (let el: Element | null = this.element; el; el = el.parentElement) {
+      if (getComputedStyle(el).display === 'none') return false;
+    }
+    return true;
   }
 
   private clearComposeKeyboardTimer(): void {
@@ -2222,6 +2275,10 @@ export class Pane {
    */
   private forwardEmptyBoxKey(e: KeyboardEvent): boolean {
     if (!this.composeFirstEngaged || this.ptyId === null) return false;
+    // D2: while Claude asks, nothing goes from the box to Claude (an Enter
+    // would pick the default option, Esc cancel the question): he answers in
+    // the terminal, and the keys stay in the box. A `menu` aside forwards.
+    if (this.claudeAsksNow()) return false;
     if (e.metaKey || e.ctrlKey || e.altKey) return false;
     const seq = this.composeKeySequence(e);
     if (seq === null) return false;

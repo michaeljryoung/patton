@@ -335,26 +335,31 @@ export class EditorInput {
     this.liveRegion.textContent = aside?.title ?? '';
   }
 
-  /** While aside: the label reads `text` for `ms`, then its own words again. */
+  /** The label reads `text` for `ms` in Send's slot (also before the box is
+   *  aside, Send's place taken for the flash only), then the slot and the
+   *  live region show the current aside words again, or Send. */
   flashAsideLabel(text: string, ms: number): void {
-    if (!this.aside) return;
     this.clearFlash();
     this.asideLabel.textContent = text;
-    this.sendSlot.classList.add('flash');
+    this.sendSlot.classList.add('aside', 'flash');
     this.liveRegion.textContent = text;
     this.flashTimer = setTimeout(() => {
       this.flashTimer = null;
-      this.sendSlot.classList.remove('flash');
-      this.asideLabel.textContent = this.aside?.label ?? '';
+      this.clearFlash();
     }, ms);
   }
 
+  /** End a flash: the slot shows what the aside state says (or Send). */
   private clearFlash(): void {
     if (this.flashTimer !== null) {
       clearTimeout(this.flashTimer);
       this.flashTimer = null;
     }
+    if (!this.sendSlot.classList.contains('flash')) return;
     this.sendSlot.classList.remove('flash');
+    this.sendSlot.classList.toggle('aside', this.aside !== null);
+    this.asideLabel.textContent = this.aside?.label ?? '';
+    this.liveRegion.textContent = this.aside?.title ?? '';
   }
 
   clear(): void {
