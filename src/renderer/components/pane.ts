@@ -1743,6 +1743,12 @@ export class Pane {
     return composeBlockedFact(this.programStatus.root, this.programStatus.children()).blocked;
   }
 
+  /** For broadcast input (Tab): this pane's Claude is asking a question or
+   *  permission, so typing broadcast into it would answer that instead. */
+  get waitsOnAnswer(): boolean {
+    return !this.disposed && this.claudeAsksNow();
+  }
+
   /** Delay between Ctrl+S (stash) and the word, so Claude Code has emptied
    *  the input line first. Chosen by reading, not measured live. */
   private static readonly STASH_SETTLE_MS = 150;

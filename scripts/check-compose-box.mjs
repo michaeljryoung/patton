@@ -85,6 +85,7 @@ const bundle = await build({
       export { parseProgramStatus } from './src/renderer/services/program-status';
       export { DEFAULTS } from './src/shared/constants';
       export { isMenuLine } from './src/renderer/services/compose-aside';
+      export { Tab } from './src/renderer/components/tab';
     `,
     resolveDir: repo, loader: 'ts',
   },
@@ -1087,6 +1088,48 @@ const ptyWrites = () => writes.filter(([, d]) => typeof d === 'string');
     liveEl(p).textContent === ASIDE_BLOCKED && labelText(p) === 'Answer above',
     { label: labelText(p), live: liveEl(p).textContent });
   drop(p);
+}
+{
+  // 8.8 Broadcast input skips a sibling pane whose Claude is asking.
+  timers = [];
+  const tab = new PA.Tab();
+  await tab.init();
+  content.appendChild(tab.element);
+  await tab.splitVertical();
+  await tab.splitVertical();
+  await realWait(40);
+  const [a, b, c] = tab.panes;
+  for (const p of [a, b, c]) { p.setComposeFirst(true, null); state(p, 'idle'); }
+  state(b, 'blocked', 'permission');
+  childBlocked(c, 't9', 'question');
+  state(c, 'working'); // c's root works, its background task asks
+  const d = tab.panes[0];
+  check('(setup) three panes with distinct ptys', new Set(tab.panes.map((p) => p.ptyId)).size === 3, tab.panes.map((p) => p.ptyId));
+  tab.toggleBroadcastInput();
+  logs.length = 0;
+  writes.length = 0;
+  await sendFromBox(a, 'hello all');
+  advance(50); await flush();
+  const to = (p) => writes.filter(([id]) => id === p.ptyId).map(([, x]) => x);
+  check('broadcast: the sending pane gets its line and Enter', to(a).some((x) => String(x).includes('hello all')) && to(a).includes('\r'), to(a));
+  check('...a pane whose Claude asks (root blocked) gets nothing', to(b).length === 0, to(b));
+  check('...nor one whose background task asks', to(c).length === 0, to(c));
+  const sk = logs.filter((l) => l.tag === '[BROADCAST] skipped').map((l) => l.data);
+  check('...logged as [BROADCAST] skipped {pane, reason: blocked} for each',
+    sk.some((x) => x.pane === b.id && x.reason === 'blocked') && sk.some((x) => x.pane === c.id && x.reason === 'blocked'), sk);
+  state(b, 'idle');
+  writes.length = 0;
+  await sendFromBox(a, 'again');
+  advance(50); await flush();
+  check('once b\'s question ends, b gets the broadcast again', to(b).some((x) => String(x).includes('again')) && to(b).includes('\r'), to(b));
+  const pasted = [];
+  b.pasteBroadcast = (t) => pasted.push(['b', t]);
+  c.pasteBroadcast = (t) => pasted.push(['c', t]);
+  a.callbacks.onBroadcastPaste('line one\nline two');
+  check('a broadcast paste skips the asking pane too (c), not the free one (b)',
+    pasted.length === 1 && pasted[0][0] === 'b', pasted);
+  void d;
+  tab.element.remove();
 }
 
 finished = true;

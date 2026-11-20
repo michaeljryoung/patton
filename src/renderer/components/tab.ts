@@ -229,18 +229,27 @@ export class Tab {
       onAutoFlag: (p, flag) => this.setPaneAutoFlag(p, flag),
       onBroadcastWrite: (data) => {
         if (!this._broadcastInput) return;
-        // Write to all OTHER panes
+        // Write to all OTHER panes, except one whose Claude is asking a
+        // question or permission: the line (and its Enter) would answer it.
         for (const p of this._panes) {
-          if (p !== pane && p.ptyId !== null) {
-            window.patton.pty.write(p.ptyId, data);
-            if (data === '\r') p.noteEnterSent();
+          if (p === pane || p.ptyId === null) continue;
+          if (p.waitsOnAnswer) {
+            rlog('info', '[BROADCAST] skipped', { pane: p.id, reason: 'blocked' });
+            continue;
           }
+          window.patton.pty.write(p.ptyId, data);
+          if (data === '\r') p.noteEnterSent();
         }
       },
       onBroadcastPaste: (text) => {
         if (!this._broadcastInput) return;
         for (const p of this._panes) {
-          if (p !== pane) p.pasteBroadcast(text);
+          if (p === pane) continue;
+          if (p.waitsOnAnswer) {
+            rlog('info', '[BROADCAST] skipped', { pane: p.id, reason: 'blocked' });
+            continue;
+          }
+          p.pasteBroadcast(text);
         }
       },
     });
