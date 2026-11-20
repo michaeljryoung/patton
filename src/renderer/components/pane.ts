@@ -12,6 +12,7 @@ import { rlog } from '../services/renderer-logger';
 import { WAKE_TITLE } from '../services/board-wake';
 import { announce } from '../services/announcer';
 import { stripPasteControls } from '../services/paste-sanitize';
+import { dropTarget, dropText, isFileDrag } from '../services/file-drop';
 import { shouldConfirmMultilinePaste } from '../services/paste-confirm';
 import { PATTON_QUOTES } from '../../shared/constants';
 import { shortcutKeys } from '../../shared/shortcuts';
@@ -1583,6 +1584,24 @@ export class Pane {
       ]);
     };
     this.element.addEventListener('contextmenu', contextMenuHandler);
+
+    // D5: dropped files add their escaped paths (services/file-drop.ts).
+    const onFileDragOver = (e: DragEvent) => {
+      if (!isFileDrag(e.dataTransfer)) return;
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+    };
+    const onFileDrop = (e: DragEvent) => {
+      if (!isFileDrag(e.dataTransfer)) return;
+      e.preventDefault();
+      this.dropFiles(Array.from(e.dataTransfer?.files ?? []));
+    };
+    this.element.addEventListener('dragover', onFileDragOver);
+    this.element.addEventListener('drop', onFileDrop);
+    this.disposables.push(() => {
+      this.element.removeEventListener('dragover', onFileDragOver);
+      this.element.removeEventListener('drop', onFileDrop);
+    });
     this.disposables.push(() => this.element.removeEventListener('contextmenu', contextMenuHandler));
 
     // OSC 133 shell integration: visual feedback on compose bar + command-done notification
@@ -1859,6 +1878,16 @@ export class Pane {
     if (count === 0) return;
     this.clearPasteChips();
     rlog('info', '[PASTE] chips cleared', { pane: this.id, reason, count });
+  }
+
+  /** D5: files dropped on the pane. Paths only; nothing is read from the files. */
+  private dropFiles(files: File[]): void {
+    const text = dropText(files, (f) => window.patton.getPathForFile(f));
+    if (!text) return;
+    const target = dropTarget(this.composeFirstEngaged);
+    rlog('info', '[DROP] files', { pane: this.id, count: files.length, target });
+    if (target === 'box') this.editorInput.insertText(text);
+    else if (this.ptyId !== null) this.terminalView.terminal.paste(stripPasteControls(text));
   }
 
   /** Sanitize pasted text and, if the setting asks for it, confirm multi-line

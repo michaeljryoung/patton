@@ -1,8 +1,9 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { IPC, uiTextScaleFromArgv } from '../shared/constants';
 import type { BoardLayout, BoardPayload, Bookmark, ConfirmRequest, PattonAPI, PauseAllRunRequest, RenderSnapshot } from '../shared/types';
 
 const api: PattonAPI = {
+  getPathForFile: (file) => webUtils.getPathForFile(file),
   pty: {
     create: (opts) => ipcRenderer.invoke(IPC.PTY_CREATE, opts),
     respawn: (id, opts) => ipcRenderer.invoke(IPC.PTY_RESPAWN, id, opts),
