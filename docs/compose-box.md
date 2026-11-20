@@ -8,62 +8,19 @@
 _Previous goal (S56, reached except `box_ship`'s live check):_ Under every Claude Code tab, a real text box is always open and takes everything Michael types; it steps aside on its own while Claude shows a permission prompt, a question or a menu, and comes back when he has answered. Michael 2026-11-20, on the Claude desktop app's "proper compose box": "How do we get that?", then, on a box opened by hand: "what's the point of one that I have to open manually … I don't know which prompt I'm going to need it for", then "ok" to the always-open design (page: https://claude.ai/code/artifact/503c49fd-8ae5-4501-be32-fe371f388337). **Done when:** a jsdom check on the real Pane proves, from Claude Code's real status sequences in main.log, that the box steps aside for every question held 250 ms or more and for none of the three shorter flashes, comes back when each ends, keeps the keyboard through a click into the terminal, steps aside after a `/` line until Claude next reports, and that a dropped file's path lands in the box (or the terminal when the box is off); lint, `tsc`, `npm run check`, a no-install package and a fresh review with no open major; released by CI; installed only on Michael's word.
 **Last verified:** 2026-11-20 11:40 (Session 56: build, two fresh reviews, fixes and checks this session)
 
+**Retired:** 17 finished nodes, in `docs/map-archive.md`
+
 ```mermaid
 flowchart TD
-  subgraph B["Build"]
-    box_core[box follows Claude's questions and menus; clicks keep it; new setting]:::done
-    box_drop[dropped files add their paths]:::done
-    box_replay[replay check from real status sequences]:::done
-    box_review[fresh review, fixes]:::done
-  end
   subgraph S["Ship"]
     box_release[merge, push, CI release, cask]:::done
     box_ship[install on his word, live check]:::live
-  end
-  subgraph O["Part 2 — One typing bar: build"]
-    bar_design[design D8–D13 and recorded screens]:::done
-    bar_reader[bar reader and fixture check]:::done
-    bar_placement[box over, docked or under; resizes and logs]:::done
-    send_no_flip[a send never flips the box]:::done
-    bar_aside[aside hides the box; Draft kept]:::done
-    aside_fixes[menu aside: Type here; hand-off frozen]:::done
-    okay_in_box[Okay? inside the box at its left]:::done
-  okay_removed[Okay? removed; a Claude Code /ok command instead]:::done
-    over_setting[setting: box over Claude bar]:::done
-    bar_layout_check[hidden-Electron layout check]:::done
-    fit_padding[terminal fit counts its padding]:::done
-    images_in_box[pasted images inside the box]:::done
-    bar_review[fresh review, fixes]:::done
   end
   subgraph OS["Part 2 — Ship"]
     bar_release[merge, push, CI release, cask]:::done
     bar_ship[install on his word, live check]:::todo
   end
-  box_core --> box_replay
-  box_core --> box_review
-  box_drop --> box_review
-  box_replay --> box_review
-  box_review --> box_release
   box_release --> box_ship
-  bar_design --> bar_reader
-  bar_reader --> bar_placement
-  bar_placement --> bar_aside
-  bar_aside --> aside_fixes
-  aside_fixes --> bar_layout_check
-  bar_placement --> send_no_flip
-  send_no_flip --> bar_layout_check
-  bar_design --> okay_in_box
-  bar_placement --> over_setting
-  bar_placement --> bar_layout_check
-  bar_aside --> bar_layout_check
-  okay_in_box --> bar_layout_check
-  over_setting --> bar_layout_check
-  bar_layout_check --> fit_padding
-  fit_padding --> bar_review
-  bar_layout_check --> bar_review
-  bar_reader --> images_in_box
-  images_in_box --> bar_review
-  bar_review --> bar_release
   bar_release --> bar_ship
   classDef done fill:#1a7f37,color:#fff
   classDef live fill:#0969da,color:#fff
@@ -75,26 +32,9 @@ flowchart TD
 
 | ID | Task | Status | Depends on | Evidence |
 |----|------|--------|------------|----------|
-| `box_core` | Design D1–D4 and D6 below: the `composeBox` setting (on by default), stepping aside on 7501 `blocked` held 250 ms and on a `/` line until Claude's next report, coming back when either ends, a click into the terminal keeping the box's keyboard, `[COMPOSE]` log lines for every switch | done | — | `eac1ef3` (D1 setting), `3a3094b` (D2–D4) · `src/renderer/services/compose-aside.ts`, `pane.ts` compose block |
-| `box_drop` | Design D5: a file dropped on a pane adds its escaped path to the box at the caret, or types it into the terminal when the box is off, as Terminal.app does; `scripts/check-file-drop.mjs` | done | — | `ee2b218`, `03b1c02` · `src/renderer/services/file-drop.ts`; `check-file-drop.mjs` 48 |
-| `box_replay` | Design D7: `scripts/check-compose-box.mjs` drives the real Pane with the 25 real question episodes from main.log (10–20 Nov) and the cases in D1–D5; every new assertion fails on main | done | `box_core` | `0465dab` · `check-compose-box.mjs` 175 at first, 96 failing on main; 255 after the fixes; layout `6ef83af` (`check-ui-text-scale.cjs` 210: container height, textarea and Send-slot widths equal in every aside state at x1, x1.1, x1.5) |
-| `box_review` | Fresh review with probes that never saw the build; every major and minor fixed by a fresh builder; checks re-run | done | `box_core`, `box_drop`, `box_replay` | review 1: 2 major, 4 minor, 2 nit, all fixed `b7e0bac`, `03b1c02`; review 2: 1 major (Enter inside the 250 ms hold approved a prompt), 3 minor, nits, plus broadcast into a blocked pane; all fixed `2ebb0a7`, `0a7af2f`; `npm run check` 30/30 |
 | `box_release` | ff-merge to main, push (no stray no-release marker on the head), CI release green, cask sha matches the downloaded DMG | done | `box_review` | pushed `eef0399` (no marker on the head), run 44728983899 green, tag `v1.31.0`, cask 1.31.0 sha `65ad2b08…` matches the downloaded DMG |
 | `box_ship` | Install on Michael's word with Patton quit; live: the box is open under a Claude tab; a permission prompt takes the keyboard and answering hands it back (`[COMPOSE] aside` / `back` in main.log); a click in the terminal leaves typing in the box; a dropped file adds its path | live | `box_release` | **S57 (20 Nov 11:55):** installed from tag `v1.31.0` with Patton quit: /Applications reports 1.31.0, asar 11:55:30, `codesign --verify --deep --strict` ok, file list identical to `out/`, `[COMPOSE] aside` in the installed bundle. Live part waits on his sessions in it |
-| `bar_design` | Design D8–D13 (one typing bar) settled and written; real Claude Code v2.1.321 screens recorded as the fixture behind D8 | done | — | `docs/compose-box.md` (Design, part 2) · `scripts/fixtures/claude-bar-screens.json` · `docs/mocks/one-typing-bar.html` |
-| `bar_reader` | D8: a pure reader of the buffer at the cursor (found / empty / holds text / why) and a check over every fixture step, the `turn` recording and synthetic edge lines | done | `bar_design` | `src/renderer/services/claude-bar.ts` · `scripts/check-claude-bar.mjs` (53 ok; 31 fail on a stub reader) · `dbcb1e2` |
-| `bar_placement` | D9 and D12: the box over Claude's bar, docked on the bottom edge when scrolled up, or under the terminal; the terminal resizes only between under and the overlays; growth upward to a third of the pane; paste strip on the box; wheel to the terminal; `[COMPOSE] place` and `bar not found` logs | done | `bar_reader` | `src/renderer/services/compose-placement.ts` · `scripts/check-compose-placement.mjs` (39 ok; 23 fail on the base) · `b24a8bf` |
-| `send_no_flip` | D9 as amended: under only after 400 ms with no empty-bar reading, and readings within 1.5 s of the pane's own send or Okay? ask never count, so a send never moves the box | done | `bar_placement` | `check-compose-placement.mjs` 72 ok (17 fail on `b24a8bf`) · `4b82876` |
-| `bar_aside` | D10: placement frozen from Claude's first `blocked` report and through any aside; in the overlays the box hides (focusable through D2's typing grace) and "Draft kept" shows with a draft; back where it was after | done | `bar_placement` | `check-compose-placement.mjs` (question screen: hidden, note, grace focus, back) · `4b82876` |
-| `aside_fixes` | D10 as amended: during a `menu` aside in the overlays a "Type here" button ends the aside and gives the box the keyboard; Esc during D2's grace hands off without changing placement until the aside ends | done | `bar_aside` | `scripts/check-compose-placement.mjs` section 6 (Type here, blocked never, Esc in the grace freezes placement) |
-| `okay_in_box` | D11: Okay? inside the box at its left whenever the box is engaged; the row under the terminal only when the box isn't; same ask rules; a press keeps the box's keyboard | done | `bar_design` | `check-okay-button.mjs` 127 ok (10 fail on the base) · `4b82876` |
-| `over_setting` | D12: Settings row "Lay the compose box over Claude Code's own input bar" (`composeOverBar`, on by default, read `!== false`); off is the v1.31 layout with Okay? inside the box | done | `bar_placement` | `#setting-compose-over-bar`, `Pane.setComposeOverBar`, applied in `Tab.createPaneInstance` · `b24a8bf` |
-| `bar_layout_check` | D13: hidden-Electron check of the real Pane fed the fixture's bytes, at UI scale 1, 1.1 and 1.5; every new assertion fails on main; `check-compose-box.mjs` and `check-okay-button.mjs` updated, not weakened | done | `bar_placement`, `send_no_flip`, `bar_aside`, `aside_fixes`, `okay_in_box`, `over_setting` | `scripts/check-compose-over.cjs` 282 ok, 6 not ok (one defect → `fit_padding`); 231 not ok on `da3f534` · `d5a6173` |
-| `fit_padding` | The terminal's fit counts `.terminal-container`'s padding (4 px top, 10 px bottom, 4 px sides): at UI scale 1.5 in `under` the last row was cut by 2.4 px (27 rows × 16 px + 4 px against 433.6 px), in the base too but hidden by the Okay? row's height; the side padding likely the same for cols | done | `bar_layout_check` | `src/renderer/services/terminal-fit.ts` (`fitGrid`) · `scripts/check-compose-over.cjs` 327 ok (24 fit assertions fail on `9f4affb`) · `5924108` |
-| `images_in_box` | D14: pasted-image thumbnails inside the box left of the text (no ×, cleared on send, "+N" past three); `[Image #N]` on Claude's bar counts as images, so the box stays over it; jsdom and layout checks extended | done | `bar_reader` | `scripts/check-paste-chips.mjs` §6 (13 of 16 new fail on the base) · `scripts/check-claude-bar.mjs` 61 ok · `d8a0a22` |
-| `bar_review` | Fresh review with probes that never saw the build; every major and minor fixed by a fresh builder; checks re-run | done | `bar_layout_check`, `images_in_box` | three fresh reviews (0, 0 and 1 major); fixes `87e901e`, `f05c5aa`, `e8baa66` (seven items, each with an assertion failing before), `dc204e2` (the 400 ms counted from the first miss: 8 assertions fail before, `scripts/check-compose-placement.mjs` 131 ok); `npm run check` 33/33 |
 | `bar_release` | ff-merge to main, push (no stray no-release marker on the head), CI release green, cask sha matches the downloaded DMG | done | `bar_review` | pushed `18de10e` (no marker on the head), run 44757794817 green, tag `v1.32.0`, cask 1.32.0 sha `906e8a04…` matches the downloaded DMG |
-| `okay_removed` | Okay? button removed; a Claude Code /ok command instead | done | — | `07dd5f5` · `grep -ri okay src` finds nothing; `npm run check` 32/32, `check-compose-over.cjs` 399 ok, asar 15:27 |
 | `bar_ship` | Install on Michael's word with Patton quit; live: one bar under a Claude tab, the box over Claude's, Okay? at its left; `[COMPOSE] place` lines in main.log; a question hides it and it comes back | todo | `bar_release` | — |
 <!-- MAP:END -->
 
