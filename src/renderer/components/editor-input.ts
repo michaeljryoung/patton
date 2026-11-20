@@ -1,4 +1,5 @@
 import { stripPasteControls } from '../services/paste-sanitize';
+import { rlog } from '../services/renderer-logger';
 
 export interface EditorInputCallbacks {
   onSubmit: (command: string) => void;
@@ -17,6 +18,9 @@ export interface EditorInputCallbacks {
   onEmptyBoxKey?: (e: KeyboardEvent) => boolean;
   /** Tallest the textarea may grow, in px (default 200). Read on every resize. */
   getMaxHeight?: () => number;
+  /** ⌘C with nothing selected in the box: text to copy instead (the pane's
+   *  terminal selection), or '' to let the copy run as usual. */
+  getCopyFallback?: () => string;
 }
 
 export const DEFAULT_COMPOSE_PLACEHOLDER = 'Enter to send, Shift+Enter for newline, Esc to dismiss';
@@ -99,7 +103,29 @@ export class EditorInput {
     this.textarea.addEventListener('paste', pasteHandler as EventListener);
     this.disposables.push(() => this.textarea.removeEventListener('paste', pasteHandler as EventListener));
 
+    // ⌘C with nothing selected in the box copies the owner's fallback (the
+    // terminal's selection). Both routes: the key itself, and the copy event
+    // the Edit menu's Copy raises.
+    const copyFallback = (): string =>
+      this.textarea.selectionStart === this.textarea.selectionEnd ? (this.callbacks.getCopyFallback?.() ?? '') : '';
+    const copyHandler = (e: ClipboardEvent) => {
+      const text = copyFallback();
+      if (!text || !e.clipboardData) return;
+      e.clipboardData.setData('text/plain', text);
+      e.preventDefault();
+    };
+    this.textarea.addEventListener('copy', copyHandler);
+    this.disposables.push(() => this.textarea.removeEventListener('copy', copyHandler));
+
     const keydownHandler = (e: KeyboardEvent) => {
+      if (e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'c' && !e.isComposing) {
+        const text = copyFallback();
+        if (text) {
+          e.preventDefault();
+          void navigator.clipboard.writeText(text).catch((err) => rlog('warn', '[COMPOSE] copy failed', { error: String(err) }));
+          return;
+        }
+      }
       // Mid-IME composition the box's value isn't settled yet, so never pass through.
       if (!e.isComposing && this.textarea.value === '' && this.callbacks.onEmptyBoxKey?.(e)) {
         e.preventDefault();

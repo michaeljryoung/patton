@@ -28,6 +28,10 @@ import type { StashKeyVerdict, TabFlag, UnsentInputState } from '../../shared/ty
 import type { PauseInput } from '../services/pause-all';
 import { OKAY_ERROR_WORDS, OKAY_PROMPT, okayAnnouncement, okayButtonText, okayDecision, okayRowVisible } from '../services/okay-ask';
 import { OkayRow } from './okay-row';
+import {
+  COMPOSE_ASIDE_HINT, COMPOSE_ASIDE_HOLD_MS, composeAsideReason, composeBackTakesKeyboard, composeBlockedFact, isMenuLine,
+  type ComposeAsideReason,
+} from '../services/compose-aside';
 
 /** Background work a parked Claude Code session is waiting on: from the Stop
  *  hook (tasks + crons), or from OSC 7501 child records (tasks + their titles,
@@ -267,6 +271,16 @@ export class Pane {
   // The user closed the box (⌘E) while engaged: it stays shut until Claude
   // exits or the mode changes, instead of reopening at the next title.
   private composeDismissed = false;
+  // The box stepped aside (services/compose-aside.ts): 'blocked' while Claude
+  // asks something (held COMPOSE_ASIDE_HOLD_MS), 'menu' after a `/` line from
+  // the box until Claude's next report or Stop hook. Dimmed, draft kept, the
+  // keyboard on the terminal; composeAsideAtMs is when it stepped aside.
+  private composeAside: ComposeAsideReason | null = null;
+  private composeAsideAtMs = 0;
+  private composeBlockedTimer: ReturnType<typeof setTimeout> | null = null;
+  private composeBlockedHeld = false;
+  private composeMenuPending = false;
+  private composeHint!: HTMLElement;
   private static readonly COMPOSE_FIRST_PLACEHOLDER =
     'Message Claude · Enter sends · Shift+Enter newline · Esc interrupts';
   private static readonly COMPOSE_FIRST_MAX_FRACTION = 0.4; // of the pane's height
@@ -457,6 +471,8 @@ export class Pane {
         break;
     }
     this.lastSignalAtMs = Date.now();
+    // A report: a `/` line's menu (if any) is over (applyProgramStatus syncs the box).
+    this.composeMenuPending = false;
     if (!this.statusReporting) {
       this.statusReporting = true;
       // From here on the hook's verdicts don't decide the dot; drop a stored one.
@@ -1011,6 +1027,8 @@ export class Pane {
     this.stopSeenSinceWork = true;
     this.stopSeenAtMs = Date.now();
     this.lastSignalAtMs = this.stopSeenAtMs;
+    this.composeMenuPending = false;
+    this.syncComposeAside('stop-hook');
     if (state.kind === 'stop') this.handleHookStop(state.tasks, state.crons);
     if (state.kind === 'stop' && state.context) this.noteFinishHeld(state.tasks, state.context);
     if (state.context) this.handleContextReading(state.context);
@@ -1171,21 +1189,45 @@ export class Pane {
       onImagePaste: () => { void this.pasteImage('compose'); },
       onEmptyBoxKey: (e) => this.forwardEmptyBoxKey(e),
       getMaxHeight: () => this.composeMaxHeight(),
+      getCopyFallback: () => this.terminalCopyFallback(),
     });
 
-    // Compose-first: a click in the terminal hands it the keyboard (so the
-    // box mustn't take focus back until Claude's next ◐); a click in the box
-    // takes it back. Capture phase, so this runs before the pane's own
-    // mousedown → onFocus → focus() path reads composeHandedOff.
+    // The line under the field while the box is aside (services/compose-aside.ts).
+    this.composeHint = document.createElement('div');
+    this.composeHint.className = 'compose-hint';
+    this.composeHint.setAttribute('role', 'status');
+    this.composeHint.hidden = true;
+    this.editorContainer.appendChild(this.composeHint);
+
+    // The compose box, a click in the terminal (D4): on a pane with 7501
+    // reports the box keeps the keyboard. xterm still gets the whole click
+    // (it focuses itself, selects, sends mouse reports), and the box takes
+    // the keyboard back once the click has run. Without 7501 reports nothing
+    // says when Claude asks, so there the click hands the keyboard to the
+    // terminal (so the box mustn't take focus back until Claude's next ◐).
+    // Aside, the terminal takes it as usual. A click in the box takes it
+    // back. Capture phase, so this runs before the pane's own mousedown →
+    // onFocus → focus() path reads composeHandedOff.
     const terminalMouseDown = (e: MouseEvent) => {
       if (!this.composeFirstEngaged) return;
       if (e.button !== 0) return; // a right-click (context menu) keeps the keyboard where it is
       if ((e.target as Element | null)?.closest?.('.search-overlay')) return;
+      if (this.composeAside !== null) return;
+      if (this.statusReporting) {
+        if (!this.composeHandedOff) setTimeout(() => this.keepBoxKeyboard(), 0);
+        return;
+      }
       this.handOffCompose('click');
     };
     this.terminalContainer.addEventListener('mousedown', terminalMouseDown, true);
     this.disposables.push(() => this.terminalContainer.removeEventListener('mousedown', terminalMouseDown, true));
     const editorMouseDown = () => {
+      // D3: a click in the box ends a menu aside and takes the keyboard.
+      if (this.composeAside === 'menu') {
+        this.composeMenuPending = false;
+        this.syncComposeAside('click');
+        this.editorInput.focus();
+      }
       if (this.composeFirstEngaged && this.composeHandedOff) {
         this.composeHandedOff = false;
         rlog('info', '[COMPOSE] reclaim', { pane: this.id, reason: 'click' });
@@ -1615,7 +1657,10 @@ export class Pane {
 
   private handleSubmit(command: string): void {
     if (this.ptyId === null) return;
-    command = this.queueSubmit(command, true);
+    // D3: his own `/` line from the box may open a picker. Counted from the
+    // Enter, as main's tracker counts slashSubmitAt for Pause all's `menu`.
+    const menu = this.composeFirstEngaged && isMenuLine(stripPasteControls(command));
+    command = this.queueSubmit(command, true, menu ? { onEnterSent: () => this.noteComposeMenuSent() } : {});
     if (command.trim()) {
       this.historyManager.add(command);
     }
@@ -1635,7 +1680,7 @@ export class Pane {
   private queueSubmit(
     command: string,
     allowBroadcast: boolean,
-    opts: { stashFirst?: boolean; scroll?: boolean; origin?: 'patton' } = {},
+    opts: { stashFirst?: boolean; scroll?: boolean; origin?: 'patton'; onEnterSent?: () => void } = {},
   ): string {
     // Broadcast mode: also write to all other panes in the tab
     const broadcast = allowBroadcast ? this.callbacks.onBroadcastWrite : undefined;
@@ -1689,6 +1734,7 @@ export class Pane {
           if (this.ptyId !== null) {
             window.patton.pty.write(this.ptyId, '\r');
             broadcast?.('\r');
+            opts.onEnterSent?.();
           }
           resolve();
         }, 60);
@@ -1699,6 +1745,7 @@ export class Pane {
           if (this.ptyId !== null) {
             window.patton.pty.write(this.ptyId, '\r', origin);
             broadcast?.('\r');
+            opts.onEnterSent?.();
           }
           resolve();
         }, 10);
@@ -1912,6 +1959,110 @@ export class Pane {
     const want = this.composeFirstEffective && this.claudeActive && !this.composeDismissed;
     if (want && !this.composeFirstEngaged) this.engageComposeFirst(reason);
     else if (!want && this.composeFirstEngaged) this.disengageComposeFirst(reason);
+    this.syncComposeAside(reason);
+  }
+
+  /** A `/` line from the box reached Claude (its Enter was written). */
+  private noteComposeMenuSent(): void {
+    if (this.disposed || !this.composeFirstEngaged) return;
+    this.composeMenuPending = true;
+    this.syncComposeAside('slash-line');
+  }
+
+  /**
+   * Step the box aside or bring it back (D2, D3) to match Claude's state, the
+   * 250 ms hold and a pending `/` menu. Called after every 7501 report, Stop
+   * hook, engage and disengage; the rules are in services/compose-aside.ts.
+   */
+  private syncComposeAside(trigger: string): void {
+    if (this.disposed) return;
+    const fact = this.statusReporting
+      ? composeBlockedFact(this.programStatus.root, this.programStatus.children())
+      : { blocked: false, kind: null };
+    if (!fact.blocked || !this.composeFirstEngaged) {
+      this.clearComposeBlockedTimer();
+      this.composeBlockedHeld = false;
+    } else if (!this.composeBlockedHeld && this.composeBlockedTimer === null) {
+      this.composeBlockedTimer = setTimeout(() => {
+        this.composeBlockedTimer = null;
+        this.composeBlockedHeld = true;
+        this.syncComposeAside('held');
+      }, COMPOSE_ASIDE_HOLD_MS);
+    }
+    if (!this.composeFirstEngaged) this.composeMenuPending = false;
+    const next = composeAsideReason({
+      engaged: this.composeFirstEngaged,
+      blocked: fact.blocked,
+      blockedHeld: this.composeBlockedHeld,
+      menuPending: this.composeMenuPending,
+      current: this.composeAside,
+    });
+    if (next === this.composeAside) return;
+    if (next === null) {
+      const reason = !this.composeFirstEngaged ? 'disengage'
+        : this.composeAside === 'blocked' ? 'unblocked' : trigger;
+      this.composeBack(reason);
+    } else {
+      this.composeStepAside(next, fact.kind);
+    }
+  }
+
+  private clearComposeBlockedTimer(): void {
+    if (this.composeBlockedTimer !== null) {
+      clearTimeout(this.composeBlockedTimer);
+      this.composeBlockedTimer = null;
+    }
+  }
+
+  private composeStepAside(reason: ComposeAsideReason, kind: string | null): void {
+    const boxHadKeyboard = this.editorInput.hasFocus();
+    if (this.composeAside === null) this.composeAsideAtMs = Date.now();
+    this.composeAside = reason;
+    this.editorContainer.classList.add('aside');
+    this.composeHint.textContent = COMPOSE_ASIDE_HINT[reason];
+    this.composeHint.hidden = false;
+    rlog('info', '[COMPOSE] aside', { pane: this.id, reason, ...(reason === 'blocked' ? { kind } : {}) });
+    if (boxHadKeyboard || this.canTakeKeyboard()) this.terminalView.focus();
+  }
+
+  /** The box back in place. It takes the keyboard back only from this pane's
+   *  terminal or from nowhere (and never as it disengages). */
+  private composeBack(reason: string): void {
+    const afterMs = Date.now() - this.composeAsideAtMs;
+    this.composeAside = null;
+    this.editorContainer.classList.remove('aside');
+    this.composeHint.hidden = true;
+    this.composeHint.textContent = '';
+    rlog('info', '[COMPOSE] back', { pane: this.id, reason, afterMs });
+    if (!this.composeFirstEngaged) return;
+    const active = document.activeElement;
+    const nothingFocused = !active || active === document.body;
+    const take = composeBackTakesKeyboard({
+      terminalHasFocus: !nothingFocused && this.terminalContainer.contains(active),
+      nothingFocused,
+      paneFocused: this._isFocused,
+      overlayFocused: Pane.isOverlayFocused(),
+    });
+    if (!take) return;
+    this.composeHandedOff = false;
+    this.editorInput.focus();
+  }
+
+  /** D4: after a click in the terminal has run (xterm focused itself), the
+   *  box takes the keyboard back, unless the click moved it out of this pane. */
+  private keepBoxKeyboard(): void {
+    if (this.disposed || !this.composeFirstEngaged || this.composeAside !== null || this.composeHandedOff) return;
+    if (Pane.isOverlayFocused()) return;
+    const active = document.activeElement;
+    if (active && active !== document.body && !this.element.contains(active)) return;
+    this.editorInput.focus();
+  }
+
+  /** ⌘C in a box with nothing selected: this pane's terminal selection. */
+  private terminalCopyFallback(): string {
+    const sel = this.terminalView.terminal.getSelection();
+    if (sel) rlog('info', '[COMPOSE] copy terminal selection', { pane: this.id, chars: sel.length });
+    return sel;
   }
 
   private engageComposeFirst(reason: string): void {
@@ -2044,6 +2195,11 @@ export class Pane {
     // Compose-first box open but the keyboard elsewhere (handed off): ⌘E
     // brings the keyboard back to it; only ⌘E from inside the box closes it.
     if (this.composeFirstEngaged && !this.editorInput.hasFocus()) {
+      // Like a click in the box, ⌘E ends a menu aside (D3).
+      if (this.composeAside === 'menu') {
+        this.composeMenuPending = false;
+        this.syncComposeAside('toggle-key');
+      }
       this.composeHandedOff = false;
       rlog('info', '[COMPOSE] reclaim', { pane: this.id, reason: 'toggle-key' });
       this.editorInput.focus();
@@ -2071,7 +2227,7 @@ export class Pane {
   }
 
   focus(): void {
-    if (this.isComposeExpanded() && !this.composeHandedOff && !Pane.isOverlayFocused()) {
+    if (this.isComposeExpanded() && !this.composeHandedOff && this.composeAside === null && !Pane.isOverlayFocused()) {
       this.editorInput.focus();
     } else {
       this.terminalView.focus();
@@ -2225,6 +2381,7 @@ export class Pane {
   dispose(): void {
     this.disposed = true;
     if (this.resizeTimer) clearTimeout(this.resizeTimer);
+    this.clearComposeBlockedTimer();
     this.clearPasteChips();
     this.okayRow.dispose();
     for (const d of this.disposables) d();

@@ -53,6 +53,13 @@
    * #111214, 7.81:1 on #1f2228. */
   --amber-text: #925d07;
 
+  /* The compose box stepped aside (editor.css .aside): its text, rules and
+   * Send in the dimmed tones, the hint line in muted. All derived from the
+   * palette, so the dark block's values follow. */
+  --compose-aside-ink: var(--muted);
+  --compose-aside-rule: var(--grey);
+  --compose-aside-hint: var(--muted);
+
   /* Type and density (the mock's compact scale) */
   --font-mono: 'SF Mono', 'Menlo', 'Monaco', 'Courier New', monospace;
   --font-ui: "Helvetica Neue", Helvetica, Arial, sans-serif;

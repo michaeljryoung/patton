@@ -148,6 +148,36 @@
   background: transparent;
 }
 
+/* The compose box stepped aside (Claude asks something, or a / command may
+   show a menu): box and Send dimmed, the draft kept, a hint line under the
+   field. Tokens only, so both themes follow (main.css). */
+.editor-container.compose-first.aside .editor-textarea,
+.editor-container.compose-first.aside.command-running .editor-textarea {
+  color: var(--compose-aside-ink);
+  border-color: var(--compose-aside-rule);
+}
+
+.editor-container.compose-first.aside .editor-textarea::placeholder {
+  color: var(--compose-aside-ink);
+}
+
+.editor-container.compose-first.aside .editor-send {
+  color: var(--compose-aside-ink);
+  border-color: var(--compose-aside-rule);
+}
+
+.editor-container .compose-hint {
+  margin-top: 4px;
+  color: var(--compose-aside-hint);
+  font-family: var(--font-ui);
+  font-size: var(--ui);
+  line-height: 1.3;
+}
+
+.editor-container .compose-hint[hidden] {
+  display: none;
+}
+
 /* --- History search (Ctrl+R) --- */
 .history-search {
   position: absolute;
