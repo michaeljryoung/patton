@@ -129,9 +129,9 @@ Last updated: 2026-11-20 (Session 58, v1.32.0 released: the compose box lies ove
 
 CLAUDE.md's `## Next Steps` section points here; this is the canonical list. Items leave only via `[x] DONE — Session N`, `[~] SUPERSEDED — <pointer>`, or `[-] DROPPED: <reason>`. Marked items linger 10 checkpoints, then sweep to `docs/session-archive.md`.
 
-### 2026-11-20 — hand-off (S58): install v1.32.0 with Patton quit
+### 2026-11-20 — hand-off (S58): install v1.33.0 with Patton quit
 
-For the session that runs the install, in iTerm or Terminal.app with Patton quit, on his word (as S57's "Install v1.31.0 now"): the S56 steps below with `v1.32.0` in place of `v1.31.0` (stop any crash reporter a quit Patton left running, build in `.worktrees/install-1.32.0` from the tag, prove it by the asar's mtime, codesign and Info.plist, never by running the binary, remove the worktree). Then the live checks from main.log as he works: `bar_ship` (`docs/compose-box.md`: one bar under a Claude tab, `[COMPOSE] place` lines and few `bar not found`, a question hiding the box and it coming back, an image paste keeping it over), then `box_ship`, `groups_ship`, `s54_ship`, `s53_ship`, `s52_ship`.
+For the session that runs the install, in iTerm or Terminal.app with Patton quit, on his word (as S57's "Install v1.31.0 now"): the S56 steps below with `v1.33.0` in place of `v1.31.0` (v1.33.0 is v1.32.0's one typing bar with the Okay? button removed; cask `516e7a08…` matches its DMG; stop any crash reporter a quit Patton left running, build in `.worktrees/install-1.33.0` from the tag, prove it by the asar's mtime, codesign and Info.plist, never by running the binary, remove the worktree). Then the live checks from main.log as he works: `bar_ship` (`docs/compose-box.md`: one bar under a Claude tab, `[COMPOSE] place` lines and few `bar not found`, a question hiding the box and it coming back, an image paste keeping it over), then `box_ship`, `groups_ship`, `s54_ship`, `s53_ship`, `s52_ship`.
 
 ### 2026-11-20 — hand-off (S56): install v1.31.0 from Terminal.app with Patton quit
 
