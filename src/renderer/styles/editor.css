@@ -168,6 +168,9 @@
   padding: 2px 12px;
   border-top: none;
   background: var(--term-bg, var(--bg));
+  /* D10: sizes and visibility change at once; the base rule's 0.2 s would
+     animate the inline min-height and max-height Pane sets. */
+  transition: none;
 }
 
 .editor-container.compose-first.placement-dock {
@@ -252,7 +255,7 @@
   z-index: 31;
   margin: 0;
   padding: 1px 8px;
-  border: 1px solid var(--compose-aside-rule);
+  border: 1px solid var(--hairline); /* a control's border: 3:1, as Okay? and Send */
   border-radius: 0;
   background: var(--bg);
   color: var(--compose-aside-hint);
