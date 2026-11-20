@@ -1,0 +1,515 @@
+{
+ "source": "Patton main.log 2026-11-10..20, [7501] state lines; timing and states only, no message text",
+ "episodes": [
+  {
+   "kind": "permission",
+   "blockedReports": [
+    {
+     "atMs": 0,
+     "root": "blocked",
+     "kind": "permission"
+    }
+   ],
+   "endAtMs": 6644,
+   "endRoot": "working"
+  },
+  {
+   "kind": "permission",
+   "blockedReports": [
+    {
+     "atMs": 0,
+     "root": "blocked",
+     "kind": "permission"
+    }
+   ],
+   "endAtMs": 44803,
+   "endRoot": "working"
+  },
+  {
+   "kind": "permission",
+   "blockedReports": [
+    {
+     "atMs": 0,
+     "root": "blocked",
+     "kind": "permission"
+    },
+    {
+     "atMs": 143331,
+     "root": "blocked",
+     "kind": "permission"
+    },
+    {
+     "atMs": 153094,
+     "root": "blocked",
+     "kind": "permission"
+    },
+    {
+     "atMs": 425202,
+     "root": "blocked",
+     "kind": "permission"
+    },
+    {
+     "atMs": 603213,
+     "root": "blocked",
+     "kind": "permission"
+    },
+    {
+     "atMs": 614117,
+     "root": "blocked",
+     "kind": "permission"
+    },
+    {
+     "atMs": 796949,
+     "root": "blocked",
+     "kind": "permission"
+    },
+    {
+     "atMs": 1222068,
+     "root": "blocked",
+     "kind": "permission"
+    },
+    {
+     "atMs": 1232384,
+     "root": "blocked",
+     "kind": "permission"
+    },
+    {
+     "atMs": 1239813,
+     "root": "blocked",
+     "kind": "permission"
+    },
+    {
+     "atMs": 1380905,
+     "root": "blocked",
+     "kind": "permission"
+    },
+    {
+     "atMs": 1663504,
+     "root": "blocked",
+     "kind": "permission"
+    },
+    {
+     "atMs": 1673865,
+     "root": "blocked",
+     "kind": "permission"
+    },
+    {
+     "atMs": 1887317,
+     "root": "blocked",
+     "kind": "permission"
+    },
+    {
+     "atMs": 3590284,
+     "root": "blocked",
+     "kind": "permission"
+    },
+    {
+     "atMs": 3609203,
+     "root": "blocked",
+     "kind": "permission"
+    },
+    {
+     "atMs": 3618611,
+     "root": "blocked",
+     "kind": "permission"
+    },
+    {
+     "atMs": 4523307,
+     "root": "blocked",
+     "kind": "permission"
+    },
+    {
+     "atMs": 4535300,
+     "root": "blocked",
+     "kind": "permission"
+    },
+    {
+     "atMs": 4870353,
+     "root": "blocked",
+     "kind": "permission"
+    },
+    {
+     "atMs": 4880584,
+     "root": "blocked",
+     "kind": "permission"
+    },
+    {
+     "atMs": 5174567,
+     "root": "blocked",
+     "kind": "permission"
+    },
+    {
+     "atMs": 5189653,
+     "root": "blocked",
+     "kind": "permission"
+    },
+    {
+     "atMs": 5380681,
+     "root": "blocked",
+     "kind": "permission"
+    },
+    {
+     "atMs": 5390222,
+     "root": "blocked",
+     "kind": "permission"
+    },
+    {
+     "atMs": 5617426,
+     "root": "blocked",
+     "kind": "permission"
+    },
+    {
+     "atMs": 5627008,
+     "root": "blocked",
+     "kind": "permission"
+    },
+    {
+     "atMs": 5642407,
+     "root": "blocked",
+     "kind": "permission"
+    },
+    {
+     "atMs": 5845243,
+     "root": "blocked",
+     "kind": "permission"
+    },
+    {
+     "atMs": 5859373,
+     "root": "blocked",
+     "kind": "permission"
+    },
+    {
+     "atMs": 7345889,
+     "root": "blocked",
+     "kind": "permission"
+    },
+    {
+     "atMs": 7362344,
+     "root": "blocked",
+     "kind": "permission"
+    },
+    {
+     "atMs": 7533615,
+     "root": "blocked",
+     "kind": "permission"
+    },
+    {
+     "atMs": 7662719,
+     "root": "blocked",
+     "kind": "permission"
+    },
+    {
+     "atMs": 7691407,
+     "root": "blocked",
+     "kind": "permission"
+    }
+   ],
+   "endAtMs": 7709575,
+   "endRoot": "working"
+  },
+  {
+   "kind": "permission",
+   "blockedReports": [
+    {
+     "atMs": 0,
+     "root": "blocked",
+     "kind": "permission"
+    }
+   ],
+   "endAtMs": 7112,
+   "endRoot": "working"
+  },
+  {
+   "kind": "permission",
+   "blockedReports": [
+    {
+     "atMs": 0,
+     "root": "blocked",
+     "kind": "permission"
+    }
+   ],
+   "endAtMs": 15953,
+   "endRoot": "working"
+  },
+  {
+   "kind": "permission",
+   "blockedReports": [
+    {
+     "atMs": 0,
+     "root": "blocked",
+     "kind": "permission"
+    }
+   ],
+   "endAtMs": 31090,
+   "endRoot": "working"
+  },
+  {
+   "kind": "question",
+   "blockedReports": [
+    {
+     "atMs": 0,
+     "root": "blocked",
+     "kind": "question"
+    },
+    {
+     "atMs": 668732,
+     "root": "blocked",
+     "kind": "question"
+    }
+   ],
+   "endAtMs": 3773142,
+   "endRoot": "working"
+  },
+  {
+   "kind": "auth",
+   "blockedReports": [
+    {
+     "atMs": 0,
+     "root": "blocked",
+     "kind": "auth"
+    }
+   ],
+   "endAtMs": 59987,
+   "endRoot": "working"
+  },
+  {
+   "kind": "auth",
+   "blockedReports": [
+    {
+     "atMs": 0,
+     "root": "blocked",
+     "kind": "auth"
+    }
+   ],
+   "endAtMs": 93168,
+   "endRoot": "working"
+  },
+  {
+   "kind": "auth",
+   "blockedReports": [
+    {
+     "atMs": 0,
+     "root": "blocked",
+     "kind": "auth"
+    }
+   ],
+   "endAtMs": 98649,
+   "endRoot": "working"
+  },
+  {
+   "kind": "auth",
+   "blockedReports": [
+    {
+     "atMs": 0,
+     "root": "blocked",
+     "kind": "auth"
+    }
+   ],
+   "endAtMs": 116214,
+   "endRoot": "working"
+  },
+  {
+   "kind": "permission",
+   "blockedReports": [
+    {
+     "atMs": 0,
+     "root": "blocked",
+     "kind": "permission"
+    },
+    {
+     "atMs": 2678,
+     "root": "blocked",
+     "kind": "permission"
+    },
+    {
+     "atMs": 9572,
+     "root": "blocked",
+     "kind": "permission"
+    },
+    {
+     "atMs": 13696,
+     "root": "blocked",
+     "kind": "permission"
+    }
+   ],
+   "endAtMs": 16899,
+   "endRoot": "working"
+  },
+  {
+   "kind": "permission",
+   "blockedReports": [
+    {
+     "atMs": 0,
+     "root": "blocked",
+     "kind": "permission"
+    }
+   ],
+   "endAtMs": 120058,
+   "endRoot": "working"
+  },
+  {
+   "kind": "permission",
+   "blockedReports": [
+    {
+     "atMs": 0,
+     "root": "blocked",
+     "kind": "permission"
+    }
+   ],
+   "endAtMs": 74486,
+   "endRoot": "working"
+  },
+  {
+   "kind": "question",
+   "blockedReports": [
+    {
+     "atMs": 0,
+     "root": "blocked",
+     "kind": "question"
+    }
+   ],
+   "endAtMs": 215345,
+   "endRoot": "working"
+  },
+  {
+   "kind": "question",
+   "blockedReports": [
+    {
+     "atMs": 0,
+     "root": "blocked",
+     "kind": "question"
+    }
+   ],
+   "endAtMs": 35238,
+   "endRoot": "working"
+  },
+  {
+   "kind": "question",
+   "blockedReports": [
+    {
+     "atMs": 0,
+     "root": "blocked",
+     "kind": "question"
+    },
+    {
+     "atMs": 557699,
+     "root": "blocked",
+     "kind": "question"
+    },
+    {
+     "atMs": 666011,
+     "root": "blocked",
+     "kind": "question"
+    },
+    {
+     "atMs": 1111938,
+     "root": "blocked",
+     "kind": "question"
+    },
+    {
+     "atMs": 1130306,
+     "root": "blocked",
+     "kind": "question"
+    }
+   ],
+   "endAtMs": 2245816,
+   "endRoot": "working"
+  },
+  {
+   "kind": null,
+   "blockedReports": [
+    {
+     "atMs": 0,
+     "root": "blocked",
+     "kind": null
+    }
+   ],
+   "endAtMs": 2107115,
+   "endRoot": "error"
+  },
+  {
+   "kind": "permission",
+   "blockedReports": [
+    {
+     "atMs": 0,
+     "root": "blocked",
+     "kind": "permission"
+    }
+   ],
+   "endAtMs": 70,
+   "endRoot": "working"
+  },
+  {
+   "kind": "question",
+   "blockedReports": [
+    {
+     "atMs": 0,
+     "root": "blocked",
+     "kind": "question"
+    }
+   ],
+   "endAtMs": 63018,
+   "endRoot": "working"
+  },
+  {
+   "kind": "permission",
+   "blockedReports": [
+    {
+     "atMs": 0,
+     "root": "blocked",
+     "kind": "permission"
+    }
+   ],
+   "endAtMs": 75,
+   "endRoot": "working"
+  },
+  {
+   "kind": "question",
+   "blockedReports": [
+    {
+     "atMs": 0,
+     "root": "blocked",
+     "kind": "question"
+    }
+   ],
+   "endAtMs": 162879,
+   "endRoot": "working"
+  },
+  {
+   "kind": "question",
+   "blockedReports": [
+    {
+     "atMs": 0,
+     "root": "blocked",
+     "kind": "question"
+    }
+   ],
+   "endAtMs": 19023,
+   "endRoot": "working"
+  },
+  {
+   "kind": "question",
+   "blockedReports": [
+    {
+     "atMs": 0,
+     "root": "blocked",
+     "kind": "question"
+    }
+   ],
+   "endAtMs": 49234,
+   "endRoot": "working"
+  },
+  {
+   "kind": "permission",
+   "blockedReports": [
+    {
+     "atMs": 0,
+     "root": "blocked",
+     "kind": "permission"
+    }
+   ],
+   "endAtMs": 63,
+   "endRoot": "working"
+  }
+ ]
+}
