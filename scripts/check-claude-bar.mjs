@@ -12,7 +12,7 @@
 import { build } from 'esbuild';
 import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const jsdomDir = process.env.JSDOM_DIR || process.argv[2];
@@ -33,12 +33,14 @@ const origError = console.error;
 console.error = (...a) => { if (!String(a[0]).includes('getContext')) origError(...a); };
 const { Terminal } = createRequire(join(repo, 'noop.js'))('@xterm/xterm');
 
+// COMPOSE_SRC_ROOT=<folder holding src/> reads another tree's reader (to prove a check bites on a base).
+const srcRoot = process.env.COMPOSE_SRC_ROOT ? resolve(process.env.COMPOSE_SRC_ROOT) : repo;
 const bundle = await build({
   stdin: {
     contents: process.env.CLAUDE_BAR_STUB
       ? `export const readClaudeBar = (b) => ({ found: false, why: 'no-glyph', row: b.baseY + b.cursorY });
          export const claudeBarVerdict = (r) => (!r.found ? 'none' : r.empty ? 'empty' : 'holds-text');`
-      : `export { readClaudeBar, claudeBarVerdict } from './src/renderer/services/claude-bar';`,
+      : `export { readClaudeBar, claudeBarVerdict } from ${JSON.stringify(join(srcRoot, 'src/renderer/services/claude-bar'))};`,
     resolveDir: repo, loader: 'ts',
   },
   bundle: true, format: 'esm', platform: 'neutral', write: false, logLevel: 'silent',
@@ -129,6 +131,16 @@ await syn('a lone ❯ with no rules', ['', 'some output', '❯ ', 'more output']
 await syn('a lone ❯ on the first row', ['❯ ', RULE], 1, 3, 'none', 'no-rule-above');
 await syn('question dialog row ❯ 1.', ['Which one?', '', '❯ 1. Yes', '  2. No'], 3, 3, 'none', 'no-rule-above');
 await syn('cursor off the glyph line', ['', RULE, '❯ ', RULE, 'footer'], 5, 1, 'none', 'no-glyph');
+// D14: Claude Code's pasted-image placeholders ([Image #N], text colour) are images, not text.
+await syn('one image placeholder, caret after it', ['', RULE, `❯ [Image #2] ${INV} ${OFF}`, RULE], 3, 15, 'empty');
+await syn('two image placeholders', ['', RULE, `❯ [Image #1] [Image #2] ${INV} ${OFF}`, RULE], 3, 26, 'empty');
+await syn('an image placeholder then typed text', ['', RULE, `❯ [Image #2] hello${INV} ${OFF}`, RULE], 3, 20, 'holds-text');
+await syn('typed text then an image placeholder', ['', RULE, `❯ see [Image #3]${INV} ${OFF}`, RULE], 3, 19, 'holds-text');
+await syn('an image placeholder, then the dim hint on the caret',
+  ['', RULE, `❯ [Image #1] ${INV}P${OFF}${DIM}ress up to edit queued messages${OFF}`, RULE], 3, 15, 'empty');
+await syn('a wide character before an image placeholder', ['', RULE, `❯ 漢 [Image #1]${INV} ${OFF}`, RULE], 3, 18, 'holds-text');
+await syn('a pasted-text placeholder stays text', ['', RULE, `❯ [Pasted text #1 +12 lines]${INV} ${OFF}`, RULE], 3, 31, 'holds-text');
+await syn('a malformed image placeholder is text', ['', RULE, `❯ [Image #]${INV} ${OFF}`, RULE], 3, 13, 'holds-text');
 // Wrapped input: the input runs past the right edge, so the cursor's row is
 // the continuation and does not start with `❯`.
 {

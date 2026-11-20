@@ -117,6 +117,14 @@ export interface PaneCallbacks {
   historyManager?: HistoryManager;
 }
 
+/** A pasted image's thumbnail: its strip chip (with ×), and what the box draws (D14). */
+interface PasteChipEntry {
+  el: HTMLElement;
+  label: string;
+  dataUrl: string;
+  timer: ReturnType<typeof setTimeout>;
+}
+
 export class Pane {
   readonly id: string;
   readonly element: HTMLElement;
@@ -354,8 +362,12 @@ export class Pane {
   // --- Pasted-image thumbnails (see pasteImage) ---
   private static readonly PASTE_CHIP_TTL_MS = 10 * 60 * 1000;
   private static readonly PASTE_CHIP_MAX = 6;
+  /** D14: thumbnails inside the box (more than this many: the first ones and a "+N"). */
+  private static readonly BOX_IMAGES_SHOWN = 3;
   private pasteStrip!: HTMLElement;
-  private pasteChips: { el: HTMLElement; timer: ReturnType<typeof setTimeout> }[] = [];
+  /** D14: the thumbnails inside the box, between Okay? and the text, while it is engaged. */
+  private boxImages!: HTMLElement;
+  private pasteChips: PasteChipEntry[] = [];
 
   // --- Claude Code Stop hook (OSC 777 `patton;stop;tasks=N;crons=M`) ---
   // Claude Code 2.1.318 shows ◐/◑ only while its main loop is busy and ✳
@@ -1328,6 +1340,16 @@ export class Pane {
     this.editorContainer.addEventListener('mousedown', editorMouseDown, true);
     this.disposables.push(() => this.editorContainer.removeEventListener('mousedown', editorMouseDown, true));
 
+    // D14: pasted images inside the box, left of the text (Okay? is
+    // prepended ahead of them). A press keeps the keyboard in the textarea.
+    this.boxImages = document.createElement('div');
+    this.boxImages.className = 'compose-images';
+    this.boxImages.setAttribute('role', 'group');
+    this.boxImages.setAttribute('aria-label', 'Pasted images');
+    this.boxImages.hidden = true;
+    this.boxImages.addEventListener('mousedown', (e) => e.preventDefault());
+    this.editorInput.insertBeforeText(this.boxImages);
+
     this.wireComposePlacement();
     this.syncOkayRow();
 
@@ -2016,9 +2038,11 @@ export class Pane {
     remove.textContent = '\u00d7';
     chip.appendChild(remove);
 
-    const entry = {
+    const entry: PasteChipEntry = {
       el: chip,
-      timer: setTimeout(() => this.removePasteChip(entry), Pane.PASTE_CHIP_TTL_MS),
+      label,
+      dataUrl,
+      timer: setTimeout(() => this.pasteChipExpired(entry), Pane.PASTE_CHIP_TTL_MS),
     };
     remove.addEventListener('click', () => {
       this.removePasteChip(entry);
@@ -2028,21 +2052,72 @@ export class Pane {
     this.pasteChips.push(entry);
     while (this.pasteChips.length > Pane.PASTE_CHIP_MAX) this.removePasteChip(this.pasteChips[0]);
     this.pasteStrip.appendChild(chip);
-    this.setPasteStripVisible(true);
+    this.syncPasteChipViews();
   }
 
-  private removePasteChip(entry: { el: HTMLElement; timer: ReturnType<typeof setTimeout> }): void {
+  /** The 10-minute timer. While the box is engaged the thumbnail is the only
+   *  sign of the image in Claude's message, so it stays (D14): the timer
+   *  starts again instead. */
+  private pasteChipExpired(entry: PasteChipEntry): void {
+    if (!this.pasteChips.includes(entry)) return;
+    if (this.composeFirstEngaged) {
+      entry.timer = setTimeout(() => this.pasteChipExpired(entry), Pane.PASTE_CHIP_TTL_MS);
+      return;
+    }
+    this.removePasteChip(entry);
+  }
+
+  private removePasteChip(entry: PasteChipEntry): void {
     clearTimeout(entry.timer);
     entry.el.remove();
     this.pasteChips = this.pasteChips.filter((c) => c !== entry);
-    if (this.pasteChips.length === 0) this.setPasteStripVisible(false);
+    this.syncPasteChipViews();
+  }
+
+  /**
+   * D14: while the box is engaged (every placement) the thumbnails sit inside
+   * it, left of the text, with no ×, and the strip above it is not used; with
+   * the box off or closed, the strip as before. `refit` false when the caller
+   * changes the box's own height in the same run (engage, disengage): the
+   * terminal's resize observer then refits once for both.
+   */
+  private syncPasteChipViews(refit = true): void {
+    const inBox = this.composeFirstEngaged;
+    this.renderBoxImages(inBox ? this.pasteChips : []);
+    this.setPasteStripVisible(!inBox && this.pasteChips.length > 0, refit);
+  }
+
+  private renderBoxImages(entries: readonly PasteChipEntry[]): void {
+    if (!this.boxImages) return; // before the constructor has built it
+    const shown = entries.slice(0, Pane.BOX_IMAGES_SHOWN);
+    const nodes: HTMLElement[] = shown.map((entry) => {
+      const img = document.createElement('img');
+      img.className = 'compose-image';
+      img.src = entry.dataUrl;
+      img.alt = `Pasted image, ${entry.label}`;
+      img.title = `Pasted image, ${entry.label}`;
+      return img;
+    });
+    const more = entries.length - shown.length;
+    if (more > 0) {
+      const count = document.createElement('span');
+      count.className = 'compose-images-more';
+      count.textContent = `+${more}`;
+      const words = `${more} more pasted image${more === 1 ? '' : 's'}`;
+      count.title = words;
+      count.setAttribute('role', 'img');
+      count.setAttribute('aria-label', words);
+      nodes.push(count);
+    }
+    this.boxImages.replaceChildren(...nodes);
+    this.boxImages.hidden = entries.length === 0;
   }
 
   /** Showing or hiding the strip changes the terminal's height: re-fit and tell the PTY now. */
-  private setPasteStripVisible(visible: boolean): void {
+  private setPasteStripVisible(visible: boolean, refit = true): void {
     if (this.pasteStrip.hidden === !visible) return;
     this.pasteStrip.hidden = !visible;
-    this.refitTerminal();
+    if (refit) this.refitTerminal();
   }
 
   /** A row under the terminal appeared or went: re-fit and tell the PTY now,
@@ -2671,6 +2746,7 @@ export class Pane {
   private engageComposeFirst(reason: string): void {
     this.composeFirstEngaged = true;
     this.syncOkayRow(false); // D11: Okay? moves into the box
+    this.syncPasteChipViews(false); // D14: the thumbnails too
     this.composeHandedOff = false;
     this.editorContainer.classList.add('compose-first');
     this.editorContainer.classList.remove('collapsed');
@@ -2699,6 +2775,7 @@ export class Pane {
     const hadFocus = this.editorInput.hasFocus();
     this.composeFirstEngaged = false;
     this.syncOkayRow(true); // D11: Okay? back in its row under the terminal
+    this.syncPasteChipViews(false); // D14: the thumbnails back in the strip
     this.composeHandedOff = false;
     this.editorContainer.classList.remove('compose-first');
     this.editorContainer.classList.add('collapsed'); // the draft stays; ⌘E shows it

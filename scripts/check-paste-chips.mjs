@@ -9,10 +9,14 @@
 // the bundled object) rather than the clipboard path; keystrokes arrive as
 // terminal data, the compose box's submit through the private queueSubmit, and
 // Claude's state through the real parseProgramStatus.
+// Section 6 (D14, 20 Nov 2026): while the compose box is engaged the thumbnails
+// sit inside it, between Okay? and the text (the real EditorInput, so the box's
+// row is real DOM).
 // Run: JSDOM_DIR=<a folder whose node_modules has jsdom> node scripts/check-paste-chips.mjs
+// COMPOSE_SRC_ROOT=<folder holding src/> bundles another tree (to prove a check bites on a base).
 import { build } from 'esbuild';
 import { createRequire } from 'node:module';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const jsdomDir = process.env.JSDOM_DIR || process.argv[2];
@@ -21,7 +25,7 @@ if (!jsdomDir) {
   process.exit(2);
 }
 const { JSDOM, VirtualConsole } = createRequire(join(jsdomDir, 'noop.js'))('jsdom');
-const repo = join(dirname(fileURLToPath(import.meta.url)), '..');
+const repo = process.env.COMPOSE_SRC_ROOT ? resolve(process.env.COMPOSE_SRC_ROOT) : join(dirname(fileURLToPath(import.meta.url)), '..');
 
 const stubSource = `
   const mk = () => new Proxy(function () {}, {
@@ -48,12 +52,11 @@ const stubSource = `
       });
     }
   }
-  export const EditorInput = mk(), SearchOverlay = mk(), HistorySearch = mk(), PasteDialog = mk(),
-    DEFAULT_COMPOSE_PLACEHOLDER = '';`;
+  export const SearchOverlay = mk(), HistorySearch = mk(), PasteDialog = mk();`;
 const stubs = {
   name: 'stubs',
   setup(b) {
-    b.onResolve({ filter: /\/(terminal-view|editor-input|search-overlay|history-search|paste-dialog)$/ },
+    b.onResolve({ filter: /\/(terminal-view|search-overlay|history-search|paste-dialog)$/ },
       (a) => ({ path: a.path, namespace: 'stub' }));
     b.onLoad({ filter: /.*/, namespace: 'stub' }, () => ({ contents: stubSource, loader: 'js' }));
   },
@@ -67,6 +70,7 @@ const bundle = await build({
     resolveDir: repo, loader: 'ts',
   },
   bundle: true, format: 'iife', globalName: 'PA', platform: 'browser', write: false,
+  nodePaths: [join(dirname(fileURLToPath(import.meta.url)), '..', 'node_modules')], // a COMPOSE_SRC_ROOT tree has none
   loader: { '.css': 'empty' }, plugins: [stubs], logLevel: 'silent',
 });
 
@@ -272,6 +276,84 @@ const submit = async (p, origin) => {
   chip(p);
   p.dispose();
   check('dispose still clears the chips', chips(p) === 0);
+}
+
+// ── 6. D14: while the box is engaged the thumbnails sit inside it ──
+{
+  const engaged = async () => {
+    const p = await makePane();
+    p.setComposeFirst(true, null);
+    report(p, 'idle');
+    return p;
+  };
+  const sized = (p, wd, ht) => p.addPasteChip('data:image/png;base64,AAAA', wd, ht);
+  const field = (p) => p.editorContainer.querySelector('.editor-field');
+  const textarea = (p) => field(p).querySelector('textarea');
+  /** The box's row, left to right: what sits before the textarea. */
+  const boxImgs = (p) => [...field(p).querySelectorAll('img')];
+  const more = (p) => field(p).querySelector('.compose-images-more');
+  const before = (a, b) => Boolean(a && b) && Boolean(a.compareDocumentPosition(b) & w.Node.DOCUMENT_POSITION_FOLLOWING);
+
+  const p = await engaged();
+  check('6 (setup) the box is engaged with Okay? in it',
+    p.composeFirstEngaged === true && field(p).querySelector('.okay-button:not([hidden])') !== null);
+  sized(p, 800, 600);
+  const img = boxImgs(p)[0];
+  check('6.1 an image pasted with the box engaged: its thumbnail inside the box', boxImgs(p).length === 1 && p.editorContainer.contains(img));
+  const okay = field(p).querySelector('.okay-button');
+  check('6.1 ...left of the text, after Okay?: Okay?, the image, the textarea in that order',
+    before(okay, img) && before(img, textarea(p)), [...field(p).children].map((el) => el.className));
+  check('6.2 its size (w×h) in its tooltip and accessible name',
+    img?.title.includes('800\u00d7600') && img?.alt.includes('800\u00d7600'), { title: img?.title, alt: img?.alt });
+  check('6.3 no × on a thumbnail in the box',
+    boxImgs(p).length === 1 && field(p).querySelectorAll('.paste-chip-remove').length === 0 && ![...field(p).querySelectorAll('button')].some((b) => b.textContent.includes('\u00d7')));
+  check('6.4 the strip above the box is not used', strip(p).hidden === true);
+  sized(p, 801, 1); sized(p, 802, 2); sized(p, 803, 3); sized(p, 804, 4);
+  check('6.5 five images: the first three and "+2"',
+    boxImgs(p).length === 3 && boxImgs(p).map((i) => i.alt).join('|') === 'Pasted image, 800\u00d7600|Pasted image, 801\u00d71|Pasted image, 802\u00d72'
+      && more(p)?.textContent === '+2' && before(boxImgs(p)[2], more(p)) && before(more(p), textarea(p)),
+    { alts: boxImgs(p).map((i) => i.alt), more: more(p)?.textContent });
+  check('6.5 ...still no strip', strip(p).hidden === true);
+  // Each clear: thumbnails were in the box before it, none after.
+  const inBox = () => boxImgs(p).length;
+  let had = inBox();
+  await submit(p);
+  check('6.6 a send from the box clears them, the box\'s row with them', had === 3 && chips(p) === 0 && inBox() === 0 && !more(p), { had });
+  sized(p, 10, 10);
+  had = inBox();
+  type(p, '\r');
+  check('6.6 Enter clears them', had === 1 && chips(p) === 0 && inBox() === 0, { had });
+  sized(p, 10, 10);
+  had = inBox();
+  report(p, 'working');
+  check('6.6 the turn starting clears them', had === 1 && chips(p) === 0 && inBox() === 0, { had });
+  p.dispose();
+
+  // The 10-minute timer, shortened.
+  const ttl = PA.Pane.PASTE_CHIP_TTL_MS;
+  PA.Pane.PASTE_CHIP_TTL_MS = 30;
+  const t = await engaged();
+  sized(t, 20, 20);
+  await wait(120);
+  const held = chips(t) === 1 && boxImgs(t).length === 1;
+  check('6.7 the timer never clears a thumbnail while the box is engaged', held);
+  t.setComposeFirst(false, null);
+  check('6.8 the box closed: the thumbnail back in the strip, × included, none left in the box',
+    strip(t).hidden === false && strip(t).querySelectorAll('.paste-chip-remove').length === 1 && boxImgs(t).length === 0);
+  await wait(120);
+  check('6.8 ...and the timer clears it again once the box is closed', held && chips(t) === 0 && strip(t).hidden === true);
+  t.dispose();
+
+  const off = await makePane();
+  report(off, 'idle');
+  sized(off, 30, 30);
+  // 6.9 is a control: unchanged from before D14, so it holds on the base too.
+  check('6.9 the box off: the strip as before (chip with ×), nothing in the box',
+    off.composeFirstEngaged === false && strip(off).hidden === false && strip(off).querySelectorAll('.paste-chip .paste-chip-remove').length === 1 && boxImgs(off).length === 0);
+  await wait(120);
+  check('6.9 ...and its timer still clears it', chips(off) === 0);
+  off.dispose();
+  PA.Pane.PASTE_CHIP_TTL_MS = ttl;
 }
 
 finished = true;

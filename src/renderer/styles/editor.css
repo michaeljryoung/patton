@@ -286,6 +286,45 @@
   align-self: center;
 }
 
+/* D14: pasted images inside the box, between Okay? and the text, while it is
+   engaged (Pane.renderBoxImages): each as tall as one line of the box's text
+   (the textarea's font size x its 1.4 line height; --compose-text-size
+   follows Font Size), no ×, the first three and a "+N". The box keeps its
+   height: in 'over' three terminal rows. */
+.compose-images {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.compose-images[hidden] {
+  display: none;
+}
+
+.compose-image {
+  display: block;
+  flex: 0 0 auto;
+  height: calc(var(--compose-text-size, 12.5px) * 1.4);
+  width: auto;
+  max-width: calc(var(--compose-text-size, 12.5px) * 1.4 * 2.5);
+  object-fit: contain;
+  box-sizing: border-box;
+  border: 1px solid var(--hairline);
+  border-radius: 0;
+  background: var(--surface);
+}
+
+.compose-images-more {
+  flex: 0 0 auto;
+  font-family: var(--font-ui);
+  font-size: var(--ui);
+  line-height: 1.1;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
 .editor-container.compose-first.aside .editor-field > .okay-button {
   color: var(--compose-aside-ink);
   border-color: var(--compose-aside-rule);

@@ -12,7 +12,10 @@
  * Claude's own hint such as "Press up to edit queued messages"), or the
  * inverse caret cell when that cell is blank or the text after it is dim.
  * Anything else (typed text, drawn in the default colour, a `/`, a pasted
- * path) means it *holds text*.
+ * path) means it *holds text*. Claude Code's pasted-image placeholders
+ * (`[Image #N]`, built as `[Image #${id}]` and drawn in the text colour)
+ * count as images, not text (D14): a bar holding only images is empty, so
+ * the box stays over it. `[Pasted text #N +M lines]` stays text.
  *
  * Pure: no DOM, no timers. It reads the narrow slice of xterm's IBuffer
  * declared below, so a check can feed it a real @xterm/xterm buffer headlessly
@@ -64,8 +67,35 @@ function isBlank(cell: BarCell): boolean {
   return cell.getChars().trim() === '';
 }
 
-/** Whether the input line R (glyph already checked) holds nothing of his. */
+/** Claude Code's pasted-image placeholder (D14). */
+const IMAGE_PLACEHOLDER = /\[Image #\d+\]/g;
+
+/**
+ * The cells of the input line covered by `[Image #N]` placeholders. The line
+ * is read cell by cell (a blank cell as a space), so a match's string offsets
+ * map back to cells even with a wide character before it.
+ */
+function imageCells(line: BarLine): Set<number> {
+  let text = '';
+  const cellAt: number[] = [];
+  for (let x = INPUT_START_X; x < line.length; x++) {
+    const chars = line.getCell(x)?.getChars() ?? '';
+    const piece = chars === '' ? ' ' : chars;
+    for (let i = 0; i < piece.length; i++) cellAt.push(x);
+    text += piece;
+  }
+  const covered = new Set<number>();
+  for (const m of text.matchAll(IMAGE_PLACEHOLDER)) {
+    const start = m.index ?? 0;
+    for (let i = start; i < start + m[0].length; i++) covered.add(cellAt[i]);
+  }
+  return covered;
+}
+
+/** Whether the input line R (glyph already checked) holds nothing of his
+ *  but images. */
 function inputIsEmpty(line: BarLine): boolean {
+  const images = imageCells(line);
   let caretSeen = false;
   // Non-blank cells after an inverse caret that sat on a non-blank cell must
   // all be dim, and at least one must exist (a caret alone on a letter is a
@@ -74,7 +104,7 @@ function inputIsEmpty(line: BarLine): boolean {
   let dimAfterCaret = false;
   for (let x = INPUT_START_X; x < line.length; x++) {
     const cell = line.getCell(x);
-    if (!cell || isBlank(cell)) continue;
+    if (!cell || isBlank(cell) || images.has(x)) continue;
     if (cell.isDim()) {
       if (caretOnText) dimAfterCaret = true;
       continue;

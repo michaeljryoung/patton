@@ -31,6 +31,9 @@
 // Claude Code's own redraw after a resize (the recordings were made at 100x30;
 // when the box goes under, xterm reflows the recorded screen instead).
 //
+// D14 (20 Nov): with two pasted images the box stays three rows and the images
+// sit between Okay? and the textarea, left to right, inside it.
+//
 // Run: node scripts/check-compose-over.cjs
 //   COMPOSE_SRC_ROOT=<folder holding src/>  bundle another source tree (to prove the check bites)
 //   COMPOSE_OVER_CHECK_DIR=<folder>         where the bundle, userData and result go (default: a temp folder, removed after)
@@ -390,6 +393,38 @@ async function pageRun(SCALES) {
     check(`${label}: no Okay? row under the terminal`, rowHidden, d);
   }
 
+  /** D14: n pasted images inside the box, between Okay? and the textarea, left to right; the box three rows. */
+  function imagesInBox(label, n) {
+    const g = grid();
+    const b = box().getBoundingClientRect();
+    const imgs = [...box().querySelectorAll('.editor-field img')];
+    const okay = q('.editor-container .editor-field > .okay-button');
+    const ta = textarea();
+    const strip = q('.paste-strip');
+    const stripShown = Boolean(strip) && !strip.hidden && getComputedStyle(strip).display !== 'none';
+    const lineH = parseFloat(getComputedStyle(ta).lineHeight);
+    const rects = imgs.map((el) => el.getBoundingClientRect());
+    const k = okay ? okay.getBoundingClientRect() : null;
+    const t = ta.getBoundingClientRect();
+    const d = {
+      count: imgs.length, cellH: r1(g.cellH), box: { top: r1(b.top), bottom: r1(b.bottom), left: r1(b.left), right: r1(b.right), h: r1(b.height) },
+      okay: k && { left: r1(k.left), right: r1(k.right) }, textarea: { left: r1(t.left), lineH: r1(lineH) },
+      imgs: rects.map((r) => ({ left: r1(r.left), right: r1(r.right), top: r1(r.top), bottom: r1(r.bottom), w: r1(r.width), h: r1(r.height) })), stripShown,
+    };
+    check(`${label}: ${n} images in the box, the box still three rows, no strip above it`,
+      imgs.length === n && Math.abs(b.height - 3 * g.cellH) <= 1 && !stripShown, d);
+    let order = Boolean(k) && rects.length === n;
+    let prev = k ? k.right : 0;
+    for (const r of rects) {
+      order = order && r.width > 0 && r.left >= prev - 0.5 && r.left >= b.left - 0.5 && r.right <= b.right + 0.5 && r.top >= b.top - 0.5 && r.bottom <= b.bottom + 0.5;
+      prev = r.right;
+    }
+    check(`${label}: Okay?, the images, then the textarea, left to right, all inside the box`, order && n > 0 && prev <= t.left + 0.5, d);
+    check(`${label}: each image as tall as one line of the box's text (1 px)`,
+      rects.length === n && n > 0 && rects.every((r) => Math.abs(r.height - lineH) <= 1), d);
+    measures.push(`${label}: box ${d.box.h} px (${r1(b.height / g.cellH)} rows), images ${d.imgs.map((r) => `${r.w}x${r.h}`).join(', ')} from ${d.imgs[0] ? d.imgs[0].left : '-'} (Okay? ends ${k ? r1(k.right) : '-'}, text from ${d.textarea.left}), text line ${d.textarea.lineH} px`);
+  }
+
   function noteInCorner(label, el) {
     const p = pane.element.getBoundingClientRect();
     const n = el.getBoundingClientRect();
@@ -454,6 +489,16 @@ async function pageRun(SCALES) {
     measures.push(`${at} 30-line draft: box ${r1(b7.height)} px, cap ${Math.floor(paneH / 3)} px`);
     await typeDraft('');
     overGeometry(`${at} draft cleared`, bar.R);
+
+    // 3. D14: two pasted images sit inside the box, left of the text; it keeps its three rows.
+    const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+    pane.addPasteChip(PNG, 640, 480);
+    pane.addPasteChip(PNG, 320, 200);
+    await settle(250);
+    imagesInBox(`${at} two pasted images`, 2);
+    overGeometry(`${at} two pasted images`, bar.R);
+    pane.clearPasteChips();
+    await settle(250);
 
     // 4. under when Claude's bar holds text or isn't found; over again once cleared.
     for (const [mark, clearMark] of [['typed', 'cleared'], ['wrapped', null], ['multiline', 'cleared2']]) {

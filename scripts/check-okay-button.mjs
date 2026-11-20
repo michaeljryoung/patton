@@ -165,9 +165,12 @@ const clearReport = (p) => p.terminalView.__emit('onProgramStatus', PA.parseProg
 const row = (p) => p.element.querySelector('.okay-row');
 const btn = (p) => p.element.querySelector('.okay-button');
 const field = (p) => p.editorContainer.querySelector('.editor-field');
+/** The next sibling that shows: D14's pasted-images group sits between Okay? and the
+ *  textarea, hidden while there are no images. */
+const nextShown = (el) => { let n = el?.nextElementSibling; while (n && n.hidden) n = n.nextElementSibling; return n; };
 /** The button is in the box at its left: the first thing in the box's field, before the textarea. */
 const inBoxAtLeft = (p) => btn(p)?.parentElement === field(p) && field(p).firstElementChild === btn(p)
-  && btn(p).nextElementSibling?.tagName === 'TEXTAREA';
+  && nextShown(btn(p))?.tagName === 'TEXTAREA';
 /** The button is offered where this MODE puts it: in its shown row (box off),
  *  or shown inside the engaged box with the row hidden. */
 const offered = (p) => (MODE === 'row'

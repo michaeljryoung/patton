@@ -169,6 +169,8 @@ w.patton = stubWith({
     onExit: () => () => {},
   }),
   history: stubWith({ get: () => Promise.resolve([]), add: () => Promise.resolve(), clear: () => Promise.resolve() }),
+  // D14 (section 7): an image on the clipboard; Pane sends Ctrl+V to Claude.
+  clipboard: stubWith({ readImage: () => Promise.resolve({ dataUrl: 'data:image/png;base64,AAAA', width: 800, height: 600 }) }),
   log: { send: (lvl, args) => logs.push({ lvl, tag: String(args[0]), data: args[1] }) },
 });
 w.eval(bundle.outputFiles[0].text);
@@ -703,6 +705,42 @@ const newPane = async () => {
     }
     p.dispose();
   }
+}
+
+// ── 7. D14: a pasted image's [Image #N] in Claude's bar keeps the box over it ──
+{
+  const p = await newPane();
+  const f = feeder(p, 'steps');
+  await f.to('idle');
+  check('7 (setup) over', placement(p) === 'over', placement(p));
+  logs.length = 0; resizes.length = 0; writes.length = 0;
+  await p.pasteImage('compose'); // from the box: Ctrl+V to Claude, a thumbnail in the box
+  check('7 (setup) Ctrl+V written to Claude', writes.includes('\x16'), writes);
+  // Claude echoes the placeholder into its bar, the caret after it, and parks
+  // the cursor on the bar's row as it does.
+  const b = term(p).buffer.active;
+  const y = b.cursorY + 1; // 1-based screen row of the bar
+  await write(term(p), `${'\x1b['}${y};3H[Image #1] ${'\x1b[7m'} ${'\x1b[0m\x1b[K'}${'\x1b['}${y};14H`);
+  await frames();
+  const line = b.getLine(b.baseY + b.cursorY).translateToString(true).replace(/\u00a0/g, ' ');
+  check('7 (setup) Claude\'s bar reads `❯ [Image #1]`, the cursor on it', line.trimEnd() === '❯ [Image #1]', line);
+  advance(450);
+  await frames();
+  advance(450);
+  check('7.1 an image paste with `[Image #1]` echoed in Claude\'s bar: still over 900 ms on, no `[COMPOSE] place`, no refit',
+    placement(p) === 'over' && places().length === 0 && resizes.length === 0, { pl: places(), resizes });
+  // A second image, then text typed after them: that is text, so under after the wait.
+  await write(term(p), `${'\x1b['}${y};3H[Image #1] [Image #2] ${'\x1b[7m'} ${'\x1b[0m\x1b[K'}${'\x1b['}${y};25H`);
+  await frames();
+  advance(900);
+  check('7.2 two placeholders: still over', placement(p) === 'over' && places().length === 0, places());
+  await write(term(p), `${'\x1b['}${y};3H[Image #1] [Image #2] see these${'\x1b[7m'} ${'\x1b[0m\x1b[K'}${'\x1b['}${y};34H`);
+  await frames();
+  advance(450);
+  const pl = places();
+  check('7.3 ...then text typed after them: under after the 400 ms wait, reason holds-text',
+    placement(p) === 'under' && pl.length === 1 && pl[0].reason === 'holds-text', pl);
+  p.dispose();
 }
 
 finished = true;

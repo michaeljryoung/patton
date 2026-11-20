@@ -72,6 +72,7 @@ export class EditorInput {
     this.textarea.setAttribute('aria-label', 'Compose');
     if (fontSize) {
       this.textarea.style.fontSize = fontSize + 'px';
+      this.field.style.setProperty('--compose-text-size', fontSize + 'px');
     }
     this.field.appendChild(this.textarea);
 
@@ -297,6 +298,11 @@ export class EditorInput {
     return this.field;
   }
 
+  /** Put an element in the row just before the textarea (D14: pasted images). */
+  insertBeforeText(el: HTMLElement): void {
+    this.field.insertBefore(el, this.textarea);
+  }
+
   hasFocus(): boolean {
     return document.activeElement === this.textarea;
   }
@@ -386,6 +392,8 @@ export class EditorInput {
 
   setFontSize(size: number): void {
     this.textarea.style.fontSize = size + 'px';
+    // Read by what sits beside the text and sizes to its line (D14's thumbnails).
+    this.field.style.setProperty('--compose-text-size', size + 'px');
   }
 
   setFontFamily(family: string): void {
