@@ -23,16 +23,17 @@
 //     the typing grace, "Draft kept" in the pane's bottom-right corner; no note
 //     without a draft; the box back over the bar after; a menu aside shows
 //     "Type here", never "Draft kept";
-//  6. Okay? inside the box at its left, the Okay? row hidden, the box three
-//     rows tall where its contents fit (D12: it may grow upward where they
+//  6. no Okay? button or row in any placement (removed 2026-11-20, S58), the
+//     box's first item from the left the image chips when there are some, else
+//     the textarea, the box three rows tall where its contents fit (D12: it may grow upward where they
 //     don't; the height is printed in px and rows at each scale);
-//  7. composeOverBar off: `under` throughout, Okay? in the box.
+//  7. composeOverBar off: `under` throughout, still no Okay? anywhere.
 // Not covered: the WebGL renderer (the grid is the same .xterm-screen box),
 // Claude Code's own redraw after a resize (the recordings were made at 100x30;
 // when the box goes under, xterm reflows the recorded screen instead).
 //
 // D14 (20 Nov): with two pasted images the box stays three rows and the images
-// sit between Okay? and the textarea, left to right, inside it.
+// sit first from the box's left, then the textarea, left to right, inside it.
 //
 // Run: node scripts/check-compose-over.cjs
 //   COMPOSE_SRC_ROOT=<folder holding src/>  bundle another source tree (to prove the check bites)
@@ -385,50 +386,52 @@ async function pageRun(SCALES) {
     measures.push(`${label}: ${c.cols} cols, grid right ${c.gridRight}, content right ${c.contentRight}, scrollbar from ${c.scrollbarLeft} (${c.scrollbarW} px)`);
   }
 
-  function okayInBox(label) {
-    const btn = q('.editor-container.compose-first .editor-field > .okay-button:first-child');
-    const row = q('.okay-row');
-    const rowHidden = !row || row.hidden || getComputedStyle(row).display === 'none';
-    if (!btn) { check(`${label}: Okay? is the first thing in the box's field`, false, { found: false, rowHidden }); return; }
-    const b = box().getBoundingClientRect();
-    const k = btn.getBoundingClientRect();
-    const padL = parseFloat(getComputedStyle(box()).paddingLeft);
-    const d = { boxLeft: r1(b.left), okayLeft: r1(k.left), paddingLeft: padL, okayW: r1(k.width), okayH: r1(k.height), rowHidden };
-    check(`${label}: Okay? in the box at its left (within the box's left padding), drawn`,
-      k.width > 0 && k.left >= b.left - 0.5 && k.left - b.left <= padL + 1 && k.top >= b.top - 0.5 && k.bottom <= b.bottom + 0.5, d);
-    check(`${label}: no Okay? row under the terminal`, rowHidden, d);
+  /** No Okay? button or row in any placement (removed 2026-11-20, S58); the box's first item from the
+   *  left is the image chips when there are some, else the textarea; and, in `over`, three rows tall. */
+  function boxFirstItem(label, inOver) {
+    const noOkay = !q('.okay-button') && !q('.okay-row');
+    const shown = [...box().querySelector('.editor-field').children].filter((el) => !el.hidden && getComputedStyle(el).display !== 'none');
+    const first = shown[0];
+    const hasImages = Boolean(box().querySelector('.editor-field .compose-image'));
+    const want = hasImages ? 'compose-images' : null;
+    const isFirstOk = Boolean(first) && (want ? first.classList.contains(want) : first === textarea());
+    const g = grid();
+    const h = box().getBoundingClientRect().height;
+    const d = { noOkay, first: first ? first.className || first.tagName : null, hasImages, boxH: r1(h), rows: r1(h / g.cellH) };
+    check(`${label}: no Okay? button or row anywhere`, noOkay, d);
+    check(`${label}: the box's first item from the left is the ${hasImages ? 'image chips' : 'textarea'}`, isFirstOk, d);
+    if (inOver) check(`${label}: the box is three rows tall in \`over\``, Math.abs(h - 3 * g.cellH) <= 1, d);
   }
 
-  /** D14: n pasted images inside the box, between Okay? and the textarea, left to right; the box three rows. */
+  /** D14: n pasted images inside the box, first from the box's left, then the textarea, left to right; the box three rows. */
   function imagesInBox(label, n) {
     const g = grid();
     const b = box().getBoundingClientRect();
     const imgs = [...box().querySelectorAll('.editor-field img')];
-    const okay = q('.editor-container .editor-field > .okay-button');
+    boxFirstItem(label, true);
     const ta = textarea();
     const strip = q('.paste-strip');
     const stripShown = Boolean(strip) && !strip.hidden && getComputedStyle(strip).display !== 'none';
     const lineH = parseFloat(getComputedStyle(ta).lineHeight);
     const rects = imgs.map((el) => el.getBoundingClientRect());
-    const k = okay ? okay.getBoundingClientRect() : null;
     const t = ta.getBoundingClientRect();
     const d = {
       count: imgs.length, cellH: r1(g.cellH), box: { top: r1(b.top), bottom: r1(b.bottom), left: r1(b.left), right: r1(b.right), h: r1(b.height) },
-      okay: k && { left: r1(k.left), right: r1(k.right) }, textarea: { left: r1(t.left), lineH: r1(lineH) },
+      textarea: { left: r1(t.left), lineH: r1(lineH) },
       imgs: rects.map((r) => ({ left: r1(r.left), right: r1(r.right), top: r1(r.top), bottom: r1(r.bottom), w: r1(r.width), h: r1(r.height) })), stripShown,
     };
     check(`${label}: ${n} images in the box, the box still three rows, no strip above it`,
       imgs.length === n && Math.abs(b.height - 3 * g.cellH) <= 1 && !stripShown, d);
-    let order = Boolean(k) && rects.length === n;
-    let prev = k ? k.right : 0;
+    let order = rects.length === n;
+    let prev = b.left;
     for (const r of rects) {
       order = order && r.width > 0 && r.left >= prev - 0.5 && r.left >= b.left - 0.5 && r.right <= b.right + 0.5 && r.top >= b.top - 0.5 && r.bottom <= b.bottom + 0.5;
       prev = r.right;
     }
-    check(`${label}: Okay?, the images, then the textarea, left to right, all inside the box`, order && n > 0 && prev <= t.left + 0.5, d);
+    check(`${label}: the images first from the box's left, then the textarea, left to right, all inside the box`, order && n > 0 && prev <= t.left + 0.5, d);
     check(`${label}: each image as tall as one line of the box's text (1 px)`,
       rects.length === n && n > 0 && rects.every((r) => Math.abs(r.height - lineH) <= 1), d);
-    measures.push(`${label}: box ${d.box.h} px (${r1(b.height / g.cellH)} rows), images ${d.imgs.map((r) => `${r.w}x${r.h}`).join(', ')} from ${d.imgs[0] ? d.imgs[0].left : '-'} (Okay? ends ${k ? r1(k.right) : '-'}, text from ${d.textarea.left}), text line ${d.textarea.lineH} px`);
+    measures.push(`${label}: box ${d.box.h} px (${r1(b.height / g.cellH)} rows), images ${d.imgs.map((r) => `${r.w}x${r.h}`).join(', ')} from ${d.imgs[0] ? d.imgs[0].left : '-'} (text from ${d.textarea.left}), text line ${d.textarea.lineH} px`);
   }
 
   function noteInCorner(label, el) {
@@ -474,7 +477,7 @@ async function pageRun(SCALES) {
     const idle = overGeometry(`${at} steps/idle`, bar.R);
     opaque(`${at} steps/idle`);
     check(`${at} steps/idle: the terminal keeps the whole pane's rows (as with no box)`, term().rows === baseRows, { rows: term().rows, baseRows });
-    okayInBox(`${at} steps/idle`);
+    boxFirstItem(`${at} steps/idle`, true);
     measures.push(`${at} idle: cell ${r1(idle.g.cellH)} px; box ${r1(idle.b.height)} px = ${r1(idle.b.height / idle.g.cellH)} rows (contents need ${r1(idle.need)} px, ${idle.fits ? 'fit' : 'do not fit'} in 3 rows); box top ${r1(idle.b.top)} vs row R-1 ${r1(idle.g.top(bar.R - 1))}, bottom ${r1(idle.b.bottom)} vs ${r1(idle.g.top(bar.R + 2))}; pane ${r1(pane.element.getBoundingClientRect().height)} px, terminal ${term().cols}x${term().rows}`);
 
     // Review fixes. (a) The overlay's colour follows a theme change at once.
@@ -677,7 +680,7 @@ async function pageRun(SCALES) {
     bar = findBar();
     if (bar && bar.empty) overGeometry(`${at} turn/after the turn`, bar.R);
     else check(`${at} turn/after the turn: Claude's bar found on screen`, false, bar);
-    okayInBox(`${at} turn/after the turn`);
+    boxFirstItem(`${at} turn/after the turn`, true);
 
     // ---------------- queue recording, and dock (3)
     await newPane();
@@ -712,7 +715,7 @@ async function pageRun(SCALES) {
     bar = findBar();
     if (bar && bar.empty) overGeometry(`${at} scrolled back down: over`, bar.R);
 
-    // ---------------- 7. composeOverBar off: under throughout, Okay? in the box
+    // ---------------- 7. composeOverBar off: under throughout, no Okay? anywhere
     await newPane();
     f = feeder('steps');
     await f.to('idle');
@@ -720,7 +723,7 @@ async function pageRun(SCALES) {
     const seen = [];
     let allUnder = true;
     underGeometry(`${at} over-bar off, idle`);
-    okayInBox(`${at} over-bar off, idle`);
+    boxFirstItem(`${at} over-bar off, idle`, false);
     for (const mark of ['typed', 'cleared', 'wrapped', 'cleared2', 'end']) {
       await f.to(mark);
       await settle(200);

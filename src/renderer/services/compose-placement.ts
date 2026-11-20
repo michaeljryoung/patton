@@ -30,7 +30,7 @@ export type ComposePlacementReason =
 export const COMPOSE_BAR_LOST_MS = 400;
 
 /** A reading taken this soon after the pane's own typing into Claude (a send
- *  from the box, an Okay? ask) never counts toward the lost wait: a send
+ *  from the box) never counts toward the lost wait: a send
  *  writes its text 10 ms before its Enter, so Claude's bar briefly holds it,
  *  and the box must not jump under the terminal and back (D9 as amended). */
 export const COMPOSE_OWN_TYPING_MS = 1500;

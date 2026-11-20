@@ -85,9 +85,8 @@ async function nodeRunner() {
         import { SearchOverlay } from './src/renderer/components/search-overlay';
         import { EditorInput } from './src/renderer/components/editor-input';
         import { ContextMenu } from './src/renderer/components/context-menu';
-        import { OkayRow } from './src/renderer/components/okay-row';
         import { COMPOSE_ASIDE_LABEL, COMPOSE_ASIDE_HINT, COMPOSE_SEND_HELD_LABEL } from './src/renderer/services/compose-aside';
-        (window as any).__ui = { Terminal, SearchAddon, applyUiTextScale, TabBar, ProjectBoard, SettingsPanel, BookmarksPanel, CommandPalette, ConfirmDialog, SearchOverlay, EditorInput, ContextMenu, OkayRow, COMPOSE_ASIDE_LABEL, COMPOSE_ASIDE_HINT, COMPOSE_SEND_HELD_LABEL };
+        (window as any).__ui = { Terminal, SearchAddon, applyUiTextScale, TabBar, ProjectBoard, SettingsPanel, BookmarksPanel, CommandPalette, ConfirmDialog, SearchOverlay, EditorInput, ContextMenu, COMPOSE_ASIDE_LABEL, COMPOSE_ASIDE_HINT, COMPOSE_SEND_HELD_LABEL };
       `,
     },
     bundle: true, platform: 'browser', format: 'iife', outfile: path.join(outDir, 'page.js'),
@@ -348,12 +347,6 @@ async function pageRun(BIG) {
   new U.EditorInput(compose, { onSubmit: noop, onInterrupt: noop, onHistoryUp: () => null, onHistoryDown: () => null, onTab: noop }, 14);
   surfaces.compose = compose;
 
-  // The Okay? row under a Claude pane's terminal: the real component, shown.
-  const okay = new U.OkayRow(async () => null);
-  okay.setVisible(true);
-  content.appendChild(okay.element);
-  surfaces.okay = okay.element;
-
   const term = new U.Terminal({ fontSize: 14, rows: 4, cols: 40 });
   const termEl = document.createElement('div');
   termEl.className = 'terminal-container';
@@ -450,49 +443,15 @@ async function pageRun(BIG) {
     check(`measured: the ${name} surface has text on screen (${surfaceCounts[name] || 0})`, (surfaceCounts[name] || 0) >= 2, surfaceCounts);
   }
 
-  // --- the Okay? row: its button is measured (one text element, so outside the list above), scales
-  // with the setting and its word fits inside it at both sizes
+  // --- the Okay? button and row are gone (removed 2026-11-20, S58): none exists in the real
+  // compose box or anywhere on the measured page, at either scale
   {
-    const ob = okay.button;
-    const a = one.get([...one.keys()].find((k) => one.get(k).el === ob));
-    const b = big.get([...big.keys()].find((k) => big.get(k).el === ob));
-    check('measured: the Okay? button is on screen at x1 and x' + BIG, Boolean(a && b && a.surface === 'okay'), { a: a && a.surface, b: b && b.surface });
-    if (a && b) {
-      check(`the Okay? button's text scales by x${BIG}`, Math.abs(b.fs - a.fs * BIG) < 0.02, { at1: a.fs, atBig: b.fs });
-      check(`the Okay? button grows with its text (${a.h.toFixed(1)} -> ${b.h.toFixed(1)} px) and the row with it`, b.h > a.h + (b.fs - a.fs) * 0.9 - 0.1 && okay.element.getBoundingClientRect().height >= b.h, { h1: a.h, hBig: b.h });
-      check(`the Okay? word fits its button at x${BIG} (no clipping)`, ob.scrollWidth <= ob.clientWidth + 1 && ob.scrollHeight <= ob.clientHeight + 1, { sw: ob.scrollWidth, cw: ob.clientWidth, sh: ob.scrollHeight, ch: ob.clientHeight });
-    }
-    check('the Okay? row sits at the left, button first', okay.button.getBoundingClientRect().left - okay.element.getBoundingClientRect().left < 24, okay.button.getBoundingClientRect().left);
-
-    // The row is slim ("one line shorter"): measured at 1, Michael's own 1.1 and 1.5.
-    // Why: the 23 px row at x1 (1.5 terminal lines) was not shorter than a line to his eye.
-    const heights = {};
-    for (const s of [1, 1.1, BIG]) {
-      await setScale(s);
-      heights[s] = Math.round(okay.element.getBoundingClientRect().height * 10) / 10;
-    }
-    check('the Okay? row is at most 20.5 px tall at Michael\'s x1.1 (measured px by scale: ' + JSON.stringify(heights) + ')', heights[1.1] <= 20.5, heights);
-    await setScale(1);
-    check('the Okay? button is at least 15 px tall at x1', okay.button.getBoundingClientRect().height >= 15, okay.button.getBoundingClientRect().height);
-
-    // The longest result word in a pane narrower than the button: the row must not spill past
-    // the pane's edge (the button shortens with an ellipsis; its full text is in the announcer and title).
-    const narrow = document.createElement('div');
-    narrow.style.cssText = 'width:120px;display:flex;flex-direction:column;position:absolute;left:0;top:0';
-    const row2 = new U.OkayRow(async () => null);
-    row2.setVisible(true);
-    row2.button.textContent = 'draft: stash key rebound';
-    narrow.appendChild(row2.element);
-    document.body.appendChild(narrow);
     for (const s of [1, BIG]) {
       await setScale(s);
-      const nr = narrow.getBoundingClientRect(), br = row2.button.getBoundingClientRect(), rr = row2.element.getBoundingClientRect();
-      check(`a long result word stays inside a 120 px pane at x${s} (button right ${br.right.toFixed(1)}, pane right ${nr.right.toFixed(1)})`,
-        br.right <= nr.right + 0.5 && rr.right <= nr.right + 0.5 && row2.element.scrollWidth <= row2.element.clientWidth + 1,
-        { button: br.right, row: rr.right, pane: nr.right, sw: row2.element.scrollWidth, cw: row2.element.clientWidth });
+      check(`no Okay? button or row exists on the measured page at x${s}`, document.querySelector('.okay-button, .okay-row') === null,
+        document.querySelectorAll('.okay-button, .okay-row').length);
     }
-    narrow.remove();
-    row2.dispose();
+    check('no element of the measured page says Okay?', ![...document.querySelectorAll('button')].some((b) => b.textContent.trim() === 'Okay?'));
     await setScale(BIG);
   }
 

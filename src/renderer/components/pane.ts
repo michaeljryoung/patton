@@ -25,10 +25,8 @@ import { paneActivity, type PaneActivity } from '../services/pane-activity';
 import { turnEndSignal, verdictAfterRootChange, verdictAfterChildren, type HookVerdict } from '../services/turn-end';
 
 import type { ITheme } from '@xterm/xterm';
-import type { StashKeyVerdict, TabFlag, UnsentInputState } from '../../shared/types';
+import type { TabFlag, UnsentInputState } from '../../shared/types';
 import type { PauseInput } from '../services/pause-all';
-import { OKAY_ERROR_WORDS, OKAY_PROMPT, okayAnnouncement, okayAvailable, okayButtonText, okayDecision } from '../services/okay-ask';
-import { OkayRow } from './okay-row';
 import {
   COMPOSE_ASIDE_HINT, COMPOSE_ASIDE_HOLD_MS, COMPOSE_ASIDE_LABEL, COMPOSE_SEND_HELD_LABEL, COMPOSE_SEND_HELD_MS,
   composeAsideReason, composeKeyboardWaitMs, composeBackTakesKeyboard, composeBlockedFact, isMenuLine,
@@ -146,7 +144,7 @@ export class Pane {
   private disposables: (() => void)[] = [];
   private resizeTimer: ReturnType<typeof setTimeout> | null = null;
   private callbacks: PaneCallbacks;
-  private _ptyExited = false;
+  private ptyExited = false;
   private _isFocused = false;
   private pasteDialog: PasteDialog;
   private contextMenu: ContextMenu;
@@ -190,7 +188,7 @@ export class Pane {
   // (◐ ◑ ✳) has been seen since the shell's last prompt: Claude Code is
   // running in this pane, so image pastes go to it as Ctrl+V (it reads the
   // clipboard itself) instead of as a file path.
-  private _claudeActive = false;
+  private claudeActive = false;
   // Claude Code's own status (OSC 7501, services/program-status.ts). Once a
   // pane has had a report, it is the only source: Claude stops putting its
   // glyph in the title, so the title path stands aside, and the Stop hook's
@@ -335,8 +333,8 @@ export class Pane {
   // The last reading that counted toward the lost wait held text (the box
   // goes under with reason holds-text) rather than missing the bar (lost).
   private barWaitHoldsText = false;
-  // When this pane last typed into Claude itself (a send from the box, an
-  // Okay? ask): readings within COMPOSE_OWN_TYPING_MS of it never count
+  // When this pane last typed into Claude itself (a send from the box):
+  // readings within COMPOSE_OWN_TYPING_MS of it never count
   // toward the lost wait (D9 as amended).
   private composeOwnTypingMs = -Infinity;
   // D9, no loop: when Patton last refitted the terminal for a change between
@@ -363,23 +361,13 @@ export class Pane {
   private typeHereButton!: HTMLButtonElement;
   private draftNoteAnnounced = false;
 
-  // claudeActive and ptyExited decide whether the Okay? row shows, so every
-  // change goes through these setters and none can miss syncOkayRow().
-  private get claudeActive(): boolean { return this._claudeActive; }
-  private set claudeActive(v: boolean) { this._claudeActive = v; this.syncOkayRow(); }
-  private get ptyExited(): boolean { return this._ptyExited; }
-  private set ptyExited(v: boolean) { this._ptyExited = v; this.syncOkayRow(); }
-
-  // --- The Okay? row under the terminal (services/okay-ask.ts) ---
-  private okayRow!: OkayRow;
-
   // --- Pasted-image thumbnails (see pasteImage) ---
   private static readonly PASTE_CHIP_TTL_MS = 10 * 60 * 1000;
   private static readonly PASTE_CHIP_MAX = 6;
   /** D14: thumbnails inside the box (more than this many: the first ones and a "+N"). */
   private static readonly BOX_IMAGES_SHOWN = 3;
   private pasteStrip!: HTMLElement;
-  /** D14: the thumbnails inside the box, between Okay? and the text, while it is engaged. */
+  /** D14: the thumbnails inside the box, left of the text, while it is engaged. */
   private boxImages!: HTMLElement;
   private pasteChips: PasteChipEntry[] = [];
 
@@ -1042,7 +1030,7 @@ export class Pane {
 
   /** Claude isn't running in this pane any more: the shell is back at its
    *  prompt, or the pane's shell was replaced (respawn) and the new one has
-   *  never run it. Drops every sign of the old session, the Okay? row with it. */
+   *  never run it. Drops every sign of the old session. */
   private claudeGone(reason: 'shell-prompt' | 'respawn'): void {
     this.resetProgramStatus('shell-prompt');
     this.claudeWorking = false;
@@ -1055,68 +1043,6 @@ export class Pane {
     if (this.takeVerdict()) rlog('info', '[DOT] Hook verdict dropped: ' + (reason === 'respawn' ? 'respawn' : 'shell prompt'), { pane: this.id });
     this.setParked(null);
     this.clearPasteChips();
-  }
-
-  /**
-   * Where the Okay? button is (D11): inside the compose box, at its left,
-   * while the box is engaged; else in its row under the terminal. Either way
-   * only while Claude Code runs here with a live shell. `engagedBefore` is
-   * the box's state before the change that called this (engage and
-   * disengage pass the old one).
-   */
-  private syncOkayRow(engagedBefore: boolean = this.composeFirstEngaged): void {
-    if (!this.okayRow || !this.editorInput) return; // before the constructor has built them
-    const live = this.ptyId !== null && !this._ptyExited;
-    const engaged = this.composeFirstEngaged;
-    const rowChanged = this.okayRow.place(okayAvailable(this._claudeActive, live), engaged ? this.editorInput.fieldElement : null);
-    if (!rowChanged) return;
-    // The row's show or hide moved the terminal's height. When the box opened
-    // or closed in the same change (Claude starting or leaving under the
-    // compose box, ⌘E), the terminal's resize observer refits once for both:
-    // no SIGWINCH at an in-between height.
-    if (engaged !== engagedBefore) return;
-    // Re-fit and tell the PTY now rather than on the resize observer's 100 ms
-    // debounce. But Claude starting or leaving usually engages or releases the
-    // compose box in the same synchronous run (syncComposeFirst follows the
-    // claudeActive change), which moves the terminal's height too: one refit
-    // for both, left to the observer.
-    const composeAtShow = engaged;
-    queueMicrotask(() => {
-      if (this.composeFirstEngaged !== composeAtShow) return; // the observer's refit covers both
-      this.refitTerminal();
-    });
-  }
-
-  /** The Okay? button's click: ask Claude "Is everything going okay?" by the
-   *  same rules as Pause all (services/okay-ask.ts). Resolves to the button's
-   *  words, or null when the session changed under the await (nothing sent). */
-  private async askOkay(): Promise<string | null> {
-    const ptyId = this.ptyId;
-    let input: UnsentInputState | null;
-    let key: StashKeyVerdict;
-    try {
-      [input, key] = await Promise.all([this.readInputState(), window.patton.pauseAll.stashKey()]);
-    } catch (error) {
-      // Nothing is known about the input line, so nothing is typed.
-      rlog('warn', '[OKAY] skipped', { pane: this.id, reason: 'error', error: String(error) });
-      announce(`Not sent: ${OKAY_ERROR_WORDS}`);
-      return OKAY_ERROR_WORDS;
-    }
-    if (this.ptyId !== ptyId || ptyId === null || this.disposed) {
-      rlog('info', '[OKAY] skipped', { pane: this.id, reason: 'session-changed' });
-      return null;
-    }
-    const decision = okayDecision(this.pauseInput(input), key);
-    if (decision.kind === 'send') {
-      rlog('info', '[OKAY] sent', { pane: this.id, queued: decision.queued, stash: decision.stash });
-      this.queueSubmit(OKAY_PROMPT, false, { stashFirst: decision.stash, origin: 'patton', own: true });
-    } else {
-      rlog('info', '[OKAY] skipped', {
-        pane: this.id, reason: decision.reason, ...('why' in key ? { stashKey: key.why } : {}),
-      });
-    }
-    announce(okayAnnouncement(decision));
-    return okayButtonText(decision);
   }
 
   /** A Claude Code Stop-hook message (OSC 777): the turn ended on its own. */
@@ -1243,9 +1169,6 @@ export class Pane {
     this.terminalContainer.className = 'terminal-container';
     this.element.appendChild(this.terminalContainer);
 
-    this.okayRow = new OkayRow(() => this.askOkay());
-    this.element.appendChild(this.okayRow.element);
-
     this.pasteStrip = document.createElement('div');
     this.pasteStrip.className = 'paste-strip';
     this.pasteStrip.setAttribute('role', 'group');
@@ -1345,17 +1268,13 @@ export class Pane {
     };
     this.terminalContainer.addEventListener('mousedown', terminalMouseDown, true);
     this.disposables.push(() => this.terminalContainer.removeEventListener('mousedown', terminalMouseDown, true));
-    const editorMouseDown = (e: MouseEvent) => {
-      // D11: a press on Okay? in the box neither chooses the box nor takes
-      // the keyboard; it only asks.
-      if ((e.target as Element | null)?.closest?.('.okay-button')) return;
+    const editorMouseDown = () => {
       this.chooseBoxByClick();
     };
     this.editorContainer.addEventListener('mousedown', editorMouseDown, true);
     this.disposables.push(() => this.editorContainer.removeEventListener('mousedown', editorMouseDown, true));
 
-    // D14: pasted images inside the box, left of the text (Okay? is
-    // prepended ahead of them). A press keeps the keyboard in the textarea.
+    // D14: pasted images inside the box, first from its left, then the text. A press keeps the keyboard in the textarea.
     this.boxImages = document.createElement('div');
     this.boxImages.className = 'compose-images';
     this.boxImages.setAttribute('role', 'group');
@@ -1365,7 +1284,6 @@ export class Pane {
     this.editorInput.insertBeforeText(this.boxImages);
 
     this.wireComposePlacement();
-    this.syncOkayRow();
 
     // Create search overlay
     this.searchOverlay = new SearchOverlay(
@@ -1460,7 +1378,7 @@ export class Pane {
       throw new Error('Pane closed while its shell was being replaced');
     }
     // The new shell has never run Claude: the old session's state goes first,
-    // so the Okay? row hides before the pane points at the new shell.
+    // before the pane points at the new shell.
     this.claudeGone('respawn');
     this.ptyId = newId;
     this.ptyExited = false;
@@ -1875,7 +1793,7 @@ export class Pane {
    *  `stashFirst` sends Ctrl+S and waits STASH_SETTLE_MS before the line;
    *  `scroll: false` leaves the view where it is; `origin: 'patton'` tells
    *  main's unsent-input tracker the user didn't type it; `own` (the box's
-   *  send, an Okay? ask) stamps each write as this pane's own typing, so
+   *  send) stamps each write as this pane's own typing, so
    *  Claude echoing it in its bar never moves the box (D9). */
   private queueSubmit(
     command: string,
@@ -2836,7 +2754,6 @@ export class Pane {
   private engageComposeFirst(reason: string): void {
     this.composeFirstEngaged = true;
     this.composeSwitchMs = -Infinity; // his own move: the first reading never waits
-    this.syncOkayRow(false); // D11: Okay? moves into the box
     this.syncPasteChipViews(false); // D14: the thumbnails too
     this.composeHandedOff = false;
     this.editorContainer.classList.add('compose-first');
@@ -2865,7 +2782,6 @@ export class Pane {
   private disengageComposeFirst(reason: string): void {
     const hadFocus = this.editorInput.hasFocus();
     this.composeFirstEngaged = false;
-    this.syncOkayRow(true); // D11: Okay? back in its row under the terminal
     this.syncPasteChipViews(false); // D14: the thumbnails back in the strip
     this.composeHandedOff = false;
     this.editorContainer.classList.remove('compose-first');
@@ -3198,7 +3114,6 @@ export class Pane {
     this.clearBarLostTimer();
     if (this.barReadFrame !== null) cancelAnimationFrame(this.barReadFrame);
     this.clearPasteChips();
-    this.okayRow.dispose();
     for (const d of this.disposables) d();
     if (this.ptyId !== null && !this.ptyExited) {
       window.patton.pty.destroy(this.ptyId);

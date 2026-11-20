@@ -10,7 +10,7 @@
 // terminal data, the compose box's submit through the private queueSubmit, and
 // Claude's state through the real parseProgramStatus.
 // Section 6 (D14, 20 Nov 2026): while the compose box is engaged the thumbnails
-// sit inside it, between Okay? and the text (the real EditorInput, so the box's
+// sit inside it, first from its left, then the text (the real EditorInput, so the box's
 // row is real DOM).
 // Run: JSDOM_DIR=<a folder whose node_modules has jsdom> node scripts/check-paste-chips.mjs
 // COMPOSE_SRC_ROOT=<folder holding src/> bundles another tree (to prove a check bites on a base).
@@ -300,14 +300,13 @@ const submit = async (p, origin) => {
   const before = (a, b) => Boolean(a && b) && Boolean(a.compareDocumentPosition(b) & w.Node.DOCUMENT_POSITION_FOLLOWING);
 
   const p = await engaged();
-  check('6 (setup) the box is engaged with Okay? in it',
-    p.composeFirstEngaged === true && field(p).querySelector('.okay-button:not([hidden])') !== null);
+  check('6 (setup) the box is engaged, with no Okay? button or row anywhere in the pane (removed 2026-11-20, S58)',
+    p.composeFirstEngaged === true && p.element.querySelector('.okay-button, .okay-row') === null);
   sized(p, 800, 600);
   const img = boxImgs(p)[0];
   check('6.1 an image pasted with the box engaged: its thumbnail inside the box', boxImgs(p).length === 1 && p.editorContainer.contains(img));
-  const okay = field(p).querySelector('.okay-button');
-  check('6.1 ...left of the text, after Okay?: Okay?, the image, the textarea in that order',
-    before(okay, img) && before(img, textarea(p)), [...field(p).children].map((el) => el.className));
+  check('6.1 ...first from the box\'s left, then the textarea: the image chips are the field\'s first item',
+    field(p).firstElementChild?.contains(img) === true && before(img, textarea(p)), [...field(p).children].map((el) => el.className));
   check('6.2 its size (w×h) in its tooltip and accessible name',
     img?.title.includes('800\u00d7600') && img?.alt.includes('800\u00d7600'), { title: img?.title, alt: img?.alt });
   check('6.3 no × on a thumbnail in the box',

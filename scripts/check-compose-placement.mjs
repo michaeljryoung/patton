@@ -7,7 +7,7 @@
 // lines with their reasons), that the terminal is refitted only between
 // `under` and the overlays, the 400 ms wait before `under` (lost or holding
 // text) and that readings within 1.5 s of the pane's own typing (a send from
-// the box, an Okay? ask) never count toward it (D9 as amended), the freeze
+// the box) never count toward it (D9 as amended), the freeze
 // from Claude's first `blocked` report, D10's hidden box and "Draft kept"
 // during an aside in the overlays, the hand-off and the setting.
 // Time: Pane's timers run on a fake clock (setTimeout, Date.now); xterm's
@@ -485,31 +485,6 @@ const newPane = async () => {
     placement(p) === 'under' && pl.length === 1 && pl[0].reason === 'lost', pl);
   p.dispose();
 }
-{
-  // An Okay? ask is the pane's own typing too: the `typed` screen (text in
-  // Claude's bar) for 800 ms after it moves nothing.
-  const p = await newPane();
-  const f = feeder(p, 'steps');
-  await f.to('idle');
-  state(p, 'working');
-  state(p, 'idle');
-  check('4.3 (setup) over', placement(p) === 'over', placement(p));
-  logs.length = 0; writes.length = 0; resizes.length = 0;
-  const okay = p.editorContainer.querySelector('.okay-button');
-  check('4.3 (setup) the Okay? button is in the box', Boolean(okay), null);
-  okay?.click();
-  await realWait(20); // the probes have answered and the line is written
-  check('4.3 (setup) the Okay? ask wrote its line', writes.includes('Is everything going okay?'), writes);
-  await f.to('typed');
-  advance(10);
-  advance(790);
-  check('4.3 an Okay? ask, then text in Claude\'s bar for 800 ms: still over, no `[COMPOSE] place`, no refit',
-    placement(p) === 'over' && places().length === 0 && resizes.length === 0, places());
-  advance(1200);
-  check('4.3 ...but text still there 2 s on (past the 1.5 s window and the wait): under, reason holds-text',
-    placement(p) === 'under' && places().length === 1 && places()[0].reason === 'holds-text', places());
-  p.dispose();
-}
 
 // ── 5. D10: an aside in the overlays hides the box; "Draft kept" ──
 {
@@ -537,7 +512,7 @@ const newPane = async () => {
     ec.classList.contains('aside') && ec.classList.contains('aside-hidden') && p.pasteStrip.classList.contains('aside-hidden'), ec.className);
   check('5.1 ...through D2\'s typing grace still focusable: not visibility-hidden, the keyboard still in the box',
     !ec.classList.contains('aside-gone') && doc.activeElement === box, { cls: ec.className, active: doc.activeElement?.className });
-  check('5.1 ...the Okay? button hides with it (inside the hidden box)', Boolean(ec.querySelector('.okay-button')), null);
+  check('5.1 ...no Okay? button or row anywhere in the pane (removed 2026-11-20, S58)', p.element.querySelector('.okay-button, .okay-row') === null, null);
   check('5.2 "Draft kept" shown while the hidden box holds a draft', note.hidden === false && note.textContent === 'Draft kept', note.outerHTML);
   await frames();
   check('5.2 ...announced through the aria-live region', announced().includes('Draft kept'), announced());

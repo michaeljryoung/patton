@@ -255,7 +255,7 @@
   z-index: 31;
   margin: 0;
   padding: 1px 8px;
-  border: 1px solid var(--hairline); /* a control's border: 3:1, as Okay? and Send */
+  border: 1px solid var(--hairline); /* a control's border: 3:1, as Send */
   border-radius: 0;
   background: var(--bg);
   color: var(--compose-aside-hint);
@@ -280,16 +280,7 @@
   display: none;
 }
 
-/* D11: the Okay? button inside the compose box, at its left (the same button
-   as the row's, moved by OkayRow.place); dimmed with the box when it steps
-   aside in place ('under'). */
-.editor-field > .okay-button {
-  flex: 0 1 auto;
-  max-width: 40%; /* a long result word shortens with an ellipsis, as in the row */
-  align-self: center;
-}
-
-/* D14: pasted images inside the box, between Okay? and the text, while it is
+/* D14: pasted images inside the box, left of the text, while it is
    engaged (Pane.renderBoxImages): each as tall as one line of the box's text
    (the textarea's font size x its 1.4 line height; --compose-text-size
    follows Font Size), no ×, the first three and a "+N". The box keeps its
@@ -326,11 +317,6 @@
   line-height: 1.1;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
-}
-
-.editor-container.compose-first.aside .editor-field > .okay-button {
-  color: var(--compose-aside-ink);
-  border-color: var(--compose-aside-rule);
 }
 
 /* Send's slot: Send, the aside label and an invisible sizer holding every
@@ -509,53 +495,6 @@
 
 .paste-strip[hidden] {
   display: none;
-}
-
-/* The Okay? row: a slim row of its own under a Claude pane's terminal, the
- * button at its left (Michael, 18 Nov 2026: "one line shorter"). About 1.2
- * terminal lines at UI scale 1 and 20 px at 1.1 (check-ui-text-scale.cjs measures
- * it); it grows with the UI text scale. Shown only while Claude Code runs in the
- * pane (components/okay-row.ts). min-width: 0 lets the button shrink in a pane
- * narrower than its words. */
-.okay-row {
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  min-width: 0;
-  padding: 1px 12px;
-  border-top: 1px solid var(--hairline);
-  background: var(--bg);
-  flex-shrink: 0;
-}
-
-.okay-row[hidden] {
-  display: none;
-}
-
-.okay-button {
-  min-width: 0;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  padding: 0 10px;
-  border: 1px solid var(--hairline);
-  border-radius: 0;
-  background: var(--bg);
-  color: var(--ink);
-  font-family: var(--font-ui);
-  font-size: var(--ui);
-  line-height: 1.1;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.okay-button:hover {
-  background: var(--surface-hover);
-}
-
-.okay-button:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: 2px;
 }
 
 .paste-strip:not([hidden]) + .editor-container:not(.collapsed) {
