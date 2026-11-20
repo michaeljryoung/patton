@@ -32,10 +32,10 @@ flowchart TD
     bar_layout_check[hidden-Electron layout check]:::done
     fit_padding[terminal fit counts its padding]:::done
     images_in_box[pasted images inside the box]:::done
-    bar_review[fresh review, fixes]:::live
+    bar_review[fresh review, fixes]:::done
   end
   subgraph OS["Part 2 — Ship"]
-    bar_release[merge, push, CI release, cask]:::todo
+    bar_release[merge, push, CI release, cask]:::live
     bar_ship[install on his word, live check]:::todo
   end
   box_core --> box_replay
@@ -91,8 +91,8 @@ flowchart TD
 | `bar_layout_check` | D13: hidden-Electron check of the real Pane fed the fixture's bytes, at UI scale 1, 1.1 and 1.5; every new assertion fails on main; `check-compose-box.mjs` and `check-okay-button.mjs` updated, not weakened | done | `bar_placement`, `send_no_flip`, `bar_aside`, `aside_fixes`, `okay_in_box`, `over_setting` | `scripts/check-compose-over.cjs` 282 ok, 6 not ok (one defect → `fit_padding`); 231 not ok on `da3f534` · `d5a6173` |
 | `fit_padding` | The terminal's fit counts `.terminal-container`'s padding (4 px top, 10 px bottom, 4 px sides): at UI scale 1.5 in `under` the last row was cut by 2.4 px (27 rows × 16 px + 4 px against 433.6 px), in the base too but hidden by the Okay? row's height; the side padding likely the same for cols | done | `bar_layout_check` | `src/renderer/services/terminal-fit.ts` (`fitGrid`) · `scripts/check-compose-over.cjs` 327 ok (24 fit assertions fail on `9f4affb`) · `5924108` |
 | `images_in_box` | D14: pasted-image thumbnails inside the box left of the text (no ×, cleared on send, "+N" past three); `[Image #N]` on Claude's bar counts as images, so the box stays over it; jsdom and layout checks extended | done | `bar_reader` | `scripts/check-paste-chips.mjs` §6 (13 of 16 new fail on the base) · `scripts/check-claude-bar.mjs` 61 ok · `d8a0a22` |
-| `bar_review` | Fresh review with probes that never saw the build; every major and minor fixed by a fresh builder; checks re-run | live | `bar_layout_check`, `images_in_box` | — |
-| `bar_release` | ff-merge to main, push (no stray no-release marker on the head), CI release green, cask sha matches the downloaded DMG | todo | `bar_review` | — |
+| `bar_review` | Fresh review with probes that never saw the build; every major and minor fixed by a fresh builder; checks re-run | done | `bar_layout_check`, `images_in_box` | three fresh reviews (0, 0 and 1 major); fixes `87e901e`, `f05c5aa`, `e8baa66` (seven items, each with an assertion failing before), `dc204e2` (the 400 ms counted from the first miss: 8 assertions fail before, `scripts/check-compose-placement.mjs` 131 ok); `npm run check` 33/33 |
+| `bar_release` | ff-merge to main, push (no stray no-release marker on the head), CI release green, cask sha matches the downloaded DMG | live | `bar_review` | — |
 | `bar_ship` | Install on Michael's word with Patton quit; live: one bar under a Claude tab, the box over Claude's, Okay? at its left; `[COMPOSE] place` lines in main.log; a question hides it and it comes back | todo | `bar_release` | — |
 <!-- MAP:END -->
 
