@@ -27,7 +27,7 @@ import { turnEndSignal, verdictAfterRootChange, verdictAfterChildren, type HookV
 import type { ITheme } from '@xterm/xterm';
 import type { StashKeyVerdict, TabFlag, UnsentInputState } from '../../shared/types';
 import type { PauseInput } from '../services/pause-all';
-import { OKAY_ERROR_WORDS, OKAY_PROMPT, okayAnnouncement, okayButtonText, okayDecision, okayRowVisible } from '../services/okay-ask';
+import { OKAY_ERROR_WORDS, OKAY_PROMPT, okayAnnouncement, okayAvailable, okayButtonText, okayDecision } from '../services/okay-ask';
 import { OkayRow } from './okay-row';
 import {
   COMPOSE_ASIDE_HINT, COMPOSE_ASIDE_HOLD_MS, COMPOSE_ASIDE_LABEL, COMPOSE_SEND_HELD_LABEL, COMPOSE_SEND_HELD_MS,
@@ -36,7 +36,8 @@ import {
 } from '../services/compose-aside';
 import { readClaudeBar, type BarMissReason } from '../services/claude-bar';
 import {
-  COMPOSE_BAR_LOST_MS, COMPOSE_BAR_NOT_FOUND_LOG_MS, COMPOSE_OVERLAY_MAX_FRACTION, barRowsInView, placementForReading,
+  COMPOSE_BAR_LOST_MS, COMPOSE_BAR_NOT_FOUND_LOG_MS, COMPOSE_OVERLAY_MAX_FRACTION, COMPOSE_OWN_TYPING_MS,
+  barRowsInView, placementForReading,
   type ComposePlacement, type ComposePlacementReason,
 } from '../services/compose-placement';
 
@@ -317,6 +318,13 @@ export class Pane {
   // runs (D10), otherwise 'lost'.
   private barLostReason: 'lost' | 'aside-end' = 'lost';
   private barLastMissWhy: BarMissReason = 'no-glyph';
+  // The last reading that counted toward the lost wait held text (the box
+  // goes under with reason holds-text) rather than missing the bar (lost).
+  private barWaitHoldsText = false;
+  // When this pane last typed into Claude itself (a send from the box, an
+  // Okay? ask): readings within COMPOSE_OWN_TYPING_MS of it never count
+  // toward the lost wait (D9 as amended).
+  private composeOwnTypingMs = -Infinity;
   private barNotFoundLoggedMs = 0;
   private barLostTimer: ReturnType<typeof setTimeout> | null = null;
   private barReadFrame: number | null = null;
@@ -326,6 +334,10 @@ export class Pane {
   private composePlacementFrozen = false;
   // Fractional wheel scroll carried over the box (D12), in lines.
   private composeWheelLines = 0;
+  // D10: "Draft kept" at the pane's bottom right while an aside hides the box
+  // in the overlays with a draft in it; announced once per aside.
+  private draftNote!: HTMLElement;
+  private draftNoteAnnounced = false;
 
   // claudeActive and ptyExited decide whether the Okay? row shows, so every
   // change goes through these setters and none can miss syncOkayRow().
@@ -1017,18 +1029,30 @@ export class Pane {
     this.clearPasteChips();
   }
 
-  /** Show the Okay? row only while Claude Code runs here with a live shell. */
-  private syncOkayRow(): void {
-    if (!this.okayRow) return; // before the constructor has built it
+  /**
+   * Where the Okay? button is (D11): inside the compose box, at its left,
+   * while the box is engaged; else in its row under the terminal. Either way
+   * only while Claude Code runs here with a live shell. `engagedBefore` is
+   * the box's state before the change that called this (engage and
+   * disengage pass the old one).
+   */
+  private syncOkayRow(engagedBefore: boolean = this.composeFirstEngaged): void {
+    if (!this.okayRow || !this.editorInput) return; // before the constructor has built them
     const live = this.ptyId !== null && !this._ptyExited;
-    if (!this.okayRow.setVisible(okayRowVisible(this._claudeActive, live))) return;
+    const engaged = this.composeFirstEngaged;
+    const rowChanged = this.okayRow.place(okayAvailable(this._claudeActive, live), engaged ? this.editorInput.fieldElement : null);
+    if (!rowChanged) return;
+    // The row's show or hide moved the terminal's height. When the box opened
+    // or closed in the same change (Claude starting or leaving under the
+    // compose box, ⌘E), the terminal's resize observer refits once for both:
+    // no SIGWINCH at an in-between height.
+    if (engaged !== engagedBefore) return;
     // Re-fit and tell the PTY now rather than on the resize observer's 100 ms
     // debounce. But Claude starting or leaving usually engages or releases the
-    // compose-first box in the same synchronous run (syncComposeFirst follows
-    // the claudeActive change), which moves the terminal's height too: one
-    // refit for both, left to the observer, not a SIGWINCH at the row's
-    // height and another at the final one.
-    const composeAtShow = this.composeFirstEngaged;
+    // compose box in the same synchronous run (syncComposeFirst follows the
+    // claudeActive change), which moves the terminal's height too: one refit
+    // for both, left to the observer.
+    const composeAtShow = engaged;
     queueMicrotask(() => {
       if (this.composeFirstEngaged !== composeAtShow) return; // the observer's refit covers both
       this.refitTerminal();
@@ -1057,7 +1081,7 @@ export class Pane {
     const decision = okayDecision(this.pauseInput(input), key);
     if (decision.kind === 'send') {
       rlog('info', '[OKAY] sent', { pane: this.id, queued: decision.queued, stash: decision.stash });
-      this.queueSubmit(OKAY_PROMPT, false, { stashFirst: decision.stash, origin: 'patton' });
+      this.queueSubmit(OKAY_PROMPT, false, { stashFirst: decision.stash, origin: 'patton', own: true });
     } else {
       rlog('info', '[OKAY] skipped', {
         pane: this.id, reason: decision.reason, ...('why' in key ? { stashKey: key.why } : {}),
@@ -1207,6 +1231,14 @@ export class Pane {
     this.editorContainer.className = 'editor-container collapsed';
     this.element.appendChild(this.editorContainer);
 
+    // D10: shown while an aside hides the box in the overlays and the box
+    // holds a draft. Words only, no click (pointer-events: none).
+    this.draftNote = document.createElement('div');
+    this.draftNote.className = 'compose-draft-note';
+    this.draftNote.textContent = 'Draft kept';
+    this.draftNote.hidden = true;
+    this.element.appendChild(this.draftNote);
+
     // Create terminal view
     this.terminalView = new TerminalView(this.terminalContainer);
 
@@ -1271,7 +1303,10 @@ export class Pane {
     };
     this.terminalContainer.addEventListener('mousedown', terminalMouseDown, true);
     this.disposables.push(() => this.terminalContainer.removeEventListener('mousedown', terminalMouseDown, true));
-    const editorMouseDown = () => {
+    const editorMouseDown = (e: MouseEvent) => {
+      // D11: a press on Okay? in the box neither chooses the box nor takes
+      // the keyboard; it only asks.
+      if ((e.target as Element | null)?.closest?.('.okay-button')) return;
       // D2: a click in the box while a question's keyboard move is pending
       // means he chose the box: the move is dropped for this aside spell (the
       // box stays dimmed and sends stay held while Claude asks).
@@ -1294,6 +1329,7 @@ export class Pane {
     this.disposables.push(() => this.editorContainer.removeEventListener('mousedown', editorMouseDown, true));
 
     this.wireComposePlacement();
+    this.syncOkayRow();
 
     // Create search overlay
     this.searchOverlay = new SearchOverlay(
@@ -1758,7 +1794,9 @@ export class Pane {
     // the Enter, as main's tracker counts slashSubmitAt for Pause all's
     // `menu`. Only on a pane with 7501 reports: nothing else would end it.
     const menu = this.composeFirstEngaged && this.statusReporting && isMenuLine(stripPasteControls(command));
-    command = this.queueSubmit(command, true, menu ? { onEnterSent: () => this.noteComposeMenuSent() } : {});
+    command = this.queueSubmit(command, true, {
+      own: true, ...(menu ? { onEnterSent: () => this.noteComposeMenuSent() } : {}),
+    });
     if (command.trim()) {
       this.historyManager.add(command);
     }
@@ -1800,11 +1838,13 @@ export class Pane {
    *  as sent. Options (Patton's own words only, never the compose box):
    *  `stashFirst` sends Ctrl+S and waits STASH_SETTLE_MS before the line;
    *  `scroll: false` leaves the view where it is; `origin: 'patton'` tells
-   *  main's unsent-input tracker the user didn't type it. */
+   *  main's unsent-input tracker the user didn't type it; `own` (the box's
+   *  send, an Okay? ask) stamps each write as this pane's own typing, so
+   *  Claude echoing it in its bar never moves the box (D9). */
   private queueSubmit(
     command: string,
     allowBroadcast: boolean,
-    opts: { stashFirst?: boolean; scroll?: boolean; origin?: 'patton'; onEnterSent?: () => void } = {},
+    opts: { stashFirst?: boolean; scroll?: boolean; origin?: 'patton'; onEnterSent?: () => void; own?: boolean } = {},
   ): string {
     // Broadcast mode: also write to all other panes in the tab
     const broadcast = allowBroadcast ? this.callbacks.onBroadcastWrite : undefined;
@@ -1826,9 +1866,11 @@ export class Pane {
     // Queue submits sequentially to prevent rapid double-submit from dropping the first Enter.
     // Each submit writes text then Enter with a small gap, and the next submit waits for the previous.
     const origin = opts.origin;
+    const own = opts.own === true ? () => this.noteOwnTyping() : () => {};
     this.submitQueue = this.submitQueue.then(() => new Promise<void>((resolve) => {
       if (this.ptyId === null) { resolve(); return; }
       if (opts.stashFirst) {
+        own();
         window.patton.pty.write(this.ptyId, '\x13', origin);
         setTimeout(() => {
           if (this.ptyId === null) { resolve(); return; }
@@ -1848,6 +1890,7 @@ export class Pane {
       if (origin !== 'patton') this.clearPasteChipsOnSend('compose');
       // xterm's scrollOnUserInput only sees its own keys, not the box's.
       if (opts.scroll !== false) this.terminalView.terminal.scrollToBottom();
+      own();
       if (route === 'paste') {
         this.terminalView.terminal.paste(command);
         broadcastPaste?.(command);
@@ -1856,6 +1899,7 @@ export class Pane {
         // (a margin chosen by reading, not yet measured live).
         setTimeout(() => {
           if (this.ptyId !== null) {
+            own();
             window.patton.pty.write(this.ptyId, '\r');
             broadcast?.('\r');
             opts.onEnterSent?.();
@@ -1867,6 +1911,7 @@ export class Pane {
         broadcast?.(command);
         setTimeout(() => {
           if (this.ptyId !== null) {
+            own();
             window.patton.pty.write(this.ptyId, '\r', origin);
             broadcast?.('\r');
             opts.onEnterSent?.();
@@ -2183,10 +2228,12 @@ export class Pane {
     });
     if (waitMs > 0) {
       this.armComposeKeyboardTimer(waitMs);
+      this.syncComposeAsideLook();
       return;
     }
     this.clearComposeKeyboardTimer();
     if (boxHadKeyboard || this.canTakeKeyboard()) this.terminalView.focus();
+    this.syncComposeAsideLook();
   }
 
   /** The deferred move of a 'blocked' aside: once the box has been quiet for
@@ -2199,21 +2246,53 @@ export class Pane {
     this.clearComposeKeyboardTimer();
     this.composeKeyboardTimer = setTimeout(() => {
       this.composeKeyboardTimer = null;
-      if (this.disposed || this.composeAside !== 'blocked' || !this.editorInput.hasFocus()) return;
-      if (!this.isOnScreen() || !this.canTakeKeyboard()) {
-        rlog('info', '[COMPOSE] aside keyboard dropped', {
-          pane: this.id, onScreen: this.isOnScreen(), focused: this._isFocused,
-        });
-        return;
-      }
-      const left = composeKeyboardWaitMs(true, Date.now(), this.composeLastKeydownMs, this.composeAsideAtMs);
-      if (left > 0) {
-        this.armComposeKeyboardTimer(left);
-        return;
-      }
-      rlog('info', '[COMPOSE] aside keyboard', { pane: this.id, afterMs: Date.now() - this.composeAsideAtMs });
-      this.terminalView.focus();
+      this.composeKeyboardTimerFired();
+      // The grace is over (or re-armed): hidden, the box may drop focus now.
+      this.syncComposeAsideLook();
     }, ms);
+  }
+
+  private composeKeyboardTimerFired(): void {
+    if (this.disposed || this.composeAside !== 'blocked' || !this.editorInput.hasFocus()) return;
+    if (!this.isOnScreen() || !this.canTakeKeyboard()) {
+      rlog('info', '[COMPOSE] aside keyboard dropped', {
+        pane: this.id, onScreen: this.isOnScreen(), focused: this._isFocused,
+      });
+      return;
+    }
+    const left = composeKeyboardWaitMs(true, Date.now(), this.composeLastKeydownMs, this.composeAsideAtMs);
+    if (left > 0) {
+      this.armComposeKeyboardTimer(left);
+      return;
+    }
+    rlog('info', '[COMPOSE] aside keyboard', { pane: this.id, afterMs: Date.now() - this.composeAsideAtMs });
+    this.terminalView.focus();
+  }
+
+  /**
+   * D10: in `over` or `dock` an aside hides the box (and its paste strip):
+   * at once fully transparent and not taking the pointer (`aside-hidden`);
+   * while D2's typing grace keeps the keyboard in it, still focusable, then
+   * `visibility: hidden` (`aside-gone`). In `under` the aside is the v1.31
+   * one (dimmed in place). While the hidden box holds a draft, "Draft kept"
+   * shows at the pane's bottom right, announced once per aside. Called on
+   * every aside change, placement change, grace timer, focus move and edit.
+   */
+  private syncComposeAsideLook(): void {
+    if (!this.draftNote) return;
+    const hide = this.composeAside !== null && this.composePlacement !== 'under';
+    const grace = hide && this.composeKeyboardTimer !== null && this.editorInput.hasFocus();
+    for (const el of [this.editorContainer, this.pasteStrip]) {
+      el.classList.toggle('aside-hidden', hide);
+      el.classList.toggle('aside-gone', hide && !grace);
+    }
+    const note = hide && this.editorInput.getValue().trim() !== '';
+    if (this.draftNote.hidden !== note) return;
+    this.draftNote.hidden = !note;
+    if (note && !this.draftNoteAnnounced) {
+      this.draftNoteAnnounced = true;
+      announce('Draft kept');
+    }
   }
 
   /** The pane is in the document and neither it nor an ancestor (its tab)
@@ -2241,6 +2320,8 @@ export class Pane {
     this.clearComposeKeyboardTimer();
     this.editorContainer.classList.remove('aside');
     this.editorInput.setAside(null);
+    this.draftNoteAnnounced = false;
+    this.syncComposeAsideLook(); // shown again where it was (D10)
     rlog('info', '[COMPOSE] back', { pane: this.id, reason, afterMs });
     if (!this.composeFirstEngaged) return;
     const active = document.activeElement;
@@ -2297,6 +2378,14 @@ export class Pane {
     this.editorContainer.addEventListener('focusin', editorFocusIn);
     this.disposables.push(() => this.editorContainer.removeEventListener('focusin', editorFocusIn));
 
+    // D10: the box hidden by an aside keeps its keyboard only through the
+    // typing grace, and "Draft kept" follows the draft typed in that time.
+    const asideLook = () => this.syncComposeAsideLook();
+    for (const type of ['focusout', 'input'] as const) {
+      this.editorContainer.addEventListener(type, asideLook);
+      this.disposables.push(() => this.editorContainer.removeEventListener(type, asideLook));
+    }
+
     // D12: a wheel over the box, outside a textarea that can still scroll
     // that way, scrolls the terminal. On the box's own element, not the
     // terminal's DOM (docs/reference/xterm-internals.md).
@@ -2351,43 +2440,75 @@ export class Pane {
       current: this.composePlacement,
     });
     if (step === null) {
-      if ('why' in reading) this.noteBarMiss(reading.why);
+      this.noteBarNotEmpty('why' in reading ? reading.why : 'holds-text');
       return;
     }
     if (reading.found && reading.empty) {
       this.barRow = reading.row;
       this.barLastMatchMs = Date.now();
       this.barLostReason = 'lost';
+      this.barWaitHoldsText = false;
       this.clearBarLostTimer();
     }
     this.setComposePlacement(step.placement, step.reason);
     this.layoutComposeOverlay();
   }
 
-  /** A reading that didn't match: keep the last good position; the bar is
-   *  lost (the box goes under) once nothing has matched for 400 ms. */
-  private noteBarMiss(why: BarMissReason): void {
-    this.barLastMissWhy = why;
-    const since = this.barLastMatchMs === null ? Infinity : Date.now() - this.barLastMatchMs;
-    if (since >= COMPOSE_BAR_LOST_MS) {
+  /** A reading with no empty bar (it missed the bar, or the bar holds text):
+   *  keep the last good position; the box goes under once COMPOSE_BAR_LOST_MS
+   *  pass with no empty-bar reading (D9). A reading within
+   *  COMPOSE_OWN_TYPING_MS of this pane's own typing into Claude doesn't
+   *  count: the wait starts no earlier than that window's end, and the bar is
+   *  read again then (a still screen sends no further writes). Each timer
+   *  takes a fresh reading, which decides. */
+  private noteBarNotEmpty(why: BarMissReason | 'holds-text'): void {
+    const now = Date.now();
+    const ownEnd = this.composeOwnTypingMs + COMPOSE_OWN_TYPING_MS;
+    if (now < ownEnd) {
+      this.armBarLostTimer(ownEnd - now);
+      return;
+    }
+    if (why === 'holds-text') {
+      this.barWaitHoldsText = true;
+    } else {
+      this.barWaitHoldsText = false;
+      this.barLastMissWhy = why;
+    }
+    if (this.barLastMatchMs === null) {
       this.barLost();
       return;
     }
-    if (this.barLostTimer === null) {
-      this.barLostTimer = setTimeout(() => {
-        this.barLostTimer = null;
-        if (this.disposed || !this.barReadingsWanted()) return;
-        const quiet = this.barLastMatchMs === null ? Infinity : Date.now() - this.barLastMatchMs;
-        if (quiet >= COMPOSE_BAR_LOST_MS) this.barLost();
-      }, COMPOSE_BAR_LOST_MS - since);
-    }
+    const left = Math.max(this.barLastMatchMs, ownEnd) + COMPOSE_BAR_LOST_MS - now;
+    if (left <= 0) this.barLost();
+    else this.armBarLostTimer(left);
   }
 
-  /** No match for 400 ms: under. A bar lost from the overlays (not one never
-   *  found, as before Claude has drawn it) logs `[COMPOSE] bar not found`,
-   *  at most once a minute per pane. */
+  private armBarLostTimer(ms: number): void {
+    this.clearBarLostTimer();
+    this.barLostTimer = setTimeout(() => {
+      this.barLostTimer = null;
+      if (this.disposed || !this.barReadingsWanted()) return;
+      this.takeBarReading();
+    }, ms);
+  }
+
+  /** This pane is typing into Claude itself (D9): readings for the next
+   *  COMPOSE_OWN_TYPING_MS don't count toward the lost wait. */
+  private noteOwnTyping(): void {
+    this.composeOwnTypingMs = Date.now();
+  }
+
+  /** No empty-bar reading for 400 ms: under, reason holds-text when the
+   *  last counting reading found the bar holding text, else lost (or
+   *  aside-end). A bar lost from the overlays (not one never found, as before
+   *  Claude has drawn it) logs `[COMPOSE] bar not found`, at most once a
+   *  minute per pane. */
   private barLost(): void {
     if (this.composePlacement === 'under') return;
+    if (this.barWaitHoldsText) {
+      this.setComposePlacement('under', 'holds-text');
+      return;
+    }
     const now = Date.now();
     if (now - this.barNotFoundLoggedMs >= COMPOSE_BAR_NOT_FOUND_LOG_MS) {
       this.barNotFoundLoggedMs = now;
@@ -2417,6 +2538,7 @@ export class Pane {
     }
     if (next === 'under') this.clearComposeOverlayStyle();
     else this.layoutComposeOverlay();
+    this.syncComposeAsideLook();
     if ((from === 'under') !== (next === 'under')) this.refitTerminal();
     this.editorInput.refreshSize(); // the height cap differs between under and the overlays
   }
@@ -2518,6 +2640,7 @@ export class Pane {
 
   private engageComposeFirst(reason: string): void {
     this.composeFirstEngaged = true;
+    this.syncOkayRow(false); // D11: Okay? moves into the box
     this.composeHandedOff = false;
     this.editorContainer.classList.add('compose-first');
     this.editorContainer.classList.remove('collapsed');
@@ -2545,6 +2668,7 @@ export class Pane {
   private disengageComposeFirst(reason: string): void {
     const hadFocus = this.editorInput.hasFocus();
     this.composeFirstEngaged = false;
+    this.syncOkayRow(true); // D11: Okay? back in its row under the terminal
     this.composeHandedOff = false;
     this.editorContainer.classList.remove('compose-first');
     this.editorContainer.classList.add('collapsed'); // the draft stays; ⌘E shows it

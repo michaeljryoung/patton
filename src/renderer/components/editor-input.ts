@@ -291,6 +291,12 @@ export class EditorInput {
     this.textarea.spellcheck = enabled;
   }
 
+  /** The box's row of controls (textarea, Send's slot): Pane puts the Okay?
+   *  button first in it, at the box's left (docs/compose-box.md D11). */
+  get fieldElement(): HTMLElement {
+    return this.field;
+  }
+
   hasFocus(): boolean {
     return document.activeElement === this.textarea;
   }

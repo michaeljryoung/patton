@@ -1,16 +1,21 @@
 // Headless check of the Okay? button (Michael, 18 Nov 2026: "Quite often, I find
 // myself wanting to ask a project, 'Is everything going okay?' ... Can we add a
-// button in the bottom left?"): a slim row under a Claude pane's terminal whose
-// button types "Is everything going okay?" and Enter into Claude, by Pause all's
-// safety rules (services/okay-ask.ts, services/pause-all.ts).
-// Drives a REAL Pane (constructed and init()ed, terminal/editor/overlays stubbed)
+// button in the bottom left?"): a button that types "Is everything going okay?"
+// and Enter into Claude, by Pause all's safety rules (services/okay-ask.ts,
+// services/pause-all.ts). It sits inside the compose box, at its left, while
+// the box is engaged, and in a slim row under the terminal otherwise
+// (docs/compose-box.md D11; Michael 20 Nov: "the OK button is now in the wrong
+// place"). Sections 2 to 6 run once with the button in its row (the box off)
+// and once in the box ([box]), so every behaviour is pinned in both places.
+// Drives a REAL Pane (constructed and init()ed, with the real compose box;
+// terminal and overlays stubbed)
 // in jsdom, as check-paste-chips.mjs does: Claude's state arrives through the
 // real parseProgramStatus, main's unsent-input tracker and the stash-key probe
 // are stubs whose answers the check sets, and every PTY write is recorded.
 // Run: JSDOM_DIR=<a folder whose node_modules has jsdom> node scripts/check-okay-button.mjs
 import { build } from 'esbuild';
 import { createRequire } from 'node:module';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const jsdomDir = process.env.JSDOM_DIR || process.argv[2];
@@ -19,7 +24,10 @@ if (!jsdomDir) {
   process.exit(2);
 }
 const { JSDOM, VirtualConsole } = createRequire(join(jsdomDir, 'noop.js'))('jsdom');
-const repo = join(dirname(fileURLToPath(import.meta.url)), '..');
+// Against another source tree (to prove the checks fail there):
+// COMPOSE_SRC_ROOT=<that worktree> node scripts/check-okay-button.mjs
+const here = join(dirname(fileURLToPath(import.meta.url)), '..');
+const repo = process.env.COMPOSE_SRC_ROOT ? resolve(process.env.COMPOSE_SRC_ROOT) : here;
 
 const stubSource = `
   const mk = () => new Proxy(function () {}, {
@@ -46,12 +54,11 @@ const stubSource = `
       });
     }
   }
-  export const EditorInput = mk(), SearchOverlay = mk(), HistorySearch = mk(), PasteDialog = mk(),
-    DEFAULT_COMPOSE_PLACEHOLDER = '';`;
+  export const SearchOverlay = mk(), HistorySearch = mk(), PasteDialog = mk();`;
 const stubs = {
   name: 'stubs',
   setup(b) {
-    b.onResolve({ filter: /\/(terminal-view|editor-input|search-overlay|history-search|paste-dialog)$/ },
+    b.onResolve({ filter: /\/(terminal-view|search-overlay|history-search|paste-dialog)$/ },
       (a) => ({ path: a.path, namespace: 'stub' }));
     b.onLoad({ filter: /.*/, namespace: 'stub' }, () => ({ contents: stubSource, loader: 'js' }));
   },
@@ -70,9 +77,13 @@ const bundle = await build({
 
 let failed = 0;
 let passed = 0;
+// 'row': the compose box off, the button in its row. 'box': the box engaged
+// with Claude, the button inside it (check names carry "[box]").
+let MODE = 'row';
 const check = (name, ok, detail) => {
-  if (ok) { passed++; console.log('ok  ', name); }
-  else { failed++; console.log('FAIL', name, detail === undefined ? '' : JSON.stringify(detail)); }
+  const label = MODE === 'box' ? `[box] ${name}` : name;
+  if (ok) { passed++; console.log('ok  ', label); }
+  else { failed++; console.log('FAIL', label, detail === undefined ? '' : JSON.stringify(detail)); }
 };
 process.on('unhandledRejection', (err) => { failed++; console.log('FAIL unhandled rejection', String(err?.stack ?? err)); });
 let finished = false;
@@ -146,12 +157,22 @@ const makePane = async () => {
   });
   await p.init();
   w.document.getElementById('content').appendChild(p.element);
+  if (MODE === 'box') p.setComposeFirst(true, null); // engages with Claude's first report
   return p;
 };
 const report = (p, state) => p.terminalView.__emit('onProgramStatus', PA.parseProgramStatus(`state=${state}:app=claude-code`));
 const clearReport = (p) => p.terminalView.__emit('onProgramStatus', PA.parseProgramStatus('state=clear'));
 const row = (p) => p.element.querySelector('.okay-row');
 const btn = (p) => p.element.querySelector('.okay-button');
+const field = (p) => p.editorContainer.querySelector('.editor-field');
+/** The button is in the box at its left: the first thing in the box's field, before the textarea. */
+const inBoxAtLeft = (p) => btn(p)?.parentElement === field(p) && field(p).firstElementChild === btn(p)
+  && btn(p).nextElementSibling?.tagName === 'TEXTAREA';
+/** The button is offered where this MODE puts it: in its shown row (box off),
+ *  or shown inside the engaged box with the row hidden. */
+const offered = (p) => (MODE === 'row'
+  ? row(p).hidden === false && btn(p).parentElement === row(p) && !btn(p).hidden
+  : p.composeFirstEngaged === true && inBoxAtLeft(p) && !btn(p).hidden && row(p).hidden === true);
 const click = (p) => btn(p).click();
 const okayLogs = (kind) => logs.filter((l) => l.includes(`[OKAY] ${kind}`));
 const sentLine = () => writes.map(([, d]) => d);
@@ -195,6 +216,7 @@ const clickSeeing = async (p) => { click(p); await wait(SEEN_AT); return btn(p).
   check('the shell prompt coming back (OSC 133) hides the row', row(p).hidden === true);
 }
 
+for (MODE of ['row', 'box']) {
 // ── 2. The click ──
 {
   const p = await makePane();
@@ -222,6 +244,19 @@ const clickSeeing = async (p) => { click(p); await wait(SEEN_AT); return btn(p).
   const mouse2 = new w.MouseEvent('mousedown', { bubbles: true, cancelable: true });
   row(p).dispatchEvent(mouse2);
   check('...and so is mousedown on the row', mouse2.defaultPrevented === true);
+  if (MODE === 'box') {
+    // D11: a press keeps the box's keyboard, and doesn't take it back either.
+    const box = p.editorContainer.querySelector('textarea');
+    box.focus();
+    const m3 = new w.MouseEvent('mousedown', { bubbles: true, cancelable: true });
+    btn(p).dispatchEvent(m3);
+    check('a press on Okay? in the box is default-prevented and the box keeps the keyboard',
+      m3.defaultPrevented === true && w.document.activeElement === box, w.document.activeElement?.className);
+    p.composeHandedOff = true; // the keyboard handed to Claude's own bar (Esc with a draft)
+    btn(p).dispatchEvent(new w.MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+    check('...and a press while handed off doesn\'t take the keyboard back for the box', p.composeHandedOff === true);
+    p.composeHandedOff = false;
+  }
 }
 {
   // A draft in Claude's input line: Ctrl+S first.
@@ -362,32 +397,30 @@ const clickSeeing = async (p) => { click(p); await wait(SEEN_AT); return btn(p).
 {
   // Claude detected by the title glyph alone (no 7501 report).
   const p = await makePane();
-  const r = row(p);
-  p.terminalView.__emit('onTitleChange', 'zsh');
-  check('a title without the glyph: the row stays hidden', r.hidden === true);
+    p.terminalView.__emit('onTitleChange', 'zsh');
+  check('a title without the glyph: the row stays hidden', !offered(p));
   p.terminalView.__emit('onTitleChange', '\u2733 Claude Code');
-  check('a ✳ title (Claude stopped) shows the row', r.hidden === false);
+  check('a ✳ title (Claude stopped) shows the row', offered(p));
   p.terminalView.__emit('onTitleChange', '\u25D0 working');
-  check('a ◐ title (Claude working) keeps it shown', r.hidden === false);
+  check('a ◐ title (Claude working) keeps it shown', offered(p));
   p.terminalView.__emit('onTitleChange', 'zsh');
-  check('a title without the glyph hides the row again', r.hidden === true);
+  check('a title without the glyph hides the row again', !offered(p));
 }
 
 // ── 4. A respawned shell has never run Claude ──
 {
   const p = await makePane();
   report(p, 'working'); report(p, 'done');
-  const r = row(p);
-  check('(setup) shown while Claude is done', r.hidden === false);
+    check('(setup) shown while Claude is done', offered(p));
   fresh();
   const out = await p.respawn({});
   check('(setup) the real respawn() ran and gave a new shell', out.newId === p.ptyId && out.newId !== out.oldId, out);
-  check('after a respawn the row is hidden (the new shell never ran Claude)', r.hidden === true);
+  check('after a respawn the row is hidden (the new shell never ran Claude)', !offered(p));
   btn(p).click();
   await wait(300);
   check('...and a click on it writes nothing to the new shell', writes.length === 0 && okayLogs('sent').length === 0, writes);
   report(p, 'working'); report(p, 'done');
-  check('Claude running again in the new shell shows the row', r.hidden === false);
+  check('Claude running again in the new shell shows the row', offered(p));
 }
 
 // ── 5. A failing probe ──
@@ -432,6 +465,9 @@ const clickSeeing = async (p) => { click(p); await wait(SEEN_AT); return btn(p).
   await wait(RESULT_WAIT);
 }
 
+}
+MODE = 'row';
+
 // ── 7. One resize, not two, when compose-first starts or ends with Claude ──
 {
   const p = await makePane();
@@ -439,7 +475,7 @@ const clickSeeing = async (p) => { click(p); await wait(SEEN_AT); return btn(p).
   resizes.length = 0;
   report(p, 'idle');
   await wait(20);
-  check('(setup) compose-first engaged with Claude', p.composeFirstEngaged === true && row(p).hidden === false);
+  check('(setup) compose-first engaged with Claude, Okay? in the box (D11)', p.composeFirstEngaged === true && row(p).hidden === true && inBoxAtLeft(p));
   check('Claude starting under compose-first: the row adds no PTY resize of its own (the resize observer sends the one final size)',
     resizes.length === 0, resizes);
   clearReport(p);
@@ -450,6 +486,44 @@ const clickSeeing = async (p) => { click(p); await wait(SEEN_AT); return btn(p).
   report(p, 'idle');
   await wait(20);
   check('without compose-first the row still re-fits the PTY once', resizes.length === 1, resizes);
+}
+
+// ── 8. D11: inside the box while it is engaged, in the row when it isn't; one state ──
+{
+  MODE = 'box';
+  const p = await makePane();
+  check('8.0 a plain shell: neither the row nor the button shows', row(p).hidden === true && btn(p).hidden === true);
+  report(p, 'working'); report(p, 'done');
+  check('8.1 Claude runs with the box engaged: Okay? inside the box at its left, the row hidden', offered(p),
+    { row: row(p).hidden, parent: btn(p).parentElement?.className, first: field(p).firstElementChild?.className });
+  const b = btn(p);
+  check('8.1 ...one button, its words, type, accessible name and title kept',
+    p.element.querySelectorAll('.okay-button').length === 1 && b.textContent === 'Okay?' && b.type === 'button'
+    && b.getAttribute('aria-label') === 'Ask Claude: ' + LINE && b.title === 'Ask Claude: ' + LINE);
+  fresh();
+  const seen = await clickSeeing(p);
+  await wait(300);
+  check('8.2 a click in the box sends the line and Enter, and says Sent',
+    seen === 'Sent' && JSON.stringify(sentLine()) === JSON.stringify([LINE, '\r']), [seen, sentLine()]);
+  p.collapseCompose(); // ⌘E from inside the box closes it
+  check('8.3 the box closed (⌘E) while Claude runs: the row shows with the button in it',
+    p.composeFirstEngaged === false && row(p).hidden === false && b.parentElement === row(p) && !b.hidden, row(p).hidden);
+  check('8.3 ...the same button with its result still showing (one state)', btn(p) === b && b.textContent === 'Sent', b.textContent);
+  click(p);
+  await wait(100);
+  check('8.3 ...so a click there while the result shows does nothing', sentLine().filter((d) => d === LINE).length === 1, sentLine());
+  await wait(RESULT_WAIT);
+  check('8.3 ...then back to Okay?', b.textContent === 'Okay?', b.textContent);
+  p.expandCompose(); // ⌘E again
+  check('8.4 reopened (⌘E): back in the box at its left, the row hidden', offered(p), row(p).hidden);
+  p.setComposeFirst(false, null);
+  check('8.5 the compose box switched off: the row shows with the button', row(p).hidden === false && b.parentElement === row(p) && !b.hidden);
+  p.setComposeFirst(true, null);
+  check('8.6 switched on again: in the box, the row hidden', offered(p));
+  clearReport(p);
+  check('8.7 Claude leaves: the box releases, the row stays hidden and the button is withdrawn',
+    p.composeFirstEngaged === false && row(p).hidden === true && b.hidden === true);
+  MODE = 'row';
 }
 
 finished = true;

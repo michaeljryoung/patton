@@ -49,7 +49,9 @@ export function okayAnnouncement(d: OkayDecision): string {
   return d.queued ? `Asked Claude: ${OKAY_PROMPT} (queued behind a running turn)` : `Asked Claude: ${OKAY_PROMPT}`;
 }
 
-/** The row shows only while Claude Code runs in the pane with a live shell. */
-export function okayRowVisible(claudeActive: boolean, live: boolean): boolean {
+/** The button is offered only while Claude Code runs in the pane with a live
+ *  shell: inside the compose box while the box is engaged, else in its row
+ *  under the terminal (D11, components/okay-row.ts). */
+export function okayAvailable(claudeActive: boolean, live: boolean): boolean {
   return claudeActive && live;
 }

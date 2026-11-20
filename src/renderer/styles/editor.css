@@ -202,6 +202,61 @@
   color: var(--compose-aside-ink);
 }
 
+/* One typing bar, D10: in the overlays ('over', 'dock') an aside hides the
+   box and its paste strip, since Claude's question or menu replaces the bar
+   they cover. At once fully transparent and not taking the pointer
+   (aside-hidden; no fade), while D2's typing grace may keep the keyboard in
+   it (opacity, not visibility, so focus stays); after the grace
+   visibility: hidden as well (aside-gone). Pane.syncComposeAsideLook(). */
+.editor-container.compose-first.aside-hidden,
+.paste-strip.aside-hidden {
+  opacity: 0;
+  pointer-events: none;
+  transition: none;
+}
+
+.editor-container.compose-first.aside-gone,
+.paste-strip.aside-gone {
+  visibility: hidden;
+}
+
+/* "Draft kept": at the pane's bottom right while the hidden box holds a
+   draft. Its own 1 px outline in the aside tones, words only, never takes a
+   click. Over the terminal's last row, above xterm's layers (as the box). */
+.compose-draft-note {
+  position: absolute;
+  right: 8px;
+  bottom: 4px;
+  z-index: 31;
+  padding: 1px 8px;
+  border: 1px solid var(--compose-aside-rule);
+  background: var(--bg);
+  color: var(--compose-aside-hint);
+  font-family: var(--font-ui);
+  font-size: var(--ui);
+  line-height: 1.3;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.compose-draft-note[hidden] {
+  display: none;
+}
+
+/* D11: the Okay? button inside the compose box, at its left (the same button
+   as the row's, moved by OkayRow.place); dimmed with the box when it steps
+   aside in place ('under'). */
+.editor-field > .okay-button {
+  flex: 0 1 auto;
+  max-width: 40%; /* a long result word shortens with an ellipsis, as in the row */
+  align-self: center;
+}
+
+.editor-container.compose-first.aside .editor-field > .okay-button {
+  color: var(--compose-aside-ink);
+  border-color: var(--compose-aside-rule);
+}
+
 /* Send's slot: Send, the aside label and an invisible sizer holding every
    label share one grid cell, so the slot is the widest of them in both states
    and the textarea beside it never reflows. */

@@ -5,8 +5,11 @@
 // screens (scripts/fixtures/claude-bar-screens.json). Asserts the placement
 // (`data-compose-placement`, the placement-* classes, `[COMPOSE] place`
 // lines with their reasons), that the terminal is refitted only between
-// `under` and the overlays, the 400 ms lost rule, the freeze from Claude's
-// first `blocked` report, the hand-off and the setting.
+// `under` and the overlays, the 400 ms wait before `under` (lost or holding
+// text) and that readings within 1.5 s of the pane's own typing (a send from
+// the box, an Okay? ask) never count toward it (D9 as amended), the freeze
+// from Claude's first `blocked` report, D10's hidden box and "Draft kept"
+// during an aside in the overlays, the hand-off and the setting.
 // Time: Pane's timers run on a fake clock (setTimeout, Date.now); xterm's
 // parsing and the animation frame are real.
 // Run: JSDOM_DIR=<a folder whose node_modules has jsdom> node scripts/check-compose-placement.mjs
@@ -150,13 +153,17 @@ const advance = (ms) => {
 };
 
 let ptySeq = 0;
+const writes = [];
+const CLEAN_INPUT = { dirty: false, length: 0, lastInputAt: 0, slashSubmitAt: 0, userStashAt: 0, pattonStashAt: 0 };
 w.patton = stubWith({
+  pauseAll: stubWith({ stashKey: () => Promise.resolve({ ok: true }) }),
   pty: stubWith({
+    inputState: () => Promise.resolve([CLEAN_INPUT]),
     create: () => Promise.resolve(++ptySeq),
     respawn: () => Promise.resolve(++ptySeq),
     getShell: () => Promise.resolve('/bin/zsh'),
     getCwd: () => Promise.resolve(''),
-    write: () => {},
+    write: (_id, d) => { writes.push(d); },
     resize: (...a) => { resizes.push(a); return Promise.resolve(); },
     onData: () => () => {},
     onExit: () => () => {},
@@ -181,6 +188,19 @@ const classesOk = (p, want) => ['placement-over', 'placement-dock'].every((c) =>
   return p.editorContainer.classList.contains(c) === on && p.pasteStrip.classList.contains(c) === on;
 });
 const frames = () => realWait(50); // the animation frame and xterm's parse have run
+const boxOf = (p) => p.editorContainer.querySelector('textarea');
+/** Send `text` from the box with Enter, as he does: the text is written now,
+ *  its Enter 10 ms later on the fake clock (advance to send it). */
+const sendFromBox = async (p, text) => {
+  const box = boxOf(p);
+  box.focus();
+  p.editorInput.setValue(text);
+  box.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  await realWait(0); // the submit queue's microtask has written the text
+};
+/** The polite announcer region (services/announcer.ts) on <body>. */
+const announced = () => [...doc.body.children].filter((el) => el.getAttribute('aria-live') === 'polite')
+  .map((el) => el.textContent).join('|');
 const write = (t, data) => new Promise((r) => t.write(data, r));
 
 /** A feeder over one recording: `to(mark)` writes every chunk up to it. */
@@ -227,12 +247,20 @@ const newPane = async () => {
     && pl[0].pane === p.id && classesOk(p, 'over'), pl);
   check('1.1 ...the terminal refitted and the pty told once (under -> over)', resizes.length === 1, resizes);
 
+  // D9 as amended: text in Claude's bar (typed there, not sent from the box)
+  // moves the box under only once 400 ms pass with no empty-bar reading.
   logs.length = 0; resizes.length = 0;
   await f.to('typed');
+  check('1.2 typed text in Claude\'s bar: still over at first', placement(p) === 'over' && places().length === 0, places());
+  advance(390);
+  check('1.2 ...still over 390 ms on', placement(p) === 'over' && places().length === 0, places());
+  advance(20);
   pl = places();
-  check('1.2 typed text in Claude\'s bar: under at once, reason holds-text',
+  check('1.2 ...under once it has stayed past 400 ms, reason holds-text',
     placement(p) === 'under' && pl.length === 1 && pl[0].reason === 'holds-text' && classesOk(p, 'under'), pl);
   check('1.2 ...refitted once (over -> under)', resizes.length === 1, resizes);
+  check('1.2 ...and no `bar not found` (the bar was found, holding text)',
+    !logs.some((l) => l.tag === '[COMPOSE] bar not found'), logs.map((l) => l.tag));
 
   logs.length = 0;
   await f.to('cleared');
@@ -378,24 +406,163 @@ const newPane = async () => {
   p.dispose();
 }
 
-// ── 3. A real turn: the 4 bursts that end mid-redraw never move the box ──
+// ── 3. A real turn sent from the box: Claude echoes the prompt into its bar
+//       before the Enter clears it, and 4 bursts end mid-redraw; nothing moves ──
 {
   const p = await newPane();
   const events = fixture.recordings.turn;
   let sent = false;
+  let lastT = 0;
+  let movedAt = null;
   for (const e of events) {
-    if (e.mark === 'turn-sent') { sent = true; logs.length = 0; continue; }
+    if (e.mark === 'turn-sent') {
+      check('3 (setup) over before the send', placement(p) === 'over', placement(p));
+      logs.length = 0; resizes.length = 0; writes.length = 0;
+      await sendFromBox(p, 'Count from 1 to 45, one number per line, nothing else.');
+      check('3 (setup) the box wrote the prompt to the pty', writes.includes('Count from 1 to 45, one number per line, nothing else.'), writes);
+      sent = true;
+      lastT = e.t;
+      continue;
+    }
     if (!e.b) continue;
+    if (sent) { advance(Math.round((e.t - lastT) * 1000)); lastT = e.t; } // the recording's own gaps
     await write(term(p), Buffer.from(e.b, 'base64'));
     await frames();
-    if (sent) advance(50); // bursts arrive tens of ms apart
+    if (sent && movedAt === null && placement(p) !== 'over') movedAt = e.t;
   }
-  // The recording typed the prompt into Claude's own bar: it holds text (under)
-  // until Enter clears it (over). After that, the 4 bursts that end mid-redraw
-  // move nothing.
+  advance(2000);
   const pl = places();
-  check('3 turn: under while the prompt sits in Claude\'s bar, over once it clears, then no move',
-    placement(p) === 'over' && pl.length === 2 && pl[0].reason === 'holds-text' && pl[1].reason === 'found', pl);
+  check('3 turn sent from the box: over throughout, no `[COMPOSE] place`, no refit',
+    movedAt === null && placement(p) === 'over' && pl.length === 0 && resizes.length === 0, { movedAt, pl, resizes });
+  p.dispose();
+}
+
+// ── 4. The pane's own typing (D9 as amended): an echo that outlasts 400 ms ──
+{
+  const p = await newPane();
+  const f = feeder(p, 'steps');
+  await f.to('idle');
+  check('4 (setup) over', placement(p) === 'over', placement(p));
+  logs.length = 0; resizes.length = 0; writes.length = 0;
+  await sendFromBox(p, 'hello there');
+  await f.to('typed'); // Claude shows the sent text in its bar
+  advance(10); // the Enter
+  check('4 (setup) text then Enter written', writes[0] === 'hello there' && writes[1] === '\r', writes);
+  advance(790); // Claude slow to clear it: 800 ms in all
+  check('4.1 a send from the box whose echo stays in Claude\'s bar for 800 ms: still over, no `[COMPOSE] place`, no refit',
+    placement(p) === 'over' && places().length === 0 && resizes.length === 0, { pl: places(), resizes });
+  await f.to('cleared');
+  check('4.1 ...cleared: over, still nothing logged', placement(p) === 'over' && places().length === 0, places());
+
+  // An echo that never clears: the 400 ms wait starts only once 1.5 s have
+  // passed since the pane's last write (its Enter).
+  await sendFromBox(p, 'a long line');
+  await f.to('wrapped'); // a screen the reader can't match
+  advance(10); // the Enter: the window runs to 1510 ms, the wait to 1910 ms
+  advance(1790);
+  check('4.2 a reading that misses the bar after the box\'s own send: still over 1.8 s on',
+    placement(p) === 'over' && places().length === 0, places());
+  advance(160);
+  let pl = places();
+  check('4.2 ...under by 1.96 s (1.5 s window, then the 400 ms wait), reason lost',
+    placement(p) === 'under' && pl.length === 1 && pl[0].reason === 'lost', pl);
+  p.dispose();
+}
+{
+  // An Okay? ask is the pane's own typing too: the `typed` screen (text in
+  // Claude's bar) for 800 ms after it moves nothing.
+  const p = await newPane();
+  const f = feeder(p, 'steps');
+  await f.to('idle');
+  state(p, 'working');
+  state(p, 'idle');
+  check('4.3 (setup) over', placement(p) === 'over', placement(p));
+  logs.length = 0; writes.length = 0; resizes.length = 0;
+  const okay = p.editorContainer.querySelector('.okay-button');
+  check('4.3 (setup) the Okay? button is in the box', Boolean(okay), null);
+  okay?.click();
+  await realWait(20); // the probes have answered and the line is written
+  check('4.3 (setup) the Okay? ask wrote its line', writes.includes('Is everything going okay?'), writes);
+  await f.to('typed');
+  advance(10);
+  advance(790);
+  check('4.3 an Okay? ask, then text in Claude\'s bar for 800 ms: still over, no `[COMPOSE] place`, no refit',
+    placement(p) === 'over' && places().length === 0 && resizes.length === 0, places());
+  advance(1200);
+  check('4.3 ...but text still there 2 s on (past the 1.5 s window and the wait): under, reason holds-text',
+    placement(p) === 'under' && places().length === 1 && places()[0].reason === 'holds-text', places());
+  p.dispose();
+}
+
+// ── 5. D10: an aside in the overlays hides the box; "Draft kept" ──
+{
+  const p = await newPane();
+  const f = feeder(p, 'steps');
+  await f.to('cleared2');
+  await f.to('q-sent');
+  state(p, 'working');
+  check('5 (setup) over', placement(p) === 'over', placement(p));
+  const ec = p.editorContainer;
+  const box = boxOf(p);
+  // (A stand-in on a tree without the note, so every check below still reports.)
+  const note = p.element.querySelector('.compose-draft-note') ?? Object.assign(doc.createElement('div'), { hidden: true });
+  check('5.0 "Draft kept" exists, hidden, not in the box', note.isConnected && note.hidden === true && !ec.contains(note), note.outerHTML);
+  check('5.0 ...the box not hidden', !ec.classList.contains('aside-hidden') && !ec.classList.contains('aside-gone'), ec.className);
+
+  // He is typing a draft when Claude asks.
+  box.focus();
+  p.editorInput.setValue('my draft');
+  box.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'a', bubbles: true, cancelable: true }));
+  state(p, 'blocked', 'question');
+  await f.to('question');
+  advance(260); // past the 250 ms hold: aside, the keyboard kept through the grace
+  check('5.1 aside in `over`: the box and its paste strip transparent and not taking the pointer at once (aside-hidden)',
+    ec.classList.contains('aside') && ec.classList.contains('aside-hidden') && p.pasteStrip.classList.contains('aside-hidden'), ec.className);
+  check('5.1 ...through D2\'s typing grace still focusable: not visibility-hidden, the keyboard still in the box',
+    !ec.classList.contains('aside-gone') && doc.activeElement === box, { cls: ec.className, active: doc.activeElement?.className });
+  check('5.1 ...the Okay? button hides with it (inside the hidden box)', Boolean(ec.querySelector('.okay-button')), null);
+  check('5.2 "Draft kept" shown while the hidden box holds a draft', note.hidden === false && note.textContent === 'Draft kept', note.outerHTML);
+  await frames();
+  check('5.2 ...announced through the aria-live region', announced().includes('Draft kept'), announced());
+  for (const el of doc.body.children) if (el.getAttribute('aria-live') === 'polite') el.textContent = '';
+  box.dispatchEvent(new w.Event('input', { bubbles: true }));
+  await frames();
+  check('5.2 ...once per aside (more typing doesn\'t announce it again)', !announced().includes('Draft kept'), announced());
+  advance(1100); // the grace ends: the keyboard goes to the terminal
+  check('5.3 after the grace: the keyboard on the terminal and the box visibility-hidden (aside-gone)',
+    doc.activeElement === view(p).__termEl && ec.classList.contains('aside-gone') && p.pasteStrip.classList.contains('aside-gone'),
+    { cls: ec.className, active: doc.activeElement?.className });
+  check('5.3 ..."Draft kept" still shown, placement still over', note.hidden === false && placement(p) === 'over', placement(p));
+  state(p, 'working'); // answered
+  check('5.4 the aside ends: the box back where it was, shown, the note gone',
+    placement(p) === 'over' && !ec.classList.contains('aside') && !ec.classList.contains('aside-hidden')
+    && !ec.classList.contains('aside-gone') && !p.pasteStrip.classList.contains('aside-hidden') && note.hidden === true,
+    { pl: placement(p), cls: ec.className });
+  check('5.4 ...with the keyboard and the draft', doc.activeElement === box && p.editorInput.getValue() === 'my draft', doc.activeElement?.className);
+
+  // No draft: hidden, no note.
+  state(p, 'idle');
+  await f.to('question-cancelled');
+  check('5.5 (setup) over again', placement(p) === 'over', placement(p));
+  p.editorInput.setValue('');
+  state(p, 'working');
+  state(p, 'blocked', 'permission');
+  advance(260);
+  check('5.5 aside with an empty box: hidden at once (no typing grace) and no "Draft kept"',
+    ec.classList.contains('aside-hidden') && ec.classList.contains('aside-gone') && note.hidden === true,
+    { cls: ec.className, note: note.hidden });
+  state(p, 'working');
+  check('5.5 ...back after', !ec.classList.contains('aside-hidden') && placement(p) === 'over', ec.className);
+
+  // `under`: the v1.31 aside, dimmed in place; no hiding, no note.
+  p.setComposeOverBar(false);
+  p.editorInput.setValue('another draft');
+  state(p, 'blocked', 'question');
+  advance(260);
+  check('5.6 aside in `under`: dimmed in place (aside), not hidden, no "Draft kept"',
+    placement(p) === 'under' && ec.classList.contains('aside') && !ec.classList.contains('aside-hidden')
+    && !ec.classList.contains('aside-gone') && note.hidden === true, { pl: placement(p), cls: ec.className });
+  state(p, 'working');
   p.dispose();
 }
 
