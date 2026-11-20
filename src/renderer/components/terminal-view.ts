@@ -5,6 +5,7 @@ import { SearchAddon } from '@xterm/addon-search';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { DEFAULTS } from '../../shared/constants';
 import { rlog } from '../services/renderer-logger';
+import { fitGrid } from '../services/terminal-fit';
 import { parsePattonOsc, type PattonState } from '../services/patton-osc';
 import { parseProgramStatus, PROGRAM_STATUS_REPLY, type ParsedSequence } from '../services/program-status';
 import { programStatusEnabled } from '../services/program-status-switch';
@@ -102,6 +103,11 @@ export type ProgramStatusEvent =
   | { type: 'probe' }
   | { type: 'reset' }
   | Exclude<ParsedSequence, { type: 'query' }>;
+
+/** The private renderer handle @xterm/addon-fit itself reads; typed here for fit(). */
+interface XtermCoreAccess {
+  _core: { _renderService: { clear(): void; dimensions: { css: { cell: { width: number; height: number } } } } };
+}
 
 export class TerminalView {
   readonly terminal: Terminal;
@@ -612,14 +618,44 @@ export class TerminalView {
     }
   }
 
+  /**
+   * Resize the grid to the container's content box (services/terminal-fit.ts says why not
+   * `fitAddon.fit()`: the addon counts `.terminal-container`'s padding as room for rows).
+   * Like the addon, it clears the renderer before a resize and does nothing when the size holds.
+   */
   fit(): void {
-    if (!this.disposed) {
-      try {
-        this.fitAddon.fit();
-      } catch {
-        // Terminal not yet visible
-      }
+    if (this.disposed) return;
+    try {
+      const dims = this.proposeFit();
+      if (!dims) return;
+      if (dims.cols === this.terminal.cols && dims.rows === this.terminal.rows) return;
+      (this.terminal as unknown as XtermCoreAccess)._core._renderService.clear();
+      this.terminal.resize(dims.cols, dims.rows);
+    } catch {
+      // Terminal not yet visible
     }
+  }
+
+  private proposeFit(): { cols: number; rows: number } | null {
+    const element = this.terminal.element;
+    const parent = element?.parentElement;
+    if (!element || !parent) return null;
+    // The cell size the addon reads (xterm.js has no public API for it).
+    const cell = (this.terminal as unknown as XtermCoreAccess)._core._renderService.dimensions.css.cell;
+    const p = window.getComputedStyle(parent);
+    const e = window.getComputedStyle(element);
+    const px = (s: CSSStyleDeclaration, name: string): number => parseFloat(s.getPropertyValue(name)) || 0;
+    return fitGrid({
+      height: parseFloat(p.getPropertyValue('height')),
+      width: parseFloat(p.getPropertyValue('width')),
+      padTop: px(p, 'padding-top'), padBottom: px(p, 'padding-bottom'),
+      padLeft: px(p, 'padding-left'), padRight: px(p, 'padding-right'),
+      borderBox: p.getPropertyValue('box-sizing') === 'border-box',
+      innerPadV: px(e, 'padding-top') + px(e, 'padding-bottom'),
+      innerPadH: px(e, 'padding-left') + px(e, 'padding-right'),
+      scrollbarWidth: this.terminal.options.scrollback === 0 ? 0 : (this.terminal.options.overviewRuler?.width || 14),
+      cellWidth: cell.width, cellHeight: cell.height,
+    });
   }
 
   getDimensions(): { cols: number; rows: number } {

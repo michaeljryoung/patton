@@ -365,6 +365,15 @@ async function pageRun(SCALES) {
       place() === 'under' && cs.position !== 'absolute' && b.height > 0 && b.top >= tc.bottom - 0.5, d);
     check(`${label}: the terminal's last row whole above the box (not clipped under it)`, b.top >= g.screen.bottom - 0.5, d);
     measures.push(`${label}: box ${d.boxH} px from ${d.boxTop}; terminal ${d.rows} rows (${d.rowsThatFit} fit its ${d.containerContentH} px), grid bottom ${d.gridBottom}, container bottom ${d.terminalBottom}`);
+    // The columns, the same way (fit_padding): the last column inside the container's content box
+    // and clear of the vertical scrollbar's strip on the .xterm element's right edge.
+    const xr = q('.terminal-container .xterm').getBoundingClientRect();
+    const sb = q('.terminal-container .xterm .scrollbar.vertical');
+    const sbW = sb ? sb.getBoundingClientRect().width : 14;
+    const contentRight = tc.right - (tcs.boxSizing === 'border-box' ? parseFloat(tcs.paddingRight) : 0);
+    const c = { cols: term().cols, gridRight: r1(g.screen.right), contentRight: r1(contentRight), xtermRight: r1(xr.right), scrollbarW: r1(sbW), scrollbarLeft: r1(xr.right - sbW) };
+    check(`${label}: the terminal's last column inside the container's content box and clear of the scrollbar`, g.screen.right <= contentRight + 0.5 && g.screen.right <= xr.right - sbW + 0.5, c);
+    measures.push(`${label}: ${c.cols} cols, grid right ${c.gridRight}, content right ${c.contentRight}, scrollbar from ${c.scrollbarLeft} (${c.scrollbarW} px)`);
   }
 
   function okayInBox(label) {
