@@ -17,7 +17,7 @@ flowchart TD
   end
   subgraph S["Ship"]
     box_release[merge, push, CI release, cask]:::done
-    box_ship[install on his word, live check]:::todo
+    box_ship[install on his word, live check]:::live
   end
   box_core --> box_replay
   box_core --> box_review
@@ -40,7 +40,7 @@ flowchart TD
 | `box_replay` | Design D7: `scripts/check-compose-box.mjs` drives the real Pane with the 25 real question episodes from main.log (10–20 Nov) and the cases in D1–D5; every new assertion fails on main | done | `box_core` | `0465dab` · `check-compose-box.mjs` 175 at first, 96 failing on main; 255 after the fixes; layout `6ef83af` (`check-ui-text-scale.cjs` 210: container height, textarea and Send-slot widths equal in every aside state at x1, x1.1, x1.5) |
 | `box_review` | Fresh review with probes that never saw the build; every major and minor fixed by a fresh builder; checks re-run | done | `box_core`, `box_drop`, `box_replay` | review 1: 2 major, 4 minor, 2 nit, all fixed `b7e0bac`, `03b1c02`; review 2: 1 major (Enter inside the 250 ms hold approved a prompt), 3 minor, nits, plus broadcast into a blocked pane; all fixed `2ebb0a7`, `0a7af2f`; `npm run check` 30/30 |
 | `box_release` | ff-merge to main, push (no stray no-release marker on the head), CI release green, cask sha matches the downloaded DMG | done | `box_review` | pushed `eef0399` (no marker on the head), run 44728983899 green, tag `v1.31.0`, cask 1.31.0 sha `65ad2b08…` matches the downloaded DMG |
-| `box_ship` | Install on Michael's word with Patton quit; live: the box is open under a Claude tab; a permission prompt takes the keyboard and answering hands it back (`[COMPOSE] aside` / `back` in main.log); a click in the terminal leaves typing in the box; a dropped file adds its path | todo | `box_release` | — |
+| `box_ship` | Install on Michael's word with Patton quit; live: the box is open under a Claude tab; a permission prompt takes the keyboard and answering hands it back (`[COMPOSE] aside` / `back` in main.log); a click in the terminal leaves typing in the box; a dropped file adds its path | live | `box_release` | **S57 (20 Nov 11:55):** installed from tag `v1.31.0` with Patton quit: /Applications reports 1.31.0, asar 11:55:30, `codesign --verify --deep --strict` ok, file list identical to `out/`, `[COMPOSE] aside` in the installed bundle. Live part waits on his sessions in it |
 <!-- MAP:END -->
 
 ## Why the 6 November box failed, and what is different now
