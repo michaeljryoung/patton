@@ -871,3 +871,17 @@ _Earlier entries archived → `docs/session-archive.md` (latest trim 2026-11-20,
 ## Decisions (S58 trim 2026-11-20)
 
 - **2026-11-20 (S56) — The compose box is always open and follows Claude Code's own question reports.** Michael rejected a box opened by hand (the Ctrl+G route): "I don't know which prompt I'm going to need it for". The 6 Nov compose-first guessed from title glyphs; 7501 `blocked` now says when Claude asks. My calls: a 250 ms hold before stepping aside (3 of 25 real questions lasted under 0.1 s); his typing keeps the keyboard until a 1 s pause, at most 3 s; sends and key forwarding refused from Claude's first question report; the note sits in the Send slot so the terminal never resizes; a new `composeBox` setting (on) so his 6 Nov "off" did not carry over; clicks into the terminal keep the box's keyboard on 7501 panes; broadcast skips a pane that's asking.
+
+## Session Log (S59 trim 2026-11-20)
+
+### 2026-11-19 (Session 55 — v1.30.0 tab groups; released not installed)
+- Michael: "something like Google Chrome's tab groups, so you can then group some of the tabs and minimize the group or something?", "and name group". A working sketch first (artifact: the strip in Patton's own styles, two looks); he answered "yes", "ink". Own map `docs/tab-groups.md` (five nodes would pass the main map's 40-node cap), pointer node `tab_groups`.
+- Builder `e36f4f1` (model, session save and main's sanitiser, chip, fold, menus, hover list, `[GROUP]` logs) ran out of context before its checks; three fresh agents wrote `check-tab-groups.mjs` (187 after fixes), `check-tab-groups-strip.mjs` (105 after the first fixes, then drop and clamp checks) and 27 chip measures in `check-ui-text-scale.cjs`; every group check fails on the base; two strip bugs fixed in `ad4cb19`.
+- Two fresh reviews, each cut off by context, together covered code, fixes and probes: 0 majors. Fixed: Move Left/Right take one step (`b5564f5`), discardTab into a folded group (`5c102b2`), a doubled window drag on a chip (`2001a64`), ⌘W answering Close Group (`77073ee`), palette numbering (`1cb8090`), the list clamp (`73487d4`, `58ec6eb`), a drop from another window moving this window's tab of the same id, older than groups (`7f092d8`). Two claims proved false; two nits left (chip role inside the tablist, a click lost across a rebuild).
+- `npm run check` 28/28, lint, tsc, no-install asar 12:51; ff-merged and pushed `6a31a51`, run 44527919306 green, v1.30.0, cask `84fbe52e…` matches the DMG. Not installed: /Applications 1.26.1, untouched all session.
+
+_Earlier entries archived → `docs/session-archive.md` (latest trim 2026-11-20, S58)._
+
+## Gotchas (S59 trim 2026-11-20)
+
+- **The first Stop after a /checkpoint is not its finish** (S54). Its turn can end parked on its own background job, or he interrupts it and talks about something else; anything meaning "checkpoint finished" keys on the hook's `cpd`, never `cpt` (its start) or the first Stop after it. Check such a signal against real transcripts and main.log, not only synthetic probes.
