@@ -84,6 +84,7 @@ const bundle = await build({
       export { Pane } from './src/renderer/components/pane';
       export { parseProgramStatus } from './src/renderer/services/program-status';
       export { DEFAULTS } from './src/shared/constants';
+      export { isMenuLine } from './src/renderer/services/compose-aside';
     `,
     resolveDir: repo, loader: 'ts',
   },
@@ -116,6 +117,7 @@ const stubWith = (overrides) => new Proxy(function () {}, {
 
 const logs = []; // [{ tag, data }] from rlog
 const writes = [];
+const resizes = [];
 const dom = new JSDOM('<!doctype html><body><div id="content"></div></body>', {
   runScripts: 'outside-only', pretendToBeVisual: true, virtualConsole: new VirtualConsole(),
 });
@@ -161,11 +163,13 @@ w.patton = stubWith({
     getShell: () => Promise.resolve('/bin/zsh'),
     getCwd: () => Promise.resolve(''),
     write: (ptyId, data, origin) => writes.push([ptyId, data, origin]),
+    resize: (...a) => { resizes.push(a); return Promise.resolve(); },
     onData: () => () => {},
     onExit: () => () => {},
   }),
   history: stubWith({ get: () => Promise.resolve([]), add: () => Promise.resolve(), clear: () => Promise.resolve() }),
-  log: { send: (_lvl, args) => logs.push({ tag: String(args[0]), data: args[1] }) },
+  getPathForFile: (f) => f.__path,
+  log: { send: (lvl, args) => logs.push({ lvl, tag: String(args[0]), data: args[1] }) },
 });
 w.eval(bundle.outputFiles[0].text);
 const PA = w.PA;
@@ -196,8 +200,13 @@ const active = () => doc.activeElement;
 const boxHasKeyboard = (p) => active() === boxEl(p);
 const termHasKeyboard = (p) => active() === termEl(p);
 const isAside = (p) => p.editorContainer.classList.contains('aside');
-const hintEl = (p) => p.element.querySelector('.compose-hint');
-const hintText = (p) => (hintEl(p) && !hintEl(p).hidden ? hintEl(p).textContent : null);
+// Aside, a label takes Send's place: its title carries the full words.
+const slotEl = (p) => p.editorContainer.querySelector('.editor-send-slot');
+const labelEl = (p) => p.editorContainer.querySelector('.editor-aside-label');
+const liveEl = (p) => p.editorContainer.querySelector('.editor-aside-live');
+const sendBtn = (p) => p.editorContainer.querySelector('.editor-send');
+const hintText = (p) => (slotEl(p)?.classList.contains('aside') ? labelEl(p).title : null);
+const labelText = (p) => (slotEl(p)?.classList.contains('aside') ? labelEl(p).textContent : null);
 const isEngaged = (p) => p.editorContainer.classList.contains('compose-first');
 const report = (p, body) => view(p).__emit('onProgramStatus', PA.parseProgramStatus(`${body}:app=claude-code`));
 const state = (p, s, kind) => report(p, `state=${s}${kind ? `:kind=${kind}` : ''}`);
@@ -625,6 +634,246 @@ const mouseDown = (el, init = {}) => {
   const storeSrc = readFileSync(join(repo, 'src/main/store.ts'), 'utf8');
   check('the store defaults and validates composeBox, and no longer composeFirst',
     /composeBox: DEFAULTS\.COMPOSE_BOX/.test(storeSrc) && /partial\.composeBox/.test(storeSrc) && !/composeFirst/.test(storeSrc));
+}
+
+// ── 7. Review fixes (S56) ──
+const keyIn = (p, key = 'a', init = {}) => {
+  const e = new w.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init });
+  boxEl(p).dispatchEvent(e);
+  return e;
+};
+const editorCss = readFileSync(join(repo, 'src/renderer/styles/editor.css'), 'utf8');
+// jsdom has no execCommand: insertText at the focused field, as Chromium does.
+const insertTextCommand = (cmd, _ui, val) => {
+  if (cmd !== 'insertText') return false;
+  const t = doc.activeElement;
+  t.setRangeText(val, t.selectionStart, t.selectionEnd, 'end');
+  return true;
+};
+{
+  // 7.1 A question lands while he types: dim at once, keyboard after a 1000 ms pause.
+  const p = await engagedPane();
+  boxEl(p).focus();
+  p.editorInput.setValue('half a wo');
+  keyIn(p);
+  advance(100);
+  state(p, 'blocked', 'question');
+  advance(250);
+  check('typing 350 ms before the hold completes: the box dims at once (aside, label "Answer above")',
+    isAside(p) && labelText(p) === 'Answer above', { aside: isAside(p), label: labelText(p) });
+  check('...but the keyboard stays in the box', boxHasKeyboard(p), { active: active()?.className });
+  const a = ofTag('aside');
+  check('...[COMPOSE] aside carries deferredMs 650 (what is left of 1000 ms)', a.length === 1 && a[0].deferredMs === 650, a);
+  advance(600);
+  keyIn(p);
+  advance(900);
+  check('a keydown during the wait re-arms it: 900 ms after it the keyboard is still in the box', boxHasKeyboard(p) && isAside(p));
+  advance(100);
+  check('1000 ms with no keydown: the keyboard goes to the terminal, still aside', termHasKeyboard(p) && isAside(p));
+  const k = ofTag('aside keyboard');
+  check('...logged once as [COMPOSE] aside keyboard', k.length === 1 && typeof k[0].afterMs === 'number', k);
+  check('...and the draft is kept', p.editorInput.getValue() === 'half a wo');
+  drop(p);
+}
+{
+  const p = await engagedPane();
+  boxEl(p).focus();
+  p.editorInput.setValue('x');
+  keyIn(p);
+  state(p, 'blocked', 'permission');
+  advance(300);
+  check('(setup) typing, then a held question: aside, keyboard still in the box', isAside(p) && boxHasKeyboard(p));
+  state(p, 'working');
+  advance(2000);
+  check('the question ends before he pauses: the move is cancelled, the keyboard stays in the box',
+    !isAside(p) && boxHasKeyboard(p) && ofTag('aside keyboard').length === 0, ofTag('aside keyboard'));
+  drop(p);
+}
+{
+  const p = await engagedPane();
+  boxEl(p).focus();
+  p.editorInput.setValue('x');
+  keyIn(p);
+  advance(1200);
+  state(p, 'blocked', 'permission');
+  advance(250);
+  check('the last keydown 1450 ms before the hold completes: the keyboard moves at once, no deferredMs',
+    isAside(p) && termHasKeyboard(p) && ofTag('aside').length === 1 && !('deferredMs' in ofTag('aside')[0]), ofTag('aside'));
+  drop(p);
+}
+{
+  // 7.2 No hint row: the label takes Send's place, the container keeps its rows.
+  const p = await engagedPane();
+  const rows = () => Array.from(p.editorContainer.children).map((el) => `${el.tagName}.${el.className}|${el.hidden}`).join(',');
+  const before = rows();
+  const slotKids = Array.from(slotEl(p)?.children ?? []);
+  resizes.length = 0;
+  check('no separate hint row in the box: no .compose-hint anywhere in the pane', !p.element.querySelector('.compose-hint'));
+  state(p, 'blocked', 'question');
+  advance(300);
+  check('aside: the container\'s rows (children and hidden flags) are the same as before', rows() === before, { before, now: rows() });
+  check('aside: Send\'s slot swaps in place (same children, the slot marked aside, label "Answer above")',
+    slotEl(p) !== null && Array.from(slotEl(p)?.children ?? []).every((el, i) => el === slotKids[i])
+      && slotEl(p)?.children?.length === slotKids.length && slotEl(p)?.classList.contains('aside')
+      && sendBtn(p).parentElement === slotEl(p) && labelEl(p).parentElement === slotEl(p) && labelEl(p)?.textContent === 'Answer above',
+    { label: labelEl(p)?.textContent });
+  check('aside: the label\'s title is the full words', labelEl(p)?.title === ASIDE_BLOCKED);
+  check('aside: an aria-live region carries the full words', liveEl(p)?.getAttribute('aria-live') === 'polite' && liveEl(p)?.textContent === ASIDE_BLOCKED);
+  const sizer = Array.from(p.editorContainer.querySelectorAll('.editor-send-sizer > span')).map((s) => s.textContent);
+  check('the slot reserves the widest label: its sizer holds Send and every aside label',
+    ['Send', 'Answer above', 'Menu above', 'Answer above first'].every((t) => sizer.includes(t)), sizer);
+  check('editor.css: the slot stacks its children in one grid cell, the live region is absolute and clipped, no hint-row rule',
+    /\.editor-send-slot > \*\s*\{\s*grid-area: 1 \/ 1;/.test(editorCss)
+      && /\.editor-aside-live\s*\{[^}]*position: absolute;[^}]*clip:/.test(editorCss)
+      && /\.editor-send-slot\.aside \.editor-send\s*\{\s*visibility: hidden;/.test(editorCss)
+      && !/compose-hint/.test(editorCss));
+  state(p, 'working');
+  check('back: the same rows, Send shown, the label and live region empty',
+    rows() === before && !slotEl(p)?.classList.contains('aside') && labelEl(p)?.textContent === '' && liveEl(p)?.textContent === '');
+  check('no PTY resize request on aside or back', resizes.length === 0, resizes);
+  drop(p);
+}
+{
+  const p = await engagedPane();
+  await sendFromBox(p, '/model');
+  check('menu aside: the label reads "Menu above", title and live region the menu words',
+    labelText(p) === 'Menu above' && hintText(p) === ASIDE_MENU && liveEl(p)?.textContent === ASIDE_MENU, { label: labelText(p) });
+  drop(p);
+}
+{
+  // 7.3 Enter or Send in a box aside for a question sends nothing.
+  const p = await engagedPane();
+  state(p, 'blocked', 'question');
+  advance(300);
+  boxEl(p).focus(); // he clicked back into the dimmed box
+  p.editorInput.setValue('my reply');
+  writes.length = 0;
+  keyIn(p, 'Enter');
+  await flush(); advance(20); await flush();
+  check('Enter in a box aside for a question writes nothing to the PTY', writes.length === 0, writes);
+  check('...keeps the draft', p.editorInput.getValue() === 'my reply', p.editorInput.getValue());
+  check('...flashes "Answer above first" in the label', labelText(p) === 'Answer above first', labelText(p));
+  const h = ofTag('send held');
+  check('...logs [COMPOSE] send held {pane}', h.length === 1 && h[0].pane === p.id, h);
+  advance(1500);
+  check('1.5 s later the label reads "Answer above" again', labelText(p) === 'Answer above', labelText(p));
+  sendBtn(p).click();
+  keyIn(p, 'Enter', { metaKey: true });
+  await flush(); advance(20); await flush();
+  check('Send and ⌘Enter are held too: nothing written, draft kept, two more held lines',
+    writes.length === 0 && p.editorInput.getValue() === 'my reply' && ofTag('send held').length === 3, { writes, held: ofTag('send held').length });
+  state(p, 'working');
+  keyIn(p, 'Enter');
+  await flush(); advance(20); await flush();
+  check('once answered, Enter sends the draft', writes.some(([, d]) => String(d).includes('my reply')) && p.editorInput.getValue() === '', writes);
+  drop(p);
+}
+{
+  // 7.4 Only a slash command on a 7501 pane steps aside, and a new turn ends it.
+  const M = PA.isMenuLine;
+  check('isMenuLine: /model, "/compact keep it short", "  /model", /plugin:x-y, "/model\\nmore"',
+    M('/model') && M('/compact keep it short') && M('  /model') && M('/plugin:x-y') && M('/model\nmore'));
+  check('isMenuLine: not /Users/me/x.png, "/", "/123", "a /model", "/tmp/a\\ b"',
+    !M('/Users/me/x.png') && !M('/') && !M('/123') && !M('a /model') && !M('/tmp/a\\ b'));
+  const p = await engagedPane();
+  await sendFromBox(p, '/Users/me/Desktop/shot.png what is this?');
+  check('a message beginning with a path does not step aside', !isAside(p) && ofTag('aside').length === 0, ofTag('aside'));
+  drop(p);
+}
+{
+  const p = await newPane();
+  p.setComposeFirst(true, null);
+  view(p).__emit('onTitleChange', '✳ Claude Code');
+  check('(setup) title-only pane, box engaged', isEngaged(p));
+  await sendFromBox(p, '/model');
+  check('a pane without 7501 reports: a /model line does not step aside', !isAside(p) && ofTag('aside').length === 0, ofTag('aside'));
+  drop(p);
+}
+{
+  const p = await engagedPane();
+  await sendFromBox(p, '/model');
+  check('(setup) menu aside', isAside(p));
+  p.startWork();
+  check('Claude starting a turn (startWork) ends the menu aside', !isAside(p) && ofTag('back').length === 1, ofTag('back'));
+  drop(p);
+}
+{
+  // 7.5 A drop while aside goes into the box without taking the keyboard.
+  const p = await engagedPane();
+  doc.execCommand = insertTextCommand;
+  state(p, 'blocked', 'permission');
+  advance(300);
+  check('(setup) aside, the terminal has the keyboard', isAside(p) && termHasKeyboard(p));
+  p.editorInput.setValue('look at ');
+  const dropEvent = () => {
+    const e = new w.Event('drop', { bubbles: true, cancelable: true });
+    Object.defineProperty(e, 'dataTransfer', { value: { types: ['Files'], files: [{ __path: '/Users/me/a b.png' }] } });
+    return e;
+  };
+  termEl(p).dispatchEvent(dropEvent());
+  check('a drop while aside adds the escaped path at the box\'s caret', p.editorInput.getValue() === 'look at /Users/me/a\\ b.png ', p.editorInput.getValue());
+  check('...and the keyboard stays on the terminal', termHasKeyboard(p), { active: active()?.className });
+  state(p, 'working');
+  p.editorInput.setValue('');
+  termEl(p).focus();
+  termEl(p).dispatchEvent(dropEvent());
+  check('a drop with the box in place still lands in the box and gives it the keyboard',
+    p.editorInput.getValue() === '/Users/me/a\\ b.png ' && boxHasKeyboard(p), p.editorInput.getValue());
+  delete doc.execCommand;
+  drop(p);
+}
+{
+  // 7.6 ⌘E reopening the box during a question.
+  const p = await engagedPane();
+  p.collapseCompose();
+  check('(setup) ⌘E shut the box', !isEngaged(p) && termHasKeyboard(p));
+  state(p, 'blocked', 'question');
+  advance(300);
+  p.expandCompose();
+  check('⌘E reopening the box during a held question: engaged and aside at once', isEngaged(p) && isAside(p) && labelText(p) === 'Answer above', { aside: isAside(p) });
+  check('...and the keyboard stays on the terminal', termHasKeyboard(p), { active: active()?.className });
+  state(p, 'working');
+  check('answering brings the box back with the keyboard', !isAside(p) && boxHasKeyboard(p));
+  drop(p);
+}
+{
+  const p = await engagedPane();
+  p.collapseCompose();
+  state(p, 'blocked', 'question');
+  advance(100);
+  p.toggleCompose();
+  advance(200);
+  check('⌘E reopening it in a question\'s first 250 ms: aside once the hold completes, keyboard on the terminal',
+    isEngaged(p) && isAside(p) && termHasKeyboard(p), { aside: isAside(p), active: active()?.className });
+  drop(p);
+}
+{
+  // 7.7 ⌘C when the clipboard API refuses.
+  const p = await engagedPane();
+  w.__selection = 'sel text';
+  const box = boxEl(p);
+  box.focus();
+  const clip = w.navigator.clipboard;
+  const realWrite = clip.writeText;
+  clip.writeText = () => Promise.reject(new Error('denied'));
+  const stored = {};
+  doc.execCommand = (cmd) => {
+    if (cmd !== 'copy') return false;
+    const ce = new w.Event('copy', { bubbles: true, cancelable: true });
+    Object.defineProperty(ce, 'clipboardData', { value: { setData: (t, v) => { stored[t] = v; } } });
+    doc.activeElement.dispatchEvent(ce);
+    return true;
+  };
+  const e = keyIn(p, 'c', { metaKey: true });
+  await flush();
+  check('⌘C with the clipboard API refusing: still default-prevented, a warning logged',
+    e.defaultPrevented && logs.some((l) => l.tag === '[COMPOSE] copy failed' && l.lvl === 'warn'), logs.filter((l) => l.tag.includes('copy')));
+  check('...the copy falls back to the editing command, carrying the terminal selection', stored['text/plain'] === 'sel text', stored);
+  check('...logged as [COMPOSE] copy fallback {ok: true}', ofTag('copy fallback').some((d) => d.ok === true), ofTag('copy fallback'));
+  clip.writeText = realWrite;
+  delete doc.execCommand;
+  w.__selection = '';
+  drop(p);
 }
 
 finished = true;

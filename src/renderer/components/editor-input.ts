@@ -2,7 +2,8 @@ import { stripPasteControls } from '../services/paste-sanitize';
 import { rlog } from '../services/renderer-logger';
 
 export interface EditorInputCallbacks {
-  onSubmit: (command: string) => void;
+  /** Send the box's text. Return false to refuse: the draft stays in the box. */
+  onSubmit: (command: string) => boolean | void;
   onInterrupt: () => void;
   onHistoryUp: () => string | null;
   onHistoryDown: () => string | null;
@@ -25,9 +26,26 @@ export interface EditorInputCallbacks {
 
 export const DEFAULT_COMPOSE_PLACEHOLDER = 'Enter to send, Shift+Enter for newline, Esc to dismiss';
 
+/** The box stepped aside: a short label in Send's place, and the full words
+ *  as its title and for the live region. */
+export interface EditorAside {
+  label: string;
+  title: string;
+}
+
 export class EditorInput {
   private textarea: HTMLTextAreaElement;
   private sendButton: HTMLButtonElement;
+  // Send's slot: Send, the aside label and a hidden sizer share one grid
+  // cell, so the slot is one width whichever shows and the textarea never
+  // reflows when the box steps aside.
+  private sendSlot: HTMLElement;
+  private asideLabel: HTMLElement;
+  private slotSizer: HTMLElement;
+  // Announces the aside words; visually hidden, out of the layout.
+  private liveRegion: HTMLElement;
+  private aside: EditorAside | null = null;
+  private flashTimer: ReturnType<typeof setTimeout> | null = null;
   private field: HTMLElement;
   private container: HTMLElement;
   private callbacks: EditorInputCallbacks;
@@ -64,7 +82,24 @@ export class EditorInput {
     this.sendButton.textContent = 'Send';
     this.sendButton.setAttribute('aria-label', 'Send');
     this.sendButton.title = 'Send (Enter)';
-    this.field.appendChild(this.sendButton);
+    this.sendSlot = document.createElement('div');
+    this.sendSlot.className = 'editor-send-slot';
+    this.sendSlot.appendChild(this.sendButton);
+    this.asideLabel = document.createElement('span');
+    this.asideLabel.className = 'editor-aside-label';
+    this.asideLabel.setAttribute('aria-hidden', 'true'); // the live region speaks for it
+    this.sendSlot.appendChild(this.asideLabel);
+    this.slotSizer = document.createElement('span');
+    this.slotSizer.className = 'editor-send-sizer';
+    this.slotSizer.setAttribute('aria-hidden', 'true');
+    this.sendSlot.appendChild(this.slotSizer);
+    this.field.appendChild(this.sendSlot);
+    this.liveRegion = document.createElement('span');
+    this.liveRegion.className = 'editor-aside-live';
+    this.liveRegion.setAttribute('role', 'status');
+    this.liveRegion.setAttribute('aria-live', 'polite');
+    this.liveRegion.setAttribute('aria-atomic', 'true');
+    this.field.appendChild(this.liveRegion);
     // A mouse click mustn't pull focus out of the box (compose-first keeps it there).
     const sendMouseDown = (e: MouseEvent) => e.preventDefault();
     const sendClick = () => this.sendLikeEnter();
@@ -122,7 +157,10 @@ export class EditorInput {
         const text = copyFallback();
         if (text) {
           e.preventDefault();
-          void navigator.clipboard.writeText(text).catch((err) => rlog('warn', '[COMPOSE] copy failed', { error: String(err) }));
+          void navigator.clipboard.writeText(text).catch((err) => {
+            rlog('warn', '[COMPOSE] copy failed', { error: String(err) });
+            this.copyByCommand();
+          });
           return;
         }
       }
@@ -142,7 +180,7 @@ export class EditorInput {
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
         const text = this.textarea.value;
-        this.callbacks.onSubmit(text);
+        if (this.callbacks.onSubmit(text) === false) return; // refused: the draft stays
         this.clear();
         return;
       }
@@ -192,10 +230,26 @@ export class EditorInput {
     this.disposables.push(() => this.textarea.removeEventListener('keydown', keydownHandler));
   }
 
-  /** Enter's submit: send the box's text, clear it, flash the bar. */
+  /** The clipboard API refused ⌘C's copy: copy through the editing command
+   *  instead. It raises a copy event on the box, which copyHandler fills with
+   *  the same fallback text (the terminal's selection). */
+  private copyByCommand(): void {
+    let ok = false;
+    try {
+      ok = document.activeElement === this.textarea && typeof document.execCommand === 'function'
+        && document.execCommand('copy');
+    } catch (err) {
+      rlog('warn', '[COMPOSE] copy fallback failed', { error: String(err) });
+      return;
+    }
+    rlog(ok ? 'info' : 'warn', '[COMPOSE] copy fallback', { ok });
+  }
+
+  /** Enter's submit: send the box's text, clear it, flash the bar. A refused
+   *  send leaves the draft and no flash. */
   private submit(): void {
     const text = this.textarea.value;
-    this.callbacks.onSubmit(text);
+    if (this.callbacks.onSubmit(text) === false) return;
     this.clear();
     this.container.classList.add('submitting');
     setTimeout(() => this.container.classList.remove('submitting'), 250);
@@ -245,11 +299,62 @@ export class EditorInput {
     this.textarea.focus();
   }
 
-  /** Insert text at the caret (keeps undo history), as if typed. */
-  insertText(text: string): void {
-    this.textarea.focus();
-    document.execCommand('insertText', false, text);
+  /** Insert text at the caret (keeps undo history), as if typed. With
+   *  `focus: false` the keyboard stays where it is: the text goes in at the
+   *  box's caret without the editing command (no undo step). */
+  insertText(text: string, opts: { focus?: boolean } = {}): void {
+    if (opts.focus === false && document.activeElement !== this.textarea) {
+      const { selectionStart, selectionEnd } = this.textarea;
+      this.textarea.setRangeText(text, selectionStart, selectionEnd, 'end');
+    } else {
+      this.textarea.focus();
+      document.execCommand('insertText', false, text);
+    }
     this.autoResize();
+  }
+
+  /** Every label Send's slot may show: the slot takes the widest, so it keeps
+   *  one width whichever shows. */
+  reserveSlotWidthFor(labels: readonly string[]): void {
+    this.slotSizer.replaceChildren(...labels.map((text) => {
+      const span = document.createElement('span');
+      span.textContent = text;
+      return span;
+    }));
+  }
+
+  /** Step aside (a label in Send's place, the full words announced) or come
+   *  back (null). Only the slot's contents change, never its size. */
+  setAside(aside: EditorAside | null): void {
+    this.clearFlash();
+    this.aside = aside;
+    this.sendSlot.classList.toggle('aside', aside !== null);
+    this.asideLabel.textContent = aside?.label ?? '';
+    if (aside) this.asideLabel.title = aside.title;
+    else this.asideLabel.removeAttribute('title');
+    this.liveRegion.textContent = aside?.title ?? '';
+  }
+
+  /** While aside: the label reads `text` for `ms`, then its own words again. */
+  flashAsideLabel(text: string, ms: number): void {
+    if (!this.aside) return;
+    this.clearFlash();
+    this.asideLabel.textContent = text;
+    this.sendSlot.classList.add('flash');
+    this.liveRegion.textContent = text;
+    this.flashTimer = setTimeout(() => {
+      this.flashTimer = null;
+      this.sendSlot.classList.remove('flash');
+      this.asideLabel.textContent = this.aside?.label ?? '';
+    }, ms);
+  }
+
+  private clearFlash(): void {
+    if (this.flashTimer !== null) {
+      clearTimeout(this.flashTimer);
+      this.flashTimer = null;
+    }
+    this.sendSlot.classList.remove('flash');
   }
 
   clear(): void {
@@ -277,6 +382,7 @@ export class EditorInput {
   }
 
   dispose(): void {
+    this.clearFlash();
     for (const d of this.disposables) d();
     this.field.remove();
   }

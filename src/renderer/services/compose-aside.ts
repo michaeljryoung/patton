@@ -10,7 +10,9 @@
  * - 'menu' (D3): the box sent a line beginning with `/` (his own send, never
  *   Patton's own typing) and no 7501 report or Stop hook has come since, the
  *   rule Pause all's `menu` fact uses: a picker such as /model may be open.
- * The box is dimmed, its draft kept, and the keyboard goes to the terminal.
+ * The box is dimmed, its draft kept, and the keyboard goes to the terminal
+ * (for 'blocked', only once the box has had no keydown for
+ * COMPOSE_TYPING_GRACE_MS, so a word being typed is never cut in two).
  */
 import type { BlockedKind, ProgramRecord } from './program-status';
 
@@ -19,11 +21,36 @@ export type ComposeAsideReason = 'blocked' | 'menu';
 /** How long Claude must stay blocked before the box steps aside. */
 export const COMPOSE_ASIDE_HOLD_MS = 250;
 
-/** The hint line under the field while the box is aside. */
+/** While the box has had a keydown this recently, a 'blocked' aside dims it
+ *  at once but leaves the keyboard in it until it has been quiet this long. */
+export const COMPOSE_TYPING_GRACE_MS = 1000;
+
+/** The full words while the box is aside: the label's title, and what the
+ *  live region announces. */
 export const COMPOSE_ASIDE_HINT: Readonly<Record<ComposeAsideReason, string>> = {
   blocked: 'Claude is asking you something above · your draft is kept',
   menu: 'Claude may be showing a menu above · click the box to type here',
 };
+
+/** The short label in the Send button's slot while the box is aside. */
+export const COMPOSE_ASIDE_LABEL: Readonly<Record<ComposeAsideReason, string>> = {
+  blocked: 'Answer above',
+  menu: 'Menu above',
+};
+
+/** Enter (or Send) in a box aside for 'blocked' sends nothing: the label
+ *  reads this for COMPOSE_SEND_HELD_MS and the draft stays. */
+export const COMPOSE_SEND_HELD_LABEL = 'Answer above first';
+export const COMPOSE_SEND_HELD_MS = 1500;
+
+/** How long a 'blocked' aside waits before moving the keyboard to the
+ *  terminal: 0 unless the box has it and had a keydown within
+ *  COMPOSE_TYPING_GRACE_MS, else what is left of that grace. */
+export function composeKeyboardWaitMs(boxHasKeyboard: boolean, nowMs: number, lastBoxKeydownMs: number): number {
+  if (!boxHasKeyboard || lastBoxKeydownMs <= 0) return 0;
+  const left = lastBoxKeydownMs + COMPOSE_TYPING_GRACE_MS - nowMs;
+  return left > 0 ? left : 0;
+}
 
 /** Whether Claude waits on him: the root, else the first background task,
  *  `blocked`; `kind` is that record's (permission, question, auth or null). */
@@ -60,9 +87,15 @@ export function composeAsideReason(f: ComposeAsideFacts): ComposeAsideReason | n
   return null;
 }
 
-/** A line sent from the box that may open a picker in Claude Code. */
+/** A slash command: `/name` (letters, digits, _, : and -) then a space or
+ *  the end. A path such as /Users/me/x.png is not one. */
+const SLASH_COMMAND = /^\/[A-Za-z][\w:-]*(\s|$)/;
+
+/** A line sent from the box that may open a picker in Claude Code: its
+ *  first line, trimmed, is a slash command. */
 export function isMenuLine(command: string): boolean {
-  return command.startsWith('/');
+  const first = command.trimStart().split(/\r\n|\r|\n/)[0].trim();
+  return SLASH_COMMAND.test(first);
 }
 
 /** Where the keyboard is as the box comes back. */

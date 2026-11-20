@@ -149,8 +149,9 @@
 }
 
 /* The compose box stepped aside (Claude asks something, or a / command may
-   show a menu): box and Send dimmed, the draft kept, a hint line under the
-   field. Tokens only, so both themes follow (main.css). */
+   show a menu): box dimmed, the draft kept, and a short label in Send's place
+   (EditorInput.setAside). No row is added, so the container's height and the
+   terminal's size never change. Tokens only, so both themes follow (main.css). */
 .editor-container.compose-first.aside .editor-textarea,
 .editor-container.compose-first.aside.command-running .editor-textarea {
   color: var(--compose-aside-ink);
@@ -161,21 +162,68 @@
   color: var(--compose-aside-ink);
 }
 
-.editor-container.compose-first.aside .editor-send {
-  color: var(--compose-aside-ink);
-  border-color: var(--compose-aside-rule);
+/* Send's slot: Send, the aside label and an invisible sizer holding every
+   label share one grid cell, so the slot is the widest of them in both states
+   and the textarea beside it never reflows. */
+.editor-send-slot {
+  flex: 0 0 auto;
+  display: grid;
+  align-items: center;
 }
 
-.editor-container .compose-hint {
-  margin-top: 4px;
-  color: var(--compose-aside-hint);
+.editor-send-slot > * {
+  grid-area: 1 / 1;
+}
+
+.editor-aside-label,
+.editor-send-sizer > span {
+  grid-area: 1 / 1;
+  border: 1px solid transparent;
   font-family: var(--font-ui);
   font-size: var(--ui);
   line-height: 1.3;
+  padding: 6px 14px;
+  white-space: nowrap;
+  text-align: center;
 }
 
-.editor-container .compose-hint[hidden] {
-  display: none;
+.editor-send-sizer {
+  display: grid;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.editor-aside-label {
+  visibility: hidden;
+  color: var(--compose-aside-hint);
+  border-color: var(--compose-aside-rule);
+  cursor: default;
+}
+
+.editor-send-slot.aside .editor-send {
+  visibility: hidden;
+}
+
+.editor-send-slot.aside .editor-aside-label {
+  visibility: visible;
+}
+
+.editor-send-slot.aside.flash .editor-aside-label {
+  color: var(--ink);
+  border-color: var(--ink);
+}
+
+/* Announces the aside words to a screen reader; takes no space. */
+.editor-aside-live {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 /* --- History search (Ctrl+R) --- */
