@@ -243,6 +243,40 @@
   display: none;
 }
 
+/* "Type here": in the note's place during a menu aside in the overlays, where
+   the hidden box can't be clicked. The same outline and tones, but a button. */
+.compose-type-here {
+  position: absolute;
+  right: 8px;
+  bottom: 4px;
+  z-index: 31;
+  margin: 0;
+  padding: 1px 8px;
+  border: 1px solid var(--compose-aside-rule);
+  border-radius: 0;
+  background: var(--bg);
+  color: var(--compose-aside-hint);
+  font-family: var(--font-ui);
+  font-size: var(--ui);
+  line-height: 1.3;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.compose-type-here:hover {
+  color: var(--ink);
+  border-color: var(--ink);
+}
+
+.compose-type-here:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.compose-type-here[hidden] {
+  display: none;
+}
+
 /* D11: the Okay? button inside the compose box, at its left (the same button
    as the row's, moved by OkayRow.place); dimmed with the box when it steps
    aside in place ('under'). */

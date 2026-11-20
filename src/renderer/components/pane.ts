@@ -337,6 +337,8 @@ export class Pane {
   // D10: "Draft kept" at the pane's bottom right while an aside hides the box
   // in the overlays with a draft in it; announced once per aside.
   private draftNote!: HTMLElement;
+  // D10: "Type here", in the note's place during a `menu` aside in the overlays.
+  private typeHereButton!: HTMLButtonElement;
   private draftNoteAnnounced = false;
 
   // claudeActive and ptyExited decide whether the Okay? row shows, so every
@@ -1239,6 +1241,20 @@ export class Pane {
     this.draftNote.hidden = true;
     this.element.appendChild(this.draftNote);
 
+    // D10: during a `menu` aside in the overlays the hidden box can't be
+    // clicked, so this button does D3's click for it. mousedown must not move
+    // the keyboard before the click runs.
+    this.typeHereButton = document.createElement('button');
+    this.typeHereButton.type = 'button';
+    this.typeHereButton.className = 'compose-type-here';
+    this.typeHereButton.textContent = 'Type here';
+    this.typeHereButton.title = 'Claude may be showing a menu above · click to type in the box';
+    this.typeHereButton.setAttribute('aria-label', 'Type here: Claude may be showing a menu above, click to type in the box');
+    this.typeHereButton.hidden = true;
+    this.typeHereButton.addEventListener('mousedown', (e) => e.preventDefault());
+    this.typeHereButton.addEventListener('click', () => this.chooseBoxByClick());
+    this.element.appendChild(this.typeHereButton);
+
     // Create terminal view
     this.terminalView = new TerminalView(this.terminalContainer);
 
@@ -1307,23 +1323,7 @@ export class Pane {
       // D11: a press on Okay? in the box neither chooses the box nor takes
       // the keyboard; it only asks.
       if ((e.target as Element | null)?.closest?.('.okay-button')) return;
-      // D2: a click in the box while a question's keyboard move is pending
-      // means he chose the box: the move is dropped for this aside spell (the
-      // box stays dimmed and sends stay held while Claude asks).
-      if (this.composeAside === 'blocked' && this.composeKeyboardTimer !== null) {
-        this.clearComposeKeyboardTimer();
-        rlog('info', '[COMPOSE] aside keyboard kept', { pane: this.id, reason: 'click' });
-      }
-      // D3: a click in the box ends a menu aside and takes the keyboard.
-      if (this.composeAside === 'menu') {
-        this.composeMenuPending = false;
-        this.syncComposeAside('click');
-        this.editorInput.focus();
-      }
-      if (this.composeFirstEngaged && this.composeHandedOff) {
-        this.composeHandedOff = false;
-        rlog('info', '[COMPOSE] reclaim', { pane: this.id, reason: 'click' });
-      }
+      this.chooseBoxByClick();
     };
     this.editorContainer.addEventListener('mousedown', editorMouseDown, true);
     this.disposables.push(() => this.editorContainer.removeEventListener('mousedown', editorMouseDown, true));
@@ -2286,7 +2286,9 @@ export class Pane {
       el.classList.toggle('aside-hidden', hide);
       el.classList.toggle('aside-gone', hide && !grace);
     }
-    const note = hide && this.editorInput.getValue().trim() !== '';
+    this.typeHereButton.hidden = !(hide && this.composeAside === 'menu');
+    // "Draft kept" is for a `blocked` aside; a menu aside has "Type here".
+    const note = hide && this.composeAside === 'blocked' && this.editorInput.getValue().trim() !== '';
     if (this.draftNote.hidden !== note) return;
     this.draftNote.hidden = !note;
     if (note && !this.draftNoteAnnounced) {
@@ -2335,6 +2337,30 @@ export class Pane {
     if (!take) return;
     this.composeHandedOff = false;
     this.editorInput.focus();
+  }
+
+  /** He chose the box with a click (in the box, or on "Type here" while it is
+   *  hidden by a menu aside): a pending question keyboard move is dropped
+   *  (D2), a menu aside ends and the box takes the keyboard (D3), a hand-off
+   *  is reclaimed. */
+  private chooseBoxByClick(): void {
+    // D2: a click in the box while a question's keyboard move is pending
+    // means he chose the box: the move is dropped for this aside spell (the
+    // box stays dimmed and sends stay held while Claude asks).
+    if (this.composeAside === 'blocked' && this.composeKeyboardTimer !== null) {
+      this.clearComposeKeyboardTimer();
+      rlog('info', '[COMPOSE] aside keyboard kept', { pane: this.id, reason: 'click' });
+    }
+    // D3: a click in the box ends a menu aside and takes the keyboard.
+    if (this.composeAside === 'menu') {
+      this.composeMenuPending = false;
+      this.syncComposeAside('click');
+      this.editorInput.focus();
+    }
+    if (this.composeFirstEngaged && this.composeHandedOff) {
+      this.composeHandedOff = false;
+      rlog('info', '[COMPOSE] reclaim', { pane: this.id, reason: 'click' });
+    }
   }
 
   /** D4: after a click in the terminal has run (xterm focused itself), the
@@ -2624,6 +2650,10 @@ export class Pane {
       }
       return;
     }
+    if (this.composeHandedOff) {
+      this.setComposePlacement('under', 'handoff'); // handed off during the freeze (D10)
+      return;
+    }
     if (this.composePlacement !== 'under') {
       this.barLastMatchMs = Date.now();
       this.barLostReason = 'aside-end';
@@ -2690,8 +2720,14 @@ export class Pane {
       rlog('info', '[COMPOSE] handoff', { pane: this.id, key, route: 'focus' });
     }
     // D9: handed off, the box goes under so he sees Claude's bar too; the
-    // focusin of its return reads the bar again.
-    this.setComposePlacement('under', 'handoff');
+    // focusin of its return reads the bar again. D10: not while placement is
+    // frozen (an aside, or Claude asking): the box stays where it is, hidden,
+    // and the freeze's end works placement out (under if still handed off).
+    if (this.composePlacementFrozen) {
+      rlog('info', '[COMPOSE] handoff placement deferred', { pane: this.id });
+    } else {
+      this.setComposePlacement('under', 'handoff');
+    }
     if (key === 'Escape') this.terminalView.focus(); // a click focuses xterm itself
   }
 

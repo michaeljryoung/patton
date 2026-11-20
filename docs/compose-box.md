@@ -26,7 +26,7 @@ flowchart TD
     bar_placement[box over, docked or under; resizes and logs]:::done
     send_no_flip[a send never flips the box]:::done
     bar_aside[aside hides the box; Draft kept]:::done
-    aside_fixes[menu aside: Type here; hand-off frozen]:::todo
+    aside_fixes[menu aside: Type here; hand-off frozen]:::done
     okay_in_box[Okay? inside the box at its left]:::done
     over_setting[setting: box over Claude bar]:::done
     bar_layout_check[hidden-Electron layout check]:::todo
@@ -79,7 +79,7 @@ flowchart TD
 | `bar_placement` | D9 and D12: the box over Claude's bar, docked on the bottom edge when scrolled up, or under the terminal; the terminal resizes only between under and the overlays; growth upward to a third of the pane; paste strip on the box; wheel to the terminal; `[COMPOSE] place` and `bar not found` logs | done | `bar_reader` | `src/renderer/services/compose-placement.ts` · `scripts/check-compose-placement.mjs` (39 ok; 23 fail on the base) · `b24a8bf` |
 | `send_no_flip` | D9 as amended: under only after 400 ms with no empty-bar reading, and readings within 1.5 s of the pane's own send or Okay? ask never count, so a send never moves the box | done | `bar_placement` | `check-compose-placement.mjs` 72 ok (17 fail on `b24a8bf`) · `4b82876` |
 | `bar_aside` | D10: placement frozen from Claude's first `blocked` report and through any aside; in the overlays the box hides (focusable through D2's typing grace) and "Draft kept" shows with a draft; back where it was after | done | `bar_placement` | `check-compose-placement.mjs` (question screen: hidden, note, grace focus, back) · `4b82876` |
-| `aside_fixes` | D10 as amended: during a `menu` aside in the overlays a "Type here" button ends the aside and gives the box the keyboard; Esc during D2's grace hands off without changing placement until the aside ends | todo | `bar_aside` | — |
+| `aside_fixes` | D10 as amended: during a `menu` aside in the overlays a "Type here" button ends the aside and gives the box the keyboard; Esc during D2's grace hands off without changing placement until the aside ends | done | `bar_aside` | `check-compose-placement.mjs` section 6 (Type here, blocked never, Esc in the grace freezes placement) |
 | `okay_in_box` | D11: Okay? inside the box at its left whenever the box is engaged; the row under the terminal only when the box isn't; same ask rules; a press keeps the box's keyboard | done | `bar_design` | `check-okay-button.mjs` 127 ok (10 fail on the base) · `4b82876` |
 | `over_setting` | D12: Settings row "Lay the compose box over Claude Code's own input bar" (`composeOverBar`, on by default, read `!== false`); off is the v1.31 layout with Okay? inside the box | done | `bar_placement` | `#setting-compose-over-bar`, `Pane.setComposeOverBar`, applied in `Tab.createPaneInstance` · `b24a8bf` |
 | `bar_layout_check` | D13: hidden-Electron check of the real Pane fed the fixture's bytes, at UI scale 1, 1.1 and 1.5; every new assertion fails on main; `check-compose-box.mjs` and `check-okay-button.mjs` updated, not weakened | todo | `bar_placement`, `send_no_flip`, `bar_aside`, `aside_fixes`, `okay_in_box`, `over_setting` | — |

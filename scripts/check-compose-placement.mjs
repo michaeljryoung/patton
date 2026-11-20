@@ -566,6 +566,145 @@ const newPane = async () => {
   p.dispose();
 }
 
+// ── 6. aside_fixes (D10 as amended) ──
+{
+  const hereOf = (p) => p.element.querySelector('.compose-type-here');
+  const shown = (el) => Boolean(el) && el.hidden === false;
+  // 6a. A menu aside in `over`: "Type here" in the note's place, never "Draft kept".
+  {
+    const p = await newPane();
+    const f = feeder(p, 'steps');
+    await f.to('cleared2');
+    await f.to('q-sent');
+    state(p, 'working');
+    check('6a (setup) over', placement(p) === 'over', placement(p));
+    const ec = p.editorContainer;
+    const note = p.element.querySelector('.compose-draft-note');
+    // (A detached stand-in on a tree without the button, so every check below still reports.)
+    const here = hereOf(p) ?? Object.assign(doc.createElement('button'), { hidden: true });
+    check('6a.0 "Type here" exists in the pane, hidden, a button outside the box',
+      Boolean(here) && here.hidden === true && here.tagName === 'BUTTON' && !ec.contains(here), here?.outerHTML);
+    p.editorInput.setValue('/model');
+    await sendFromBox(p, '/model');
+    advance(20);
+    check('6a.1 a menu aside in `over`: box hidden at once', ec.classList.contains('aside') && ec.classList.contains('aside-hidden'), ec.className);
+    check('6a.1 ..."Type here" shown (with the sent line gone, no draft)', shown(here) && here.textContent === 'Type here', here?.outerHTML);
+    check('6a.1 ...title and accessible name', here?.title === 'Claude may be showing a menu above · click to type in the box'
+      && /Type here/.test(here?.getAttribute('aria-label') ?? ''), { t: here?.title, a: here?.getAttribute('aria-label') });
+    check('6a.1 ..."Draft kept" not shown', note.hidden === true, note.outerHTML);
+    p.editorInput.setValue('a draft');
+    boxOf(p).dispatchEvent(new w.Event('input', { bubbles: true }));
+    check('6a.2 with a draft too: "Type here" shown, "Draft kept" still not', shown(here) && note.hidden === true, { here: here?.hidden, note: note.hidden });
+    check('6a.2 ...the keyboard on the terminal', doc.activeElement === view(p).__termEl, doc.activeElement?.className);
+    // mousedown must not move the keyboard; the click runs D3's path.
+    const down = new w.MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0 });
+    here.dispatchEvent(down);
+    check('6a.3 mousedown on it is prevented (no focus move before the click)', down.defaultPrevented === true && doc.activeElement === view(p).__termEl, doc.activeElement?.className);
+    logs.length = 0;
+    here.dispatchEvent(new w.MouseEvent('click', { bubbles: true, cancelable: true, button: 0 }));
+    await frames();
+    check('6a.4 a click on it ends the aside: box shown again, in `over`, the draft kept',
+      !ec.classList.contains('aside') && !ec.classList.contains('aside-hidden') && !ec.classList.contains('aside-gone')
+      && placement(p) === 'over' && p.editorInput.getValue() === 'a draft', { cls: ec.className, pl: placement(p) });
+    check('6a.4 ...the box has the keyboard', doc.activeElement === boxOf(p), doc.activeElement?.className);
+    check('6a.4 ...logged as back with reason click, and the button gone',
+      logs.some((l) => l.tag === '[COMPOSE] back' && l.data.reason === 'click') && here.hidden === true, logs.map((l) => l.tag));
+    p.dispose();
+  }
+  // 6b. `under`: nothing changes (the dimmed box is clickable there).
+  {
+    const p = await newPane();
+    p.setComposeOverBar(false);
+    await sendFromBox(p, '/model');
+    advance(20);
+    check('6b menu aside in `under`: dimmed in place, no "Type here"',
+      p.editorContainer.classList.contains('aside') && !p.editorContainer.classList.contains('aside-hidden') && !shown(hereOf(p)),
+      { cls: p.editorContainer.className, here: hereOf(p)?.hidden });
+    p.dispose();
+  }
+  // 6c. A `blocked` aside never shows "Type here"; a menu aside turned blocked loses it.
+  {
+    const p = await newPane();
+    const f = feeder(p, 'steps');
+    await f.to('cleared2');
+    await f.to('q-sent');
+    state(p, 'working');
+    p.editorInput.setValue('draft');
+    state(p, 'blocked', 'question');
+    await f.to('question');
+    advance(260);
+    check('6c a blocked aside: "Draft kept" shown, "Type here" never',
+      p.element.querySelector('.compose-draft-note').hidden === false && !shown(hereOf(p)), { note: p.element.querySelector('.compose-draft-note').hidden, here: hereOf(p)?.hidden });
+    state(p, 'working');
+    p.dispose();
+  }
+  {
+    const p = await newPane();
+    const f = feeder(p, 'steps');
+    await f.to('cleared2');
+    await f.to('q-sent');
+    state(p, 'working');
+    await sendFromBox(p, '/model');
+    advance(20);
+    check('6c (setup) menu aside shows "Type here"', shown(hereOf(p)), hereOf(p)?.hidden);
+    p.editorInput.setValue('draft');
+    state(p, 'blocked', 'permission');
+    advance(260);
+    check('6c the menu aside turned blocked: "Type here" gone, "Draft kept" shown',
+      !shown(hereOf(p)) && p.element.querySelector('.compose-draft-note').hidden === false, { here: hereOf(p)?.hidden });
+    state(p, 'working');
+    p.dispose();
+  }
+  // 6d. Esc in the box during D2's grace hands off, but placement is frozen.
+  for (const stillHandedOff of [true, false]) {
+    const tag = stillHandedOff ? '6d' : '6e';
+    const p = await newPane();
+    const f = feeder(p, 'steps');
+    await f.to('cleared2');
+    await f.to('q-sent');
+    state(p, 'working');
+    const ec = p.editorContainer;
+    const box = boxOf(p);
+    box.focus();
+    p.editorInput.setValue('my draft');
+    box.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'a', bubbles: true, cancelable: true }));
+    state(p, 'blocked', 'question');
+    await f.to('question');
+    advance(260); // aside; the keyboard still in the box (D2's grace)
+    check(`${tag} (setup) over, hidden, in the grace`, placement(p) === 'over' && ec.classList.contains('aside-hidden') && doc.activeElement === box, ec.className);
+    logs.length = 0; resizes.length = 0;
+    box.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    await frames();
+    check(`${tag}.1 Esc in the grace: the keyboard goes to the terminal (D2)`, doc.activeElement === view(p).__termEl, doc.activeElement?.className);
+    check(`${tag}.1 ...placement unchanged: still over, no [COMPOSE] place, no refit`,
+      placement(p) === 'over' && places().length === 0 && resizes.length === 0 && classesOk(p, 'over'), { pl: placement(p), places: places(), resizes });
+    check(`${tag}.1 ...the box stays hidden, "Draft kept" shown`,
+      ec.classList.contains('aside-hidden') && p.element.querySelector('.compose-draft-note').hidden === false, ec.className);
+    advance(3000);
+    await frames();
+    check(`${tag}.2 through the rest of the aside: still over, still nothing logged`, placement(p) === 'over' && places().length === 0, places());
+    let ext = null;
+    if (stillHandedOff) {
+      // The keyboard is somewhere else when the aside ends, so the hand-off stands.
+      ext = doc.createElement('input');
+      doc.body.appendChild(ext);
+      ext.focus();
+    }
+    state(p, 'working'); // answered: the aside ends
+    await frames();
+    const pl = places();
+    if (stillHandedOff) {
+      check(`${tag}.3 the aside ends still handed off: under, reason handoff`, placement(p) === 'under' && pl.length === 1 && pl[0].reason === 'handoff', pl);
+      check(`${tag}.3 ...and no other place line before it`, pl.every((d) => d.reason === 'handoff'), pl);
+      ext.remove();
+    } else {
+      check(`${tag}.3 the aside ends with the keyboard back in the box (no longer handed off): no handoff placement`,
+        !pl.some((d) => d.reason === 'handoff') && doc.activeElement === box, { pl, active: doc.activeElement?.className });
+    }
+    p.dispose();
+  }
+}
+
 finished = true;
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
