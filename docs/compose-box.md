@@ -35,7 +35,7 @@ flowchart TD
     bar_review[fresh review, fixes]:::done
   end
   subgraph OS["Part 2 — Ship"]
-    bar_release[merge, push, CI release, cask]:::live
+    bar_release[merge, push, CI release, cask]:::done
     bar_ship[install on his word, live check]:::todo
   end
   box_core --> box_replay
@@ -92,7 +92,7 @@ flowchart TD
 | `fit_padding` | The terminal's fit counts `.terminal-container`'s padding (4 px top, 10 px bottom, 4 px sides): at UI scale 1.5 in `under` the last row was cut by 2.4 px (27 rows × 16 px + 4 px against 433.6 px), in the base too but hidden by the Okay? row's height; the side padding likely the same for cols | done | `bar_layout_check` | `src/renderer/services/terminal-fit.ts` (`fitGrid`) · `scripts/check-compose-over.cjs` 327 ok (24 fit assertions fail on `9f4affb`) · `5924108` |
 | `images_in_box` | D14: pasted-image thumbnails inside the box left of the text (no ×, cleared on send, "+N" past three); `[Image #N]` on Claude's bar counts as images, so the box stays over it; jsdom and layout checks extended | done | `bar_reader` | `scripts/check-paste-chips.mjs` §6 (13 of 16 new fail on the base) · `scripts/check-claude-bar.mjs` 61 ok · `d8a0a22` |
 | `bar_review` | Fresh review with probes that never saw the build; every major and minor fixed by a fresh builder; checks re-run | done | `bar_layout_check`, `images_in_box` | three fresh reviews (0, 0 and 1 major); fixes `87e901e`, `f05c5aa`, `e8baa66` (seven items, each with an assertion failing before), `dc204e2` (the 400 ms counted from the first miss: 8 assertions fail before, `scripts/check-compose-placement.mjs` 131 ok); `npm run check` 33/33 |
-| `bar_release` | ff-merge to main, push (no stray no-release marker on the head), CI release green, cask sha matches the downloaded DMG | live | `bar_review` | — |
+| `bar_release` | ff-merge to main, push (no stray no-release marker on the head), CI release green, cask sha matches the downloaded DMG | done | `bar_review` | pushed `18de10e` (no marker on the head), run 44757794817 green, tag `v1.32.0`, cask 1.32.0 sha `906e8a04…` matches the downloaded DMG |
 | `bar_ship` | Install on Michael's word with Patton quit; live: one bar under a Claude tab, the box over Claude's, Okay? at its left; `[COMPOSE] place` lines in main.log; a question hides it and it comes back | todo | `bar_release` | — |
 <!-- MAP:END -->
 
