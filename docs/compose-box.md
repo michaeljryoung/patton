@@ -5,15 +5,15 @@
 
 **Goal:** Under every Claude Code tab, a real text box is always open and takes everything Michael types; it steps aside on its own while Claude shows a permission prompt, a question or a menu, and comes back when he has answered. Michael 2026-11-20, on the Claude desktop app's "proper compose box": "How do we get that?", then, on a box opened by hand: "what's the point of one that I have to open manually … I don't know which prompt I'm going to need it for", then "ok" to the always-open design (page: https://claude.ai/code/artifact/503c49fd-8ae5-4501-be32-fe371f388337).
 **Done when:** a jsdom check on the real Pane proves, from Claude Code's real status sequences in main.log, that the box steps aside for every question held 250 ms or more and for none of the three shorter flashes, comes back when each ends, keeps the keyboard through a click into the terminal, steps aside after a `/` line until Claude next reports, and that a dropped file's path lands in the box (or the terminal when the box is off); lint, `tsc`, `npm run check`, a no-install package and a fresh review with no open major; released by CI; installed only on Michael's word.
-**Last verified:** 2026-11-20 10:45 (Session 56: design settled, nothing built yet)
+**Last verified:** 2026-11-20 11:40 (Session 56: build, two fresh reviews, fixes and checks this session)
 
 ```mermaid
 flowchart TD
   subgraph B["Build"]
-    box_core[box follows Claude's questions and menus; clicks keep it; new setting]:::todo
-    box_drop[dropped files add their paths]:::todo
-    box_replay[replay check from real status sequences]:::todo
-    box_review[fresh review, fixes]:::todo
+    box_core[box follows Claude's questions and menus; clicks keep it; new setting]:::done
+    box_drop[dropped files add their paths]:::done
+    box_replay[replay check from real status sequences]:::done
+    box_review[fresh review, fixes]:::done
   end
   subgraph S["Ship"]
     box_release[merge, push, CI release, cask]:::todo
@@ -35,10 +35,10 @@ flowchart TD
 
 | ID | Task | Status | Depends on | Evidence |
 |----|------|--------|------------|----------|
-| `box_core` | Design D1–D4 and D6 below: the `composeBox` setting (on by default), stepping aside on 7501 `blocked` held 250 ms and on a `/` line until Claude's next report, coming back when either ends, a click into the terminal keeping the box's keyboard, `[COMPOSE]` log lines for every switch | todo | — | — |
-| `box_drop` | Design D5: a file dropped on a pane adds its escaped path to the box at the caret, or types it into the terminal when the box is off, as Terminal.app does; `scripts/check-file-drop.mjs` | todo | — | — |
-| `box_replay` | Design D7: `scripts/check-compose-box.mjs` drives the real Pane with the 25 real question episodes from main.log (10–20 Nov) and the cases in D1–D5; every new assertion fails on main | todo | `box_core` | — |
-| `box_review` | Fresh review with probes that never saw the build; every major and minor fixed by a fresh builder; checks re-run | todo | `box_core`, `box_drop`, `box_replay` | — |
+| `box_core` | Design D1–D4 and D6 below: the `composeBox` setting (on by default), stepping aside on 7501 `blocked` held 250 ms and on a `/` line until Claude's next report, coming back when either ends, a click into the terminal keeping the box's keyboard, `[COMPOSE]` log lines for every switch | done | — | `eac1ef3` (D1 setting), `3a3094b` (D2–D4) · `src/renderer/services/compose-aside.ts`, `pane.ts` compose block |
+| `box_drop` | Design D5: a file dropped on a pane adds its escaped path to the box at the caret, or types it into the terminal when the box is off, as Terminal.app does; `scripts/check-file-drop.mjs` | done | — | `ee2b218`, `03b1c02` · `src/renderer/services/file-drop.ts`; `check-file-drop.mjs` 48 |
+| `box_replay` | Design D7: `scripts/check-compose-box.mjs` drives the real Pane with the 25 real question episodes from main.log (10–20 Nov) and the cases in D1–D5; every new assertion fails on main | done | `box_core` | `0465dab` · `check-compose-box.mjs` 175 at first, 96 failing on main; 255 after the fixes; layout `6ef83af` (`check-ui-text-scale.cjs` 210: container height, textarea and Send-slot widths equal in every aside state at x1, x1.1, x1.5) |
+| `box_review` | Fresh review with probes that never saw the build; every major and minor fixed by a fresh builder; checks re-run | done | `box_core`, `box_drop`, `box_replay` | review 1: 2 major, 4 minor, 2 nit, all fixed `b7e0bac`, `03b1c02`; review 2: 1 major (Enter inside the 250 ms hold approved a prompt), 3 minor, nits, plus broadcast into a blocked pane; all fixed `2ebb0a7`, `0a7af2f`; `npm run check` 30/30 |
 | `box_release` | ff-merge to main, push (no stray no-release marker on the head), CI release green, cask sha matches the downloaded DMG | todo | `box_review` | — |
 | `box_ship` | Install on Michael's word with Patton quit; live: the box is open under a Claude tab; a permission prompt takes the keyboard and answering hands it back (`[COMPOSE] aside` / `back` in main.log); a click in the terminal leaves typing in the box; a dropped file adds its path | todo | `box_release` | — |
 <!-- MAP:END -->
