@@ -1,10 +1,11 @@
 # Patton — The compose box
 
 <!-- MAP:BEGIN -->
-## 🗺 THE MAP — S56: an always-open compose box that steps aside when Claude asks
+## 🗺 THE MAP — S56: an always-open compose box that steps aside when Claude asks; S58: one typing bar
 
-**Goal:** Under every Claude Code tab, a real text box is always open and takes everything Michael types; it steps aside on its own while Claude shows a permission prompt, a question or a menu, and comes back when he has answered. Michael 2026-11-20, on the Claude desktop app's "proper compose box": "How do we get that?", then, on a box opened by hand: "what's the point of one that I have to open manually … I don't know which prompt I'm going to need it for", then "ok" to the always-open design (page: https://claude.ai/code/artifact/503c49fd-8ae5-4501-be32-fe371f388337).
-**Done when:** a jsdom check on the real Pane proves, from Claude Code's real status sequences in main.log, that the box steps aside for every question held 250 ms or more and for none of the three shorter flashes, comes back when each ends, keeps the keyboard through a click into the terminal, steps aside after a `/` line until Claude next reports, and that a dropped file's path lands in the box (or the terminal when the box is off); lint, `tsc`, `npm run check`, a no-install package and a fresh review with no open major; released by CI; installed only on Michael's word.
+**Goal:** (S58) One typing bar under a Claude Code tab: Patton's box lies over Claude Code's own input bar, found from the screen, with the Okay? button inside the box at its left (Michael 2026-11-20: "the OK button is now in the wrong place"; "we now have two typing bars, which just doesn't look very good"; "ok" to sketch A, https://claude.ai/code/artifact/8bf5f5bc-0dab-4cab-afa2-cd9219a9f1a8).
+**Done when:** a hidden-Electron check that feeds the real Pane recorded Claude Code v2.1.321 screens shows the box covering exactly Claude's three bar rows (start-up, mid-turn, after a turn, a queued message), docking on the bottom edge when scrolled up, going under the terminal when Claude's bar holds text or isn't found, hidden with "Draft kept" during a question, Okay? inside it at its left, at UI scale 1, 1.1 and 1.5 (D13); lint, `tsc`, `npm run check`, a no-install package and a fresh review with no open major; released by CI; installed only on Michael's word.
+_Previous goal (S56, reached except `box_ship`'s live check):_ Under every Claude Code tab, a real text box is always open and takes everything Michael types; it steps aside on its own while Claude shows a permission prompt, a question or a menu, and comes back when he has answered. Michael 2026-11-20, on the Claude desktop app's "proper compose box": "How do we get that?", then, on a box opened by hand: "what's the point of one that I have to open manually … I don't know which prompt I'm going to need it for", then "ok" to the always-open design (page: https://claude.ai/code/artifact/503c49fd-8ae5-4501-be32-fe371f388337). **Done when:** a jsdom check on the real Pane proves, from Claude Code's real status sequences in main.log, that the box steps aside for every question held 250 ms or more and for none of the three shorter flashes, comes back when each ends, keeps the keyboard through a click into the terminal, steps aside after a `/` line until Claude next reports, and that a dropped file's path lands in the box (or the terminal when the box is off); lint, `tsc`, `npm run check`, a no-install package and a fresh review with no open major; released by CI; installed only on Michael's word.
 **Last verified:** 2026-11-20 11:40 (Session 56: build, two fresh reviews, fixes and checks this session)
 
 ```mermaid
@@ -19,12 +20,38 @@ flowchart TD
     box_release[merge, push, CI release, cask]:::done
     box_ship[install on his word, live check]:::live
   end
+  subgraph O["Part 2 — One typing bar: build"]
+    bar_design[design D8–D13 and recorded screens]:::done
+    bar_reader[bar reader and fixture check]:::todo
+    bar_placement[box over, docked or under; resizes and logs]:::todo
+    bar_aside[aside hides the box; Draft kept]:::todo
+    okay_in_box[Okay? inside the box at its left]:::todo
+    over_setting[setting: box over Claude bar]:::todo
+    bar_layout_check[hidden-Electron layout check]:::todo
+    bar_review[fresh review, fixes]:::todo
+  end
+  subgraph OS["Part 2 — Ship"]
+    bar_release[merge, push, CI release, cask]:::todo
+    bar_ship[install on his word, live check]:::todo
+  end
   box_core --> box_replay
   box_core --> box_review
   box_drop --> box_review
   box_replay --> box_review
   box_review --> box_release
   box_release --> box_ship
+  bar_design --> bar_reader
+  bar_reader --> bar_placement
+  bar_placement --> bar_aside
+  bar_design --> okay_in_box
+  bar_placement --> over_setting
+  bar_placement --> bar_layout_check
+  bar_aside --> bar_layout_check
+  okay_in_box --> bar_layout_check
+  over_setting --> bar_layout_check
+  bar_layout_check --> bar_review
+  bar_review --> bar_release
+  bar_release --> bar_ship
   classDef done fill:#1a7f37,color:#fff
   classDef live fill:#0969da,color:#fff
   classDef todo fill:#8c959f,color:#fff
@@ -41,6 +68,16 @@ flowchart TD
 | `box_review` | Fresh review with probes that never saw the build; every major and minor fixed by a fresh builder; checks re-run | done | `box_core`, `box_drop`, `box_replay` | review 1: 2 major, 4 minor, 2 nit, all fixed `b7e0bac`, `03b1c02`; review 2: 1 major (Enter inside the 250 ms hold approved a prompt), 3 minor, nits, plus broadcast into a blocked pane; all fixed `2ebb0a7`, `0a7af2f`; `npm run check` 30/30 |
 | `box_release` | ff-merge to main, push (no stray no-release marker on the head), CI release green, cask sha matches the downloaded DMG | done | `box_review` | pushed `eef0399` (no marker on the head), run 44728983899 green, tag `v1.31.0`, cask 1.31.0 sha `65ad2b08…` matches the downloaded DMG |
 | `box_ship` | Install on Michael's word with Patton quit; live: the box is open under a Claude tab; a permission prompt takes the keyboard and answering hands it back (`[COMPOSE] aside` / `back` in main.log); a click in the terminal leaves typing in the box; a dropped file adds its path | live | `box_release` | **S57 (20 Nov 11:55):** installed from tag `v1.31.0` with Patton quit: /Applications reports 1.31.0, asar 11:55:30, `codesign --verify --deep --strict` ok, file list identical to `out/`, `[COMPOSE] aside` in the installed bundle. Live part waits on his sessions in it |
+| `bar_design` | Design D8–D13 (one typing bar) settled and written; real Claude Code v2.1.321 screens recorded as the fixture behind D8 | done | — | `docs/compose-box.md` (Design, part 2) · `scripts/fixtures/claude-bar-screens.json` · `docs/mocks/one-typing-bar.html` |
+| `bar_reader` | D8: a pure reader of the buffer at the cursor (found / empty / holds text / why) and a check over every fixture step, the `turn` recording and synthetic edge lines | todo | `bar_design` | — |
+| `bar_placement` | D9 and D12: the box over Claude's bar, docked on the bottom edge when scrolled up, or under the terminal; the terminal resizes only between under and the overlays; growth upward to a third of the pane; paste strip on the box; wheel to the terminal; `[COMPOSE] place` and `bar not found` logs | todo | `bar_reader` | — |
+| `bar_aside` | D10: placement frozen from Claude's first `blocked` report and through any aside; in the overlays the box hides (focusable through D2's typing grace) and "Draft kept" shows with a draft; back where it was after | todo | `bar_placement` | — |
+| `okay_in_box` | D11: Okay? inside the box at its left whenever the box is engaged; the row under the terminal only when the box isn't; same ask rules; a press keeps the box's keyboard | todo | `bar_design` | — |
+| `over_setting` | D12: Settings row "Lay the compose box over Claude Code's own input bar" (`composeOverBar`, on by default, read `!== false`); off is the v1.31 layout with Okay? inside the box | todo | `bar_placement` | — |
+| `bar_layout_check` | D13: hidden-Electron check of the real Pane fed the fixture's bytes, at UI scale 1, 1.1 and 1.5; every new assertion fails on main; `check-compose-box.mjs` and `check-okay-button.mjs` updated, not weakened | todo | `bar_placement`, `bar_aside`, `okay_in_box`, `over_setting` | — |
+| `bar_review` | Fresh review with probes that never saw the build; every major and minor fixed by a fresh builder; checks re-run | todo | `bar_layout_check` | — |
+| `bar_release` | ff-merge to main, push (no stray no-release marker on the head), CI release green, cask sha matches the downloaded DMG | todo | `bar_review` | — |
+| `bar_ship` | Install on Michael's word with Patton quit; live: one bar under a Claude tab, the box over Claude's, Okay? at its left; `[COMPOSE] place` lines in main.log; a question hides it and it comes back | todo | `bar_release` | — |
 <!-- MAP:END -->
 
 ## Why the 6 November box failed, and what is different now
@@ -58,3 +95,19 @@ The 6 Nov box had no signal for "Claude is asking you something": it ran on the 
 - **D5. Dropped files.** A file or files dropped on a pane: with the box engaged, their paths go into the box at the caret; otherwise they are typed into the terminal as text, as Terminal.app does. Paths escaped as Terminal.app escapes them (a backslash before spaces and shell specials), joined by spaces, with a trailing space. The path comes from Electron's `webUtils.getPathForFile` through the preload; nothing is read from the file. dragover/drop take `preventDefault` so no drop navigates the window. Log `[DROP] files {pane, count, target}` (no paths in the log).
 - **D6. Unchanged.** Send routes (typed line, bracketed paste for multi-line), history, image paste chips, placeholder, the Okay? row, Pause all.
 - **D7. The replay check.** `scripts/check-compose-box.mjs` (jsdom, the real Pane, as `check-okay-button.mjs` does) feeds 7501 state sequences with the real timing of the 25 episodes (fixture: state, kind and offsets only, no message text) and asserts D2 per episode (aside for the 22 held ≥ 250 ms, none for the 3 flashes, back at each end, focus where D2 says); then D3 and D4 cases. D5's cases live in `scripts/check-file-drop.mjs`. Each new assertion must fail on main (run it against main's `pane.ts` and record the failures). Added to `npm run check`.
+
+## Design, part 2: one typing bar (settled; Michael approved A with "ok", 2026-11-20 12:23)
+
+Michael, 20 Nov 12:10, on v1.31.0 (screenshot of the Okay? row between the terminal and the box): "I think the OK button is now in the wrong place", then "we now have two typing bars, which just doesn't look very good. Is there a way to [re]move? Maybe that's what we have to do." Sketch page with A to D: https://claude.ai/code/artifact/8bf5f5bc-0dab-4cab-afa2-cd9219a9f1a8 (source `docs/mocks/one-typing-bar.html`); he chose A ("ok"). Claude Code v2.1.321 has no setting, environment switch or terminal capability that hides its own input bar (checked in the installed binary: every setting description, the environment switches, the eight terminal capabilities it probes), so Patton covers it.
+
+- **D8. Claude's bar, found from the screen.** After every redraw Claude Code (classic renderer) parks the terminal's cursor on its own input line. The bar is *found* when, in the active buffer at the cursor's row R, line R starts with `❯` and lines R−1 and R+1 are each one or more `─` and nothing else (trailing blanks ignored). A found bar is *empty* when every cell on R after the `❯` and its space is blank, or dim (SGR 2: Claude's own hint, such as "Press up to edit queued messages"), or the inverse caret cell when that cell is blank or the text after it is dim; any other non-blank cell (typed text, which is drawn in the default colour, a `/`, a pasted path) means it *holds text*. Readings are taken at rest: after xterm has parsed a write (`onWriteParsed`), at most once per animation frame, and on scroll and resize. A reading that doesn't match keeps the last good position (in a real turn 4 of 26 output bursts ended mid-redraw, the cursor on the footer); the bar counts as *lost* only when no reading has matched for 400 ms. Evidence, `scripts/fixtures/claude-bar-screens.json` (recorded 20 Nov, v2.1.321, 100×30): found and empty at start-up, mid-turn, after a turn and with a queued message (the queue renders above the bar); found holding text with typed text and with `/`; not found with wrapped input, multi-line input, a recalled history entry (its top rule reads `─── History n/m ───`) and a question dialog (its `❯ 1.` row has no rules beside it).
+- **D9. Where the box goes, while engaged and not aside.**
+  - `over`: the bar is found and empty and its three rows are all in the viewport. The box lies over those three rows as an overlay inside the terminal container: its left and right edges on the terminal grid's, its top on the top of row R−1 and its bottom on the bottom of row R+1, opaque in the terminal's background so nothing of Claude's bar shows through. Taller contents (a long draft, a large UI scale) grow it upward from that bottom edge, up to a third of the pane, then the text scrolls inside it. The terminal takes the pane's whole height: neither the box nor the Okay? row takes rows under it.
+  - `dock`: the bar is found and empty but he has scrolled up, so its rows aren't all in view. The same overlay sits on the terminal's bottom edge, with a hairline on its top edge, until he scrolls back down.
+  - `under`: the bar is lost or holds text, or `composeOverBar` is off, or no reading has matched yet in this session. The box sits under the terminal in the flow, as in v1.31 (with Okay? inside it, D11).
+  - While the keyboard is handed to Claude's own bar (`composeHandedOff`: Esc with a draft), `under`, so he sees both; placement is worked out again when the box takes the keyboard back.
+  - Changes: `under` → `over` or `dock` on the first matching reading; `over` or `dock` → `under` at once when the bar holds text, and 400 ms after the last match when it is lost; `over` ↔ `dock` on scroll. The terminal resizes only on a change between `under` and the overlays, never while the overlay grows or shrinks. Every change logs `[COMPOSE] place {pane, placement, from, reason}` (reason: found, scrolled, in-view, holds-text, lost, handoff, setting, aside-end); a lost bar also logs `[COMPOSE] bar not found {pane, why}` (why: no-glyph, no-rule-above, no-rule-below) at most once a minute per pane, so main.log tells a changed Claude Code from a passing screen.
+- **D10. Claude asks, or a menu may be open.** From Claude's first `blocked` report (the live fact, before the 250 ms hold) and for as long as an aside (D2, D3) lasts, placement is frozen: no reading changes it, since the question or menu replaces Claude's bar. In `over` or `dock` the aside hides the box: at once it turns fully transparent and stops taking the pointer; while D2's typing grace keeps the keyboard in it, it stays focusable (opacity, not `visibility: hidden`, which would drop the keyboard); after that, `visibility: hidden`. While the hidden box holds a draft, a small note "Draft kept" sits at the pane's bottom right (its own outline, no click, announced once through an aria-live region). In `under` the aside is the v1.31 one (dimmed in place, the label in Send's slot). When the aside ends the box comes back where it was and placement resumes; if the bar isn't found within 400 ms, `under`. D2's and D3's rules for keys, sends and the keyboard are unchanged.
+- **D11. Okay? sits inside the box, at its left,** whenever the box is engaged, in every placement; it hides with the box during an aside. Same behaviour as the row's (`services/okay-ask.ts`): one ask at a time, Sent / Queued / the refusal for 3 s; a press doesn't take the keyboard from the box (mousedown `preventDefault`). The Okay? row under the terminal shows only while Claude runs and the box is not engaged (the box off, or closed with ⌘E), as in v1.28–v1.30. Michael 18 Nov: "a button in the bottom left"; 20 Nov: "the OK button is now in the wrong place".
+- **D12. The rest.** In `over` and `dock` the paste strip (image thumbnails) sits on the box's top edge. A wheel over the box, outside a textarea that can still scroll that way, scrolls the terminal. D4 (clicks in the terminal keep the box's keyboard) is unchanged. Settings gains "Lay the compose box over Claude Code's own input bar" (`composeOverBar`, on by default, read `!== false`), just under the compose box setting; off gives the v1.31 layout with Okay? inside the box. The overlay is three terminal rows tall at every Font Size and UI scale where its contents fit, and grows upward where they don't.
+- **D13. Checks.** A pure reader (`services/claude-bar.ts`) takes the buffer's lines and cells at the cursor and returns found / empty / holds text / why; a check runs it over every marked step of the fixture against the fixture's `expected` verdicts, over every chunk of the `turn` recording (at least 22 of 26 found), and over synthetic edge lines (dim hint, caret on a typed letter, a labelled rule, a lone `❯`). A hidden-Electron check (as `check-ui-text-scale.cjs` does) mounts the real Pane with a stub bridge, feeds the fixture's bytes through its real terminal, and measures, at UI scale 1, 1.1 and 1.5: in `over` the box's rectangle covers rows R−1 to R+1 within 1 px and no other row; the terminal's row count is the whole pane's; `dock` after scrolling up and `over` again after scrolling down; `under` on the typed, wrapped, multi-line and history screens, and over again once cleared; during the question screen with a draft, the box hidden and "Draft kept" shown, and the box back after; Okay? inside the box at its left and no Okay? row; with `composeOverBar` off, `under` throughout. The jsdom checks of the box (`check-compose-box.mjs`, `check-okay-button.mjs`) are updated, not weakened. Every new assertion fails on main.
