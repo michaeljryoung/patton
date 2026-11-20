@@ -141,6 +141,35 @@ await syn('an image placeholder, then the dim hint on the caret',
 await syn('a wide character before an image placeholder', ['', RULE, `❯ 漢 [Image #1]${INV} ${OFF}`, RULE], 3, 18, 'holds-text');
 await syn('a pasted-text placeholder stays text', ['', RULE, `❯ [Pasted text #1 +12 lines]${INV} ${OFF}`, RULE], 3, 31, 'holds-text');
 await syn('a malformed image placeholder is text', ['', RULE, `❯ [Image #]${INV} ${OFF}`, RULE], 3, 13, 'holds-text');
+// Cost: a reading reuses one cell (xterm's getCell(x, cell)) instead of
+// allocating one per column; the verdicts are the same through the wrapper.
+for (const [label, line, col, want] of [
+  ['an image placeholder and the caret', `❯ [Image #2] ${INV} ${OFF}`, 15, 'empty'],
+  ['typed text', `❯ hello${INV} ${OFF}`, 8, 'holds-text'],
+]) {
+  const term = await screen(['', RULE, line, RULE], 3, col);
+  const real = term.buffer.active;
+  const cells = new Set();
+  let calls = 0, withoutCell = 0;
+  const spy = {
+    cursorY: real.cursorY, baseY: real.baseY,
+    getNullCell: () => real.getNullCell(),
+    getLine: (y) => {
+      const l = real.getLine(y);
+      if (!l) return l;
+      return {
+        length: l.length,
+        translateToString: (t) => l.translateToString(t),
+        getCell: (x, cell) => { calls++; if (cell === undefined) withoutCell++; else cells.add(cell); return l.getCell(x, cell); },
+      };
+    },
+  };
+  const r = readClaudeBar(spy);
+  check(`reused cell, ${label}: ${want} as before`, claudeBarVerdict(r) === want, { got: claudeBarVerdict(r) });
+  check(`reused cell, ${label}: every getCell call passes a cell, and it is one cell`,
+    calls > 10 && withoutCell === 0 && cells.size === 1, { calls, withoutCell, distinct: cells.size });
+  term.dispose();
+}
 // Wrapped input: the input runs past the right edge, so the cursor's row is
 // the continuation and does not start with `❯`.
 {

@@ -32,7 +32,9 @@ export interface BarCell {
 /** The line methods the reader uses (a subset of xterm's IBufferLine). */
 export interface BarLine {
   readonly length: number;
-  getCell(x: number): BarCell | undefined;
+  /** xterm's own signature: with `cell` given, it is loaded and returned, so
+   *  a reading allocates no cell per column. */
+  getCell(x: number, cell?: BarCell): BarCell | undefined;
   translateToString(trimRight?: boolean): string;
 }
 
@@ -41,6 +43,8 @@ export interface BarBuffer {
   readonly cursorY: number;
   readonly baseY: number;
   getLine(y: number): BarLine | undefined;
+  /** xterm's blank cell, the one a reading reuses (absent on a hand-made buffer). */
+  getNullCell?(): BarCell;
 }
 
 /** Why a reading found no bar, in the order the reader tests them. */
@@ -75,11 +79,11 @@ const IMAGE_PLACEHOLDER = /\[Image #\d+\]/g;
  * is read cell by cell (a blank cell as a space), so a match's string offsets
  * map back to cells even with a wide character before it.
  */
-function imageCells(line: BarLine): Set<number> {
+function imageCells(line: BarLine, scratch?: BarCell): Set<number> {
   let text = '';
   const cellAt: number[] = [];
   for (let x = INPUT_START_X; x < line.length; x++) {
-    const chars = line.getCell(x)?.getChars() ?? '';
+    const chars = line.getCell(x, scratch)?.getChars() ?? '';
     const piece = chars === '' ? ' ' : chars;
     for (let i = 0; i < piece.length; i++) cellAt.push(x);
     text += piece;
@@ -94,8 +98,8 @@ function imageCells(line: BarLine): Set<number> {
 
 /** Whether the input line R (glyph already checked) holds nothing of his
  *  but images. */
-function inputIsEmpty(line: BarLine): boolean {
-  const images = imageCells(line);
+function inputIsEmpty(line: BarLine, scratch?: BarCell): boolean {
+  const images = imageCells(line, scratch);
   let caretSeen = false;
   // Non-blank cells after an inverse caret that sat on a non-blank cell must
   // all be dim, and at least one must exist (a caret alone on a letter is a
@@ -103,7 +107,7 @@ function inputIsEmpty(line: BarLine): boolean {
   let caretOnText = false;
   let dimAfterCaret = false;
   for (let x = INPUT_START_X; x < line.length; x++) {
-    const cell = line.getCell(x);
+    const cell = line.getCell(x, scratch);
     if (!cell || isBlank(cell) || images.has(x)) continue;
     if (cell.isDim()) {
       if (caretOnText) dimAfterCaret = true;
@@ -128,7 +132,7 @@ export function readClaudeBar(buffer: BarBuffer): ClaudeBarReading {
   }
   if (row < 1 || !isRule(buffer.getLine(row - 1))) return { found: false, why: 'no-rule-above', row };
   if (!isRule(buffer.getLine(row + 1))) return { found: false, why: 'no-rule-below', row };
-  return { found: true, empty: inputIsEmpty(line), row };
+  return { found: true, empty: inputIsEmpty(line, buffer.getNullCell?.()), row };
 }
 
 /** The reading as one word: 'empty', 'holds-text' or 'none' (the fixture's verdicts). */
