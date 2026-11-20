@@ -266,6 +266,8 @@ export interface ClipboardImageThumb {
 // --- end image paste ---
 
 export interface PattonAPI {
+  /** The file's path on disk (Electron's webUtils.getPathForFile); '' for a file with none. */
+  getPathForFile: (file: File) => string;
   pty: {
     create: (opts?: PtyCreateOptions) => Promise<number>;
     /** Replace this pane's own shell with a new one (same options as create);
