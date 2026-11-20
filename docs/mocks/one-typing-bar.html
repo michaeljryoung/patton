@@ -1,0 +1,361 @@
+<title>One Typing Bar</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: one reading column; each sketch is a Patton pane drawn in Patton's own tokens (ink lines, square corners), pairs side by side when wide */
+:root {
+  --ink: #0b0d12;
+  --bg: #ffffff;
+  --page: #f6f7f9;
+  --muted: #596170;
+  --hairline: var(--ink);
+  --term-bg: #ffffff;
+  --cc-rule: #8a8a8a;
+  --cc-dim: #8b8b8b;
+  --cc-accent: #c8603f;
+  --cc-mode: #b8264f;
+  --mark-bg: #2f6bff;
+  --mark-fg: #ffffff;
+  --gap-fill: #eef0f4;
+  --font-ui: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Monaco, monospace;
+  --row: 18px;
+  --s-row: 16px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --ink: #dbe3ee; --bg: #111214; --page: #0b0c0e; --muted: #8b95a5;
+    --hairline: #6b717a; --term-bg: #111214; --cc-rule: #6f6f6f; --cc-dim: #8a8a8a;
+    --cc-accent: #d77757; --cc-mode: #ff6b80; --mark-bg: #7aa2ff; --mark-fg: #0b0d12; --gap-fill: #1b1d22;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ink: #dbe3ee; --bg: #111214; --page: #0b0c0e; --muted: #8b95a5;
+  --hairline: #6b717a; --term-bg: #111214; --cc-rule: #6f6f6f; --cc-dim: #8a8a8a;
+  --cc-accent: #d77757; --cc-mode: #ff6b80; --mark-bg: #7aa2ff; --mark-fg: #0b0d12; --gap-fill: #1b1d22;
+}
+
+body { background: var(--page); color: var(--ink); font: 15px/1.55 var(--font-ui); }
+.wrap {
+  max-width: 1120px; margin: 0 auto;
+  padding-block: 36px 72px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 44px;
+}
+h1 { font-size: 30px; line-height: 1.15; margin: 0 0 12px; letter-spacing: -0.01em; text-wrap: balance; }
+h2 { font-size: 19px; margin: 0 0 6px; text-wrap: balance; }
+p { margin: 0; max-width: 68ch; }
+.lede { font-size: 17px; display: grid; gap: 10px; }
+.lede strong { font-weight: 600; }
+section { display: grid; gap: 16px; }
+.intro { color: var(--muted); max-width: 68ch; }
+
+.row2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 500px), 1fr)); gap: 28px 32px; }
+.row3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 330px), 1fr)); gap: 28px 24px; }
+figure { margin: 0; display: grid; gap: 10px; align-content: start; }
+figcaption { font-size: 14px; color: var(--muted); max-width: 60ch; }
+figcaption b { color: var(--ink); font-weight: 600; }
+.label { font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+.label .rec { color: var(--mark-bg); }
+.scroll { overflow-x: auto; padding-left: 30px; padding-bottom: 2px; }
+
+/* A pane: terminal on top (latest lines at the bottom), then whatever Patton puts under it */
+.pane {
+  width: 500px; height: 272px; box-sizing: border-box;
+  border: 1px solid var(--hairline); background: var(--term-bg);
+  display: flex; flex-direction: column; position: relative;
+  font-family: var(--font-mono); font-size: 12.5px; line-height: var(--row);
+}
+.pane.small { width: 330px; height: 300px; font-size: 11.5px; line-height: var(--s-row); }
+.term { flex: 1 1 auto; min-height: 0; overflow-x: visible; overflow-y: clip; display: flex; flex-direction: column; justify-content: flex-end; padding: 0 10px; }
+.term.top { justify-content: flex-start; }
+.l { position: relative; height: var(--row); white-space: pre; flex: 0 0 auto; }
+.small .l { height: var(--s-row); }
+.l .t { display: block; overflow: hidden; white-space: pre; }
+.foot { flex: 0 0 auto; padding: 0 10px; }
+.rule { color: var(--cc-rule); }
+.dim { color: var(--cc-dim); }
+.acc { color: var(--cc-accent); }
+.mode { color: var(--cc-mode); }
+.full { margin: 0 -10px; padding: 0 10px; }
+
+/* Numbered markers in the left gutter, explained in each caption */
+.m::before {
+  content: attr(data-m);
+  position: absolute; left: -40px; top: 50%; transform: translateY(-50%);
+  width: 18px; height: 18px; border-radius: 50%;
+  background: var(--mark-bg); color: var(--mark-fg);
+  font: 700 11px/18px var(--font-ui); text-align: center;
+}
+.pane > .m::before { left: -30px; }
+
+/* Patton's own pieces, as the app draws them */
+.okayrow { flex: 0 0 auto; border-top: 1px solid var(--hairline); padding: 1px 12px; position: relative; font-family: var(--font-ui); }
+.okay { display: inline-block; border: 1px solid var(--hairline); padding: 0 10px; font: 12px/1.5 var(--font-ui); background: var(--bg); color: var(--ink); white-space: nowrap; }
+.box { flex: 0 0 auto; border-top: 1px solid var(--hairline); background: var(--bg); padding: 8px 12px; position: relative; font-family: var(--font-ui); }
+.field { display: flex; gap: 8px; align-items: center; }
+.field.tall { align-items: flex-end; }
+.ta {
+  flex: 1 1 auto; min-width: 0; border: 1px solid var(--hairline); background: var(--bg);
+  font: 12.5px/1.4 var(--font-mono); color: var(--muted); padding: 6px 10px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.small .ta { font-size: 11.5px; }
+.ta.focus { box-shadow: inset 0 0 0 1px var(--ink); outline: 1px solid var(--ink); outline-offset: 1px; }
+.ta.draft { color: var(--ink); white-space: normal; }
+.send { flex: 0 0 auto; border: 1px solid var(--hairline); padding: 5px 13px; font: 12px/1.3 var(--font-ui); background: var(--bg); color: var(--ink); }
+/* A: the box lies over Claude's three rows (rule, ❯ line, rule), so it is exactly three rows tall */
+.box.over { border-top: 0; height: calc(var(--row) * 3); box-sizing: border-box; padding: 0 10px; margin: 0 -10px; display: flex; align-items: center; background: var(--term-bg); }
+.box.over.m::before { left: -30px; }
+.box.over .field { width: 100%; }
+.small .box.over { height: calc(var(--s-row) * 3); }
+.box.over.tall { height: auto; padding: 6px 10px; }
+.box.dock { border-top: 1px solid var(--hairline); }
+.gapfill { background: var(--gap-fill); color: var(--muted); font-family: var(--font-ui); font-size: 12px; font-style: italic; display: flex; align-items: center; justify-content: center; height: calc(var(--row) * 3); margin: 0 -10px; }
+.note { position: absolute; right: 10px; bottom: 8px; font: 600 11px/1 var(--font-ui); letter-spacing: 0.04em; padding: 5px 8px; border: 1px solid var(--hairline); background: var(--bg); color: var(--ink); }
+
+.facts { display: grid; gap: 12px; max-width: 72ch; padding: 0; margin: 0; list-style: none; }
+.facts li { padding-left: 18px; position: relative; }
+.facts li::before { content: ""; position: absolute; left: 2px; top: 0.65em; width: 6px; height: 6px; background: var(--ink); }
+code { font-family: var(--font-mono); font-size: 13px; }
+.alt { display: grid; gap: 6px; max-width: 68ch; }
+.ask { font-size: 16px; }
+</style>
+
+<div class="wrap">
+
+<header>
+  <h1>One Typing Bar</h1>
+  <div class="lede">
+    <p>Claude Code has no setting that hides its own input bar, so Patton has to cover it. <strong>Recommended: A.</strong> Patton's box lies exactly over Claude's own bar, so there is one place to type, and the Okay? button sits inside the box at its left.</p>
+    <p class="intro">Today the box sits under the terminal, below Claude's own bar, with the Okay? row squeezed between them. The sketches are drawn from a real Claude Code v2.1.321 screen and Patton's own styles.</p>
+  </div>
+</header>
+
+<section aria-labelledby="h-now">
+  <h2 id="h-now">Today, and A</h2>
+  <div class="row2">
+    <figure>
+      <div class="label">Today</div>
+      <div class="scroll">
+        <div class="pane" role="img" aria-label="Today: Claude's own bar in the terminal, then the Okay? row, then Patton's box">
+          <div class="term">
+            <div class="l"><span class="t">⏺ Stopped the crash reporter left from 13 Nov.</span></div>
+            <div class="l"><span class="t">⏺ Built from the tag in .worktrees/install-1.31.0;</span></div>
+            <div class="l"><span class="t">  prod audit 0.</span></div>
+            <div class="l"><span class="t">⏺ Installed 11:55:30: /Applications reports 1.31.0,</span></div>
+            <div class="l"><span class="t">  codesign ok, file list identical to out/.</span></div>
+            <div class="l"><span class="t"> </span></div>
+            <div class="l"><span class="t"><span class="acc">✻</span> <span class="acc">Cogitating…</span> <span class="dim">(12s · esc to interrupt)</span></span></div>
+            <div class="l"><span class="t"> </span></div>
+            <div class="l full"><span class="t rule">────────────────────────────────────────────────────────────────────────</span></div>
+            <div class="l m" data-m="1"><span class="t">❯ </span></div>
+            <div class="l full"><span class="t rule">────────────────────────────────────────────────────────────────────────</span></div>
+            <div class="l"><span class="t">  <span class="mode">⏵⏵ bypass permissions on</span> <span class="dim">(shift+tab to cycle)</span></span></div>
+          </div>
+          <div class="okayrow m" data-m="3"><span class="okay">Okay?</span></div>
+          <div class="box m" data-m="2">
+            <div class="field">
+              <div class="ta focus">Message Claude · Enter sends · Shift+Enter newline · Esc interrupts</div>
+              <div class="send">Send</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <figcaption><b>1</b> Claude Code's own bar · <b>2</b> Patton's box · <b>3</b> the Okay? row, between the two</figcaption>
+    </figure>
+
+    <figure>
+      <div class="label"><span class="rec">A · recommended</span></div>
+      <div class="scroll">
+        <div class="pane" role="img" aria-label="A: Patton's box lies over Claude's own bar, with Okay? inside it at the left; Claude's footer stays visible below">
+          <div class="term">
+            <div class="l"><span class="t">⏺ Stopped the crash reporter left from 13 Nov.</span></div>
+            <div class="l"><span class="t">⏺ Built from the tag in .worktrees/install-1.31.0;</span></div>
+            <div class="l"><span class="t">  prod audit 0.</span></div>
+            <div class="l"><span class="t">⏺ Installed 11:55:30: /Applications reports 1.31.0,</span></div>
+            <div class="l"><span class="t">  codesign ok, file list identical to out/.</span></div>
+            <div class="l"><span class="t"> </span></div>
+            <div class="l"><span class="t"><span class="acc">✻</span> <span class="acc">Cogitating…</span> <span class="dim">(12s · esc to interrupt)</span></span></div>
+            <div class="l"><span class="t"> </span></div>
+            <div class="box over m" data-m="2">
+              <div class="field">
+                <div class="okay">Okay?</div>
+                <div class="ta focus">Message Claude · Enter sends · Shift+Enter newline</div>
+                <div class="send">Send</div>
+              </div>
+            </div>
+            <div class="l"><span class="t">  <span class="mode">⏵⏵ bypass permissions on</span> <span class="dim">(shift+tab to cycle)</span></span></div>
+            <div class="l"><span class="t"> </span></div>
+          </div>
+        </div>
+      </div>
+      <figcaption><b>2</b> Patton's box, laid over the three rows of Claude's bar. Claude's footer stays in view under it. The terminal gets back the room the box and the Okay? row take today, about four lines.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section aria-labelledby="h-states">
+  <h2 id="h-states">A, in its other states</h2>
+  <div class="row3">
+    <figure>
+      <div class="label">Writing a long message</div>
+      <div class="scroll">
+        <div class="pane small" role="img" aria-label="A while writing several lines: the box grows upward over the last lines of output">
+          <div class="term">
+            <div class="l"><span class="t">⏺ Installed 11:55:30: /Applications</span></div>
+            <div class="l"><span class="t">  reports 1.31.0, codesign ok.</span></div>
+            <div class="l"><span class="t"> </span></div>
+            <div class="l"><span class="t"><span class="acc">✻ Cogitating…</span> <span class="dim">(31s · esc to</span></span></div>
+            <div class="box over tall">
+              <div class="field tall">
+                <div class="okay">Okay?</div>
+                <div class="ta focus draft">Move the Okay? button into the box, at its left, and lay the box over Claude's own bar so there is one place to type.</div>
+                <div class="send">Send</div>
+              </div>
+            </div>
+            <div class="l"><span class="t">  <span class="mode">⏵⏵ bypass permissions on</span></span></div>
+          </div>
+        </div>
+      </div>
+      <figcaption>The box grows upward over the last lines of output, up to a third of the pane, then scrolls inside itself.</figcaption>
+    </figure>
+
+    <figure>
+      <div class="label">Claude asks you something</div>
+      <div class="scroll">
+        <div class="pane small" role="img" aria-label="A while Claude asks a question: the box lifts off so the question shows in full; a note says the draft is kept">
+          <div class="term top">
+            <div class="l"><span class="t">⏺ Two ways to place the button.</span></div>
+            <div class="l"><span class="t"> </span></div>
+            <div class="l full"><span class="t rule">──────────────────────────────────────────────</span></div>
+            <div class="l"><span class="t"> ☐ Okay? button</span></div>
+            <div class="l"><span class="t"> </span></div>
+            <div class="l"><span class="t"> Where should the Okay? button go?</span></div>
+            <div class="l"><span class="t"> </span></div>
+            <div class="l"><span class="t"> <span class="acc">❯ 1. Inside the box, at its left</span></span></div>
+            <div class="l"><span class="t">   2. Its own row under the box</span></div>
+            <div class="l"><span class="t">   3. Type something.</span></div>
+            <div class="l full"><span class="t rule">──────────────────────────────────────────────</span></div>
+            <div class="l"><span class="t dim"> Enter to select · ↑/↓ to navigate · Esc</span></div>
+          </div>
+          <div class="note">Draft kept</div>
+        </div>
+      </div>
+      <figcaption>Claude replaces its bar with the question, so the box lifts off and the question shows in full. Your draft waits and comes back when you have answered, as the box does today.</figcaption>
+    </figure>
+
+    <figure>
+      <div class="label">Scrolled up to read</div>
+      <div class="scroll">
+        <div class="pane small" role="img" aria-label="A while scrolled up: Claude's bar is out of view, so the box waits at the bottom edge of the pane">
+          <div class="term top">
+            <div class="l"><span class="t">⏺ Read src/renderer/components/pane.ts</span></div>
+            <div class="l"><span class="t">  (lines 1120–1200)</span></div>
+            <div class="l"><span class="t"> </span></div>
+            <div class="l"><span class="t">⏺ The Okay? row is added straight after</span></div>
+            <div class="l"><span class="t">  the terminal, before the paste strip</span></div>
+            <div class="l"><span class="t">  and the box, so it sits between them.</span></div>
+            <div class="l"><span class="t"> </span></div>
+            <div class="l"><span class="t">⏺ Bash(claude --version)</span></div>
+            <div class="l"><span class="t">  ⎿  2.1.321 (Claude Code)</span></div>
+            <div class="l"><span class="t"> </span></div>
+            <div class="l"><span class="t">⏺ No setting hides Claude's own bar.</span></div>
+          </div>
+          <div class="box dock">
+            <div class="field">
+              <div class="okay">Okay?</div>
+              <div class="ta focus">Message Claude</div>
+              <div class="send">Send</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <figcaption>Claude's bar has scrolled out of view, so the box waits at the pane's bottom edge until you scroll back down, and you can keep typing.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section aria-labelledby="h-other">
+  <h2 id="h-other">The other ways</h2>
+  <div class="row2">
+    <figure>
+      <div class="label">B · blank out Claude's bar</div>
+      <div class="scroll">
+        <div class="pane" role="img" aria-label="B: Claude's bar painted over, leaving a gap; the box stays under the terminal with Okay? inside it">
+          <div class="term">
+            <div class="l"><span class="t">⏺ Built from the tag in .worktrees/install-1.31.0;</span></div>
+            <div class="l"><span class="t">  prod audit 0.</span></div>
+            <div class="l"><span class="t">⏺ Installed 11:55:30: /Applications reports 1.31.0,</span></div>
+            <div class="l"><span class="t">  codesign ok, file list identical to out/.</span></div>
+            <div class="l"><span class="t"> </span></div>
+            <div class="l"><span class="t"><span class="acc">✻</span> <span class="acc">Cogitating…</span> <span class="dim">(12s · esc to interrupt)</span></span></div>
+            <div class="l"><span class="t"> </span></div>
+            <div class="gapfill">where Claude's bar was</div>
+            <div class="l"><span class="t">  <span class="mode">⏵⏵ bypass permissions on</span> <span class="dim">(shift+tab to cycle)</span></span></div>
+          </div>
+          <div class="box m" data-m="2">
+            <div class="field">
+              <div class="okay">Okay?</div>
+              <div class="ta focus">Message Claude · Enter sends · Shift+Enter newline</div>
+              <div class="send">Send</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <figcaption>The box stays where it is, with Okay? inside it. Easier to build than A, but it leaves a three-line hole, and Claude's footer ends up between the hole and the box.</figcaption>
+    </figure>
+
+    <figure>
+      <div class="label">C · move only the button</div>
+      <div class="scroll">
+        <div class="pane" role="img" aria-label="C: both bars stay; the Okay? row is gone and the button sits inside Patton's box">
+          <div class="term">
+            <div class="l"><span class="t">⏺ Built from the tag in .worktrees/install-1.31.0;</span></div>
+            <div class="l"><span class="t">  prod audit 0.</span></div>
+            <div class="l"><span class="t">⏺ Installed 11:55:30: /Applications reports 1.31.0,</span></div>
+            <div class="l"><span class="t">  codesign ok, file list identical to out/.</span></div>
+            <div class="l"><span class="t"> </span></div>
+            <div class="l"><span class="t"><span class="acc">✻</span> <span class="acc">Cogitating…</span> <span class="dim">(12s · esc to interrupt)</span></span></div>
+            <div class="l"><span class="t"> </span></div>
+            <div class="l full"><span class="t rule">────────────────────────────────────────────────────────────────────────</span></div>
+            <div class="l m" data-m="1"><span class="t">❯ </span></div>
+            <div class="l full"><span class="t rule">────────────────────────────────────────────────────────────────────────</span></div>
+            <div class="l"><span class="t">  <span class="mode">⏵⏵ bypass permissions on</span> <span class="dim">(shift+tab to cycle)</span></span></div>
+          </div>
+          <div class="box m" data-m="2">
+            <div class="field">
+              <div class="okay">Okay?</div>
+              <div class="ta focus">Message Claude · Enter sends · Shift+Enter newline</div>
+              <div class="send">Send</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <figcaption>The Okay? row goes and the button moves into the box. A small change, and both bars stay.</figcaption>
+    </figure>
+  </div>
+  <div class="alt">
+    <div class="label">D · go back to Claude's bar alone</div>
+    <p>Patton's box closes by default again and opens on ⌘E. That leaves one bar, but it undoes this morning's always-open box, which you chose because you can't tell in advance which message will need it.</p>
+  </div>
+</section>
+
+<section aria-labelledby="h-how">
+  <h2 id="h-how">How A finds Claude's bar</h2>
+  <ul class="facts">
+    <li>Claude Code v2.1.321, the version on this Mac, has nothing that hides its bar. I checked the program itself: its settings, its environment switches and the eight terminal features it asks a terminal about.</li>
+    <li>Every time it redraws, Claude Code parks the terminal's cursor on its own <code>❯</code> line, between a <code>─</code> rule above and one below. I replayed a real Claude Code session through the same terminal engine Patton uses: the cursor rested on the bar at start-up, and after 22 of 26 bursts of output during a turn. The other 4 bursts ended halfway through a redraw, and the cursor was back on the bar after the next one. So Patton reads the bar's position only once the screen has settled.</li>
+    <li>If a later Claude Code draws its bar differently, Patton won't see that pattern and puts the box back under the terminal, as it is today. It never covers rows it hasn't recognised.</li>
+    <li>When you hand the keyboard to Claude's own bar (Esc with a draft), the box moves off it so you can see what you type there. With the box switched off in Settings, everything is as before v1.31, the Okay? row included.</li>
+  </ul>
+</section>
+
+<section aria-labelledby="h-ask">
+  <h2 id="h-ask">Your call</h2>
+  <p class="ask">Reply in the session with A, B, C or D. Whichever you pick, the Okay? button moves inside the box at its left, unless you want it somewhere else.</p>
+</section>
+
+</div>
