@@ -120,12 +120,12 @@ export class SettingsPanel {
             <span class="settings-hint">Auto-copy selected text to clipboard</span>
           </div>
           <div class="settings-group settings-group-toggle">
-            <label class="settings-label" for="setting-compose-first">Compose-first in Claude Code tabs</label>
+            <label class="settings-label" for="setting-compose-box">Compose box under Claude Code tabs</label>
             <label class="settings-toggle">
-              <input type="checkbox" id="setting-compose-first" />
+              <input type="checkbox" id="setting-compose-box" />
               <span class="settings-toggle-slider"></span>
             </label>
-            <span class="settings-hint">Keeps the compose panel open and focused while Claude Code runs. In an empty box, Esc (which interrupts a running reply), Enter, Tab and the arrows go to Claude; with a draft, Esc hands the keyboard to Claude and keeps the draft.</span>
+            <span class="settings-hint">Keeps a box open under Claude Code for writing your messages. It steps aside while Claude asks you something, and after a / command until Claude answers. In an empty box, Esc (which interrupts a running reply), Enter, Tab and the arrows go to Claude; with a draft, Esc hands the keyboard to Claude and keeps the draft.</span>
           </div>
           <div class="settings-group settings-group-toggle">
             <label class="settings-label" for="setting-confirm-multiline-paste">Confirm multi-line pastes</label>
@@ -289,9 +289,9 @@ export class SettingsPanel {
       this.saveAndNotify({ copyOnSelect: copyOnSelectInput.checked });
     });
 
-    const composeFirstInput = this.overlay.querySelector('#setting-compose-first') as HTMLInputElement;
-    listen(composeFirstInput, 'change', () => {
-      this.saveAndNotify({ composeFirst: composeFirstInput.checked });
+    const composeBoxInput = this.overlay.querySelector('#setting-compose-box') as HTMLInputElement;
+    listen(composeBoxInput, 'change', () => {
+      this.saveAndNotify({ composeBox: composeBoxInput.checked });
     });
 
     const checkpointNudgeInput = this.overlay.querySelector('#setting-checkpoint-nudge') as HTMLInputElement;
@@ -483,7 +483,7 @@ export class SettingsPanel {
     (this.overlay.querySelector('#setting-notification-sound') as HTMLInputElement).checked = settings.notificationSound !== false;
     (this.overlay.querySelector('#setting-notification-sound-type') as HTMLSelectElement).value = settings.notificationSoundType || 'chime';
     (this.overlay.querySelector('#setting-copy-on-select') as HTMLInputElement).checked = settings.copyOnSelect === true;
-    (this.overlay.querySelector('#setting-compose-first') as HTMLInputElement).checked = settings.composeFirst !== false;
+    (this.overlay.querySelector('#setting-compose-box') as HTMLInputElement).checked = settings.composeBox !== false;
     (this.overlay.querySelector('#setting-confirm-multiline-paste') as HTMLInputElement).checked = settings.confirmMultilinePaste === true;
     (this.overlay.querySelector('#setting-program-status') as HTMLInputElement).checked = settings.programStatus !== false;
     (this.overlay.querySelector('#setting-checkpoint-nudge') as HTMLInputElement).value =

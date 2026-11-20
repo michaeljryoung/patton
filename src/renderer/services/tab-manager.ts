@@ -58,7 +58,7 @@ export class TabManager {
   private closedPanes: ClosedPaneState[] = [];
   private static readonly MAX_CLOSED = 10;
   private currentCopyOnSelect = false;
-  private currentComposeFirst: boolean = DEFAULTS.COMPOSE_FIRST;
+  private currentComposeFirst: boolean = DEFAULTS.COMPOSE_BOX;
   private currentTerminalTheme: ITheme | null = null;
   private currentRenderer: RendererMode = 'webgl';
   private onTabsChanged: (() => void) | null = null; // bookmarks sidebar
@@ -233,7 +233,7 @@ export class TabManager {
     }
   }
 
-  /** Compose-first in Claude Code tabs: applies to every open pane at once. */
+  /** The compose box under Claude Code tabs: applies to every open pane at once. */
   setComposeFirst(enabled: boolean): void {
     this.currentComposeFirst = enabled;
     for (const tab of this.tabs) {

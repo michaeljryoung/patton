@@ -94,8 +94,8 @@ export class App {
       if (settings.copyOnSelect !== undefined) {
         this.tabManager.setCopyOnSelect(settings.copyOnSelect);
       }
-      if (settings.composeFirst !== undefined) {
-        this.tabManager.setComposeFirst(settings.composeFirst);
+      if (settings.composeBox !== undefined) {
+        this.tabManager.setComposeFirst(settings.composeBox);
       }
       if (settings.confirmMultilinePaste !== undefined) {
         setConfirmMultilinePaste(settings.confirmMultilinePaste);
@@ -210,7 +210,7 @@ export class App {
       this.notificationSound.setType(settings.notificationSoundType);
     }
     this.tabManager.setCopyOnSelect(settings.copyOnSelect === true);
-    this.tabManager.setComposeFirst(settings.composeFirst !== false);
+    this.tabManager.setComposeFirst(settings.composeBox !== false);
     setConfirmMultilinePaste(settings.confirmMultilinePaste === true);
     setProgramStatusEnabled(settings.programStatus !== false);
     rlog('info', '[SETTINGS] programStatus at startup', { enabled: settings.programStatus !== false });

@@ -60,10 +60,11 @@ export interface AppSettings {
   restoreSession: boolean;
   shellIntegration: boolean;
   renderer: RendererMode;
-  /** Compose-first mode: while Claude Code runs in a pane, keep the compose
-   *  panel open and focused. Absent in settings saved before it existed, so
-   *  read it as `!== false` (on by default). */
-  composeFirst: boolean;
+  /** The compose box: while Claude Code runs in a pane, keep a compose box
+   *  open under it (replaced `composeFirst`, which is no longer read). Absent
+   *  in settings saved before it existed, so read it as `!== false` (on by
+   *  default). */
+  composeBox: boolean;
   /** Ask before pasting 3+ lines into the terminal. Absent in settings saved
    *  before it existed, so read it as `=== true` (off by default). */
   confirmMultilinePaste: boolean;

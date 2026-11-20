@@ -261,7 +261,7 @@ async function pageRun(BIG) {
   const settings = {
     fontSize: 14, fontFamily: "'Menlo', monospace", scrollback: 10000, shell: '/bin/zsh', notificationSound: true,
     notificationSoundType: 'chime', copyOnSelect: false, globalHotkey: 'Control+`', theme: 'system', startupCommand: '',
-    opacity: 1, restoreSession: false, shellIntegration: true, renderer: 'dom', composeFirst: true,
+    opacity: 1, restoreSession: false, shellIntegration: true, renderer: 'dom', composeBox: true,
     confirmMultilinePaste: false, programStatus: true, checkpointNudgePct: 20, projectBoard: true, projectListFile: '', boardWakeCommand: 'wake',
   };
   const answers = {

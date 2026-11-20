@@ -67,7 +67,7 @@ export class Tab {
   // and the bookmarks sidebar can place each pane of a split on its own.
   private _paneProjects = new Map<Pane, ProjectInfo | null>();
   private _broadcastInput = false;
-  // Compose-first in Claude Code tabs: the Settings value, and this tab's
+  // The compose box in Claude Code tabs: the Settings value, and this tab's
   // session-only override from the palette (null = follow the setting).
   private _composeFirstSetting = false;
   private _composeFirstOverride: boolean | null = null;
@@ -745,13 +745,13 @@ export class Tab {
     this.applyComposeFirst();
   }
 
-  /** Palette: flip compose-first for this tab only, until Patton quits. */
+  /** Palette: flip the compose box for this tab only, until Patton quits. */
   toggleComposeFirst(): void {
     const effective = this._composeFirstOverride ?? this._composeFirstSetting;
     const next = !effective;
     this._composeFirstOverride = next === this._composeFirstSetting ? null : next;
     this.applyComposeFirst();
-    this.showToast(`Compose-first ${next ? 'on' : 'off'} for this tab`);
+    this.showToast(`Compose box ${next ? 'on' : 'off'} for this tab`);
   }
 
   private applyComposeFirst(): void {

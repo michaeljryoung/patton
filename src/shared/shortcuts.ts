@@ -88,9 +88,9 @@ export const SHORTCUTS: Shortcut[] = [
 
   // ── Input & tools ──
   { id: 'toggle-compose', label: 'Toggle Compose Panel', accelerator: 'CmdOrCtrl+E', rendererOnly: true, palette: true },
-  // Session-only override of the compose-first setting for the active tab. No
+  // Session-only override of the compose box setting for the active tab. No
   // key: it's an escape hatch, reached from the palette.
-  { id: 'toggle-compose-first', label: 'Compose-first: toggle for this tab', palette: true },
+  { id: 'toggle-compose-first', label: 'Compose box: toggle for this tab', palette: true },
   // The tab strip's checkpoint clock does the same on a click; no key of its own.
   { id: 'checkpoint-session', label: 'Checkpoint this session', palette: true },
   { id: 'history-search', label: 'History Search', accelerator: 'Control+R', rendererOnly: true, palette: true },

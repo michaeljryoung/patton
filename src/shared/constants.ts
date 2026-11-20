@@ -169,8 +169,8 @@ export const DEFAULTS = {
   NOTIFICATION_SOUND: true,
   NOTIFICATION_SOUND_TYPE: 'chime' as const,
   STARTUP_COMMAND: '' as const,
-  // Compose-first in Claude Code tabs (Settings, per tab from the palette).
-  COMPOSE_FIRST: true,
+  // The compose box under Claude Code tabs (Settings, per tab from the palette).
+  COMPOSE_BOX: true,
   // Multi-line paste confirmation: off since Michael's dictation (pasted text)
   // tripped it on every message (2026-11-06).
   CONFIRM_MULTILINE_PASTE: false,

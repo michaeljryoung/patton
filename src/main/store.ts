@@ -91,7 +91,7 @@ const defaults: StoreSchema = {
     restoreSession: false,
     shellIntegration: true,
     renderer: DEFAULTS.RENDERER,
-    composeFirst: DEFAULTS.COMPOSE_FIRST,
+    composeBox: DEFAULTS.COMPOSE_BOX,
     confirmMultilinePaste: DEFAULTS.CONFIRM_MULTILINE_PASTE,
     programStatus: DEFAULTS.PROGRAM_STATUS,
     checkpointNudgePct: DEFAULTS.CHECKPOINT_NUDGE_PCT,
@@ -323,8 +323,8 @@ export function setSettings(partial: Partial<AppSettings>): void {
     validated.shellIntegration = !!partial.shellIntegration;
   }
 
-  if (partial.composeFirst !== undefined) {
-    validated.composeFirst = !!partial.composeFirst;
+  if (partial.composeBox !== undefined) {
+    validated.composeBox = !!partial.composeBox;
   }
 
   if (partial.renderer !== undefined) {
