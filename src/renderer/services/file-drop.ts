@@ -14,18 +14,23 @@ export function isFileDrag(dt: Pick<DataTransfer, 'types'> | null | undefined): 
   return Array.from(dt.types as ArrayLike<string>).includes('Files');
 }
 
-// Characters Terminal.app leaves bare: letters and digits of any script, and
-// these ASCII marks. Everything else (spaces, quotes, $ & ( ) ; * ? [ ] { } < > | ! # ` ^ and so on) gets a backslash.
-const SAFE_PATH_CHAR = /[\p{L}\p{N}_\-.,:/@%+=~]/u;
+// Characters Terminal.app leaves bare: letters and digits of any script, the
+// combining marks that build them (é as e + U+0301, as macOS stores names),
+// emoji with their skin tones, variation selector (U+FE0F, a mark) and
+// joiner (U+200D), and these ASCII marks. Everything else (spaces, quotes,
+// $ & ( ) ; * ? [ ] { } < > | ! # ` ^ and so on) gets a backslash.
+const SAFE_PATH_CHAR = /[\p{L}\p{N}\p{M}\p{Extended_Pictographic}\p{Emoji_Modifier}_\-.,:/@%+=~]/u;
+const ZERO_WIDTH_JOINER = '\u200D';
 
 /** One path, escaped as Terminal.app escapes a dropped file: a backslash
  *  before each space and shell special. Line breaks cannot be escaped (a
  *  backslash before one is a line continuation, and a bare one would run the
- *  line), so they are removed, as are the other control characters. */
+ *  line), so they are removed, as are tab, DEL and the other control
+ *  characters. */
 export function escapeDropPath(path: string): string {
-  const clean = stripPasteControls(path).replace(/[\r\n]/g, '');
+  const clean = stripPasteControls(path).replace(/[\r\n\t\x7f]/g, '');
   let out = '';
-  for (const ch of clean) out += SAFE_PATH_CHAR.test(ch) ? ch : '\\' + ch;
+  for (const ch of clean) out += ch === ZERO_WIDTH_JOINER || SAFE_PATH_CHAR.test(ch) ? ch : '\\' + ch;
   return out;
 }
 
