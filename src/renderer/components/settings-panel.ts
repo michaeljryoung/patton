@@ -128,6 +128,14 @@ export class SettingsPanel {
             <span class="settings-hint">Keeps a box open under Claude Code for writing your messages. It steps aside while Claude asks you something, and after a / command until Claude answers. In an empty box, Esc (which interrupts a running reply), Enter, Tab and the arrows go to Claude; with a draft, Esc hands the keyboard to Claude and keeps the draft.</span>
           </div>
           <div class="settings-group settings-group-toggle">
+            <label class="settings-label" for="setting-compose-over-bar">Lay the compose box over Claude Code's own input bar</label>
+            <label class="settings-toggle">
+              <input type="checkbox" id="setting-compose-over-bar" />
+              <span class="settings-toggle-slider"></span>
+            </label>
+            <span class="settings-hint">One typing bar: the box covers Claude Code's own input line while it is empty. It moves under the terminal while Claude's bar holds text or can't be found.</span>
+          </div>
+          <div class="settings-group settings-group-toggle">
             <label class="settings-label" for="setting-confirm-multiline-paste">Confirm multi-line pastes</label>
             <label class="settings-toggle">
               <input type="checkbox" id="setting-confirm-multiline-paste" />
@@ -292,6 +300,11 @@ export class SettingsPanel {
     const composeBoxInput = this.overlay.querySelector('#setting-compose-box') as HTMLInputElement;
     listen(composeBoxInput, 'change', () => {
       this.saveAndNotify({ composeBox: composeBoxInput.checked });
+    });
+
+    const composeOverBarInput = this.overlay.querySelector('#setting-compose-over-bar') as HTMLInputElement;
+    listen(composeOverBarInput, 'change', () => {
+      this.saveAndNotify({ composeOverBar: composeOverBarInput.checked });
     });
 
     const checkpointNudgeInput = this.overlay.querySelector('#setting-checkpoint-nudge') as HTMLInputElement;
@@ -484,6 +497,7 @@ export class SettingsPanel {
     (this.overlay.querySelector('#setting-notification-sound-type') as HTMLSelectElement).value = settings.notificationSoundType || 'chime';
     (this.overlay.querySelector('#setting-copy-on-select') as HTMLInputElement).checked = settings.copyOnSelect === true;
     (this.overlay.querySelector('#setting-compose-box') as HTMLInputElement).checked = settings.composeBox !== false;
+    (this.overlay.querySelector('#setting-compose-over-bar') as HTMLInputElement).checked = settings.composeOverBar !== false;
     (this.overlay.querySelector('#setting-confirm-multiline-paste') as HTMLInputElement).checked = settings.confirmMultilinePaste === true;
     (this.overlay.querySelector('#setting-program-status') as HTMLInputElement).checked = settings.programStatus !== false;
     (this.overlay.querySelector('#setting-checkpoint-nudge') as HTMLInputElement).value =

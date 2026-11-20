@@ -92,6 +92,7 @@ const defaults: StoreSchema = {
     shellIntegration: true,
     renderer: DEFAULTS.RENDERER,
     composeBox: DEFAULTS.COMPOSE_BOX,
+    composeOverBar: DEFAULTS.COMPOSE_OVER_BAR,
     confirmMultilinePaste: DEFAULTS.CONFIRM_MULTILINE_PASTE,
     programStatus: DEFAULTS.PROGRAM_STATUS,
     checkpointNudgePct: DEFAULTS.CHECKPOINT_NUDGE_PCT,
@@ -325,6 +326,10 @@ export function setSettings(partial: Partial<AppSettings>): void {
 
   if (partial.composeBox !== undefined) {
     validated.composeBox = !!partial.composeBox;
+  }
+
+  if (partial.composeOverBar !== undefined) {
+    validated.composeOverBar = !!partial.composeOverBar;
   }
 
   if (partial.renderer !== undefined) {

@@ -34,6 +34,11 @@ import {
   composeAsideReason, composeKeyboardWaitMs, composeBackTakesKeyboard, composeBlockedFact, isMenuLine,
   type ComposeAsideReason,
 } from '../services/compose-aside';
+import { readClaudeBar, type BarMissReason } from '../services/claude-bar';
+import {
+  COMPOSE_BAR_LOST_MS, COMPOSE_BAR_NOT_FOUND_LOG_MS, COMPOSE_OVERLAY_MAX_FRACTION, barRowsInView, placementForReading,
+  type ComposePlacement, type ComposePlacementReason,
+} from '../services/compose-placement';
 
 /** Background work a parked Claude Code session is waiting on: from the Stop
  *  hook (tasks + crons), or from OSC 7501 child records (tasks + their titles,
@@ -296,6 +301,31 @@ export class Pane {
   private static readonly COMPOSE_FIRST_MAX_FRACTION = 0.4; // of the pane's height
   private static readonly COMPOSE_FIRST_MIN_PX = 60;
   private static readonly COMPOSE_DEFAULT_MAX_PX = 200;
+  private static readonly COMPOSE_OVERLAY_CHROME_PX = 8; // editor.css: the overlay's padding and rules
+
+  // --- One typing bar (docs/compose-box.md D8–D10, D12) ---
+  // The box over Claude Code's own input bar ('over'), on the terminal's
+  // bottom edge when scrolled up ('dock'), or under the terminal ('under').
+  // Shown as the pane's data-compose-placement and the box's
+  // placement-over / placement-dock classes (services/compose-placement.ts).
+  private composeOverBarSetting = true;
+  private composePlacement: ComposePlacement = 'under';
+  // The last reading that found Claude's bar empty: its absolute row and when.
+  private barRow = -1;
+  private barLastMatchMs: number | null = null;
+  // The reason a lost bar logs: 'aside-end' while the 400 ms after an aside
+  // runs (D10), otherwise 'lost'.
+  private barLostReason: 'lost' | 'aside-end' = 'lost';
+  private barLastMissWhy: BarMissReason = 'no-glyph';
+  private barNotFoundLoggedMs = 0;
+  private barLostTimer: ReturnType<typeof setTimeout> | null = null;
+  private barReadFrame: number | null = null;
+  private barViewportY = -1;
+  // Placement frozen (D10): from Claude's first `blocked` report (the live
+  // fact) and through any aside. Kept in step by syncComposeFreeze().
+  private composePlacementFrozen = false;
+  // Fractional wheel scroll carried over the box (D12), in lines.
+  private composeWheelLines = 0;
 
   // claudeActive and ptyExited decide whether the Okay? row shows, so every
   // change goes through these setters and none can miss syncOkayRow().
@@ -1263,6 +1293,8 @@ export class Pane {
     this.editorContainer.addEventListener('mousedown', editorMouseDown, true);
     this.disposables.push(() => this.editorContainer.removeEventListener('mousedown', editorMouseDown, true));
 
+    this.wireComposePlacement();
+
     // Create search overlay
     this.searchOverlay = new SearchOverlay(
       this.terminalContainer,
@@ -1578,10 +1610,20 @@ export class Pane {
         }
         // The box's cap is a share of the pane's height, so follow resizes.
         if (this.composeFirstEngaged) this.editorInput.refreshSize();
+        this.layoutComposeOverlay();
+        this.scheduleBarReading();
       }, 100);
     });
     resizeObserver.observe(this.terminalContainer);
     this.disposables.push(() => resizeObserver.disconnect());
+
+    // In the overlays the paste strip sits on the box's top edge, which moves
+    // as the box grows upward (D12). Not debounced, unlike the terminal's fit
+    // above: this only writes one style, and a lag would leave the strip over
+    // the box. Here in init(), not the constructor, as the terminal's observer.
+    const boxResize = new ResizeObserver(() => this.placePasteStrip());
+    boxResize.observe(this.editorContainer);
+    this.disposables.push(() => boxResize.disconnect());
 
     // Security: intercept paste to sanitize and warn on multi-line.
     // xterm registers its own paste listeners on its textarea and .xterm and
@@ -2045,6 +2087,19 @@ export class Pane {
     this.syncComposeFirst('mode-change');
   }
 
+  /** Settings: lay the box over Claude Code's own bar (D12). Off: `under`. */
+  setComposeOverBar(enabled: boolean): void {
+    if (enabled === this.composeOverBarSetting) return;
+    this.composeOverBarSetting = enabled;
+    rlog('info', '[COMPOSE] over-bar setting', { pane: this.id, enabled });
+    if (!enabled) {
+      this.clearBarLostTimer();
+      this.setComposePlacement('under', 'setting');
+    } else {
+      this.scheduleBarReading();
+    }
+  }
+
   /** Open or close the compose-first box to match the mode and Claude's presence. */
   private syncComposeFirst(reason: string): void {
     // A dismissal (⌘E) lasts until Claude leaves or the mode changes.
@@ -2094,14 +2149,16 @@ export class Pane {
       menuPending: this.composeMenuPending,
       current: this.composeAside,
     });
-    if (next === this.composeAside) return;
-    if (next === null) {
-      const reason = !this.composeFirstEngaged ? 'disengage'
-        : this.composeAside === 'blocked' ? 'unblocked' : trigger;
-      this.composeBack(reason);
-    } else {
-      this.composeStepAside(next, fact.kind);
+    if (next !== this.composeAside) {
+      if (next === null) {
+        const reason = !this.composeFirstEngaged ? 'disengage'
+          : this.composeAside === 'blocked' ? 'unblocked' : trigger;
+        this.composeBack(reason);
+      } else {
+        this.composeStepAside(next, fact.kind);
+      }
     }
+    this.syncComposeFreeze();
   }
 
   private clearComposeBlockedTimer(): void {
@@ -2209,6 +2266,249 @@ export class Pane {
     this.editorInput.focus();
   }
 
+  // --- One typing bar: placement (docs/compose-box.md D8–D10, D12) ---
+
+  /** Readings of Claude's bar after xterm has parsed a write, on scroll and
+   *  on resize (at most once per animation frame); the box keeps its overlay
+   *  geometry and the paste strip in step; a wheel over the box scrolls the
+   *  terminal. Called once from the constructor. */
+  private wireComposePlacement(): void {
+    this.element.dataset.composePlacement = this.composePlacement;
+    const term = this.terminalView.terminal;
+    const subs = [
+      term.onWriteParsed(() => this.scheduleBarReading()),
+      term.onScroll(() => this.scheduleBarReading()),
+      term.onResize(() => this.scheduleBarReading()),
+      // A scroll of the viewport alone (wheel, scrollbar) is caught here too,
+      // in case onScroll doesn't report it: only a changed viewportY reads.
+      term.onRender(() => {
+        if (this.composePlacement === 'under' && this.barLastMatchMs === null) return;
+        const y = term.buffer.active.viewportY;
+        if (y === this.barViewportY) return;
+        this.barViewportY = y;
+        this.scheduleBarReading();
+      }),
+    ];
+    this.disposables.push(() => { for (const d of subs) d.dispose(); });
+
+    // The keyboard back in the box (after a hand-off): placement is worked
+    // out again (D9).
+    const editorFocusIn = () => this.scheduleBarReading();
+    this.editorContainer.addEventListener('focusin', editorFocusIn);
+    this.disposables.push(() => this.editorContainer.removeEventListener('focusin', editorFocusIn));
+
+    // D12: a wheel over the box, outside a textarea that can still scroll
+    // that way, scrolls the terminal. On the box's own element, not the
+    // terminal's DOM (docs/reference/xterm-internals.md).
+    const boxWheel = (e: WheelEvent) => {
+      if (this.composePlacement === 'under' || e.deltaY === 0) return;
+      const ta = (e.target as Element | null)?.closest?.('textarea');
+      if (ta) {
+        const canScroll = e.deltaY < 0 ? ta.scrollTop > 0 : ta.scrollTop + ta.clientHeight < ta.scrollHeight;
+        if (canScroll) return;
+      }
+      e.preventDefault();
+      const cellH = this.terminalCellHeight();
+      const lines = e.deltaMode === WheelEvent.DOM_DELTA_LINE ? e.deltaY
+        : e.deltaMode === WheelEvent.DOM_DELTA_PAGE ? e.deltaY * this.terminalView.terminal.rows
+          : cellH > 0 ? e.deltaY / cellH : 0;
+      this.composeWheelLines += lines;
+      const whole = Math.trunc(this.composeWheelLines);
+      if (whole === 0) return;
+      this.composeWheelLines -= whole;
+      this.terminalView.terminal.scrollLines(whole);
+    };
+    this.editorContainer.addEventListener('wheel', boxWheel, { passive: false });
+    this.disposables.push(() => this.editorContainer.removeEventListener('wheel', boxWheel));
+  }
+
+  /** Read Claude's bar at the next animation frame (one reading per frame). */
+  private scheduleBarReading(): void {
+    if (this.disposed || this.barReadFrame !== null || !this.barReadingsWanted()) return;
+    this.barReadFrame = requestAnimationFrame(() => {
+      this.barReadFrame = null;
+      this.takeBarReading();
+    });
+  }
+
+  /** Readings are taken only while they can move the box. */
+  private barReadingsWanted(): boolean {
+    return this.composeFirstEngaged && this.composeOverBarSetting && !this.composePlacementFrozen
+      && !this.composeHandedOff;
+  }
+
+  private takeBarReading(): void {
+    if (this.disposed || !this.barReadingsWanted()) return;
+    const buffer = this.terminalView.terminal.buffer.active;
+    const reading = readClaudeBar(buffer);
+    this.barViewportY = buffer.viewportY;
+    const inView = reading.found && barRowsInView(reading.row, buffer.viewportY, this.terminalView.terminal.rows);
+    const step = placementForReading({
+      overSetting: this.composeOverBarSetting,
+      handedOff: this.composeHandedOff,
+      reading,
+      inView,
+      current: this.composePlacement,
+    });
+    if (step === null) {
+      if ('why' in reading) this.noteBarMiss(reading.why);
+      return;
+    }
+    if (reading.found && reading.empty) {
+      this.barRow = reading.row;
+      this.barLastMatchMs = Date.now();
+      this.barLostReason = 'lost';
+      this.clearBarLostTimer();
+    }
+    this.setComposePlacement(step.placement, step.reason);
+    this.layoutComposeOverlay();
+  }
+
+  /** A reading that didn't match: keep the last good position; the bar is
+   *  lost (the box goes under) once nothing has matched for 400 ms. */
+  private noteBarMiss(why: BarMissReason): void {
+    this.barLastMissWhy = why;
+    const since = this.barLastMatchMs === null ? Infinity : Date.now() - this.barLastMatchMs;
+    if (since >= COMPOSE_BAR_LOST_MS) {
+      this.barLost();
+      return;
+    }
+    if (this.barLostTimer === null) {
+      this.barLostTimer = setTimeout(() => {
+        this.barLostTimer = null;
+        if (this.disposed || !this.barReadingsWanted()) return;
+        const quiet = this.barLastMatchMs === null ? Infinity : Date.now() - this.barLastMatchMs;
+        if (quiet >= COMPOSE_BAR_LOST_MS) this.barLost();
+      }, COMPOSE_BAR_LOST_MS - since);
+    }
+  }
+
+  /** No match for 400 ms: under. A bar lost from the overlays (not one never
+   *  found, as before Claude has drawn it) logs `[COMPOSE] bar not found`,
+   *  at most once a minute per pane. */
+  private barLost(): void {
+    if (this.composePlacement === 'under') return;
+    const now = Date.now();
+    if (now - this.barNotFoundLoggedMs >= COMPOSE_BAR_NOT_FOUND_LOG_MS) {
+      this.barNotFoundLoggedMs = now;
+      rlog('info', '[COMPOSE] bar not found', { pane: this.id, why: this.barLastMissWhy });
+    }
+    this.setComposePlacement('under', this.barLostReason);
+  }
+
+  private clearBarLostTimer(): void {
+    if (this.barLostTimer !== null) {
+      clearTimeout(this.barLostTimer);
+      this.barLostTimer = null;
+    }
+  }
+
+  /** Move the box. The terminal resizes only on a change between `under` and
+   *  the overlays (in the overlays it takes the pane's whole height). */
+  private setComposePlacement(next: ComposePlacement, reason: ComposePlacementReason): void {
+    if (next === this.composePlacement) return;
+    const from = this.composePlacement;
+    this.composePlacement = next;
+    rlog('info', '[COMPOSE] place', { pane: this.id, placement: next, from, reason });
+    this.element.dataset.composePlacement = next;
+    for (const el of [this.editorContainer, this.pasteStrip]) {
+      el.classList.toggle('placement-over', next === 'over');
+      el.classList.toggle('placement-dock', next === 'dock');
+    }
+    if (next === 'under') this.clearComposeOverlayStyle();
+    else this.layoutComposeOverlay();
+    if ((from === 'under') !== (next === 'under')) this.refitTerminal();
+    this.editorInput.refreshSize(); // the height cap differs between under and the overlays
+  }
+
+  /** xterm's cell height in CSS px: the render service sets `.xterm-screen`'s
+   *  CSS height to rows × the cell height (dimensions.css.canvas.height), for
+   *  the DOM and WebGL renderers alike. 0 while the pane isn't laid out. */
+  private terminalCellHeight(): number {
+    const screen = this.terminalScreen();
+    const rows = this.terminalView.terminal.rows;
+    if (!screen || !rows) return 0;
+    return screen.getBoundingClientRect().height / rows;
+  }
+
+  private terminalScreen(): HTMLElement | null {
+    const root = this.terminalView.terminal.element;
+    const screen = root instanceof HTMLElement ? root.querySelector('.xterm-screen') : null;
+    return screen instanceof HTMLElement ? screen : null;
+  }
+
+  /** Lay the overlay on xterm's grid: left and right on the grid's edges,
+   *  its bottom on the bottom of row R+1 ('over') or of the last row ('dock'),
+   *  three rows tall at least, growing upward to a third of the pane. */
+  private layoutComposeOverlay(): void {
+    if (this.composePlacement === 'under') return;
+    const screen = this.terminalScreen();
+    const rows = this.terminalView.terminal.rows;
+    if (!screen || !rows) return;
+    const sr = screen.getBoundingClientRect();
+    const pr = this.element.getBoundingClientRect();
+    const cellH = sr.height / rows;
+    if (cellH <= 0 || pr.height <= 0) return; // hidden tab: show() lays it out again
+    const viewportY = this.terminalView.terminal.buffer.active.viewportY;
+    const lastRow = this.composePlacement === 'over' ? this.barRow + 1 - viewportY : rows - 1;
+    const bottomEdge = sr.top - pr.top + (lastRow + 1) * cellH;
+    const st = this.editorContainer.style;
+    st.left = `${sr.left - pr.left}px`;
+    st.width = `${sr.width}px`;
+    st.bottom = `${pr.height - bottomEdge}px`;
+    st.minHeight = `${3 * cellH}px`;
+    st.maxHeight = `${Math.floor(pr.height * COMPOSE_OVERLAY_MAX_FRACTION)}px`;
+    // Opaque in the terminal's own background (terminal-view.ts sets
+    // --term-bg on the terminal's container, not on the pane).
+    const termBg = this.terminalContainer.style.getPropertyValue('--term-bg');
+    if (termBg) st.setProperty('--term-bg', termBg);
+    else st.removeProperty('--term-bg');
+    this.placePasteStrip();
+  }
+
+  /** In the overlays the paste strip sits on the box's top edge (D12). */
+  private placePasteStrip(): void {
+    const st = this.pasteStrip.style;
+    if (this.composePlacement === 'under') {
+      st.left = st.width = st.bottom = '';
+      return;
+    }
+    const box = this.editorContainer.style;
+    st.left = box.left;
+    st.width = box.width;
+    st.bottom = `${(parseFloat(box.bottom) || 0) + this.editorContainer.offsetHeight}px`;
+  }
+
+  private clearComposeOverlayStyle(): void {
+    const st = this.editorContainer.style;
+    st.left = st.width = st.bottom = st.minHeight = st.maxHeight = '';
+    st.removeProperty('--term-bg');
+    this.placePasteStrip();
+  }
+
+  /** D10: placement freezes from Claude's first `blocked` report (the live
+   *  fact, before the 250 ms hold) and through any aside; when that ends the
+   *  box is where it was and readings resume, `under` if the bar isn't found
+   *  within 400 ms. Called after every aside sync and on disengage. */
+  private syncComposeFreeze(): void {
+    const frozen = this.composeFirstEngaged && (this.composeAside !== null || this.claudeAsksNow());
+    if (frozen === this.composePlacementFrozen) return;
+    this.composePlacementFrozen = frozen;
+    if (frozen) {
+      this.clearBarLostTimer();
+      if (this.barReadFrame !== null) {
+        cancelAnimationFrame(this.barReadFrame);
+        this.barReadFrame = null;
+      }
+      return;
+    }
+    if (this.composePlacement !== 'under') {
+      this.barLastMatchMs = Date.now();
+      this.barLostReason = 'aside-end';
+    }
+    this.scheduleBarReading();
+  }
+
   /** ⌘C in a box with nothing selected: this pane's terminal selection. */
   private terminalCopyFallback(): string {
     const sel = this.terminalView.terminal.getSelection();
@@ -2225,6 +2525,7 @@ export class Pane {
     this.editorInput.setSpellcheck(true); // messages to Claude are prose
     this.editorInput.refreshSize();
     rlog('info', '[COMPOSE] engage', { pane: this.id, reason });
+    this.scheduleBarReading();
     // Opened during a question or menu: aside from the start (D2, D3), and
     // the keyboard is not the box's to take.
     this.syncComposeAside(reason);
@@ -2251,6 +2552,10 @@ export class Pane {
     this.editorInput.setSpellcheck(false);
     this.editorInput.refreshSize();
     rlog('info', '[COMPOSE] disengage', { pane: this.id, reason });
+    // Closed, the box starts again from `under` until a reading matches.
+    this.setComposePlacement('under', 'disengage');
+    this.barLastMatchMs = null;
+    this.clearBarLostTimer();
     if (hadFocus) this.terminalView.focus();
   }
 
@@ -2260,6 +2565,9 @@ export class Pane {
       this.composeHandedOff = true;
       rlog('info', '[COMPOSE] handoff', { pane: this.id, key, route: 'focus' });
     }
+    // D9: handed off, the box goes under so he sees Claude's bar too; the
+    // focusin of its return reads the bar again.
+    this.setComposePlacement('under', 'handoff');
     if (key === 'Escape') this.terminalView.focus(); // a click focuses xterm itself
   }
 
@@ -2319,6 +2627,12 @@ export class Pane {
 
   private composeMaxHeight(): number {
     if (!this.composeFirstEngaged) return Pane.COMPOSE_DEFAULT_MAX_PX;
+    if (this.composePlacement !== 'under') {
+      // The overlay grows upward to a third of the pane (D9); the textarea
+      // leaves room for the overlay's own padding and rules.
+      const third = Math.floor(this.element.clientHeight * COMPOSE_OVERLAY_MAX_FRACTION) - Pane.COMPOSE_OVERLAY_CHROME_PX;
+      return Math.max(Pane.COMPOSE_FIRST_MIN_PX, third);
+    }
     const share = Math.floor(this.element.clientHeight * Pane.COMPOSE_FIRST_MAX_FRACTION);
     return Math.max(Pane.COMPOSE_FIRST_MIN_PX, share);
   }
@@ -2398,6 +2712,8 @@ export class Pane {
     this.terminalView.fit();
     // Always: a resize skipped while the tab was hidden (display:none) is redone here.
     this.editorInput.refreshSize();
+    this.layoutComposeOverlay();
+    this.scheduleBarReading();
   }
 
   hide(): void {
@@ -2542,6 +2858,8 @@ export class Pane {
     if (this.resizeTimer) clearTimeout(this.resizeTimer);
     this.clearComposeBlockedTimer();
     this.clearComposeKeyboardTimer();
+    this.clearBarLostTimer();
+    if (this.barReadFrame !== null) cancelAnimationFrame(this.barReadFrame);
     this.clearPasteChips();
     this.okayRow.dispose();
     for (const d of this.disposables) d();

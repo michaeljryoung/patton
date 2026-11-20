@@ -171,6 +171,8 @@ export const DEFAULTS = {
   STARTUP_COMMAND: '' as const,
   // The compose box under Claude Code tabs (Settings, per tab from the palette).
   COMPOSE_BOX: true,
+  // The box laid over Claude Code's own input bar (docs/compose-box.md D9, D12).
+  COMPOSE_OVER_BAR: true,
   // Multi-line paste confirmation: off since Michael's dictation (pasted text)
   // tripped it on every message (2026-11-06).
   CONFIRM_MULTILINE_PASTE: false,

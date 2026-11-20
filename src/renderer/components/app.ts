@@ -97,6 +97,9 @@ export class App {
       if (settings.composeBox !== undefined) {
         this.tabManager.setComposeFirst(settings.composeBox);
       }
+      if (settings.composeOverBar !== undefined) {
+        this.tabManager.setComposeOverBar(settings.composeOverBar);
+      }
       if (settings.confirmMultilinePaste !== undefined) {
         setConfirmMultilinePaste(settings.confirmMultilinePaste);
       }
@@ -211,6 +214,7 @@ export class App {
     }
     this.tabManager.setCopyOnSelect(settings.copyOnSelect === true);
     this.tabManager.setComposeFirst(settings.composeBox !== false);
+    this.tabManager.setComposeOverBar(settings.composeOverBar !== false);
     setConfirmMultilinePaste(settings.confirmMultilinePaste === true);
     setProgramStatusEnabled(settings.programStatus !== false);
     rlog('info', '[SETTINGS] programStatus at startup', { enabled: settings.programStatus !== false });

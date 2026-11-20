@@ -148,6 +148,46 @@
   background: transparent;
 }
 
+/* One typing bar (docs/compose-box.md D9): the box laid over Claude Code's own
+   input bar ('over') or on the terminal's bottom edge when scrolled up ('dock').
+   Out of the flow, so the terminal takes the pane's whole height. Pane's
+   layoutComposeOverlay() sets left, width, bottom, min-height (three terminal
+   rows) and max-height (a third of the pane) from xterm's cell grid; the box
+   grows upward from that bottom edge. Opaque in the terminal's background
+   (--term-bg, copied from the terminal's container), above xterm's own layers
+   (z-index up to 11) and below the search overlay (100). The padding and the
+   dock's rule are the chrome Pane.COMPOSE_OVERLAY_CHROME_PX leaves room for. */
+.editor-container.compose-first.placement-over,
+.editor-container.compose-first.placement-dock {
+  position: absolute;
+  z-index: 30;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 2px 12px;
+  border-top: none;
+  background: var(--term-bg, var(--bg));
+}
+
+.editor-container.compose-first.placement-dock {
+  border-top: 1px solid var(--hairline);
+}
+
+/* In the overlays the paste strip sits on the box's top edge (D12); Pane's
+   placePasteStrip() sets left, width and bottom. */
+.paste-strip.placement-over,
+.paste-strip.placement-dock {
+  position: absolute;
+  z-index: 30;
+  box-sizing: border-box;
+}
+
+.paste-strip.placement-over:not([hidden]) + .editor-container.placement-over,
+.paste-strip.placement-dock:not([hidden]) + .editor-container.placement-dock {
+  padding-top: 2px;
+}
+
 /* The compose box stepped aside (Claude asks something, or a / command may
    show a menu): box dimmed, the draft kept, and a short label in Send's place
    (EditorInput.setAside). No row is added, so the container's height and the

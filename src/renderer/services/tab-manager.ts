@@ -59,6 +59,7 @@ export class TabManager {
   private static readonly MAX_CLOSED = 10;
   private currentCopyOnSelect = false;
   private currentComposeFirst: boolean = DEFAULTS.COMPOSE_BOX;
+  private currentComposeOverBar: boolean = DEFAULTS.COMPOSE_OVER_BAR;
   private currentTerminalTheme: ITheme | null = null;
   private currentRenderer: RendererMode = 'webgl';
   private onTabsChanged: (() => void) | null = null; // bookmarks sidebar
@@ -241,6 +242,14 @@ export class TabManager {
     }
   }
 
+  /** The compose box over Claude Code's own bar (D12): every open pane at once. */
+  setComposeOverBar(enabled: boolean): void {
+    this.currentComposeOverBar = enabled;
+    for (const tab of this.tabs) {
+      tab.setComposeOverBar(enabled);
+    }
+  }
+
   setTerminalTheme(theme: ITheme | null): void {
     this.currentTerminalTheme = theme;
     for (const tab of this.tabs) {
@@ -292,6 +301,7 @@ export class TabManager {
       tab.setCopyOnSelect(this.currentCopyOnSelect);
     }
     tab.setComposeFirst(this.currentComposeFirst);
+    tab.setComposeOverBar(this.currentComposeOverBar);
     if (this.currentTerminalTheme) {
       tab.setTerminalTheme(this.currentTerminalTheme);
     }
@@ -1397,6 +1407,7 @@ export class TabManager {
             tab.setCopyOnSelect(this.currentCopyOnSelect);
           }
           tab.setComposeFirst(this.currentComposeFirst);
+          tab.setComposeOverBar(this.currentComposeOverBar);
           if (this.currentTerminalTheme) {
             tab.setTerminalTheme(this.currentTerminalTheme);
           }

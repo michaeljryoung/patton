@@ -71,6 +71,7 @@ export class Tab {
   // session-only override from the palette (null = follow the setting).
   private _composeFirstSetting = false;
   private _composeFirstOverride: boolean | null = null;
+  private _composeOverBar: boolean = DEFAULTS.COMPOSE_OVER_BAR;
   // The window's terminal settings, kept here so a pane made later (a split)
   // gets them too, not only the panes open when they were set. Unset = the
   // terminal's own defaults.
@@ -254,6 +255,7 @@ export class Tab {
       },
     });
     pane.setComposeFirst(this._composeFirstSetting, this._composeFirstOverride);
+    pane.setComposeOverBar(this._composeOverBar);
     if (this._fontSize !== undefined) pane.setFontSize(this._fontSize);
     if (this._fontFamily !== undefined) pane.setFontFamily(this._fontFamily);
     if (this._scrollback !== undefined) pane.setScrollback(this._scrollback);
@@ -761,6 +763,12 @@ export class Tab {
     this._composeFirstOverride = next === this._composeFirstSetting ? null : next;
     this.applyComposeFirst();
     this.showToast(`Compose box ${next ? 'on' : 'off'} for this tab`);
+  }
+
+  /** Settings: lay the compose box over Claude Code's own bar (D12). */
+  setComposeOverBar(enabled: boolean): void {
+    this._composeOverBar = enabled;
+    for (const pane of this._panes) pane.setComposeOverBar(enabled);
   }
 
   private applyComposeFirst(): void {

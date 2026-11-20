@@ -65,6 +65,11 @@ export interface AppSettings {
    *  in settings saved before it existed, so read it as `!== false` (on by
    *  default). */
   composeBox: boolean;
+  /** Lay the compose box over Claude Code's own input bar, found from the
+   *  screen (docs/compose-box.md D9, D12); off keeps it under the terminal.
+   *  Absent in settings saved before it existed, so read it as `!== false`
+   *  (on by default). */
+  composeOverBar: boolean;
   /** Ask before pasting 3+ lines into the terminal. Absent in settings saved
    *  before it existed, so read it as `=== true` (off by default). */
   confirmMultilinePaste: boolean;
