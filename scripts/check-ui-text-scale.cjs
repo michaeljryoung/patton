@@ -257,6 +257,7 @@ async function pageRun(BIG) {
     { id: 'b1', kind: 'project', label: 'Alpha project', path: '/tmp/pb/alpha', displayPath: '~/pb/alpha', addedAt: NOW },
     { id: 'b2', kind: 'project', label: 'Beta project with a longer name', path: '/tmp/pb/beta', displayPath: '~/pb/beta', addedAt: NOW },
     { id: 'b3', kind: 'artifact', label: 'A shared page', url: 'https://example.com/page', addedAt: NOW },
+    { id: 'b4', kind: 'project', label: 'Alpha project', path: '/tmp/other/alpha', displayPath: '~/other/alpha', addedAt: NOW },
   ];
   const settings = {
     fontSize: 14, fontFamily: "'Menlo', monospace", scrollback: 10000, shell: '/bin/zsh', notificationSound: true,
@@ -547,6 +548,26 @@ async function pageRun(BIG) {
 
   const logged = calls.filter((c) => c.name === 'log.send' && String(c.args[1][0]).startsWith('[SETTINGS] uiTextScale'));
   check('each change is logged with rlog ([SETTINGS] uiTextScale <n>)', logged.length >= 3 && logged.some((c) => c.args[1][0] === '[SETTINGS] uiTextScale 1.5'), logged.map((c) => c.args[1][0]));
+
+  // --- bookmarks rows: the name alone (no file path), the full path or address in the tooltip, a twin's parent folder as its one extra line
+  {
+    const rowOf = (id) => document.querySelector(`.bookmark-row[data-bookmark-id="${id}"]`);
+    const textOf = (id) => [...rowOf(id).querySelectorAll('.bookmark-label, .bookmark-subtitle')].map((e) => e.textContent);
+    check('a uniquely named project row shows its name alone', JSON.stringify(textOf('b2')) === JSON.stringify(['Beta project with a longer name']), textOf('b2'));
+    check('an artifact row shows its name alone (no host line)', JSON.stringify(textOf('b3')) === JSON.stringify(['A shared page']), textOf('b3'));
+    check('two projects of one name differ by parent folder', JSON.stringify(textOf('b1')) === JSON.stringify(['Alpha project', 'pb']) && JSON.stringify(textOf('b4')) === JSON.stringify(['Alpha project', 'other']), [textOf('b1'), textOf('b4')]);
+    check('no bookmark row shows a path', [...document.querySelectorAll('.bookmark-row')].every((r) => !r.textContent.includes('/') && !r.textContent.includes('~')), [...document.querySelectorAll('.bookmark-row')].map((r) => r.textContent));
+    check('the tooltip holds the full path or address', rowOf('b2').title.includes('/tmp/pb/beta') && rowOf('b3').title.includes('https://example.com/page'), [rowOf('b2').title, rowOf('b3').title]);
+    check('the accessible name holds it too', rowOf('b2').getAttribute('aria-label').includes('~/pb/beta') && rowOf('b3').getAttribute('aria-label').includes('https://example.com/page'), [rowOf('b2').getAttribute('aria-label'), rowOf('b3').getAttribute('aria-label')]);
+    for (const s of [1, BIG]) {
+      await setScale(s);
+      const ids = ['b1', 'b2', 'b3', 'b4'];
+      const rows = ids.map((id) => rowOf(id));
+      const heights = rows.map((r) => Math.round(r.getBoundingClientRect().height));
+      check(`bookmark rows are one height whether or not they have a second line, at x${s}`, new Set(heights).size === 1, heights);
+      check(`every bookmark row's text fits its row at x${s}`, rows.every((r) => r.scrollHeight <= r.clientHeight + 1), rows.map((r) => [r.scrollHeight, r.clientHeight]));
+    }
+  }
 
   // --- bookmarks rail: the collapsed sidebar's mark sits level with the header row it stood in
   const hdr = document.querySelector('.bookmarks-header');

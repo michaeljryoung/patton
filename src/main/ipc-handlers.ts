@@ -23,25 +23,14 @@ import { UnsentInputTracker } from './unsent-input';
 import { readStashKeyVerdict } from './stash-key';
 import { broadcastUiTextScale, isOnlyWindow } from './window-manager';
 import { decideFileOpen, extensionOf, parseLinkPath, type OpenDecision } from './link-open-policy';
+import { openWebUrl, parseWebUrl } from './web-open';
 import { annotateBookmarks, validateBookmarks } from './bookmarks'; // bookmarks sidebar
 import { AdditionLog, addProject, loadBoard, saveLayout, type BoardSources } from './project-board';
 import type { BoardPayload, PtyCreateOptions, RenderSnapshot, SessionState } from '../shared/types';
 
-/** Open an http(s) URL in the default browser. Anything else — other schemes
- *  can launch local apps — is refused and returns false. */
-function openWebUrl(url: unknown): boolean {
-  if (typeof url !== 'string' || url.length > 2048) return false;
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    return false; // not a URL
-  }
-  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
-  // The normalised form (punycode host, `\` read as `/`) is what the hover
-  // shows and what we open; the raw string could be read differently.
-  shell.openExternal(parsed.href).catch(() => {});
-  return true;
+/** Hand an http(s) URL to the default browser; resolves true once handed over, false when refused or failed (both logged: web-open.ts). */
+function openWebUrlNow(url: unknown): Promise<boolean> {
+  return openWebUrl(url, (href) => shell.openExternal(href), console);
 }
 
 // --- File links: validate, resolve, decide (decision rules: link-open-policy.ts) ---
@@ -621,7 +610,8 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
       // A web address printed without its scheme ("civitai.com") arrives as a
       // cwd-relative path that doesn't exist. The renderer offers the address
       // it looks like; use it only when there really is no such file.
-      if (typeof webFallback === 'string' && openWebUrl(webFallback)) {
+      if (typeof webFallback === 'string' && parseWebUrl(webFallback) !== null) {
+        void openWebUrlNow(webFallback);
         console.info('[LINK] No such file, opened as a web address', { url: webFallback });
       } else {
         console.info('[LINK] No such file', { path: pathForLog(plan.path) });
@@ -805,9 +795,7 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
   });
 
   // --- Open external URL (for terminal link clicks) ---
-  ipcMain.handle(IPC.APP_OPEN_EXTERNAL, (_event, url: string) => {
-    openWebUrl(url);
-  });
+  ipcMain.handle(IPC.APP_OPEN_EXTERNAL, (_event, url: string) => openWebUrlNow(url));
 
   // --- System fonts: SF Mono from the Mac's own Terminal.app (fixed paths, read once) ---
   ipcMain.handle(IPC.FONTS_GET_SYSTEM, () => getSystemFonts());

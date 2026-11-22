@@ -425,7 +425,8 @@ export interface PattonAPI {
   };
   notify: (title: string, body: string, tabId: string) => void;
   setOpacity: (opacity: number) => void;
-  openExternal: (url: string) => Promise<void>;
+  /** Hand a web address to the default browser: true once handed over, false when main refused it or the hand-off failed (main.log says which). */
+  openExternal: (url: string) => Promise<boolean>;
   /** This Mac's host name, to tell `file://<hostname>/…` links from remote ones. */
   getHostname: () => Promise<string>;
   moveWindowBy: (dx: number, dy: number) => void;
