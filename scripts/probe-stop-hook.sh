@@ -14,6 +14,8 @@ expect_seq() { # name, tasks, crons, json
 check() { # name, wanted stdout, json
   local got
   got=$(printf '%s' "$3" | PATTON_HOOK_PARSER="$PARSER" "$HOOK"); rc=$?
+  # The tp, tl and cl fields have cases of their own below; here they are cut off.
+  got=$(printf '%s' "$got" | sed -E 's#;(tp|tl|cl)=[A-Za-z0-9+/=]*##g')
   if [ "$got" = "$2" ] && [ $rc -eq 0 ]; then
     echo "ok   [$PARSER] $1"
   else
@@ -43,6 +45,88 @@ for PARSER in jq osascript; do
   check "neither field: prints nothing" "" "{$COMMON}"
   check "malformed JSON: prints nothing" "" "{not json"
 done
+
+# The lists (tp, tl, cl): decoded and compared as text, through both parsers.
+seq_of() { printf '%s' "$1" | PATTON_HOOK_PARSER="$PARSER" "$HOOK" | /usr/bin/jq -r '.terminalSequence // empty' 2>/dev/null; }
+field() { # sequence, key -> the decoded field, or "<absent>"
+  local v
+  v=$(printf '%s' "$1" | sed -nE "s#.*;$2=([A-Za-z0-9+/=]*).*#\\1#p")
+  if [ -z "$v" ]; then printf '<absent>'; else printf '%s' "$v" | /usr/bin/base64 -d 2>/dev/null; fi
+}
+expect_field() { # name, sequence, key, wanted decoded text
+  local got; got=$(field "$2" "$3")
+  if [ "$got" = "$4" ]; then echo "ok   [$PARSER] $1"; else echo "FAIL [$PARSER] $1: got <$got> want <$4>"; fail=1; fi
+}
+expect_true() { # name, condition result (0 = true), detail
+  if [ "$2" -eq 0 ]; then echo "ok   [$PARSER] $1"; else echo "FAIL [$PARSER] $1: $3"; fail=1; fi
+}
+tasks_json() { # N running tasks with long unicode descriptions
+  /usr/bin/jq -c -n --argjson n "$1" '{session_id:"s",transcript_path:"/x",cwd:"/x",hook_event_name:"Stop",
+    background_tasks:[range($n) | {id:("task-" + tostring), type:"subagent", status:"running",
+      description:("naïve résumé 😀 " + ("long description " * 8)), agent_type:"builder"}], session_crons:[]}'
+}
+xs() { printf 'x%.0s' $(seq 1 "$1"); }
+for PARSER in jq osascript; do
+  S=$(seq_of "{$COMMON,\"background_tasks\":[{\"id\":\"a1\",\"type\":\"subagent\",\"status\":\"running\",\"description\":\"fix the build\"},{\"id\":\"b2\",\"type\":\"shell\",\"status\":\"completed\",\"description\":\"done\"},{\"id\":\"m1\",\"type\":\"memory import\",\"status\":\"running\",\"description\":\"ambient\"}],\"session_crons\":[{\"id\":\"c1\",\"schedule\":\"*/5 * * * *\",\"recurring\":true,\"prompt\":\"check CI\"},{\"id\":\"c2\",\"schedule\":\"30 9 * * 1\",\"recurring\":false,\"prompt\":\"once\"}]}")
+  expect_field "lists: tl holds the running non-ambient task only" "$S" tl '[{"id":"a1","type":"subagent","d":"fix the build"}]'
+  expect_field "lists: cl holds both crons, recurring as a boolean" "$S" cl '[{"id":"c1","s":"*/5 * * * *","r":true,"p":"check CI"},{"id":"c2","s":"30 9 * * 1","r":false,"p":"once"}]'
+  expect_field "lists: tp is the transcript path" "$S" tp '/x'
+  case "$S" in *'tasks=1;crons=2;tp='*) expect_true "lists: counts first, then tp, tl, cl" 0 "";; *) expect_true "lists: counts first, then tp, tl, cl" 1 "<$S>";; esac
+
+  S=$(seq_of "{$COMMON,\"background_tasks\":[{\"id\":\"q\",\"type\":\"shell\",\"status\":\"running\",\"description\":\"say \\\"hi\\\" naïve 😀 — \\\\ back\\nsecond line\\ttab\"}],\"session_crons\":[{\"id\":\"c\",\"schedule\":\"* * * * *\",\"recurring\":true,\"prompt\":\"a \\\"b\\\"\\nc\"}]}")
+  expect_field "lists: quotes, unicode, a newline and a tab in a description" "$S" tl '[{"id":"q","type":"shell","d":"say \"hi\" naïve 😀 — \\ back second line tab"}]'
+  expect_field "lists: a newline and quotes in a cron prompt" "$S" cl '[{"id":"c","s":"* * * * *","r":true,"p":"a \"b\" c"}]'
+
+  LONG=$(xs 200)
+  S=$(seq_of "{$COMMON,\"background_tasks\":[{\"id\":\"l\",\"type\":\"shell\",\"status\":\"running\",\"description\":\"$LONG\"}],\"session_crons\":[{\"id\":\"c\",\"schedule\":\"* * * * *\",\"recurring\":true,\"prompt\":\"$LONG\"}]}")
+  expect_field "lists: a long description is cut to 80 characters" "$S" tl "[{\"id\":\"l\",\"type\":\"shell\",\"d\":\"$(xs 80)\"}]"
+  expect_field "lists: a long cron prompt is cut to 80 characters" "$S" cl "[{\"id\":\"c\",\"s\":\"* * * * *\",\"r\":true,\"p\":\"$(xs 80)\"}]"
+
+  S=$(seq_of "{$COMMON,\"background_tasks\":[],\"session_crons\":[]}")
+  expect_field "lists: empty lists are sent as []" "$S" tl '[]'
+  S=$(seq_of "{\"session_id\":\"s\",\"hook_event_name\":\"Stop\",\"background_tasks\":[]}")
+  expect_field "lists: no cron field -> no cl" "$S" cl '<absent>'
+  expect_field "lists: no transcript_path -> no tp" "$S" tp '<absent>'
+  expect_field "lists: tl still sent when only tasks arrived" "$S" tl '[]'
+
+  # 40 tasks with 150-character descriptions: cut to fit, every id kept.
+  S=$(seq_of "$(tasks_json 40)")
+  BYTES=$(printf '%s' "$S" | LC_ALL=C wc -c | tr -d ' ')
+  echo "info [$PARSER] 40-task sequence: $BYTES bytes"
+  expect_true "40 tasks: the whole sequence is under 3500 bytes" "$([ "$BYTES" -gt 0 ] && [ "$BYTES" -le 3500 ] && echo 0 || echo 1)" "$BYTES bytes"
+  case "$S" in *'tasks=40;crons=0;'*) expect_true "40 tasks: tasks=40 kept" 0 "";; *) expect_true "40 tasks: tasks=40 kept" 1 "<$S>";; esac
+  TL=$(field "$S" tl)
+  N=$(printf '%s' "$TL" | /usr/bin/jq 'length' 2>/dev/null)
+  expect_true "40 tasks: the list parses and keeps all 40 ids" "$([ "$N" = 40 ] && echo 0 || echo 1)" "length=$N"
+  LASTID=$(printf '%s' "$TL" | /usr/bin/jq -r '.[-1].id' 2>/dev/null)
+  expect_true "40 tasks: the last id is task-39" "$([ "$LASTID" = task-39 ] && echo 0 || echo 1)" "$LASTID"
+  DLEN=$(printf '%s' "$TL" | /usr/bin/jq '.[0].d | length' 2>/dev/null)
+  expect_true "40 tasks: descriptions were shortened, not left at 80" "$([ "${DLEN:-99}" -lt 80 ] && echo 0 || echo 1)" "d length $DLEN"
+  expect_true "40 tasks: the cl field is still there" "$([ "$(field "$S" cl)" = '[]' ] && echo 0 || echo 1)" "$(field "$S" cl)"
+
+  # 150 tasks: not even bare ids fit, so entries are dropped from the end.
+  S=$(seq_of "$(tasks_json 150)")
+  BYTES=$(printf '%s' "$S" | LC_ALL=C wc -c | tr -d ' ')
+  expect_true "150 tasks: the whole sequence is under 3500 bytes" "$([ "$BYTES" -gt 0 ] && [ "$BYTES" -le 3500 ] && echo 0 || echo 1)" "$BYTES bytes"
+  case "$S" in *'tasks=150;crons=0;'*) expect_true "150 tasks: tasks=150 kept" 0 "";; *) expect_true "150 tasks: tasks=150 kept" 1 "<$S>";; esac
+  TL=$(field "$S" tl)
+  N=$(printf '%s' "$TL" | /usr/bin/jq 'length' 2>/dev/null)
+  FIRST=$(printf '%s' "$TL" | /usr/bin/jq -r '.[0].id' 2>/dev/null)
+  expect_true "150 tasks: the list was cut from the end (first id kept, fewer than 150)" "$([ "$FIRST" = task-0 ] && [ "${N:-0}" -gt 0 ] && [ "${N:-0}" -lt 150 ] && echo 0 || echo 1)" "first=$FIRST length=$N"
+
+  # No task fields (an old Claude Code): nothing is sent, as before.
+  check "no task fields: still prints nothing" "" "{$COMMON}"
+done
+# With a context reading the budget shrinks but the reading is never cut.
+PARSER=jq
+LTD=$(mktemp -d "${TMPDIR:-/tmp}/patton-probe-lists.XXXXXX")
+printf '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":10,"cache_read_input_tokens":1000,"cache_creation_input_tokens":200,"output_tokens":9}},"timestamp":"2026-10-11T05:00:00.000Z"}\n' > "$LTD/t.jsonl"
+S=$(seq_of "$(tasks_json 150 | /usr/bin/jq -c --arg t "$LTD/t.jsonl" '.transcript_path = $t')")
+BYTES=$(printf '%s' "$S" | LC_ALL=C wc -c | tr -d ' ')
+case "$S" in *'tasks=150;crons=0;ctx=1210;since=1210;tp='*) expect_true "150 tasks with a context reading: ctx fields intact" 0 "";; *) expect_true "150 tasks with a context reading: ctx fields intact" 1 "<${S:0:120}>";; esac
+expect_true "150 tasks with a context reading: under 3500 bytes" "$([ "$BYTES" -gt 0 ] && [ "$BYTES" -le 3500 ] && echo 0 || echo 1)" "$BYTES bytes"
+expect_field "tp is the transcript path with a context reading" "$S" tp "$LTD/t.jsonl"
+rm -f "$LTD/t.jsonl" && rmdir "$LTD"
 
 # Context reading: synthetic transcripts (jq parser; the osascript fallback
 # leaves the ctx fields out by design, checked once).
@@ -206,6 +290,7 @@ if command -v node >/dev/null 2>&1; then
   ' "$ROOT/src/main/claude-hook.ts" "$ODD/hook.sh")
   want="{\"terminalSequence\":\"\\u001b]777;patton;stop;tasks=0;crons=0\\u0007\"}"
   got=$(printf '%s' "{$COMMON,\"background_tasks\":[],\"session_crons\":[]}" | /bin/sh -c "$cmd"); rc=$?
+  got=$(printf '%s' "$got" | sed -E 's#;(tp|tl|cl)=[A-Za-z0-9+/=]*##g')
   if [ -n "$cmd" ] && [ "$got" = "$want" ] && [ $rc -eq 0 ]; then
     echo "ok   quoted path: $cmd"
   else
@@ -217,8 +302,13 @@ else
 fi
 
 # The renderer's parse of the OSC 777 message: unknown or malformed trailing
-# fields must not cost the stop verdict. Needs Node 22.18+; skipped without it.
-if command -v node >/dev/null 2>&1; then
+# fields must not cost the stop verdict. The module imports its sibling
+# hook-lists.ts, so it is bundled with the repo's esbuild first; skipped without
+# node or esbuild.
+ESBUILD="$ROOT/node_modules/.bin/esbuild"
+if command -v node >/dev/null 2>&1 && [ -x "$ESBUILD" ]; then
+  OSCD=$(mktemp -d "${TMPDIR:-/tmp}/patton-probe-osc.XXXXXX")
+  "$ESBUILD" "$ROOT/src/renderer/services/patton-osc.ts" --bundle --format=esm --platform=node --log-level=error --outfile="$OSCD/patton-osc.mjs" || fail=1
   out=$(node --no-warnings -e '
     import(process.argv[1]).then((m) => {
       const t = (s) => JSON.stringify(m.parsePattonOsc(s));
@@ -240,10 +330,11 @@ if command -v node >/dev/null 2>&1; then
       console.log(bad ? "parse FAILED" : "ok   OSC 777 parse (" + cases.length + " cases)");
       process.exit(bad ? 1 : 0);
     });
-  ' "$ROOT/src/renderer/services/patton-osc.ts" 2>&1) || fail=1
+  ' "$OSCD/patton-osc.mjs" 2>&1) || fail=1
   echo "$out"
+  rm -f "$OSCD/patton-osc.mjs" && rmdir "$OSCD"
 else
-  echo "skip OSC parse (no node)"
+  echo "skip OSC parse (no node or no esbuild)"
 fi
 
 if [ $fail -ne 0 ]; then echo "probe FAILED"; exit 1; fi

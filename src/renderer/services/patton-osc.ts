@@ -1,4 +1,6 @@
 /** Patton's own OSC 777 messages from its Claude Code Stop hook (parsed here, pure, so scripts/probe-stop-hook.sh can run it). */
+import type { HookCron, HookTask } from '../../shared/session-feed';
+import { hookListsFrom } from './hook-lists';
 
 /** The Stop hook's context reading (`ctx=…;since=…[;cpt=…][;cpd=…]`): tokens
  *  of the session's latest request, tokens added since the end of its current
@@ -20,10 +22,20 @@ export interface ContextReading {
  *  - `ctx`: the context reading alone, sent when Claude Code gave the hook no
  *    task fields, so it never counts as a verdict. */
 export type PattonState =
-  | { kind: 'stop'; tasks: number; crons: number; context: ContextReading | null }
+  | {
+      kind: 'stop'; tasks: number; crons: number; context: ContextReading | null;
+      /** The running tasks the hook listed (`tl`), when it sent a readable list: shorter than
+       *  `tasks` when the hook cut the list to fit Claude Code's length limit. */
+      taskList?: HookTask[];
+      /** `session_crons` as the hook listed them (`cl`). */
+      cronList?: HookCron[];
+      /** The session's transcript path (`tp`), shape-checked only; main validates it before use. */
+      transcriptPath?: string;
+    }
   | { kind: 'ctx'; context: ContextReading };
 
-// Both messages may end in `;key=value` fields: ctx=C;since=S[;cpt=T][;cpd=T]. They
+// Both messages may end in `;key=value` fields: ctx=C;since=S[;cpt=T][;cpd=T] (and, on
+// a stop, tl, cl and tp: services/hook-lists.ts). They
 // are read one by one, so an unknown or malformed field (a future version's)
 // costs only itself, never the stop verdict. Token counts are capped at nine
 // digits, the timestamp at twelve.
@@ -57,7 +69,10 @@ function contextFrom(tail: string | undefined): ContextReading | null {
 export function parsePattonOsc(data: string): PattonState | null {
   const stop = STOP_RE.exec(data);
   if (stop) {
-    return { kind: 'stop', tasks: Number(stop[1]), crons: Number(stop[2]), context: contextFrom(stop[3]) };
+    return {
+      kind: 'stop', tasks: Number(stop[1]), crons: Number(stop[2]), context: contextFrom(stop[3]),
+      ...hookListsFrom(stop[3]),
+    };
   }
   const ctx = CTX_RE.exec(data);
   if (ctx) {

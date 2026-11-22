@@ -18,6 +18,28 @@
 # "memory import") and by the raw name. Patton parses it in
 # terminal-view.ts and pane.ts (handleHookStop).
 #
+# Lists (the session bar, docs/session-bar.md D10). The stop sequence ends
+#   …[;ctx…];tp=P;tl=L;cl=C
+#   tp  base64 of `transcript_path` (absolute, at most 512 bytes, no control
+#       character; else left out).
+#   tl  base64 of a JSON array of the tasks counted in `tasks`:
+#       {"id","type","d"} (Claude Code's id and type label, the description).
+#   cl  base64 of a JSON array of `session_crons`:
+#       {"id","s":schedule,"r":recurring,"p":prompt}.
+#   Control characters in any text become spaces. A list is sent (possibly
+#   `[]`) whenever Claude Code sent its field, so an absent tl or cl means
+#   "no data", never "none". An old Claude Code that sends neither task field
+#   gets no stop sequence at all, as before.
+# Size cap. Claude Code drops a hook's terminalSequence whole when it is longer
+# than 4096 bytes (2.1.321, w8o: `Buffer.byteLength(e,"utf8")>_8o`, `_8o=4096`,
+# checked on the entire ESC ] … BEL string, then "rejected by the allowlist"),
+# which would lose the verdict, so the whole sequence is kept under SEQ_MAX
+# (3500). The counts and the context reading are never cut; the lists are: the
+# text of every entry is shortened (80 down to 0 characters) so every id stays,
+# since Patton reads a task missing from `tl` as ended (tasks=N against the
+# length of tl tells it a list was cut), and only then are entries dropped from
+# the end of the longer list. tp is left out when over 512 bytes.
+#
 # Context reading (the tab strip's checkpoint clock and its red "checkpoint
 # finished" circle). From the transcript at `transcript_path` (JSONL, often
 # tens of MB, so only tail and perl touch the whole file and jq sees a few
@@ -90,7 +112,7 @@
 #
 # Parser: jq (/usr/bin/jq ships with macOS 15+), else JavaScript for
 # Automation through osascript (every macOS). The osascript fallback sends
-# the task counts only, never the context reading. Running Patton's own Electron
+# the counts and the lists, never the context reading. Running Patton's own Electron
 # binary as Node is not an option: the packaged app's RunAsNode fuse is off,
 # so ELECTRON_RUN_AS_NODE would launch the app instead.
 
@@ -103,30 +125,73 @@ FINISHED='["completed","failed","killed","cancelled","canceled","done","finished
 AMBIENT='["dream","auto_mode_scan","auto-mode scan","local_memory_import","memory import"]'
 
 counts=""
+tlb=""; clb=""; tpb=""   # base64 of the task list, the cron list, the transcript path ("" = none)
+# The size cap on the whole sequence (see "Size cap" in the header) and what a
+# list may use of it. LIST_MIN: below it a list can't hold even "[]" and its
+# field name, so the lists are left out.
+SEQ_MAX=3500
+LIST_MIN=16
 JQ=$(command -v jq 2>/dev/null || { [ -x /usr/bin/jq ] && echo /usr/bin/jq; })
 [ "${PATTON_HOOK_PARSER:-}" = osascript ] && JQ=""  # lets the probe test the fallback
+# The tasks that count, shared by the count and the list: not finished, not ambient.
+JQ_RUNNING='
+  def arr(f): (f | if type == "array" then . else [] end);
+  def running: [arr(.background_tasks)[]
+    | select((((.status // "running") | tostring | ascii_downcase) as $s | $fin | index($s)) == null)
+    | select(((.type // "") | tostring) as $t | $amb | index($t) | not)];'
 if [ -n "$JQ" ]; then
-  counts=$(printf '%s' "$input" | "$JQ" -r --argjson fin "$FINISHED" --argjson amb "$AMBIENT" '
-    def arr(f): (f | if type == "array" then . else [] end);
+  counts=$(printf '%s' "$input" | "$JQ" -r --argjson fin "$FINISHED" --argjson amb "$AMBIENT" "$JQ_RUNNING"'
     if (has("background_tasks") or has("session_crons")) | not then empty else
-      ([arr(.background_tasks)[]
-        | select((((.status // "running") | tostring | ascii_downcase) as $s | $fin | index($s)) == null)
-        | select(((.type // "") | tostring) as $t | $amb | index($t) | not)]
-        | length | tostring) + " " + (arr(.session_crons) | length | tostring)
+      (running | length | tostring) + " " + (arr(.session_crons) | length | tostring)
     end' 2>/dev/null)
 elif [ -x /usr/bin/osascript ]; then
-  counts=$(printf '%s' "$input" | /usr/bin/osascript -l JavaScript -e '
+  # Line 1: the counts; then the task list, the cron list and the transcript
+  # path, each base64 or empty (see lists_fit below for the same cut in jq).
+  # The context reading is never taken on this path, so the budget is the
+  # sequence cap less a generous allowance for the fixed part (tp is counted
+  # inside).
+  out=$(printf '%s' "$input" | /usr/bin/osascript -l JavaScript -e '
     ObjC.import("Foundation");
     const raw = $.NSString.alloc.initWithDataEncoding(
       $.NSFileHandle.fileHandleWithStandardInput.readDataToEndOfFile, $.NSUTF8StringEncoding).js;
     const j = JSON.parse(raw), fin = '"$FINISHED"', amb = '"$AMBIENT"';
+    const SEQ_MAX = '"$SEQ_MAX"', LIST_MIN = '"$LIST_MIN"', FIXED = 70;
     const arr = (v) => Array.isArray(v) ? v : [];
+    const str = (v) => (v === undefined || v === null || v === false) ? "" : String(v);
+    const clean = (v) => Array.from(str(v).replace(/[\u0000-\u001f\u007f-\u009f]/g, " "));
+    const cut = (v, n) => clean(v).slice(0, n).join("");
+    const b64 = (s) => $.NSString.stringWithString(s).dataUsingEncoding($.NSUTF8StringEncoding)
+      .base64EncodedStringWithOptions(0).js;
     if (!("background_tasks" in j) && !("session_crons" in j)) { "" } else {
-      const t = arr(j.background_tasks).filter((x) =>
+      const running = arr(j.background_tasks).filter((x) =>
         !fin.includes(String((x && x.status) || "running").toLowerCase()) &&
-        !amb.includes(String((x && x.type) || ""))).length;
-      t + " " + arr(j.session_crons).length;
+        !amb.includes(String((x && x.type) || "")));
+      const byteLen = (s) => $.NSString.stringWithString(s).lengthOfBytesUsingEncoding($.NSUTF8StringEncoding);
+      let tp = "";
+      const path = typeof j.transcript_path === "string" ? j.transcript_path : "";
+      if (path.startsWith("/") && byteLen(path) <= 512 && !/[\u0000-\u001f\u007f-\u009f]/.test(path)) tp = b64(path);
+      const mk = (n) => ({
+        tl: "background_tasks" in j ? running.map((x) => ({ id: cut(x && x.id, 128), type: cut(x && x.type, 32), d: cut(x && x.description, n) })) : null,
+        cl: "session_crons" in j ? arr(j.session_crons).map((x) => ({ id: cut(x && x.id, 128), s: cut(x && x.schedule, 100), r: !!(x && x.recurring === true), p: cut(x && x.prompt, n) })) : null,
+      });
+      const enc = (l) => l === null ? 0 : b64(JSON.stringify(l)).length + 4;
+      const size = (o) => enc(o.tl) + enc(o.cl);
+      const budget = SEQ_MAX - FIXED - (tp ? tp.length + 4 : 0);
+      let o = null;
+      if (budget >= LIST_MIN) {
+        for (const n of [80, 60, 40, 30, 20, 10, 0]) { const c = mk(n); if (size(c) <= budget) { o = c; break; } }
+        if (o === null) {
+          o = mk(0);
+          while (size(o) > budget && ((o.tl || []).length + (o.cl || []).length) > 0) {
+            if (enc(o.tl) >= enc(o.cl) && (o.tl || []).length > 0) o.tl.pop(); else o.cl.pop();
+          }
+        }
+      }
+      [running.length + " " + arr(j.session_crons).length,
+       o && o.tl !== null ? b64(JSON.stringify(o.tl)) : "",
+       o && o.cl !== null ? b64(JSON.stringify(o.cl)) : "", tp].join("\n");
     }' 2>/dev/null)
+  { IFS= read -r counts; IFS= read -r tlb; IFS= read -r clb; IFS= read -r tpb; } <<<"$out"
 fi
 
 # --- Context reading (jq + perl; see the header) ---
@@ -284,9 +349,52 @@ if [ -n "$JQ" ]; then
   fi
 fi
 
+# --- The lists (jq path; the osascript path made its own above) ---
+# tp: the transcript path, base64, when it is an absolute path of at most 512
+# bytes with no control character. tl, cl: the running tasks and the crons,
+# base64 of a JSON array, fitted to what the sequence has room for (SEQ_MAX
+# less everything else in it). Fitting: the text of every entry is cut
+# 80 -> 60 -> 40 -> 30 -> 20 -> 10 -> 0 characters until the lists fit, keeping every id (Patton
+# reads a task missing from the list as ended); only when even that is too
+# long are entries dropped from the end of the longer list.
+if [ -n "$JQ" ] && [[ "$counts" =~ ^([0-9]+)\ ([0-9]+)$ ]]; then
+  tpath=${tpath:-}
+  if [ -n "$tpath" ] && [ "${#tpath}" -le 512 ] && [[ "$tpath" == /* ]] && [[ "$tpath" != *[[:cntrl:]]* ]]; then
+    tpb=$(printf '%s' "$tpath" | /usr/bin/base64 2>/dev/null | tr -d '\n')
+  fi
+  base=$(printf '\033]777;patton;stop;tasks=%s;crons=%s%s\007' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "$ctxf")
+  budget=$((SEQ_MAX - ${#base} - ${#tpb} - 4))
+  if [ "$budget" -ge "$LIST_MIN" ]; then
+    lists=$(printf '%s' "$input" | "$JQ" -r --argjson b "$budget" --argjson fin "$FINISHED" --argjson amb "$AMBIENT" "$JQ_RUNNING"'
+      def clean: if . == null or . == false then "" else tostring | gsub("[\\p{Cc}]"; " ") end;
+      def mk($n): {
+        tl: (if has("background_tasks") then [running[]
+              | {id: (.id | clean | .[:128]), type: (.type | clean | .[:32]), d: (.description | clean | .[:$n])}] else null end),
+        cl: (if has("session_crons") then [arr(.session_crons)[]
+              | {id: (.id | clean | .[:128]), s: (.schedule | clean | .[:100]), r: (.recurring == true), p: (.prompt | clean | .[:$n])}] else null end)};
+      def enc: if . == null then 0 else (tojson | @base64 | length) + 4 end;
+      def size: (.tl | enc) + (.cl | enc);
+      def count: ((.tl // []) | length) + ((.cl // []) | length);
+      def dropfit: if size <= $b or count == 0 then . elif (.tl | enc) >= (.cl | enc) and ((.tl // []) | length) > 0
+                   then .tl |= .[:-1] | dropfit else .cl |= .[:-1] | dropfit end;
+      . as $in | (first((80, 60, 40, 30, 20, 10, 0) as $n | $in | mk($n) | select(size <= $b)) // ($in | mk(0) | dropfit))
+      | (.tl | if . == null then "" else tojson | @base64 end), (.cl | if . == null then "" else tojson | @base64 end)' 2>/dev/null)
+    { IFS= read -r tlb; IFS= read -r clb; } <<<"$lists"
+  fi
+fi
+
+# What the stop sequence gets on top of the counts and the context reading.
+# Anything unreadable above left its field empty, which leaves it out. A
+# sequence still over the cap (it shouldn't be) loses the lists and tp whole:
+# never the counts or the context reading.
+extras=""
+[ -n "$tpb" ] && extras="$extras;tp=$tpb"
+[ -n "$tlb" ] && extras="$extras;tl=$tlb"
+[ -n "$clb" ] && extras="$extras;cl=$clb"
 if [[ "$counts" =~ ^([0-9]+)\ ([0-9]+)$ ]]; then
-  printf '{"terminalSequence":"\\u001b]777;patton;stop;tasks=%s;crons=%s%s\\u0007"}\n' \
-    "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "$ctxf"
+  [ $((${#extras} + ${#ctxf} + 50)) -le "$SEQ_MAX" ] || extras=""
+  printf '{"terminalSequence":"\\u001b]777;patton;stop;tasks=%s;crons=%s%s%s\\u0007"}\n' \
+    "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "$ctxf" "$extras"
 elif [ -n "$ctxf" ]; then
   printf '{"terminalSequence":"\\u001b]777;patton;ctx%s\\u0007"}\n' "$ctxf"
 fi
