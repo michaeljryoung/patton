@@ -303,8 +303,15 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
 
   const historyAddLimiter = new RateLimiter(20);
   ipcMain.handle(IPC.HISTORY_ADD, (_event, command: string) => {
-    if (typeof command !== 'string' || command.length > 10000) {
+    if (typeof command !== 'string') {
       console.warn('[SECURITY] HISTORY_ADD type validation failed', { type: typeof command });
+      return;
+    }
+    if (command.length > 10000) {
+      // A long draft was sent (that part worked); it is just too long to keep
+      // in the recall history. Not a security event: until S61 this logged as
+      // "type validation failed {type: string}", which read like an attack.
+      console.info('[HISTORY] not kept: too long', { chars: command.length, max: 10000 });
       return;
     }
     if (!historyAddLimiter.allow()) {
