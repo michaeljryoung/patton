@@ -178,17 +178,19 @@ await section('1. Placement and look', 12, async () => {
     return (css.match(re) || [])[2] || '';
   };
   const chipRule = rule('.tab-bar-group-chip');
-  check('chip CSS: --grey ground, --ink text, bold, 10.5px x scale, uppercase, 0.06em, 2px ink top line',
-    /background:\s*var\(--grey\)/.test(chipRule) && /(^|;)\s*color:\s*var\(--ink\)/.test(chipRule) && /font-weight:\s*(700|bold)/.test(chipRule)
+  check('chip CSS: its shade (--g-chip, --grey without one) as ground, --ink text, bold, 10.5px x scale, uppercase, 0.06em, 2px top line in its shade (--g-line, ink without one)',
+    /background:\s*var\(--g-chip, var\(--grey\)\)/.test(chipRule) && /(^|;)\s*color:\s*var\(--ink\)/.test(chipRule) && /font-weight:\s*(700|bold)/.test(chipRule)
     && /font-size:\s*calc\(10\.5px \* var\(--ui-scale\)\)/.test(chipRule) && /text-transform:\s*uppercase/.test(chipRule)
-    && /letter-spacing:\s*0\.06em/.test(chipRule) && /inset 0 2px 0 var\(--ink\)/.test(chipRule) && /flex:\s*0 0 auto/.test(chipRule), chipRule);
-  check('chip CSS: hover a darker grey; the name caps at 140px x scale with an ellipsis; unnamed in --muted',
-    /background:\s*var\(--grey-hover\)/.test(rule('.tab-bar-group-chip:hover'))
+    && /letter-spacing:\s*0\.06em/.test(chipRule) && /inset 0 2px 0 var\(--g-line, var\(--ink\)\)/.test(chipRule) && /flex:\s*0 0 auto/.test(chipRule), chipRule);
+  check('chip CSS: hover moves the shade toward its line (grey-hover without a shade); the name caps at 140px x scale with an ellipsis; unnamed in --muted',
+    /color-mix\(in srgb, var\(--g-line\) 25%, var\(--g-chip/.test(rule('.tab-bar-group-chip:hover'))
+    && /background:\s*var\(--grey-hover\)/.test(rule('.tab-bar-group-chip:not([class*="group-shade-"]):hover'))
     && /max-width:\s*calc\(140px \* var\(--ui-scale\)\)/.test(rule('.tab-bar-group-name')) && /text-overflow:\s*ellipsis/.test(rule('.tab-bar-group-name'))
-    && /color:\s*var\(--muted\)/.test(rule('.tab-bar-group-name.unnamed')));
-  check('member tab CSS: a 2px ink top line; the selected one keeps its 3px bottom bar too',
-    /inset 0 2px 0 var\(--ink\)/.test(rule('.tab-bar-tab.in-group'))
-    && /inset 0 2px 0 var\(--ink\)/.test(rule('.tab-bar-tab.in-group.active')) && /inset 0 -3px 0 var\(--ink\)/.test(rule('.tab-bar-tab.in-group.active')));
+    && /color:\s*var\(--chip-muted\)/.test(rule('.tab-bar-group-name.unnamed')) && /--chip-muted:\s*color-mix\(in srgb, var\(--ink\) 50%, var\(--muted\)\)/.test(chipRule));
+  check('member tab CSS: its shade as ground and a 2px line in its shade on top; the selected one keeps --bg, its group\'s line and its 3px ink bottom bar',
+    /background:\s*var\(--g-tab\)/.test(rule('.tab-bar-tab.in-group')) && /inset 0 2px 0 var\(--g-line\)/.test(rule('.tab-bar-tab.in-group'))
+    && /background:\s*var\(--bg\)/.test(rule('.tab-bar-tab.in-group.active'))
+    && /inset 0 2px 0 var\(--g-line\)/.test(rule('.tab-bar-tab.in-group.active')) && /inset 0 -3px 0 var\(--ink\)/.test(rule('.tab-bar-tab.in-group.active')));
   const mainCss = readFileSync(join(repo, 'src/renderer/styles/main.css'), 'utf8');
   check('main.css defines --grey-hover in both light and dark', (mainCss.match(/--grey-hover:/g) || []).length >= 2);
 });
@@ -629,6 +631,111 @@ await section('12. The folded chip\'s list stays inside the window\'s right edge
     draw();
   }
 });
+
+// --- group shades (22 Nov 2026, look B of the shades sketch): each group takes a shade in turn by
+// its place on the strip (class group-shade-1..3 on its chip and its tabs), a fourth repeats the
+// first, ungrouped tabs have none; the colours are tokens in main.css, light in :root and dark in
+// the prefers-color-scheme block, ink on every fill 4.5:1 or better. (The painted fills, hover
+// and the selected tab's ground are measured on the real CSS in check-ui-text-scale.cjs.)
+{
+  const shadeOf = (el) => (el && [...el.classList].find((c) => /^group-shade-\d$/.test(c))) ?? null;
+  const four = [
+    { id: 'p', title: 'p', active: false },
+    { id: 'a1', title: 'a1', active: false, groupId: 'A' },
+    { id: 'u', title: 'u', active: false },
+    { id: 'b1', title: 'b1', active: true, groupId: 'B' },
+    { id: 'b2', title: 'b2', active: false, groupId: 'B' },
+    { id: 'c1', title: 'c1', active: false, groupId: 'C' },
+    { id: 'd1', title: 'd1', active: false, groupId: 'D' },
+  ];
+  const fourGroups = ['A', 'B', 'C', 'D'].map((id) => ({ id, name: id, folded: id === 'C' }));
+  draw(four, fourGroups);
+  check('shades: groups A, B, C get shades 1, 2, 3 on their chips (the folded one too) and D repeats 1',
+    ['A', 'B', 'C', 'D'].map((g) => shadeOf(chip(g))).join() === 'group-shade-1,group-shade-2,group-shade-3,group-shade-1', ['A', 'B', 'C', 'D'].map((g) => shadeOf(chip(g))));
+  check('shades: a tab wears its group\'s shade (b1, b2 = 2; a1 = 1; d1 = 1); ungrouped p and u wear none',
+    shadeOf(tabEl('b1')) === 'group-shade-2' && shadeOf(tabEl('b2')) === 'group-shade-2' && shadeOf(tabEl('a1')) === 'group-shade-1' && shadeOf(tabEl('d1')) === 'group-shade-1'
+      && shadeOf(tabEl('p')) === null && shadeOf(tabEl('u')) === null && !tabEl('u').classList.contains('in-group'), ['p', 'a1', 'u', 'b1', 'b2', 'd1'].map((id) => [id, shadeOf(tabEl(id))]));
+  check('shades: the selected grouped tab is still .active .in-group (CSS gives it --bg and the bar)', tabEl('b1').classList.contains('active') && tabEl('b1').classList.contains('in-group'));
+  // The shade is the group's place on the strip, so removing the first group moves the others up.
+  draw(four.filter((t) => t.groupId !== 'A'), fourGroups.filter((g) => g.id !== 'A'));
+  check('shades: with group A gone, B takes shade 1 (by place on the strip)', shadeOf(chip('B')) === 'group-shade-1' && shadeOf(tabEl('b2')) === 'group-shade-1', shadeOf(chip('B')));
+  draw();
+
+  // The tokens, read from main.css: exactly the approved colours, light in :root, dark in the dark block.
+  const css = readFileSync(join(repo, 'src/renderer/styles/main.css'), 'utf8');
+  const darkAt = css.indexOf('@media (prefers-color-scheme: dark)');
+  const lightCss = css.slice(0, darkAt);
+  const darkCss = css.slice(darkAt, css.indexOf('\n}\n', css.indexOf(':root', darkAt)));
+  const want = {
+    light: [['edf3fc', 'd9e6f8', '8fb0e3'], ['ecf6f0', 'd4ecdf', '86c3a2'], ['fcf5e6', 'f4e3bf', 'e0bd6e']],
+    dark: [['18202b', '22304a', '3f5c8f'], ['17231d', '213a2d', '3f7558'], ['261f12', '3b2f17', '7a6127']],
+  };
+  const tokenOf = (block, n, part) => block.match(new RegExp(`--group${n}-${part}:\\s*#([0-9a-fA-F]{6})`))?.[1]?.toLowerCase();
+  for (const [mode, block] of [['light', lightCss], ['dark', darkCss]]) {
+    const got = [1, 2, 3].map((n) => ['tab', 'chip', 'line'].map((part) => tokenOf(block, n, part)));
+    check(`shades: the ${mode} tokens are exactly the approved colours`, JSON.stringify(got) === JSON.stringify(want[mode]), got);
+  }
+  // Contrast, from the REAL tokens (main.css: light in :root, dark in the dark block, dark falling back to light) and the
+  // real rules (tabs.css), on every group fill: the tab, the tab hovered (18% toward the line), the chip, the chip
+  // hovered (25%) and the selected tab's --bg. Ink 4.5:1; secondary text (--muted on an inactive tab at rest,
+  // the chip's --chip-muted mix on a chip) 4.5:1; status dots, flags and the parked ring 3:1; the drop line 3:1.
+  const tabsCss = readFileSync(join(repo, 'src/renderer/styles/tabs.css'), 'utf8');
+  const tokensIn = (block) => Object.fromEntries([...block.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/--([a-z0-9-]+):\s*([^;]+);/g)].map((m) => [m[1], m[2].trim()]));
+  const tokenMaps = { light: tokensIn(lightCss), dark: { ...tokensIn(lightCss), ...tokensIn(darkCss) } };
+  const hex = (h) => [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16));
+  const lum = (c) => { const [r, g, b] = c.map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+  const ratio = (a, b) => { const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x); return (hi + 0.05) / (lo + 0.05); };
+  const mix = (a, b, p) => a.map((v, i) => Math.round(v * p + b[i] * (1 - p)));
+  const colourIn = (mode, name, depth = 0) => { // an rgb triple, or null for transparent
+    const v = tokenMaps[mode][name];
+    if (v === undefined || depth > 8) throw new Error(`token --${name} unreadable in ${mode}`);
+    const ref = v.match(/^var\(--([a-z0-9-]+)\)$/);
+    if (ref) return colourIn(mode, ref[1], depth + 1);
+    if (v === 'transparent') return null;
+    const h = v.match(/^#([0-9a-fA-F]{6})$/);
+    if (!h) throw new Error(`token --${name} in ${mode} is not a plain colour: ${v}`);
+    return hex(h[1]);
+  };
+  const chipMutedPct = Number(tabsCss.match(/--chip-muted:\s*color-mix\(in srgb, var\(--ink\) (\d+)%, var\(--muted\)\)/)?.[1]);
+  check('shades: the chip\'s secondary lettering is a --muted mix read from tabs.css (a percentage of ink)', chipMutedPct > 0 && chipMutedPct < 100, chipMutedPct);
+  // The colour var the drop line takes in each rule that draws it.
+  const dropVar = (sel) => tabsCss.replace(/\/\*[\s\S]*?\*\//g, '').match(new RegExp(`${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{[^}]*inset 2px 0 0 var\\(--([a-z-]+)\\)`))?.[1];
+  const drops = { chip: dropVar('.tab-bar-group-chip.drag-over'), tab: dropVar('.tab-bar-tab.in-group.drag-over'), selected: dropVar('.tab-bar-tab.in-group.active.drag-over') };
+  check('shades: the drop line on a chip, a grouped tab and the selected grouped tab each name a colour token', Object.values(drops).every(Boolean), drops);
+  for (const mode of ['light', 'dark']) {
+    const T = (n) => colourIn(mode, n);
+    const ink = T('ink');
+    const sec = mix(ink, T('muted'), chipMutedPct / 100);
+    const edge = T('dot-edge');
+    const rows = { ink: [], secondary: [], status: [], drop: [] };
+    want[mode].forEach(([tab, chipC, line], i) => {
+      const L = hex(line);
+      const fills = [['tab', hex(tab)], ['tab hover', mix(L, hex(tab), 0.18)], ['chip', hex(chipC)], ['chip hover', mix(L, hex(chipC), 0.25)], ['selected', T('bg')]];
+      for (const [what, fill] of fills) {
+        const tag = `g${i + 1} ${what}`;
+        rows.ink.push([tag, +ratio(ink, fill).toFixed(2)]);
+        // A dot's edge (light mode only: transparent in dark) counts as its outline, as --dot-edge's comment says.
+        for (const dot of ['prompt-ready', 'status-ckpt', 'flag-green', 'flag-yellow', 'flag-red']) {
+          const d = T(dot);
+          rows.status.push([`${tag} ${dot}`, +Math.max(ratio(d, fill), edge ? ratio(edge, fill) : 0).toFixed(2)]);
+        }
+        rows.status.push([`${tag} parked ring`, +ratio(T('parked'), fill).toFixed(2)]);
+        if (what.startsWith('chip')) rows.secondary.push([`${tag} chip lettering`, +ratio(sec, fill).toFixed(2)]);
+        if (what === 'tab') rows.secondary.push([`${tag} --muted title`, +ratio(T('muted'), fill).toFixed(2)]);
+        if (what !== 'selected' || drops.selected) {
+          const dv = drops[what.startsWith('chip') ? 'chip' : what === 'selected' ? 'selected' : 'tab'];
+          if (dv) rows.drop.push([`${tag} drop line --${dv}`, +ratio(T(dv), fill).toFixed(2)]);
+        }
+      }
+    });
+    const low = (list) => Math.min(...list.map((r) => r[1]));
+    const under = (list, min) => list.filter((r) => r[1] < min);
+    check(`shades: ${mode}, ink reaches 4.5:1 on every group fill and its hover (lowest ${low(rows.ink)})`, under(rows.ink, 4.5).length === 0, under(rows.ink, 4.5));
+    check(`shades: ${mode}, secondary text (the chips' --muted mix, an inactive tab's --muted title) reaches 4.5:1 (lowest ${low(rows.secondary)})`, under(rows.secondary, 4.5).length === 0, under(rows.secondary, 4.5));
+    check(`shades: ${mode}, status dots, flags and the parked ring reach 3:1 on every fill, counting a dot's edge as its outline (lowest ${low(rows.status)})`, under(rows.status, 3).length === 0, under(rows.status, 3).slice(0, 6));
+    check(`shades: ${mode}, the drop line on a chip, a tab and the selected tab reaches 3:1 on every fill (lowest ${low(rows.drop)})`, rows.drop.length > 0 && under(rows.drop, 3).length === 0, under(rows.drop, 3));
+  }
+}
 
 bar.dispose();
 console.log(`\n${passed} passed, ${failed} failed`);

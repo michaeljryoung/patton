@@ -77,6 +77,9 @@ interface TabHeaderInfo {
 /** Task titles listed in the parked tooltip before "and N more". */
 const PARKED_TITLES_SHOWN = 5;
 
+/** How many group shades main.css defines (--group1-* to --group3-*); a fourth group repeats the first. */
+const GROUP_SHADES = 3;
+
 function parkedText({ tasks, crons, titles }: { tasks: number; crons: number; titles?: string[] }): string {
   const counts: string[] = [];
   if (tasks > 0 || crons === 0) counts.push(`${tasks} ${tasks === 1 ? 'task' : 'tasks'}`);
@@ -446,7 +449,8 @@ export class TabBar {
     this.heldGroups = null;
     const groupById = new Map(groups.map((g) => [g.id, g]));
     const membersOf = (groupId: string) => tabs.filter((t) => t.groupId === groupId);
-    const chipsDrawn = new Set<string>();
+    // A group's shade (1-3, cycling) is its place among the groups on the strip.
+    const shadeOf = new Map<string, number>();
     // The strip scrolls sideways (hidden scrollbar) and is rebuilt on every
     // update, which empties it and resets scrollLeft: keep the position, and
     // bring the active tab into view when it is a different tab or the count
@@ -469,13 +473,13 @@ export class TabBar {
       // A chip sits immediately left of its group's tabs; a folded group's tabs
       // stay off the strip.
       const group = tab.groupId ? groupById.get(tab.groupId) : undefined;
-      if (group && !chipsDrawn.has(group.id)) {
-        chipsDrawn.add(group.id);
-        this.tabsContainer.appendChild(this.buildChip(group, membersOf(group.id)));
+      if (group && !shadeOf.has(group.id)) {
+        shadeOf.set(group.id, (shadeOf.size % GROUP_SHADES) + 1);
+        this.tabsContainer.appendChild(this.buildChip(group, membersOf(group.id), shadeOf.get(group.id)!));
       }
       if (group?.folded) continue;
       const el = document.createElement('div');
-      el.className = `tab-bar-tab${tab.active ? ' active' : ''}${group ? ' in-group' : ''}`;
+      el.className = `tab-bar-tab${tab.active ? ' active' : ''}${group ? ` in-group group-shade-${shadeOf.get(group.id)}` : ''}`;
       el.dataset.tabId = tab.id;
       if (group) el.dataset.groupId = group.id;
 
@@ -769,13 +773,13 @@ export class TabBar {
     return this.latestGroups.find((g) => g.id === groupId) ?? null;
   }
 
-  /** A group's chip: grey, its name in ink (or "N tabs" when unnamed), a
+  /** A group's chip: in its group's shade, its name in ink (or "N tabs" when unnamed), a
    *  chevron, and when folded the tab count and the strongest indicator of its
    *  tabs. A click that doesn't drag folds or unfolds it; a drag moves the
    *  window, as a tab's body does. */
-  private buildChip(group: TabGroupHeader, members: TabHeaderInfo[]): HTMLElement {
+  private buildChip(group: TabGroupHeader, members: TabHeaderInfo[], shade: number): HTMLElement {
     const chip = document.createElement('div');
-    chip.className = `tab-bar-group-chip${group.folded ? ' folded' : ''}`;
+    chip.className = `tab-bar-group-chip group-shade-${shade}${group.folded ? ' folded' : ''}`;
     chip.dataset.groupId = group.id;
     chip.setAttribute('role', 'button');
     chip.setAttribute('tabindex', '-1');

@@ -165,14 +165,31 @@
   box-shadow: inset 2px 0 0 var(--accent), inset 0 -3px 0 var(--ink);
 }
 
-/* --- Tab groups (19 Nov 2026, the approved sketch's look A, "ink") ---
- * A grey chip sits immediately left of its group's tabs, its name in bold
- * uppercase ink; a 2 px ink line runs along the top of the chip and of every
- * tab in the group (an inset shadow, so nothing moves; the selected tab keeps
- * its 3 px bottom bar too). Colour stays for status: groups are told apart by
- * name. The chip never grows (the tabs share the strip as before); its name
- * stops at 140 px x scale with an ellipsis. */
+/* --- Tab groups ---
+ * 19 Nov 2026, the approved sketch's look A, "ink": a grey chip sits
+ * immediately left of its group's tabs, its name in bold uppercase ink; a 2 px
+ * ink line runs along the top of the chip and of every tab in the group.
+ * 22 Nov 2026, look B of the shades sketch, after Michael: "there should be
+ * slightly different shading ... so you can see which group each of them is
+ * in. At the moment, it's not super clear where outreach ends and where
+ * [Patton] begins ... very mild, very light coloring". So each group takes a
+ * shade in turn (blue, green, sand; the group's place on the strip, a fourth
+ * repeats the first; tab-bar.ts adds .group-shade-N): the chip's fill, its
+ * inactive tabs' fill and the 2 px line on top of both, from --groupN-tab /
+ * -chip / -line in main.css (light and dark). Ungrouped tabs stay plain; the
+ * selected tab keeps --bg and its 3 px ink bar and takes only its group's
+ * line. The lines are inset shadows, so nothing moves. Colour is a cue, not the
+ * only one: the chip's name and the line's place still say where a group is.
+ * The chip never grows (the tabs share the strip as before); its name stops at
+ * 140 px x scale with an ellipsis. Without a shade class, a chip is the old
+ * grey with an ink line. */
+.group-shade-1 { --g-tab: var(--group1-tab); --g-chip: var(--group1-chip); --g-line: var(--group1-line); }
+.group-shade-2 { --g-tab: var(--group2-tab); --g-chip: var(--group2-chip); --g-line: var(--group2-line); }
+.group-shade-3 { --g-tab: var(--group3-tab); --g-chip: var(--group3-chip); --g-line: var(--group3-line); }
 .tab-bar-group-chip {
+  /* Secondary lettering on a shaded chip: --muted is 4.06:1 on the dark green
+     chip, so it is half way to ink (5.2:1 or better on every chip, hovered or not). */
+  --chip-muted: color-mix(in srgb, var(--ink) 50%, var(--muted));
   flex: 0 0 auto;
   display: flex;
   align-items: center;
@@ -180,9 +197,9 @@
   height: 100%;
   box-sizing: border-box;
   padding: 0 11px 0 9px;
-  background: var(--grey);
+  background: var(--g-chip, var(--grey));
   color: var(--ink);
-  box-shadow: inset 0 2px 0 var(--ink);
+  box-shadow: inset 0 2px 0 var(--g-line, var(--ink));
   font-family: var(--font-ui);
   font-size: calc(10.5px * var(--ui-scale));
   font-weight: 700;
@@ -197,7 +214,11 @@
   -webkit-app-region: no-drag;
 }
 
+/* Under the pointer: the shade moved a quarter of the way to its line colour. */
 .tab-bar-group-chip:hover {
+  background: color-mix(in srgb, var(--g-line) 25%, var(--g-chip, var(--grey-hover)));
+}
+.tab-bar-group-chip:not([class*="group-shade-"]):hover {
   background: var(--grey-hover);
 }
 
@@ -210,7 +231,7 @@
 .tab-bar-group-chevron {
   font-size: calc(8px * var(--ui-scale));
   font-weight: 400;
-  color: var(--muted);
+  color: var(--chip-muted);
   letter-spacing: 0;
 }
 
@@ -224,18 +245,20 @@
 }
 
 .tab-bar-group-name.unnamed {
-  color: var(--muted);
+  color: var(--chip-muted);
 }
 
 .tab-bar-group-count {
   font-weight: 400;
-  color: var(--muted);
+  color: var(--chip-muted);
   letter-spacing: 0;
   font-variant-numeric: tabular-nums;
 }
 
+/* The drop line is --focus, not --accent: on the dark chips (hovered ones too) --accent
+   is 2.2 to 2.9:1, --focus 4.0:1 or better; in light the two are the same blue. */
 .tab-bar-group-chip.drag-over {
-  box-shadow: inset 0 2px 0 var(--ink), inset 2px 0 0 var(--accent);
+  box-shadow: inset 0 2px 0 var(--g-line, var(--ink)), inset 2px 0 0 var(--focus);
 }
 
 /* The name box on a chip: the chip's own lettering, ink on the terminal ground. */
@@ -258,27 +281,40 @@
 }
 
 .tab-bar-tab.in-group {
-  box-shadow: inset 0 2px 0 var(--ink);
+  --tab-bg: var(--g-tab);
+  background: var(--g-tab);
+  box-shadow: inset 0 2px 0 var(--g-line);
 }
 
+/* Hover: the tab's shade moved 18% of the way to its line colour (after the
+   shade rule, which has the same weight as :hover, so it would win otherwise). */
+.tab-bar-tab.in-group:hover {
+  --tab-bg: color-mix(in srgb, var(--g-line) 18%, var(--g-tab));
+  background: var(--tab-bg);
+}
+
+/* The selected member: the terminal's ground, the ink bar, its group's line.
+   After the :hover rule above, which weighs the same, so hovering it changes nothing. */
 .tab-bar-tab.in-group.active {
-  box-shadow: inset 0 2px 0 var(--ink), inset 0 -3px 0 var(--ink);
+  --tab-bg: var(--bg);
+  background: var(--bg);
+  box-shadow: inset 0 2px 0 var(--g-line), inset 0 -3px 0 var(--ink);
 }
 
 .tab-bar-tab.in-group .tab-bar-tab-close {
-  box-shadow: inset 0 2px 0 var(--ink);
+  box-shadow: inset 0 2px 0 var(--g-line);
 }
 
 .tab-bar-tab.in-group.active .tab-bar-tab-close {
-  box-shadow: inset 0 2px 0 var(--ink), inset 0 -3px 0 var(--ink);
+  box-shadow: inset 0 2px 0 var(--g-line), inset 0 -3px 0 var(--ink);
 }
 
 .tab-bar-tab.in-group.drag-over {
-  box-shadow: inset 0 2px 0 var(--ink), inset 2px 0 0 var(--accent);
+  box-shadow: inset 0 2px 0 var(--g-line), inset 2px 0 0 var(--focus);
 }
 
 .tab-bar-tab.in-group.active.drag-over {
-  box-shadow: inset 0 2px 0 var(--ink), inset 2px 0 0 var(--accent), inset 0 -3px 0 var(--ink);
+  box-shadow: inset 0 2px 0 var(--g-line), inset 2px 0 0 var(--focus), inset 0 -3px 0 var(--ink);
 }
 
 /* Under a folded chip, on hover or keyboard focus: each of its tabs with its
