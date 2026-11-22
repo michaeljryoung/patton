@@ -175,7 +175,7 @@ async function nodeRunner() {
 
 // ------------------------------------------------------------ Electron side
 function electronMain() {
-  const { app, BrowserWindow } = require('electron');
+  const { app, BrowserWindow, nativeTheme } = require('electron');
   const outDir = process.env.UI_SCALE_CHECK_DIR;
   const resultFile = path.join(outDir, 'result.json');
   const write = (obj) => fs.writeFileSync(resultFile, JSON.stringify(obj, null, 1));
@@ -206,7 +206,8 @@ function electronMain() {
           const req = await win.webContents.executeJavaScript('window.__inputReq || null');
           if (!req) return;
           await win.webContents.executeJavaScript('window.__inputReq = null');
-          win.webContents.sendInputEvent(req);
+          // {type: 'theme', mode} switches the hidden window's colour scheme (nativeTheme drives prefers-color-scheme); anything else is real input.
+          if (req.type === 'theme') nativeTheme.themeSource = req.mode; else win.webContents.sendInputEvent(req);
           await win.webContents.executeJavaScript('window.__inputDone = true');
         } catch { /* the window is going away */ } finally { relayBusy = false; }
       }, 15);
@@ -1363,65 +1364,110 @@ async function pageRun(BIG) {
         gone && foldP1 > openP1 + 10 && foldP2 > openP2 + 10 && Math.abs(lastR.right - stripR.right) <= 1 && !(strip.scrollWidth > strip.clientWidth + 0.5),
         { gone, openP1, foldP1, openP2, foldP2, lastRight: lastR.right, stripRight: stripR.right });
     }
-    // --- group shades (22 Nov 2026, look B): the real CSS and tokens, light scheme, x1. Four groups (the
-    // third folded) and an ungrouped tab between the first and second.
-    await setScale(1);
-    barEl.style.width = '1200px';
-    barEl.style.flex = 'none';
-    const shadeTabs = [
-      { id: 's1', title: 'a1', active: false, groupId: 'gS1' },
-      { id: 's2', title: 'a2', active: false, groupId: 'gS1' },
-      { id: 'u1', title: 'plain', active: false },
-      { id: 's3', title: 'b1', active: true, groupId: 'gS2' },
-      { id: 's4', title: 'b2', active: false, groupId: 'gS2' },
-      { id: 's5', title: 'c1', active: false, groupId: 'gS3' },
-      { id: 's6', title: 'd1', active: false, groupId: 'gS4' },
-    ];
-    const shadeGroups = [
-      { id: 'gS1', name: 'One', folded: false }, { id: 'gS2', name: 'Two', folded: false },
-      { id: 'gS3', name: 'Three', folded: true }, { id: 'gS4', name: 'Four', folded: false },
-    ];
-    tabBar.update(shadeTabs, shadeGroups);
-    await frame();
-    const tabOf = (id) => strip.querySelector(`.tab-bar-tab[data-tab-id="${id}"]`);
-    const chipFor = (id) => strip.querySelector(`.tab-bar-group-chip[data-group-id="${id}"]`);
-    const bgOf = (el) => getComputedStyle(el).backgroundColor;
-    const lineOf = (el) => getComputedStyle(el).boxShadow;
-    const SHADE = [1, 2, 3].map((n) => ({ tab: colourOf(`--group${n}-tab`), chip: colourOf(`--group${n}-chip`), line: colourOf(`--group${n}-line`) }));
-    const PLAIN = bgOf(tabOf('u1'));
-    const chipBg = ['gS1', 'gS2', 'gS3', 'gS4'].map((id) => bgOf(chipFor(id)));
-    const tabBg = Object.fromEntries(['s1', 's2', 's3', 's4', 's6'].map((id) => [id, bgOf(tabOf(id))]));
-    check('group shades: three groups get three different chip fills (the folded third too), the fourth repeats the first',
-      new Set(chipBg.slice(0, 3)).size === 3 && chipBg[3] === chipBg[0] && chipBg.every((c, i) => c === SHADE[i % 3].chip), { chipBg, want: SHADE.map((x) => x.chip) });
-    check('group shades: inactive tabs take their group\'s fill (the fourth group\'s tab = the first group\'s), unlike the plain tab',
-      tabBg.s1 === SHADE[0].tab && tabBg.s2 === SHADE[0].tab && tabBg.s4 === SHADE[1].tab && tabBg.s6 === SHADE[0].tab && new Set([tabBg.s1, tabBg.s4, PLAIN]).size === 3, { tabBg, PLAIN, want: SHADE.map((x) => x.tab) });
-    check('group shades: an ungrouped tab between two groups keeps the plain fill (not any group\'s) and has no shadow',
-      !SHADE.some((x) => x.tab === PLAIN || x.chip === PLAIN) && lineOf(tabOf('u1')) === 'none', { PLAIN, shadow: lineOf(tabOf('u1')) });
-    check('group shades: the selected grouped tab keeps the terminal ground (--bg), its group\'s line on top and the 3px ink bar',
-      tabBg.s3 === bgColour && lineOf(tabOf('s3')) === `${SHADE[1].line} 0px 2px 0px 0px inset, ${inkColour} 0px -3px 0px 0px inset`, { bg: tabBg.s3, bgColour, shadow: lineOf(tabOf('s3')) });
-    check('group shades: each chip and tab carries its own group\'s 2px line (chip of group 1, tab of group 2, chip of group 4 = line 1)',
-      lineOf(chipFor('gS1')) === `${SHADE[0].line} 0px 2px 0px 0px inset` && lineOf(tabOf('s4')) === `${SHADE[1].line} 0px 2px 0px 0px inset` && lineOf(chipFor('gS4')) === `${SHADE[0].line} 0px 2px 0px 0px inset`,
-      { chip1: lineOf(chipFor('gS1')), tab4: lineOf(tabOf('s4')), chip4: lineOf(chipFor('gS4')) });
-    // Hover is real: a grouped tab and a chip move toward their line colour and stay readable; the selected member keeps --bg.
-    const centre = (el) => { const r = el.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; };
-    // Earlier parts of this run leave overlays (command palette, a menu) over the strip: set whatever
-    // covers a hover point aside while the pointer is real, and put it back after.
-    const covers = [];
-    const uncover = (x, y) => { for (let i = 0; i < 8; i++) { const top = document.elementFromPoint(x, y); if (!top || strip.contains(top)) return; top.style.display = 'none'; covers.push(top); } };
-    const hoverState = {};
-    for (const [name, el] of [['tab', tabOf('s4')], ['chip', chipFor('gS2')], ['selected', tabOf('s3')]]) {
-      const [x, y] = centre(el);
-      uncover(x, y);
-      await hoverAt(x, y);
-      await new Promise((r) => setTimeout(r, 320)); // the fill and text colour ease over 0.15 s
-      hoverState[name] = { bg: bgOf(el), color: getComputedStyle(el).color, isHover: el.matches(':hover'), at: [Math.round(x), Math.round(y)], top: document.elementFromPoint(x, y)?.className };
+    // --- group shades (22 Nov 2026, look B): the real CSS and tokens, painted in the light AND the dark scheme (the
+    // hidden window's nativeTheme is switched through the relay), x1. Four groups (the third folded) and an
+    // ungrouped tab between the first and second.
+    const setScheme = async (mode) => {
+      await sendInput({ type: 'theme', mode });
+      for (let i = 0; i < 100 && matchMedia('(prefers-color-scheme: dark)').matches !== (mode === 'dark'); i++) await sleep(20);
+      await frame();
+      return matchMedia('(prefers-color-scheme: dark)').matches === (mode === 'dark');
+    };
+    // A computed colour is rgb(...) in 0-255, or color(srgb r g b) in 0-1 where Chromium keeps a color-mix result as such.
+    const rgbOf = (c) => (c.match(/[\d.]+/g) || []).slice(0, 3).map(Number).map((v) => (/^color\(srgb/.test(c) ? v * 255 : v));
+    const lumOf = (c) => { const [r, g, b] = c.map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+    const ratioOf = (a, b) => { const [hi, lo] = [lumOf(rgbOf(a)), lumOf(rgbOf(b))].sort((x, y) => y - x); return +((hi + 0.05) / (lo + 0.05)).toFixed(2); };
+    for (const mode of ['light', 'dark']) {
+      const schemeOk = await setScheme(mode);
+      check(`group shades (${mode}): the hidden window really is in the ${mode} scheme (prefers-color-scheme), so the fills below are painted in it`, schemeOk, { mode });
+      const inkNow = colourOf('--ink');
+      const bgNow = colourOf('--bg');
+      await setScale(1);
+      barEl.style.width = '1200px';
+      barEl.style.flex = 'none';
+      const shadeTabs = [
+        { id: 's1', title: 'a1', active: false, groupId: 'gS1' },
+        { id: 's2', title: 'a2', active: false, groupId: 'gS1' },
+        { id: 'u1', title: 'plain', active: false },
+        { id: 's3', title: 'b1', active: true, groupId: 'gS2' },
+        { id: 's4', title: 'b2', active: false, groupId: 'gS2' },
+        { id: 's5', title: 'c1', active: false, groupId: 'gS3' },
+        { id: 's6', title: 'd1', active: false, groupId: 'gS4' },
+      ];
+      const shadeGroups = [
+        { id: 'gS1', name: 'One', folded: false }, { id: 'gS2', name: 'Two', folded: false },
+        { id: 'gS3', name: 'Three', folded: true }, { id: 'gS4', name: 'Four', folded: false },
+      ];
+      tabBar.update(shadeTabs, shadeGroups);
+      await frame();
+      const tabOf = (id) => strip.querySelector(`.tab-bar-tab[data-tab-id="${id}"]`);
+      const chipFor = (id) => strip.querySelector(`.tab-bar-group-chip[data-group-id="${id}"]`);
+      const bgOf = (el) => getComputedStyle(el).backgroundColor;
+      const lineOf = (el) => getComputedStyle(el).boxShadow;
+      const SHADE = [1, 2, 3].map((n) => ({ tab: colourOf(`--group${n}-tab`), chip: colourOf(`--group${n}-chip`), line: colourOf(`--group${n}-line`) }));
+      const PLAIN = bgOf(tabOf('u1'));
+      const chipBg = ['gS1', 'gS2', 'gS3', 'gS4'].map((id) => bgOf(chipFor(id)));
+      const tabBg = Object.fromEntries(['s1', 's2', 's3', 's4', 's6'].map((id) => [id, bgOf(tabOf(id))]));
+      check(`group shades (${mode}): three groups get three different chip fills (the folded third too), the fourth repeats the first`,
+        new Set(chipBg.slice(0, 3)).size === 3 && chipBg[3] === chipBg[0] && chipBg.every((c, i) => c === SHADE[i % 3].chip), { chipBg, want: SHADE.map((x) => x.chip) });
+      check(`group shades (${mode}): inactive tabs take their group's fill (the fourth group's tab = the first group's), unlike the plain tab`,
+        tabBg.s1 === SHADE[0].tab && tabBg.s2 === SHADE[0].tab && tabBg.s4 === SHADE[1].tab && tabBg.s6 === SHADE[0].tab && new Set([tabBg.s1, tabBg.s4, PLAIN]).size === 3, { tabBg, PLAIN, want: SHADE.map((x) => x.tab) });
+      check(`group shades (${mode}): an ungrouped tab between two groups keeps the plain fill (not any group's) and has no shadow`,
+        !SHADE.some((x) => x.tab === PLAIN || x.chip === PLAIN) && lineOf(tabOf('u1')) === 'none', { PLAIN, shadow: lineOf(tabOf('u1')) });
+      check(`group shades (${mode}): the selected grouped tab keeps the terminal ground (--bg), its group's line on top and the 3px ink bar`,
+        tabBg.s3 === bgNow && lineOf(tabOf('s3')) === `${SHADE[1].line} 0px 2px 0px 0px inset, ${inkNow} 0px -3px 0px 0px inset`, { bg: tabBg.s3, bgNow, shadow: lineOf(tabOf('s3')) });
+      check(`group shades (${mode}): each chip and tab carries its own group's 2px line (chip of group 1, tab of group 2, chip of group 4 = line 1)`,
+        lineOf(chipFor('gS1')) === `${SHADE[0].line} 0px 2px 0px 0px inset` && lineOf(tabOf('s4')) === `${SHADE[1].line} 0px 2px 0px 0px inset` && lineOf(chipFor('gS4')) === `${SHADE[0].line} 0px 2px 0px 0px inset`,
+        { chip1: lineOf(chipFor('gS1')), tab4: lineOf(tabOf('s4')), chip4: lineOf(chipFor('gS4')) });
+      // Hover is real: a grouped tab and a chip move toward their line colour and stay readable; the selected member keeps --bg.
+      const centre = (el) => { const r = el.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; };
+      // Earlier parts of this run leave overlays (command palette, a menu) over the strip: set whatever
+      // covers a hover point aside while the pointer is real, and put it back after.
+      const covers = [];
+      const uncover = (x, y) => { for (let i = 0; i < 8; i++) { const top = document.elementFromPoint(x, y); if (!top || strip.contains(top)) return; top.style.display = 'none'; covers.push(top); } };
+      const hoverState = {};
+      for (const [name, el] of [['tab', tabOf('s4')], ['chip', chipFor('gS2')], ['selected', tabOf('s3')]]) {
+        const [x, y] = centre(el);
+        uncover(x, y);
+        await hoverAt(x, y);
+        await new Promise((r) => setTimeout(r, 320)); // the fill and text colour ease over 0.15 s
+        const under = document.elementFromPoint(x, y);
+        const label = el.querySelector('.tab-bar-tab-title, .tab-bar-group-name');
+        // isHover: the browser really has the pointer over it (:hover), and what lies under the pointer is the element itself or inside it.
+        hoverState[name] = { bg: bgOf(el), color: getComputedStyle(el).color, labelColor: getComputedStyle(label).color, isHover: el.matches(':hover'), pointerInside: !!under && el.contains(under), at: [Math.round(x), Math.round(y)], top: under?.className };
+      }
+      await hoverAt(600, 700);
+      await new Promise((r) => setTimeout(r, 320));
+      for (const c of covers) c.style.display = '';
+      check(`group shades (${mode}): the pointer really is over the grouped tab, the chip and the selected grouped tab when they are measured (:hover matches, the hit element is inside)`,
+        Object.values(hoverState).every((h) => h.isHover && h.pointerInside), hoverState);
+      check(`group shades (${mode}): a hovered grouped tab and a hovered chip change fill (away from their rest fill, still tinted, not the old grey), text ink; the selected member, really hovered, keeps --bg`,
+        hoverState.tab.bg !== tabBg.s4 && hoverState.tab.bg !== SHADE[1].tab && hoverState.tab.bg !== colourOf('--surface-hover') && hoverState.tab.color === inkNow
+          && hoverState.chip.bg !== chipBg[1] && hoverState.chip.bg !== SHADE[1].chip && hoverState.chip.bg !== colourOf('--grey-hover')
+          && hoverState.selected.isHover && hoverState.selected.bg === bgNow && hoverState.selected.color === inkNow, { hoverState, SHADE: SHADE[1] });
+      // Painted contrast, as drawn in this scheme (not only the tokens): the lettering against its own painted fill, at rest and hovered.
+      const restText = { tab: getComputedStyle(tabOf('s4').querySelector('.tab-bar-tab-title')).color, chip: getComputedStyle(chipFor('gS2').querySelector('.tab-bar-group-name')).color,
+        foldedCount: getComputedStyle(chipFor('gS3').querySelector('.tab-bar-group-count')).color };
+      const painted = [
+        ['tab title at rest', ratioOf(restText.tab, tabBg.s4), 4.5], ['chip name at rest', ratioOf(restText.chip, chipBg[1]), 4.5], ['folded chip count at rest', ratioOf(restText.foldedCount, chipBg[2]), 4.5],
+        ['tab title hovered', ratioOf(hoverState.tab.labelColor, hoverState.tab.bg), 4.5], ['chip name hovered', ratioOf(hoverState.chip.labelColor, hoverState.chip.bg), 4.5],
+        ['selected title hovered', ratioOf(hoverState.selected.labelColor, hoverState.selected.bg), 4.5],
+      ];
+      check(`group shades (${mode}): painted lettering reaches 4.5:1 on its painted fill (tab, chip, folded chip's count, hovered, selected) (lowest ${Math.min(...painted.map((r) => r[1]))})`, painted.every((r) => r[1] >= r[2]), painted);
+      // The drop line, painted: each of the chip, a grouped tab and the selected grouped tab forced into drag-over.
+      const dropLine = (el) => { const m = getComputedStyle(el).boxShadow.match(/(rgba?\([^)]*\)) 2px 0px 0px 0px inset/); return m ? m[1] : null; };
+      const dropRows = [];
+      for (const [what, el, fill] of [['chip', chipFor('gS2'), chipBg[1]], ['tab', tabOf('s4'), tabBg.s4], ['selected tab', tabOf('s3'), bgNow]]) {
+        el.classList.add('drag-over');
+        await frame();
+        const c = dropLine(el);
+        dropRows.push([what, c, c ? ratioOf(c, fill) : 0]);
+        el.classList.remove('drag-over');
+      }
+      check(`group shades (${mode}): the painted 2px drop line on a chip, a grouped tab and the selected grouped tab reaches 3:1 on its fill (lowest ${Math.min(...dropRows.map((r) => r[2]))})`, dropRows.every((r) => r[1] && r[2] >= 3), dropRows);
+      await setScheme('light');
+      await frame();
     }
-    await hoverAt(600, 700);
-    await new Promise((r) => setTimeout(r, 320));
-    for (const c of covers) c.style.display = '';
-    check('group shades: a hovered grouped tab and a hovered chip change fill (away from the shade, still tinted, not the old grey), text ink; the selected member keeps --bg',
-      hoverState.tab.bg !== SHADE[1].tab && hoverState.tab.bg !== colourOf('--surface-hover') && hoverState.tab.color === inkColour
-        && hoverState.chip.bg !== SHADE[1].chip && hoverState.chip.bg !== colourOf('--grey-hover') && hoverState.selected.bg === bgColour, { hoverState, SHADE: SHADE[1] });
     barEl.style.width = '1000px';
     await setScale(1);
     tabBar.update(tabs);

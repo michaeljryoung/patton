@@ -675,22 +675,65 @@ await section('12. The folded chip\'s list stays inside the window\'s right edge
     const got = [1, 2, 3].map((n) => ['tab', 'chip', 'line'].map((part) => tokenOf(block, n, part)));
     check(`shades: the ${mode} tokens are exactly the approved colours`, JSON.stringify(got) === JSON.stringify(want[mode]), got);
   }
-  // Ink and the secondary lettering (--muted half way to ink on a chip) on every fill, and on its hover (tab 18%, chip 25% toward the line).
+  // Contrast, from the REAL tokens (main.css: light in :root, dark in the dark block, dark falling back to light) and the
+  // real rules (tabs.css), on every group fill: the tab, the tab hovered (18% toward the line), the chip, the chip
+  // hovered (25%) and the selected tab's --bg. Ink 4.5:1; secondary text (--muted on an inactive tab at rest,
+  // the chip's --chip-muted mix on a chip) 4.5:1; status dots, flags and the parked ring 3:1; the drop line 3:1.
+  const tabsCss = readFileSync(join(repo, 'src/renderer/styles/tabs.css'), 'utf8');
+  const tokensIn = (block) => Object.fromEntries([...block.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/--([a-z0-9-]+):\s*([^;]+);/g)].map((m) => [m[1], m[2].trim()]));
+  const tokenMaps = { light: tokensIn(lightCss), dark: { ...tokensIn(lightCss), ...tokensIn(darkCss) } };
   const hex = (h) => [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16));
   const lum = (c) => { const [r, g, b] = c.map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
   const ratio = (a, b) => { const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x); return (hi + 0.05) / (lo + 0.05); };
   const mix = (a, b, p) => a.map((v, i) => Math.round(v * p + b[i] * (1 - p)));
-  const ground = { light: { ink: '0b0d12', muted: '596170' }, dark: { ink: 'dbe3ee', muted: '8b95a5' } };
+  const colourIn = (mode, name, depth = 0) => { // an rgb triple, or null for transparent
+    const v = tokenMaps[mode][name];
+    if (v === undefined || depth > 8) throw new Error(`token --${name} unreadable in ${mode}`);
+    const ref = v.match(/^var\(--([a-z0-9-]+)\)$/);
+    if (ref) return colourIn(mode, ref[1], depth + 1);
+    if (v === 'transparent') return null;
+    const h = v.match(/^#([0-9a-fA-F]{6})$/);
+    if (!h) throw new Error(`token --${name} in ${mode} is not a plain colour: ${v}`);
+    return hex(h[1]);
+  };
+  const chipMutedPct = Number(tabsCss.match(/--chip-muted:\s*color-mix\(in srgb, var\(--ink\) (\d+)%, var\(--muted\)\)/)?.[1]);
+  check('shades: the chip\'s secondary lettering is a --muted mix read from tabs.css (a percentage of ink)', chipMutedPct > 0 && chipMutedPct < 100, chipMutedPct);
+  // The colour var the drop line takes in each rule that draws it.
+  const dropVar = (sel) => tabsCss.replace(/\/\*[\s\S]*?\*\//g, '').match(new RegExp(`${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{[^}]*inset 2px 0 0 var\\(--([a-z-]+)\\)`))?.[1];
+  const drops = { chip: dropVar('.tab-bar-group-chip.drag-over'), tab: dropVar('.tab-bar-tab.in-group.drag-over'), selected: dropVar('.tab-bar-tab.in-group.active.drag-over') };
+  check('shades: the drop line on a chip, a grouped tab and the selected grouped tab each name a colour token', Object.values(drops).every(Boolean), drops);
   for (const mode of ['light', 'dark']) {
-    const ink = hex(ground[mode].ink);
-    const sec = mix(ink, hex(ground[mode].muted), 0.5);
-    const rows = [];
+    const T = (n) => colourIn(mode, n);
+    const ink = T('ink');
+    const sec = mix(ink, T('muted'), chipMutedPct / 100);
+    const edge = T('dot-edge');
+    const rows = { ink: [], secondary: [], status: [], drop: [] };
     want[mode].forEach(([tab, chipC, line], i) => {
       const L = hex(line);
-      for (const [what, fill, text] of [['tab', hex(tab), ink], ['tab hover', mix(L, hex(tab), 0.18), ink], ['chip', hex(chipC), ink], ['chip hover', mix(L, hex(chipC), 0.25), ink],
-        ['chip secondary', hex(chipC), sec], ['chip hover secondary', mix(L, hex(chipC), 0.25), sec]]) rows.push([`g${i + 1} ${what}`, +ratio(text, fill).toFixed(2)]);
+      const fills = [['tab', hex(tab)], ['tab hover', mix(L, hex(tab), 0.18)], ['chip', hex(chipC)], ['chip hover', mix(L, hex(chipC), 0.25)], ['selected', T('bg')]];
+      for (const [what, fill] of fills) {
+        const tag = `g${i + 1} ${what}`;
+        rows.ink.push([tag, +ratio(ink, fill).toFixed(2)]);
+        // A dot's edge (light mode only: transparent in dark) counts as its outline, as --dot-edge's comment says.
+        for (const dot of ['prompt-ready', 'status-ckpt', 'flag-green', 'flag-yellow', 'flag-red']) {
+          const d = T(dot);
+          rows.status.push([`${tag} ${dot}`, +Math.max(ratio(d, fill), edge ? ratio(edge, fill) : 0).toFixed(2)]);
+        }
+        rows.status.push([`${tag} parked ring`, +ratio(T('parked'), fill).toFixed(2)]);
+        if (what.startsWith('chip')) rows.secondary.push([`${tag} chip lettering`, +ratio(sec, fill).toFixed(2)]);
+        if (what === 'tab') rows.secondary.push([`${tag} --muted title`, +ratio(T('muted'), fill).toFixed(2)]);
+        if (what !== 'selected' || drops.selected) {
+          const dv = drops[what.startsWith('chip') ? 'chip' : what === 'selected' ? 'selected' : 'tab'];
+          if (dv) rows.drop.push([`${tag} drop line --${dv}`, +ratio(T(dv), fill).toFixed(2)]);
+        }
+      }
     });
-    check(`shades: ${mode}, ink and the chips' secondary lettering reach 4.5:1 on every group fill and its hover (lowest ${Math.min(...rows.map((r) => r[1]))})`, rows.every((r) => r[1] >= 4.5), rows.filter((r) => r[1] < 4.5));
+    const low = (list) => Math.min(...list.map((r) => r[1]));
+    const under = (list, min) => list.filter((r) => r[1] < min);
+    check(`shades: ${mode}, ink reaches 4.5:1 on every group fill and its hover (lowest ${low(rows.ink)})`, under(rows.ink, 4.5).length === 0, under(rows.ink, 4.5));
+    check(`shades: ${mode}, secondary text (the chips' --muted mix, an inactive tab's --muted title) reaches 4.5:1 (lowest ${low(rows.secondary)})`, under(rows.secondary, 4.5).length === 0, under(rows.secondary, 4.5));
+    check(`shades: ${mode}, status dots, flags and the parked ring reach 3:1 on every fill, counting a dot's edge as its outline (lowest ${low(rows.status)})`, under(rows.status, 3).length === 0, under(rows.status, 3).slice(0, 6));
+    check(`shades: ${mode}, the drop line on a chip, a tab and the selected tab reaches 3:1 on every fill (lowest ${low(rows.drop)})`, rows.drop.length > 0 && under(rows.drop, 3).length === 0, under(rows.drop, 3));
   }
 }
 
