@@ -45,6 +45,8 @@ const PATH_MAX = 1024;
 export const LINE_MAX = 16 * 1024 * 1024;
 /** Tool calls remembered so a later result can name its description. */
 const TOOL_USE_MEMORY = 2000;
+/** A ScheduleWakeup further off than this is dropped (J: 7 days). */
+export const WAKE_MAX_SECONDS = 7 * 24 * 3600;
 /** Task ids remembered for start / end dedupe. */
 const ID_MEMORY = 5000;
 
@@ -72,14 +74,18 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
+/** The start of a tool result's text: launch sentences open the result, so
+ *  the first 1 KB is all that is matched (a Read result can be megabytes). */
+const RESULT_HEAD = 1024;
 function resultText(content: unknown): string {
-  if (typeof content === 'string') return content;
+  if (typeof content === 'string') return content.slice(0, RESULT_HEAD);
   if (!Array.isArray(content)) return '';
   let out = '';
   for (const part of content) {
-    if (isRecord(part) && typeof part.text === 'string') out += part.text + '\n';
+    if (out.length >= RESULT_HEAD) break;
+    if (isRecord(part) && typeof part.text === 'string') out += part.text.slice(0, RESULT_HEAD) + '\n';
   }
-  return out;
+  return out.slice(0, RESULT_HEAD);
 }
 
 // ---------------------------------------------------------------- links (D6)
@@ -131,50 +137,155 @@ function pageLabel(id: string): string {
   return 'Page ' + id.slice(0, 8);
 }
 
-/** Links in one piece of Claude's text, in the order they appear. */
-export function extractLinks(text: string, home: string, at: number): SessionFeedEvent[] {
+/** Text scanned per block: a link or notice past this is not looked for (A). */
+export const SCAN_MAX = 64 * 1024;
+/** Link events one transcript line may give, after dedupe (A). */
+export const LINKS_PER_LINE = 20;
+/** Raw link matches collected per block before dedupe. */
+const LINKS_PER_BLOCK = 200;
+/** A markdown link's target is at most a URL's length, and its label 300. */
+const MD_TARGET_MAX = URL_MAX + 2;
+const MD_LABEL_MAX = 300;
+const FILE_EXT_AT = /\.(?:docx|pdf|xlsx|pptx|csv|html|png)(?![A-Za-z0-9])/gi;
+/** Characters a bare ~/Downloads path never holds. */
+const PATH_STOP = new Set(['`', '"', "'", '<', '>', '|', '*', '?', '\n']);
+
+/** For each index, the first index at or after it holding one of `stops`
+ *  (text.length when none): one backward pass, so every lookup is O(1). */
+function nextIndexOf(text: string, stops: (c: string) => boolean): Int32Array {
+  const out = new Int32Array(text.length + 1);
+  out[text.length] = text.length;
+  for (let i = text.length - 1; i >= 0; i--) out[i] = stops(text[i]) ? i : out[i + 1];
+  return out;
+}
+
+/** Markdown links `[label](target)` in order, found by one linear scan (the
+ *  regex this replaces went quadratic on `[a](x` and a long run of spaces). */
+function markdownLinks(text: string): Array<{ start: number; end: number; label: string; target: string }> {
+  const out: Array<{ start: number; end: number; label: string; target: string }> = [];
+  const closeParen = nextIndexOf(text, (c) => c === ')' || c === '\n');
+  const closeAngle = nextIndexOf(text, (c) => c === '>' || c === '\n');
+  let from = 0;
+  while (out.length < LINKS_PER_BLOCK) {
+    const mid = text.indexOf('](', from);
+    if (mid < 0) break;
+    from = mid + 2;
+    // The label: back to the earliest `[` with no `]` or newline between.
+    let open = -1;
+    for (let j = mid - 1; j >= 0 && mid - j <= MD_LABEL_MAX + 1; j--) {
+      const c = text[j];
+      if (c === ']' || c === '\n') break;
+      if (c === '[') open = j;
+    }
+    if (open < 0 || open + 1 === mid) continue;
+    let t = mid + 2;
+    while (t < text.length && (text[t] === ' ' || text[t] === '\t')) t++;
+    let target: string;
+    let end: number;
+    if (text[t] === '<') {
+      const gt = closeAngle[t];
+      if (gt >= text.length || text[gt] !== '>' || gt - t > MD_TARGET_MAX || gt === t + 1) continue;
+      let k = gt + 1;
+      while (k < text.length && (text[k] === ' ' || text[k] === '\t')) k++;
+      if (text[k] !== ')') continue;
+      target = text.slice(t, gt + 1);
+      end = k + 1;
+    } else {
+      const close = closeParen[t];
+      if (close >= text.length || text[close] !== ')' || close === t || close - t > MD_TARGET_MAX) continue;
+      target = text.slice(t, close).trim();
+      if (!target) continue;
+      end = close + 1;
+    }
+    out.push({ start: open, end, label: text.slice(open + 1, mid), target });
+    from = end;
+  }
+  return out;
+}
+
+/** Bare paths under ~/Downloads (names may hold spaces, not after a slash),
+ *  by one linear scan: each candidate runs from `~/Downloads/` (or
+ *  `<home>/Downloads/`) to the first `.docx`-style extension before a stop
+ *  character, within PATH_MAX. */
+function downloadsPaths(text: string, home: string): Array<{ start: number; end: number }> {
+  const out: Array<{ start: number; end: number }> = [];
+  const homeDir = home.replace(/\/+$/, '');
+  const stop = nextIndexOf(text, (c) => PATH_STOP.has(c));
+  const ext = new RegExp(FILE_EXT_AT.source, 'gi');
+  let extAt = -1;
+  let extEnd = -1;
+  let from = 0;
+  while (out.length < LINKS_PER_BLOCK) {
+    const d = text.indexOf('/Downloads/', from);
+    if (d < 0) break;
+    from = d + 1;
+    let start = -1;
+    if (d >= 1 && text[d - 1] === '~') start = d - 1;
+    else if (homeDir && d >= homeDir.length && text.startsWith(homeDir, d - homeDir.length)) start = d - homeDir.length;
+    if (start < 0) continue;
+    const bodyAt = d + '/Downloads/'.length;
+    // The next extension at or after the body (the cursor only moves forward).
+    if (extAt < bodyAt) {
+      ext.lastIndex = bodyAt;
+      const m = ext.exec(text);
+      if (!m) break; // no extension anywhere later: no more paths
+      extAt = m.index;
+      extEnd = m.index + m[0].length;
+    }
+    if (extAt === bodyAt || extEnd - start > PATH_MAX || stop[bodyAt] < extEnd) continue;
+    const rest = text.slice(bodyAt, extEnd);
+    // Every segment starts with neither whitespace nor a slash, and the
+    // file name has a character before its extension.
+    if (/^[\s/]|\/[\s/]/.test(rest) || text[extAt - 1] === '/') continue;
+    out.push({ start, end: extEnd });
+    from = extEnd;
+  }
+  return out;
+}
+
+/** Links in one piece of Claude's text, in the order they appear. Only the
+ *  first SCAN_MAX characters are read, and at most LINKS_PER_BLOCK kept. */
+export function extractLinks(fullText: string, home: string, at: number): SessionFeedEvent[] {
+  const text = fullText.length > SCAN_MAX ? fullText.slice(0, SCAN_MAX) : fullText;
   const found: Array<{ pos: number; ev: SessionFeedEvent }> = [];
+  // Taken spans in order of start; md spans are found in order and don't overlap.
   const taken: Array<[number, number]> = [];
-  const overlaps = (a: number, b: number) => taken.some(([s, e]) => a < e && b > s);
+  const overlaps = (a: number, b: number) => {
+    for (const [s, e] of taken) if (a < e && b > s) return true;
+    return false;
+  };
 
   // Markdown links first: [label](target), the label kept.
-  const md = /\[([^\]\n]{1,300})\]\(\s*(<[^>\n]+>|[^)\s][^)\n]*?)\s*\)/g;
-  for (const m of text.matchAll(md)) {
-    const start = m.index ?? 0;
-    const target = m[2].replace(/^<|>$/g, '');
-    const label = cleanText(m[1].replace(/[`*_]/g, ''), LABEL_MAX);
+  for (const m of markdownLinks(text)) {
+    const target = m.target.replace(/^<|>$/g, '');
+    const label = cleanText(m.label.replace(/[`*_]/g, ''), LABEL_MAX);
     const u = urlLink(target);
     if (u) {
-      found.push({ pos: start, ev: { type: 'link', url: u.url, label: label || pageLabel(u.id), at, ...(label ? {} : { fallback: true as const }) } });
-      taken.push([start, start + m[0].length]);
+      found.push({ pos: m.start, ev: { type: 'link', url: u.url, label: label || pageLabel(u.id), at, ...(label ? {} : { fallback: true as const }) } });
+      taken.push([m.start, m.end]);
       continue;
     }
     const f = fileLink(target, home);
     if (f) {
-      found.push({ pos: start, ev: { type: 'link', path: f, label: label || cleanText(baseName(f), LABEL_MAX), at, ...(label ? {} : { fallback: true as const }) } });
-      taken.push([start, start + m[0].length]);
+      found.push({ pos: m.start, ev: { type: 'link', path: f, label: label || cleanText(baseName(f), LABEL_MAX), at, ...(label ? {} : { fallback: true as const }) } });
+      taken.push([m.start, m.end]);
     }
   }
 
   // Bare URLs.
   for (const m of text.matchAll(/https:\/\/[^\s<>"'`()[\]{}|\\^]+/g)) {
+    if (found.length >= LINKS_PER_BLOCK * 2) break;
     const start = m.index ?? 0;
     if (overlaps(start, start + m[0].length)) continue;
     const u = urlLink(m[0]);
     if (u) found.push({ pos: start, ev: { type: 'link', url: u.url, label: pageLabel(u.id), at, fallback: true } });
   }
 
-  // Bare paths under ~/Downloads (names may hold spaces, not after a slash).
-  const homeRe = home.replace(/\/+$/, '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const pathRe = new RegExp(
-    `(?:~|${homeRe})/Downloads/(?:[^\\s/\`"'<>|*?\\n][^/\`"'<>|*?\\n]*?/)*[^\\s/\`"'<>|*?\\n][^/\`"'<>|*?\\n]*?\\.(?:docx|pdf|xlsx|pptx|csv|html|png)(?![A-Za-z0-9])`,
-    'gi',
-  );
-  for (const m of text.matchAll(pathRe)) {
-    const start = m.index ?? 0;
-    if (overlaps(start, start + m[0].length)) continue;
-    const f = fileLink(m[0], home);
-    if (f) found.push({ pos: start, ev: { type: 'link', path: f, label: cleanText(baseName(f), LABEL_MAX), at, fallback: true } });
+  // Bare paths under ~/Downloads.
+  for (const m of downloadsPaths(text, home)) {
+    if (overlaps(m.start, m.end)) continue;
+    const f = fileLink(text.slice(m.start, m.end), home);
+    if (f) found.push({ pos: m.start, ev: { type: 'link', path: f, label: cleanText(baseName(f), LABEL_MAX), at, fallback: true } });
   }
 
   found.sort((a, b) => a.pos - b.pos);
@@ -211,22 +322,46 @@ export function dedupeLinks(events: SessionFeedEvent[]): SessionFeedEvent[] {
   return out;
 }
 
+/** At most LINKS_PER_LINE link events from one line; other events all kept. */
+function capLinks(events: SessionFeedEvent[]): SessionFeedEvent[] {
+  let links = 0;
+  return events.filter((ev) => ev.type !== 'link' || ++links <= LINKS_PER_LINE);
+}
+
 // ------------------------------------------------------------ notices (D9)
 
 const END_STATUSES: Record<string, FeedTaskEndStatus> = {
   completed: 'completed', failed: 'failed', killed: 'killed', stopped: 'stopped',
 };
 
+/** The first `<name>…</name>` in a string: indexOf, so linear (a lazy regex
+ *  over many unclosed opens was quadratic). */
 function tag(text: string, name: string): string | null {
-  const m = text.match(new RegExp(`<${name}>([\\s\\S]*?)</${name}>`));
-  return m ? m[1] : null;
+  const open = `<${name}>`;
+  const i = text.indexOf(open);
+  if (i < 0) return null;
+  const j = text.indexOf(`</${name}>`, i + open.length);
+  return j < 0 ? null : text.slice(i + open.length, j);
 }
 
-/** Every `<task-notification>` in a string, as task-end events. */
-export function parseNotifications(text: string, at: number): SessionFeedEvent[] {
+/** Notices read per string: a real one is a few hundred bytes. */
+const NOTICES_MAX = 50;
+
+/** Every `<task-notification>` in a string, as task-end events. Linear: the
+ *  first SCAN_MAX characters, at most NOTICES_MAX notices. */
+export function parseNotifications(fullText: string, at: number): SessionFeedEvent[] {
+  const text = fullText.length > SCAN_MAX ? fullText.slice(0, SCAN_MAX) : fullText;
   const out: SessionFeedEvent[] = [];
-  for (const m of text.matchAll(/<task-notification>([\s\S]*?)<\/task-notification>/g)) {
-    const body = m[1];
+  const OPEN = '<task-notification>';
+  const CLOSE = '</task-notification>';
+  let from = 0;
+  for (let n = 0; n < NOTICES_MAX; n++) {
+    const i = text.indexOf(OPEN, from);
+    if (i < 0) break;
+    const j = text.indexOf(CLOSE, i + OPEN.length);
+    if (j < 0) break; // no close after this open: none after any later open either
+    from = j + CLOSE.length;
+    const body = text.slice(i + OPEN.length, j);
     const id = (tag(body, 'task-id') ?? '').trim();
     const status = END_STATUSES[(tag(body, 'status') ?? '').trim()];
     if (!TASK_ID.test(id) || !status) continue; // Monitor events have no status
@@ -243,7 +378,11 @@ export function parseNotifications(text: string, at: number): SessionFeedEvent[]
 
 // ------------------------------------------------------------ the parser
 
-interface ToolUse { name: string; description: string; command: string }
+interface ToolUse { name: string; description: string; command: string; background: boolean }
+
+/** Tools whose results quote files, pages or command output: a launch
+ *  sentence in their text is quoted, never a launch (B). */
+const QUOTING_TOOLS = new Set(['Bash', 'Read', 'Grep', 'Glob', 'WebFetch', 'WebSearch', 'Edit', 'Write', 'NotebookEdit']);
 
 export interface ParserOptions {
   /** The HOME whose ~/Downloads links are listed. */
@@ -366,9 +505,11 @@ export class TranscriptParser {
           name: block.name,
           description: cleanText(input.description, DESCRIPTION_MAX),
           command: cleanText(input.command, DESCRIPTION_MAX),
+          background: input.run_in_background === true,
         });
         if (block.name === 'ScheduleWakeup' && typeof input.delaySeconds === 'number'
-            && Number.isFinite(input.delaySeconds) && input.delaySeconds >= 0) {
+            && Number.isFinite(input.delaySeconds) && input.delaySeconds >= 0
+            && input.delaySeconds <= WAKE_MAX_SECONDS) {
           const ev: SessionFeedEvent = { type: 'wake', fireAt: at + Math.round(input.delaySeconds * 1000), at };
           const prompt = cleanText(input.prompt, DESCRIPTION_MAX);
           if (prompt) ev.prompt = prompt;
@@ -376,7 +517,7 @@ export class TranscriptParser {
         }
       }
     }
-    return dedupeLinks(out);
+    return capLinks(dedupeLinks(out));
   }
 
   private rememberToolUse(id: string, use: ToolUse): void {
@@ -426,19 +567,26 @@ export class TranscriptParser {
 
     if (typeof tur.backgroundTaskId === 'string') {
       id = tur.backgroundTaskId; kind = 'shell';
-    } else if ((m = text.match(/Command running in background with ID: ([A-Za-z0-9_-]+)/))
-        || (m = text.match(/moved to the background \(ID: ([A-Za-z0-9_-]+)\)/))) {
+    } else if (name === 'Bash' && use?.background
+        && (m = text.match(/^\s*Command running in background with ID: ([A-Za-z0-9_-]+)/))) {
+      // Text only from a Bash call that asked for the background, at the
+      // start of its result: a Read or a foreground grep may quote it (B).
+      id = m[1]; kind = 'shell';
+    } else if (name === 'Bash'
+        && (m = text.match(/^\s*Command did not complete within its \d+s timeout and was moved to the background \(ID: ([A-Za-z0-9_-]+)\)/))) {
       id = m[1]; kind = 'shell';
     } else if (tur.isAsync === true && typeof tur.agentId === 'string') {
       id = tur.agentId; kind = 'agent';
       if (!description) description = cleanText(tur.description, DESCRIPTION_MAX);
-    } else if ((m = text.match(/^Async agent launched successfully\.\s*agentId: ([A-Za-z0-9_-]+)/))) {
+    } else if ((name === 'Agent' || name === 'Task')
+        && (m = text.match(/^Async agent launched successfully\.\s*agentId: ([A-Za-z0-9_-]+)/))) {
       id = m[1]; kind = 'agent';
     } else if (name === 'Monitor' && typeof tur.taskId === 'string') {
       id = tur.taskId; kind = 'monitor';
-    } else if ((m = text.match(/^Monitor started \(task ([A-Za-z0-9_-]+)/))) {
+    } else if (name === 'Monitor' && (m = text.match(/^Monitor started \(task ([A-Za-z0-9_-]+)/))) {
       id = m[1]; kind = 'monitor';
-    } else if ((m = text.match(/^Workflow launched in background\.\s*Task ID: ([A-Za-z0-9_-]+)/))) {
+    } else if (name !== '' && !QUOTING_TOOLS.has(name)
+        && (m = text.match(/^Workflow launched in background\.\s*Task ID: ([A-Za-z0-9_-]+)/))) {
       id = m[1]; kind = 'workflow';
     } else {
       return null;

@@ -3,6 +3,7 @@
 // made-up content in the line shapes read from real transcripts on this Mac.
 // Every expectation is an exact event, so an empty parser fails them all.
 // Run: node scripts/check-session-feed.mjs   (no extra dependencies)
+//   SB_SRC_ROOT=<folder holding src/>  check another source tree (to prove the check bites)
 import { build } from 'esbuild';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
@@ -11,6 +12,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), '..');
+const srcRoot = process.env.SB_SRC_ROOT || repo;
 let failed = 0;
 let passed = 0;
 const check = (name, ok, detail) => {
@@ -22,10 +24,10 @@ const work = mkdtempSync(join(tmpdir(), 'session-feed-'));
 try {
   const out = join(work, 'parser.cjs');
   await build({
-    entryPoints: [join(repo, 'src/main/transcript-parser.ts')],
+    entryPoints: [join(srcRoot, 'src/main/transcript-parser.ts')],
     bundle: true, platform: 'node', format: 'cjs', outfile: out, logLevel: 'error',
   });
-  const { TranscriptParser, cleanText } = createRequire(import.meta.url)(out);
+  const { TranscriptParser, cleanText, extractLinks, parseNotifications } = createRequire(import.meta.url)(out);
   const HOME = '/Users/tester';
   const text = readFileSync(join(repo, 'scripts/fixtures/session-feed-lines.jsonl'), 'utf8');
   const t = (iso) => Date.parse(iso);
@@ -150,6 +152,87 @@ try {
     for (let i = 0; i < text.length; i += size) got.push(...p.push(text.slice(i, i + size)));
     same(`fed in ${size}-character chunks, the same events`, got, events);
   }
+
+  // --- pathological text stays fast (review A): each under 50 ms
+  const timed = (fn) => { const t0 = process.hrtime.bigint(); let r; try { r = fn(); } catch (err) { r = err; } return { ms: Number(process.hrtime.bigint() - t0) / 1e6, r }; };
+  const slow = [
+    ['`[a](x` and 32,000 spaces', () => extractLinks('[a](x' + ' '.repeat(32000), HOME, 0)],
+    ['`[a](<x` and 32,000 spaces', () => extractLinks('[a](<x' + ' '.repeat(32000), HOME, 0)],
+    ['`[a](x` 13,000 times', () => extractLinks('[a](x'.repeat(13000), HOME, 0)],
+    ['`](` 40,000 times', () => extractLinks('[' + ']('.repeat(40000), HOME, 0)],
+    ['`~/Downloads/` 8,000 times', () => extractLinks('~/Downloads/'.repeat(8000), HOME, 0)],
+    ['`~/Downloads/a ` 8,000 times then .pdf', () => extractLinks('~/Downloads/a '.repeat(8000) + 'x.pdf', HOME, 0)],
+    ['an unclosed `<task-notification>` 16,000 times', () => parseNotifications('<task-notification>'.repeat(16000), 0)],
+    ['a notice with 16,000 unclosed `<summary>`', () => parseNotifications('<task-notification>' + '<summary>'.repeat(16000) + '</task-notification>', 0)],
+  ];
+  for (const [name, fn] of slow) {
+    const { ms } = timed(fn);
+    check(`${name} parses in under 50 ms`, ms < 50, `${ms.toFixed(1)} ms`);
+  }
+  {
+    const many = '[x](https://claude.ai/artifact/abcdefgh) https://claude.ai/artifact/zzzzzzzz '.repeat(20000);
+    const pl = new TranscriptParser({ home: HOME, now: () => 0 });
+    const line = JSON.stringify({ parentUuid: 'a', type: 'assistant', timestamp: '2026-11-22T10:00:00Z', message: { content: [{ type: 'text', text: many }] } }) + '\n';
+    const { ms, r } = timed(() => pl.push(line));
+    check('1.5 MB of links in one block parses in under 50 ms', ms < 50, `${ms.toFixed(1)} ms`);
+    check('one line gives at most 20 link events', Array.isArray(r) && r.filter((e) => e.type === 'link').length <= 20, Array.isArray(r) ? r.length : String(r));
+    const distinct = Array.from({ length: 30 }, (_, i) => `https://claude.ai/artifact/page${String(i).padStart(4, '0')}`).join(' ');
+    const ev2 = new TranscriptParser({ home: HOME, now: () => 0 }).push(JSON.stringify({ parentUuid: 'a', type: 'assistant', timestamp: '2026-11-22T10:00:00Z', message: { content: [{ type: 'text', text: distinct }] } }) + '\n');
+    check('30 distinct links in one line: the first 20 kept, in order', ev2.length === 20 && ev2[0].url.endsWith('page0000') && ev2[19].url.endsWith('page0019'), ev2.length);
+  }
+  // The linear scans still read what the regexes read.
+  same('markdown link with spaces inside the parentheses',
+    extractLinks('see [Plan v2]( https://claude.ai/code/artifact/abcd1234 ) now', HOME, 5),
+    [{ type: 'link', url: 'https://claude.ai/code/artifact/abcd1234', label: 'Plan v2', at: 5 }]);
+  same('markdown link in angle brackets, a file under ~/Downloads',
+    extractLinks('[The brief](<~/Downloads/Q3 brief.docx>)', HOME, 5),
+    [{ type: 'link', path: `${HOME}/Downloads/Q3 brief.docx`, label: 'The brief', at: 5 }]);
+  same('a bare Downloads path with spaces, then one with a space after a slash (refused)',
+    extractLinks('Saved ~/Downloads/Lindus/Board pack v3.pdf and ~/Downloads/ x.pdf.', HOME, 5),
+    [{ type: 'link', path: `${HOME}/Downloads/Lindus/Board pack v3.pdf`, label: 'Board pack v3.pdf', fallback: true, at: 5 }]);
+  same('a full-home Downloads path ends at its extension',
+    extractLinks(`open ${HOME}/Downloads/report.xlsx, then`, HOME, 5),
+    [{ type: 'link', path: `${HOME}/Downloads/report.xlsx`, label: 'report.xlsx', fallback: true, at: 5 }]);
+  same('two notices in one string, the first closed tag of each read',
+    parseNotifications('<task-notification><task-id>t1</task-id><status>completed</status></task-notification> x <task-notification><task-id>t2</task-id><status>failed</status><summary>failed with exit code 3</summary></task-notification>', 7),
+    [{ type: 'task-end', id: 't1', status: 'completed', at: 7 }, { type: 'task-end', id: 't2', status: 'failed', exitCode: 3, summary: 'failed with exit code 3', at: 7 }]);
+
+  // --- launch sentences only from the tool that launches (review B)
+  const startsFrom = (name, input, content, tur) => {
+    const pp = new TranscriptParser({ home: HOME, now: () => 0 });
+    const lines = [
+      { parentUuid: 'a', type: 'assistant', timestamp: '2026-11-22T10:00:00Z', message: { content: [{ type: 'tool_use', id: 'tu1', name, input }] } },
+      { parentUuid: 'b', type: 'user', timestamp: '2026-11-22T10:00:01Z', ...(tur ? { toolUseResult: tur } : {}), message: { content: [{ type: 'tool_result', tool_use_id: 'tu1', content }] } },
+    ];
+    return pp.push(lines.map((l) => JSON.stringify(l)).join('\n') + '\n').filter((e) => e.type === 'task-start');
+  };
+  check('a Read result quoting the background sentence starts nothing',
+    startsFrom('Read', { file_path: '/x/f.jsonl' }, 'line 12: "Command running in background with ID: b4k2m9x. Output"').length === 0);
+  check('a foreground Bash grep quoting it starts nothing',
+    startsFrom('Bash', { command: 'grep -n running src/x' }, [{ type: 'text', text: 'x.ts:3: Command running in background with ID: fakeid99.' }]).length === 0);
+  check('a foreground Bash whose output starts with the sentence starts nothing',
+    startsFrom('Bash', { command: 'cat notes.txt' }, 'Command running in background with ID: fakeid98. Output').length === 0);
+  check('a Read result quoting the timeout sentence starts nothing',
+    startsFrom('Read', { file_path: '/x' }, 'Command did not complete within its 120s timeout and was moved to the background (ID: bzz11). Output').length === 0);
+  check('a Read result opening with the agent sentence starts nothing',
+    startsFrom('Read', { file_path: '/x' }, 'Async agent launched successfully. agentId: a1234567').length === 0);
+  check('a Bash result opening with the monitor sentence starts nothing',
+    startsFrom('Bash', { command: 'cat m' }, 'Monitor started (task m1234567, timeout 60s)').length === 0);
+  check('a Bash result opening with the workflow sentence starts nothing',
+    startsFrom('Bash', { command: 'cat w' }, 'Workflow launched in background. Task ID: w1234567').length === 0);
+  same('a background Bash call with only the result text starts a shell',
+    startsFrom('Bash', { command: 'npm test', description: 'Tests', run_in_background: true }, 'Command running in background with ID: b77. Output is being written to: /tmp/b77'),
+    [{ type: 'task-start', id: 'b77', kind: 'shell', description: 'Tests', command: 'npm test', at: t('2026-11-22T10:00:01Z') }]);
+  same('a foreground Bash moved by its timeout, text only, starts a shell',
+    startsFrom('Bash', { command: 'make', description: 'Build' }, 'Command did not complete within its 120s timeout and was moved to the background (ID: b78). Output'),
+    [{ type: 'task-start', id: 'b78', kind: 'shell', description: 'Build', command: 'make', at: t('2026-11-22T10:00:01Z') }]);
+
+  // --- a wake-up more than 7 days off is dropped (review J)
+  const wakes = (d) => new TranscriptParser({ home: HOME, now: () => 0 }).push(JSON.stringify({ parentUuid: 'a', type: 'assistant', timestamp: '2026-11-22T10:00:00Z', message: { content: [{ type: 'tool_use', id: 'w', name: 'ScheduleWakeup', input: { delaySeconds: d, prompt: 'hi' } }] } }) + '\n').filter((e) => e.type === 'wake');
+  check('ScheduleWakeup of 1e12 s gives no wake-up', wakes(1e12).length === 0, wakes(1e12));
+  check('ScheduleWakeup of 1e308 s gives no wake-up', wakes(1e308).length === 0, wakes(1e308));
+  check('ScheduleWakeup of 7 days + 1 s gives no wake-up', wakes(7 * 86400 + 1).length === 0);
+  check('ScheduleWakeup of exactly 7 days is kept', wakes(7 * 86400).length === 1 && wakes(7 * 86400)[0].fireAt === t('2026-11-29T10:00:00Z'), wakes(7 * 86400));
   const lastLineStart = text.lastIndexOf('\n', text.length - 2) + 1;
   const linkLine = text.lastIndexOf('\n', text.indexOf('A\\u0007 label')) + 1;
   const p2 = new TranscriptParser({ home: HOME, now: () => 0 });
