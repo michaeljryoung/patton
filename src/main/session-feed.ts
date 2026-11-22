@@ -21,7 +21,7 @@ import { TranscriptParser } from './transcript-parser';
 import { TranscriptTail } from './transcript-tail';
 import {
   checkTranscriptPath, claudeHome, listProcesses, readSessionsFile, resolveSession,
-  type ProcRow,
+  transcriptInCwdFolder, type ProcRow,
 } from './session-link';
 
 export interface SessionFeedDeps {
@@ -56,6 +56,8 @@ interface Watch {
   shellPid: number;
   hint: string | null;
   attached: Attached | null;
+  /** A session found whose transcript isn't written yet (new, or after /clear). */
+  pending: { sessionId: string; cwd: string } | null;
   resolving: boolean;
   stopped: boolean;
   lastResolve: number;
@@ -95,7 +97,7 @@ export class SessionFeed {
     let w = this.watches.get(ptyId);
     if (!w) {
       w = {
-        ptyId, shellPid, hint: null, attached: null, resolving: false, stopped: false,
+        ptyId, shellPid, hint: null, attached: null, pending: null, resolving: false, stopped: false,
         lastResolve: 0, checking: false, lastError: '',
         timer: setInterval(() => this.tick(ptyId), this.checkEveryMs),
       };
@@ -131,7 +133,17 @@ export class SessionFeed {
     if ((!w.attached || w.attached.how === 'hook') && now - w.lastResolve >= this.resolveEveryMs) {
       void this.resolve(w);
     }
+    else if (!w.attached && w.pending) void this.probePending(w);
     if (w.attached?.how === 'sessions-file') void this.checkSession(w);
+  }
+
+  /** Once a second while a found session has no transcript: one stat of
+   *  where it will appear, and a full resolve the moment it does. */
+  private async probePending(w: Watch): Promise<void> {
+    const p = w.pending;
+    if (!p || w.resolving) return;
+    const path = await transcriptInCwdFolder(this.claudeHome(), p.sessionId, p.cwd);
+    if (path && !w.stopped && !w.attached && w.pending === p) void this.resolve(w);
   }
 
   private async resolve(w: Watch): Promise<void> {
@@ -142,6 +154,7 @@ export class SessionFeed {
       const home = this.claudeHome();
       const found = await resolveSession(w.shellPid, home, this.deps.ps ?? listProcesses);
       if (w.stopped) return;
+      w.pending = found && !found.transcriptPath ? { sessionId: found.sessionId, cwd: found.cwd } : null;
       if (found && found.transcriptPath) {
         if (w.attached?.transcriptPath === found.transcriptPath) {
           // The hook's path was right: keep the tail, follow the sessions file.

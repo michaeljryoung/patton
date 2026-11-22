@@ -33,6 +33,8 @@ export interface ResolvedSession {
   sessionsFile: string;
   /** The transcript, realpath; null while Claude Code hasn't written one yet. */
   transcriptPath: string | null;
+  /** The session's cwd from its sessions file ('' when absent). */
+  cwd: string;
 }
 
 export function claudeHome(env: NodeJS.ProcessEnv = process.env): string {
@@ -90,8 +92,8 @@ async function realpathInside(path: string, dir: string): Promise<string | null>
   }
 }
 
-/** `sessionId` from `~/.claude/sessions/<pid>.json`, or null. */
-export async function readSessionsFile(home: string, pid: number): Promise<{ sessionId: string; file: string } | null> {
+/** `sessionId` (and `cwd`) from `~/.claude/sessions/<pid>.json`, or null. */
+export async function readSessionsFile(home: string, pid: number): Promise<{ sessionId: string; file: string; cwd: string } | null> {
   const dir = join(home, 'sessions');
   const file = await realpathInside(join(dir, `${pid}.json`), dir);
   if (!file) return null;
@@ -102,15 +104,33 @@ export async function readSessionsFile(home: string, pid: number): Promise<{ ses
     if (typeof obj.pid === 'number' && obj.pid !== pid) return null;
     const id = obj.sessionId;
     if (typeof id !== 'string' || !SESSION_ID.test(id)) return null;
-    return { sessionId: id, file };
+    const cwd = typeof obj.cwd === 'string' && obj.cwd.length <= 4096 ? obj.cwd : '';
+    return { sessionId: id, file, cwd };
   } catch {
     return null;
   }
 }
 
-/** `~/.claude/projects/<any>/<sessionId>.jsonl`, realpath; the newest if several. */
-export async function findTranscript(home: string, sessionId: string): Promise<string | null> {
+/** Claude Code's folder name for a project: the cwd with every character
+ *  but a letter or digit turned into `-` (5 of 5 live sessions here). */
+export function projectDirName(cwd: string): string {
+  return cwd.replace(/[^A-Za-z0-9]/g, '-');
+}
+
+/** The transcript in the cwd's own project folder: one stat, cheap enough to
+ *  repeat every second while a new session hasn't written its first line. */
+export async function transcriptInCwdFolder(home: string, sessionId: string, cwd: string): Promise<string | null> {
+  if (!SESSION_ID.test(sessionId) || !cwd.startsWith('/')) return null;
+  const projects = join(home, 'projects');
+  return realpathInside(join(projects, projectDirName(cwd), `${sessionId}.jsonl`), projects);
+}
+
+/** `~/.claude/projects/<any>/<sessionId>.jsonl`, realpath: the cwd's folder
+ *  first, else the newest match in any folder. */
+export async function findTranscript(home: string, sessionId: string, cwd = ''): Promise<string | null> {
   if (!SESSION_ID.test(sessionId)) return null;
+  const direct = cwd ? await transcriptInCwdFolder(home, sessionId, cwd) : null;
+  if (direct) return direct;
   const projects = join(home, 'projects');
   let dirs: string[];
   try {
@@ -158,7 +178,8 @@ export async function resolveSession(
       claudePid: pid,
       sessionId: found.sessionId,
       sessionsFile: found.file,
-      transcriptPath: await findTranscript(home, found.sessionId),
+      transcriptPath: await findTranscript(home, found.sessionId, found.cwd),
+      cwd: found.cwd,
     };
   }
   return null;

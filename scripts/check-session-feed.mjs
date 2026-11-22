@@ -103,6 +103,7 @@ try {
     of('link').length > 0 && of('link').every((e) => (e.url === undefined) !== (e.path === undefined) && e.at > 0), of('link').length);
 
   // --- untrusted text
+  // eslint-disable-next-line no-control-regex
   const CONTROL = /[\u0000-\u001f\u007f-\u009f‎‏‪-‮⁦-⁩]/;
   const strings = events.flatMap((e) => Object.values(e).filter((v) => typeof v === 'string'));
   check('no control or bidi characters in any sent string', strings.length > 20 && !strings.some((s) => CONTROL.test(s)), strings.length);
