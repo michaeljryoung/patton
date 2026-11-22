@@ -13,8 +13,9 @@
 //     services/claude-bar.ts: the cursor's row starts with `❯`, the rows above
 //     and below are `─` rules), left/right on the grid's edges, opaque; the
 //     terminal keeps the rows the whole pane gives (as with no box at all);
-//  2. a long draft grows the box upward from the same bottom edge, never past a
-//     third of the pane, the text scrolling inside it; the terminal's rows stay;
+//  2. a long draft grows the box down from the same top edge (D15; upward until
+//     S60), never past a third of the pane, the text scrolling inside it; with
+//     blank rows below Claude's bar to grow over, the terminal's rows stay;
 //  3. `dock` on the terminal's bottom edge (hairline on top) when scrolled up,
 //     `over` again when scrolled down;
 //  4. `under` (in the flow, below the terminal) on the typed (after 400 ms),
@@ -25,7 +26,7 @@
 //     "Type here", never "Draft kept";
 //  6. no Okay? button or row in any placement (removed 2026-11-20, S58), the
 //     box's first item from the left the image chips when there are some, else
-//     the textarea, the box three rows tall where its contents fit (D12: it may grow upward where they
+//     the textarea, the box three rows tall where its contents fit (D12, D15: it grows down where they
 //     don't; the height is printed in px and rows at each scale);
 //  7. composeOverBar off: `under` throughout, still no Okay? anywhere.
 // Not covered: the WebGL renderer (the grid is the same .xterm-screen box),
@@ -337,9 +338,9 @@ async function pageRun(SCALES) {
       contentNeeds: r1(need),
     };
     check(`${label}: placement over`, place() === 'over', d);
-    check(`${label}: bottom edge on row R+1's bottom (1 px)`, Math.abs(b.bottom - wantBottom) <= 1, d);
-    if (fits) check(`${label}: top edge on row R-1's top (1 px), three rows, no other row covered`, Math.abs(b.top - wantTop) <= 1, d);
-    else check(`${label}: contents need more than three rows, so the box grows upward to fit them (D12)`, Math.abs(b.height - need) <= 1 && b.top < wantTop, d);
+    check(`${label}: top edge on row R-1's top (1 px), no row above it covered (D15)`, Math.abs(b.top - wantTop) <= 1, d);
+    if (fits) check(`${label}: bottom edge on row R+1's bottom (1 px): three rows, no other row covered`, Math.abs(b.bottom - wantBottom) <= 1, d);
+    else check(`${label}: contents need more than three rows, so the box grows down to fit them (D15)`, Math.abs(b.height - need) <= 1 && b.bottom > wantBottom, d);
     check(`${label}: left and right on the grid's edges (1 px)`,
       Math.abs(b.left - g.screen.left) <= 1 && Math.abs(b.right - g.screen.right) <= 1, d);
     // D10: the overlay's sizes and visibility change at once, no 0.2 s transition.
@@ -507,29 +508,33 @@ async function pageRun(SCALES) {
     }
     // (c) Switching the renderer lays the overlay out again.
     {
-      const want = parseFloat(box().style.bottom);
-      box().style.bottom = `${want + 37}px`;
+      // D15: the overlay is laid out by its top edge (it grows down).
+      const want = parseFloat(box().style.top);
+      box().style.top = `${want + 37}px`;
       pane.setRenderer('dom');
       await settle(120);
-      check(`${at} renderer switched: the overlay laid out again`, Math.abs(parseFloat(box().style.bottom) - want) <= 0.5,
-        { bottom: box().style.bottom, want });
+      check(`${at} renderer switched: the overlay laid out again`, Math.abs(parseFloat(box().style.top) - want) <= 0.5,
+        { top: box().style.top, want });
     }
 
-    // 2. A long draft grows the box upward, capped at a third of the pane.
+    // 2. A long draft grows the box down from the same top edge (D15; until
+    //    S60 upward from the bottom edge, D9), capped at a third of the pane. On
+    //    these screens Claude's bar has many blank rows below it, so the box
+    //    grows over them and the terminal keeps its rows.
     const paneH = pane.element.getBoundingClientRect().height;
     await typeDraft(Array.from({ length: 7 }, (_, i) => `draft line ${i + 1}`).join('\n'));
     let b7 = box().getBoundingClientRect();
     let g7 = grid();
-    check(`${at} long draft (7 lines): grows upward from the same bottom edge, terminal rows unchanged`,
-      place() === 'over' && Math.abs(b7.bottom - idle.b.bottom) <= 1 && b7.height > idle.b.height + 1 && b7.height <= Math.floor(paneH / 3) + 1 && term().rows === baseRows,
-      { placement: place(), bottom: r1(b7.bottom), wasBottom: r1(idle.b.bottom), h: r1(b7.height), wasH: r1(idle.b.height), third: Math.floor(paneH / 3), rows: term().rows });
+    check(`${at} long draft (7 lines): grows down from the same top edge (row R-1), terminal rows unchanged`,
+      place() === 'over' && Math.abs(b7.top - idle.b.top) <= 1 && b7.height > idle.b.height + 1 && b7.height <= Math.floor(paneH / 3) + 1 && term().rows === baseRows,
+      { placement: place(), top: r1(b7.top), wasTop: r1(idle.b.top), h: r1(b7.height), wasH: r1(idle.b.height), third: Math.floor(paneH / 3), rows: term().rows });
     measures.push(`${at} 7-line draft: box ${r1(b7.height)} px (${r1(b7.height / g7.cellH)} rows), a third of the pane ${Math.floor(paneH / 3)} px`);
     await typeDraft(Array.from({ length: 30 }, (_, i) => `draft line ${i + 1}`).join('\n'));
     b7 = box().getBoundingClientRect();
     const ta = textarea();
     check(`${at} long draft (30 lines): never past a third of the pane, the text scrolls inside, terminal rows unchanged`,
-      place() === 'over' && Math.abs(b7.bottom - idle.b.bottom) <= 1 && b7.height <= Math.floor(paneH / 3) + 1 && ta.scrollHeight > ta.clientHeight && term().rows === baseRows,
-      { placement: place(), bottom: r1(b7.bottom), h: r1(b7.height), third: Math.floor(paneH / 3), scrollH: ta.scrollHeight, clientH: ta.clientHeight, rows: term().rows });
+      place() === 'over' && Math.abs(b7.top - idle.b.top) <= 1 && b7.height <= Math.floor(paneH / 3) + 1 && ta.scrollHeight > ta.clientHeight && term().rows === baseRows,
+      { placement: place(), top: r1(b7.top), h: r1(b7.height), third: Math.floor(paneH / 3), scrollH: ta.scrollHeight, clientH: ta.clientHeight, rows: term().rows });
     measures.push(`${at} 30-line draft: box ${r1(b7.height)} px, cap ${Math.floor(paneH / 3)} px`);
     await typeDraft('');
     overGeometry(`${at} draft cleared`, bar.R);

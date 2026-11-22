@@ -39,6 +39,8 @@ import {
   barRowsInView, placementForReading,
   type ComposePlacement, type ComposePlacementReason,
 } from '../services/compose-placement';
+import { composeRoomRows } from '../services/compose-room';
+import { onUiTextScaleApplied } from '../services/ui-text-scale';
 
 /** Background work a parked Claude Code session is waiting on: from the Stop
  *  hook (tasks + crons), or from OSC 7501 child records (tasks + their titles,
@@ -345,6 +347,15 @@ export class Pane {
   private composeSwitchMs = -Infinity;
   // What the overlay was last laid out from (see layoutComposeOverlay).
   private overlayLayoutKey = '';
+  // The overlay's height cap as last laid out (px): a third of the pane, or
+  // the room from its top edge to the pane's bottom if less. 0 under.
+  private overlayMaxPx = 0;
+  // D15: the whole rows the terminal gives up at its bottom so a long draft
+  // grows down into them (k), when k last changed, and the timer that applies
+  // a change D9's once-a-second rule held back.
+  private composeRoomRows = 0;
+  private composeRoomMs = -Infinity;
+  private composeRoomTimer: ReturnType<typeof setTimeout> | null = null;
   private barNotFoundLoggedMs = 0;
   private barLostTimer: ReturnType<typeof setTimeout> | null = null;
   private barReadFrame: number | null = null;
@@ -1233,6 +1244,8 @@ export class Pane {
       onEmptyBoxKey: (e) => this.forwardEmptyBoxKey(e),
       getMaxHeight: () => this.composeMaxHeight(),
       getCopyFallback: () => this.terminalCopyFallback(),
+      onContentHeight: () => this.syncComposeRoom('content'),
+      onKillLine: (lines) => rlog('info', '[COMPOSE] kill line', { pane: this.id, lines }),
     });
 
     // Aside, a label takes Send's place (services/compose-aside.ts); the
@@ -1593,7 +1606,10 @@ export class Pane {
     const resizeObserver = new ResizeObserver(() => {
       if (this.resizeTimer) clearTimeout(this.resizeTimer);
       this.resizeTimer = setTimeout(() => {
-        this.terminalView.fit();
+        // D15: rows given up stay given up at the new size (the padding that
+        // gives them up is measured from the container's size).
+        if (this.composeRoomRows > 0) this.terminalView.setRowsGivenUp(this.composeRoomRows);
+        else this.terminalView.fit();
         if (this.ptyId !== null) {
           const dims = this.terminalView.getDimensions();
           window.patton.pty.resize(this.ptyId, dims.cols, dims.rows);
@@ -2067,6 +2083,7 @@ export class Pane {
     }
     this.boxImages.replaceChildren(...nodes);
     this.boxImages.hidden = entries.length === 0;
+    this.syncComposeRoom('chip'); // D15: a chip may change the box's height
   }
 
   /** Showing or hiding the strip changes the terminal's height: re-fit and tell the PTY now. */
@@ -2431,6 +2448,12 @@ export class Pane {
       }),
     ];
     this.disposables.push(() => { for (const d of subs) d.dispose(); });
+    // D15: Interface Text Size changes the box's chrome and Send's height.
+    this.disposables.push(onUiTextScaleApplied(() => {
+      if (this.disposed) return;
+      this.editorInput.refreshSize();
+      this.syncComposeRoom('ui-scale');
+    }));
 
     // The keyboard back in the box (after a hand-off): placement is worked
     // out again (D9).
@@ -2602,8 +2625,10 @@ export class Pane {
     }
   }
 
-  /** Move the box. The terminal resizes only on a change between `under` and
-   *  the overlays (in the overlays it takes the pane's whole height). */
+  /** Move the box. The terminal resizes on a change between `under` and the
+   *  overlays (in the overlays it takes the pane's whole height, less the rows
+   *  a long draft has it give up, D15); going under gives those rows back in
+   *  the same refit. */
   private setComposePlacement(next: ComposePlacement, reason: ComposePlacementReason): void {
     if (next === this.composePlacement) return;
     const from = this.composePlacement;
@@ -2621,6 +2646,7 @@ export class Pane {
     // the refit, so a long draft refits once (a box that changes height after
     // the refit would make the resize observer refit again).
     this.editorInput.refreshSize();
+    if (next === 'under') this.clearComposeRoom(reason);
     if ((from === 'under') !== (next === 'under')) {
       const now = Date.now();
       this.composeRefitMs = now;
@@ -2629,6 +2655,90 @@ export class Pane {
       const byReading = reason === 'found' || reason === 'holds-text' || reason === 'lost' || reason === 'aside-end';
       this.composeSwitchMs = byReading ? now : -Infinity;
       this.refitTerminal();
+    }
+    // D15: a placement change works k out again (into an overlay, after the
+    // refit just made: D9's once-a-second rule holds it back a second).
+    if (next !== 'under') this.syncComposeRoom('placement');
+  }
+
+  /** D15: k for the box as it stands, or null when the pane isn't laid out
+   *  (a hidden tab: show() works it out again). Never called from a bar
+   *  reading: only on content-height and placement changes. */
+  private composeRoomWanted(): number | null {
+    if (!this.composeFirstEngaged || this.composePlacement === 'under') return 0;
+    const cellH = this.terminalCellHeight();
+    const paneH = this.element.clientHeight;
+    if (cellH <= 0 || paneH <= 0) return null;
+    const term = this.terminalView.terminal;
+    const barViewRow = this.barRow - term.buffer.active.viewportY;
+    const cs = getComputedStyle(this.editorContainer);
+    const px = (v: string) => parseFloat(v) || 0;
+    const chrome = px(cs.paddingTop) + px(cs.paddingBottom) + px(cs.borderTopWidth) + px(cs.borderBottomWidth);
+    return composeRoomRows({
+      placement: this.composePlacement,
+      oneLine: this.editorInput.isOneLine(),
+      neededPx: this.editorInput.naturalHeight() + chrome,
+      cellH,
+      paneH,
+      rowsBelowBar: term.rows - 1 - (barViewRow + 1),
+    });
+  }
+
+  /** D15: bring the rows the terminal gives up in line with the box's
+   *  contents. Not during an aside or while Claude asks (the terminal keeps
+   *  its size, so the question is drawn once); a change due within a second
+   *  of Patton's last resize waits for that second (D9) and is decided again. */
+  private syncComposeRoom(reason: string): void {
+    if (this.disposed || this.composePlacementFrozen) return;
+    const want = this.composeRoomWanted();
+    if (want === null || want === this.composeRoomRows) {
+      if (want === this.composeRoomRows) this.clearComposeRoomTimer();
+      return;
+    }
+    const wait = Math.max(this.composeRefitMs, this.composeRoomMs) + COMPOSE_SWITCH_MIN_MS - Date.now();
+    if (wait > 0) {
+      this.clearComposeRoomTimer();
+      this.composeRoomTimer = setTimeout(() => {
+        this.composeRoomTimer = null;
+        this.syncComposeRoom(reason);
+      }, wait);
+      return;
+    }
+    this.setComposeRoom(want, reason);
+  }
+
+  /** Give up k rows at the terminal's bottom (0: take them back), tell the
+   *  PTY, lay the box out again. Readings in the 500 ms after this refit don't
+   *  count toward the lost wait, as after any refit of Patton's own (D9). */
+  private setComposeRoom(rows: number, reason: string): void {
+    this.clearComposeRoomTimer();
+    const from = this.composeRoomRows;
+    if (rows === from) return;
+    this.composeRoomRows = rows;
+    const now = Date.now();
+    this.composeRoomMs = now;
+    this.composeRefitMs = now;
+    this.terminalView.setRowsGivenUp(rows);
+    this.refitTerminal();
+    rlog('info', '[COMPOSE] room', { pane: this.id, rows, from, placement: this.composePlacement, reason });
+    this.layoutComposeOverlay();
+  }
+
+  /** k back to 0 as the box goes under or closes: in the caller's own refit. */
+  private clearComposeRoom(reason: string): void {
+    this.clearComposeRoomTimer();
+    if (this.composeRoomRows === 0) return;
+    const from = this.composeRoomRows;
+    this.composeRoomRows = 0;
+    this.composeRoomMs = Date.now();
+    this.terminalView.setRowsGivenUp(0);
+    rlog('info', '[COMPOSE] room', { pane: this.id, rows: 0, from, placement: this.composePlacement, reason });
+  }
+
+  private clearComposeRoomTimer(): void {
+    if (this.composeRoomTimer !== null) {
+      clearTimeout(this.composeRoomTimer);
+      this.composeRoomTimer = null;
     }
   }
 
@@ -2649,11 +2759,13 @@ export class Pane {
   }
 
   /** Lay the overlay on xterm's grid: left and right on the grid's edges,
-   *  its bottom on the bottom of row R+1 ('over') or of the last row ('dock'),
-   *  three rows tall at least, growing upward to a third of the pane. `force`
-   *  false (a bar reading that found the bar empty again): nothing is measured
-   *  when the bar's row, the viewport, the rows, the box's height, the pane's
-   *  size and the font are the same as at the last layout. */
+   *  its top on the top of row R-1 ('over') or of the third row up from the
+   *  terminal's bottom ('dock'), three rows tall at least, growing DOWN (D15):
+   *  over the rows below Claude's bar, then the rows the terminal gave up,
+   *  capped at a third of the pane and at the pane's bottom. `force` false (a
+   *  bar reading that found the bar empty again): nothing is measured when the
+   *  bar's row, the viewport, the rows, the pane's size, the font and k are
+   *  the same as at the last layout. Never changes k (syncComposeRoom). */
   private layoutComposeOverlay(force = true): void {
     if (this.composePlacement === 'under') return;
     const screen = this.terminalScreen();
@@ -2661,7 +2773,7 @@ export class Pane {
     if (!screen || !rows) return;
     const term = this.terminalView.terminal;
     const key = [
-      this.composePlacement, this.barRow, term.buffer.active.viewportY, rows, this.editorContainer.offsetHeight,
+      this.composePlacement, this.barRow, term.buffer.active.viewportY, rows, this.composeRoomRows,
       this.element.clientWidth, this.element.clientHeight, term.options.fontSize, term.options.fontFamily,
       term.options.lineHeight,
     ].join('|');
@@ -2672,16 +2784,29 @@ export class Pane {
     if (cellH <= 0 || pr.height <= 0) return; // hidden tab: show() lays it out again
     this.overlayLayoutKey = key;
     const viewportY = this.terminalView.terminal.buffer.active.viewportY;
-    const lastRow = this.composePlacement === 'over' ? this.barRow + 1 - viewportY : rows - 1;
-    const bottomEdge = sr.top - pr.top + (lastRow + 1) * cellH;
+    const topRow = this.composePlacement === 'over' ? this.barRow - 1 - viewportY : rows - 3;
+    const topEdge = sr.top - pr.top + topRow * cellH;
     const st = this.editorContainer.style;
     st.left = `${sr.left - pr.left}px`;
     st.width = `${sr.width}px`;
-    st.bottom = `${pr.height - bottomEdge}px`;
-    st.minHeight = `${3 * cellH}px`;
-    st.maxHeight = `${Math.floor(pr.height * COMPOSE_OVERLAY_MAX_FRACTION)}px`;
+    st.top = `${topEdge}px`;
+    st.bottom = '';
+    const third = Math.floor(pr.height * COMPOSE_OVERLAY_MAX_FRACTION);
+    const toPaneBottom = Math.floor(pr.height - topEdge);
+    const maxPx = Math.max(3 * cellH, Math.min(third, toPaneBottom));
+    // With rows given up (D15) the box reaches the pane's bottom, so it fills
+    // the room the terminal made, within the cap.
+    st.minHeight = `${this.composeRoomRows > 0 ? maxPx : 3 * cellH}px`;
+    st.maxHeight = `${maxPx}px`;
     this.applyOverlayColor();
     this.placePasteStrip();
+    // The textarea's own cap follows the room below the box's top (its text
+    // scrolls inside past it); its natural height, which k is worked out
+    // from, does not change with the cap.
+    if (maxPx !== this.overlayMaxPx) {
+      this.overlayMaxPx = maxPx;
+      this.editorInput.refreshSize();
+    }
   }
 
   /** Opaque in the terminal's own background: terminal-view.ts sets --term-bg
@@ -2705,13 +2830,14 @@ export class Pane {
     const box = this.editorContainer.style;
     st.left = box.left;
     st.width = box.width;
-    st.bottom = `${(parseFloat(box.bottom) || 0) + this.editorContainer.offsetHeight}px`;
+    st.bottom = `${this.element.getBoundingClientRect().height - (parseFloat(box.top) || 0)}px`;
   }
 
   private clearComposeOverlayStyle(): void {
     this.overlayLayoutKey = '';
+    this.overlayMaxPx = 0;
     const st = this.editorContainer.style;
-    st.left = st.width = st.bottom = st.minHeight = st.maxHeight = '';
+    st.left = st.width = st.top = st.bottom = st.minHeight = st.maxHeight = '';
     st.removeProperty('--term-bg');
     this.placePasteStrip();
   }
@@ -2742,6 +2868,7 @@ export class Pane {
       this.barLostReason = 'aside-end';
     }
     this.scheduleBarReading();
+    this.syncComposeRoom('aside-end'); // D15: the draft may have changed meanwhile
   }
 
   /** ⌘C in a box with nothing selected: this pane's terminal selection. */
@@ -2875,10 +3002,12 @@ export class Pane {
   private composeMaxHeight(): number {
     if (!this.composeFirstEngaged) return Pane.COMPOSE_DEFAULT_MAX_PX;
     if (this.composePlacement !== 'under') {
-      // The overlay grows upward to a third of the pane (D9); the textarea
-      // leaves room for the overlay's own padding and rules.
-      const third = Math.floor(this.element.clientHeight * COMPOSE_OVERLAY_MAX_FRACTION) - Pane.COMPOSE_OVERLAY_CHROME_PX;
-      return Math.max(Pane.COMPOSE_FIRST_MIN_PX, third);
+      // The overlay grows down to a third of the pane, or to the pane's
+      // bottom if that is nearer (D15); the textarea leaves room for the
+      // overlay's own padding and rules.
+      const cap = this.overlayMaxPx > 0 ? this.overlayMaxPx
+        : Math.floor(this.element.clientHeight * COMPOSE_OVERLAY_MAX_FRACTION);
+      return Math.max(1, cap - Pane.COMPOSE_OVERLAY_CHROME_PX);
     }
     const share = Math.floor(this.element.clientHeight * Pane.COMPOSE_FIRST_MAX_FRACTION);
     return Math.max(Pane.COMPOSE_FIRST_MIN_PX, share);
@@ -2970,11 +3099,24 @@ export class Pane {
   setFontSize(size: number): void {
     this.terminalView.setFontSize(size);
     this.editorInput.setFontSize(size);
+    this.composeRoomAfterFontChange();
   }
 
   setFontFamily(family: string): void {
     this.terminalView.setFontFamily(family);
     this.editorInput.setFontFamily(family);
+    this.composeRoomAfterFontChange();
+  }
+
+  /** D15: a new font changes the cell height the rows given up are measured
+   *  in and the draft's height: keep k rows given up, then work k out again. */
+  private composeRoomAfterFontChange(): void {
+    if (this.composeRoomRows > 0) {
+      this.terminalView.setRowsGivenUp(this.composeRoomRows);
+      this.refitTerminal();
+    }
+    this.editorInput.refreshSize();
+    this.syncComposeRoom('font');
   }
 
   setScrollback(lines: number): void {
@@ -3112,6 +3254,7 @@ export class Pane {
     this.clearComposeBlockedTimer();
     this.clearComposeKeyboardTimer();
     this.clearBarLostTimer();
+    this.clearComposeRoomTimer();
     if (this.barReadFrame !== null) cancelAnimationFrame(this.barReadFrame);
     this.clearPasteChips();
     for (const d of this.disposables) d();

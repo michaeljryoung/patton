@@ -1,5 +1,6 @@
 import { stripPasteControls } from '../services/paste-sanitize';
 import { rlog } from '../services/renderer-logger';
+import { killLineRange } from '../services/kill-line';
 
 export interface EditorInputCallbacks {
   /** Send the box's text. Return false to refuse: the draft stays in the box. */
@@ -22,6 +23,11 @@ export interface EditorInputCallbacks {
   /** ⌘C with nothing selected in the box: text to copy instead (the pane's
    *  terminal selection), or '' to let the copy run as usual. */
   getCopyFallback?: () => string;
+  /** The textarea's natural height (its contents, uncapped) changed: a line
+   *  added or gone, a wrap, a font change. */
+  onContentHeight?: () => void;
+  /** Ctrl-U deleted `lines` lines (D16). */
+  onKillLine?: (lines: number) => void;
 }
 
 export const DEFAULT_COMPOSE_PLACEHOLDER = 'Enter to send, Shift+Enter for newline, Esc to dismiss';
@@ -50,6 +56,8 @@ export class EditorInput {
   private container: HTMLElement;
   private callbacks: EditorInputCallbacks;
   private disposables: (() => void)[] = [];
+  // The textarea's last natural height (scrollHeight, uncapped), px.
+  private naturalTextHeight = 0;
 
   constructor(container: HTMLElement, callbacks: EditorInputCallbacks, fontSize?: number) {
     this.container = container;
@@ -165,6 +173,14 @@ export class EditorInput {
           return;
         }
       }
+      // D16: Ctrl-U deletes the caret's line, as zsh does. Before the empty-box
+      // forwarding, so it never reaches the program, also from an empty box.
+      if (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && !e.isComposing && e.key.toLowerCase() === 'u') {
+        e.preventDefault();
+        this.killLine();
+        return;
+      }
+
       // Mid-IME composition the box's value isn't settled yet, so never pass through.
       if (!e.isComposing && this.textarea.value === '' && this.callbacks.onEmptyBoxKey?.(e)) {
         e.preventDefault();
@@ -267,6 +283,48 @@ export class EditorInput {
     this.submit();
   }
 
+  /** D16: delete the line(s) the caret or selection is on through the text
+   *  field's own editing command, so ⌘Z brings them back. An empty box: nothing. */
+  private killLine(): void {
+    const ta = this.textarea;
+    const range = killLineRange(ta.value, ta.selectionStart, ta.selectionEnd);
+    if (!range) return;
+    ta.focus();
+    ta.setSelectionRange(range.start, range.end);
+    let done = false;
+    try {
+      done = typeof document.execCommand === 'function' && document.execCommand('delete');
+    } catch {
+      done = false;
+    }
+    // No editing command (never in Chromium): the same edit, without an undo step.
+    if (!done) ta.setRangeText('', range.start, range.end, 'start');
+    ta.setSelectionRange(range.start, range.start);
+    this.autoResize();
+    this.callbacks.onKillLine?.(range.lines);
+  }
+
+  /** The box's contents at their natural height (px): the textarea uncapped,
+   *  or whatever beside it in the row is taller (Send, the image chips). */
+  naturalHeight(): number {
+    let h = this.naturalTextHeight;
+    for (const child of Array.from(this.field.children)) {
+      if (child === this.textarea || child === this.liveRegion || !(child instanceof HTMLElement)) continue;
+      h = Math.max(h, child.offsetHeight);
+    }
+    return h;
+  }
+
+  /** The draft is one line of text (one row of the textarea, no line break). */
+  isOneLine(): boolean {
+    if (this.textarea.value.includes('\n')) return false;
+    const cs = getComputedStyle(this.textarea);
+    const line = parseFloat(cs.lineHeight);
+    if (!(line > 0) || !(this.naturalTextHeight > 0)) return true;
+    const padV = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
+    return this.naturalTextHeight - padV < 1.5 * line;
+  }
+
   private autoResize(): void {
     // In a hidden tab (display:none) scrollHeight is 0, and writing it would
     // leave a zero-height box; Pane.show() redoes this once it's visible.
@@ -277,6 +335,10 @@ export class EditorInput {
     this.textarea.style.height = Math.min(full, cap) + 'px';
     // Past the cap the textarea scrolls itself, with a visible scrollbar.
     this.textarea.style.overflowY = full > cap ? 'auto' : 'hidden';
+    if (full !== this.naturalTextHeight) {
+      this.naturalTextHeight = full;
+      this.callbacks.onContentHeight?.();
+    }
   }
 
   /** Re-apply the height cap (after the cap or the pane's size changed). */

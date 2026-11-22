@@ -2,7 +2,9 @@
   flex: 1;
   position: relative;
   overflow: hidden;
-  padding: 4px 4px 10px 4px;
+  /* --rows-given-up: the rows the terminal gives up at its bottom so a long
+     draft in the compose box grows down (TerminalView.setRowsGivenUp, D15). */
+  padding: 4px 4px calc(10px + var(--rows-given-up, 0px)) 4px;
   /* The padding frame takes the terminal theme's background (set in terminal-view.ts). */
   background: var(--term-bg, var(--bg));
 }

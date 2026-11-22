@@ -5,7 +5,7 @@ import { SearchAddon } from '@xterm/addon-search';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { DEFAULTS } from '../../shared/constants';
 import { rlog } from '../services/renderer-logger';
-import { fitGrid } from '../services/terminal-fit';
+import { fitGrid, roomPadding, type FitInput } from '../services/terminal-fit';
 import { parsePattonOsc, type PattonState } from '../services/patton-osc';
 import { parseProgramStatus, PROGRAM_STATUS_REPLY, type ParsedSequence } from '../services/program-status';
 import { programStatusEnabled } from '../services/program-status-switch';
@@ -638,6 +638,33 @@ export class TerminalView {
   }
 
   private proposeFit(): { cols: number; rows: number } | null {
+    const input = this.fitInput();
+    return input ? fitGrid(input) : null;
+  }
+
+  /**
+   * Give up `rows` whole rows at the terminal's bottom (the compose box's room
+   * below, docs/compose-box.md D15), or take them back with 0: the container's
+   * bottom padding grows by `--rows-given-up` (terminal.css), measured here
+   * from the container as it stands with none given up, then the grid is fit
+   * again. Called again with the same count after the container's size or the
+   * font changes, so the count holds. The caller tells the PTY.
+   */
+  setRowsGivenUp(rows: number): void {
+    if (this.disposed) return;
+    const parent = this.terminal.element?.parentElement;
+    if (!parent) return;
+    parent.style.removeProperty('--rows-given-up');
+    if (rows > 0) {
+      const input = this.fitInput();
+      const pad = input ? roomPadding(input, rows) : 0;
+      if (pad > 0) parent.style.setProperty('--rows-given-up', `${pad}px`);
+    }
+    this.fit();
+  }
+
+  /** What fitGrid needs, read from the container and the renderer now. */
+  private fitInput(): FitInput | null {
     const element = this.terminal.element;
     const parent = element?.parentElement;
     if (!element || !parent) return null;
@@ -646,7 +673,7 @@ export class TerminalView {
     const p = window.getComputedStyle(parent);
     const e = window.getComputedStyle(element);
     const px = (s: CSSStyleDeclaration, name: string): number => parseFloat(s.getPropertyValue(name)) || 0;
-    return fitGrid({
+    return {
       height: parseFloat(p.getPropertyValue('height')),
       width: parseFloat(p.getPropertyValue('width')),
       padTop: px(p, 'padding-top'), padBottom: px(p, 'padding-bottom'),
@@ -656,7 +683,7 @@ export class TerminalView {
       innerPadH: px(e, 'padding-left') + px(e, 'padding-right'),
       scrollbarWidth: this.terminal.options.scrollback === 0 ? 0 : (this.terminal.options.overviewRuler?.width || 14),
       cellWidth: cell.width, cellHeight: cell.height,
-    });
+    };
   }
 
   getDimensions(): { cols: number; rows: number } {

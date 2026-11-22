@@ -150,10 +150,11 @@
 
 /* One typing bar (docs/compose-box.md D9): the box laid over Claude Code's own
    input bar ('over') or on the terminal's bottom edge when scrolled up ('dock').
-   Out of the flow, so the terminal takes the pane's whole height. Pane's
-   layoutComposeOverlay() sets left, width, bottom, min-height (three terminal
-   rows) and max-height (a third of the pane) from xterm's cell grid; the box
-   grows upward from that bottom edge. Opaque in the terminal's background
+   Out of the flow, so the terminal takes the pane's whole height (less the
+   rows a long draft has it give up, D15). Pane's layoutComposeOverlay() sets
+   left, width, top, min-height (three terminal rows) and max-height (a third
+   of the pane, or less to the pane's bottom) from xterm's cell grid; the box
+   grows DOWN from that top edge (D15). Opaque in the terminal's background
    (--term-bg, copied from the terminal's container), above xterm's own layers
    (z-index up to 11) and below the search overlay (100). The padding and the
    dock's rule are the chrome Pane.COMPOSE_OVERLAY_CHROME_PX leaves room for. */

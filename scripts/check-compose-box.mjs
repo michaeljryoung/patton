@@ -3,7 +3,8 @@
 // Claude asks (a 7501 `blocked` held 250 ms, root or background task), after a
 // `/` line the user sends from it, and comes back when that ends; a click in
 // the terminal keeps the box's keyboard on a pane with 7501 reports; the
-// setting `composeBox` (the old `composeFirst` is no longer read).
+// setting `composeBox` (the old `composeFirst` is no longer read); Ctrl-U in
+// the box deletes the caret's line, undoably, and never reaches the pty (D16).
 //
 // Drives a REAL Pane (constructed and init()ed) in jsdom with the REAL
 // EditorInput (the box, its textarea, Enter and the copy keys), the terminal
@@ -1130,6 +1131,103 @@ const ptyWrites = () => writes.filter(([, d]) => typeof d === 'string');
     pasted.length === 1 && pasted[0][0] === 'b', pasted);
   void d;
   tab.element.remove();
+}
+
+// ── 9. Ctrl-U deletes the caret's line (D16) ──
+// jsdom has no editing commands: this stand-in keeps an undo stack for the
+// edits made through execCommand ('insertText', 'delete'), as Chromium's
+// text field does, so 'undo' (⌘Z) restores only an edit that went through
+// the editing command. An edit made by assigning the value is not undoable.
+{
+  const undoStack = [];
+  doc.execCommand = (cmd, _ui, val) => {
+    const t = doc.activeElement;
+    if (!(t instanceof w.HTMLTextAreaElement)) return false;
+    if (cmd === 'undo') {
+      const prev = undoStack.pop();
+      if (!prev) return false;
+      t.value = prev.value;
+      t.setSelectionRange(prev.start, prev.end);
+      return true;
+    }
+    if (cmd !== 'insertText' && cmd !== 'delete') return false;
+    const { selectionStart: a, selectionEnd: b } = t;
+    if (cmd === 'delete' && a === b) return false;
+    undoStack.push({ value: t.value, start: a, end: b });
+    t.setRangeText(cmd === 'insertText' ? val : '', a, b, 'end');
+    return true;
+  };
+  const ctrlU = (p, init = {}) => keyIn(p, 'u', { ctrlKey: true, ...init });
+  const caret = (p) => [boxEl(p).selectionStart, boxEl(p).selectionEnd];
+  const put = (p, text, start, end = start) => {
+    boxEl(p).focus();
+    p.editorInput.setValue(text);
+    boxEl(p).setSelectionRange(start, end);
+  };
+  const killLogs = () => ofTag('kill line');
+  const p = await engagedPane();
+  boxEl(p).focus();
+  writes.length = 0;
+
+  put(p, 'fix the build', 4);
+  logs.length = 0;
+  const e1 = ctrlU(p);
+  check('Ctrl-U in a one-line draft clears it, the key taken (default prevented)',
+    boxEl(p).value === '' && e1.defaultPrevented, { value: boxEl(p).value, prevented: e1.defaultPrevented });
+  check('...logged [COMPOSE] kill line {pane, lines: 1}',
+    killLogs().length === 1 && killLogs()[0].pane === p.id && killLogs()[0].lines === 1, killLogs());
+  const cleared = boxEl(p).value;
+  doc.execCommand('undo');
+  check('...⌘Z (the text field\'s undo) brings the line back', cleared === '' && boxEl(p).value === 'fix the build', { cleared, now: boxEl(p).value });
+
+  put(p, 'one\ntwo\nthree', 5); // in "two"
+  ctrlU(p);
+  const middle = boxEl(p).value;
+  check('the middle line of three goes with its line break; the caret starts the line that takes its place',
+    middle === 'one\nthree' && caret(p)[0] === 4 && caret(p)[1] === 4, { value: middle, caret: caret(p) });
+  doc.execCommand('undo');
+  check('...⌘Z restores it', middle === 'one\nthree' && boxEl(p).value === 'one\ntwo\nthree', boxEl(p).value);
+
+  put(p, 'one\ntwo\nthree', 13); // end of "three"
+  ctrlU(p);
+  check('the last line goes with the line break before it; the caret ends the line above',
+    boxEl(p).value === 'one\ntwo' && caret(p)[0] === 7 && caret(p)[1] === 7, { value: boxEl(p).value, caret: caret(p) });
+
+  put(p, 'one\ntwo\nthree\nfour', 1, 10); // from "one" into "three"
+  logs.length = 0;
+  ctrlU(p);
+  const across = boxEl(p).value;
+  check('a selection across lines removes every line it touches',
+    across === 'four' && caret(p)[0] === 0, { value: across, caret: caret(p) });
+  check('...logged with lines: 3', killLogs().length === 1 && killLogs()[0].lines === 3, killLogs());
+  doc.execCommand('undo');
+  check('...⌘Z restores all three', across === 'four' && boxEl(p).value === 'one\ntwo\nthree\nfour', boxEl(p).value);
+
+  put(p, '', 0);
+  logs.length = 0;
+  const eEmpty = ctrlU(p);
+  await flush(); advance(20); await flush();
+  check('Ctrl-U in an empty box: nothing happens, the key is still taken, no log line',
+    boxEl(p).value === '' && eEmpty.defaultPrevented && killLogs().length === 0, { prevented: eEmpty.defaultPrevented, logs: killLogs() });
+
+  put(p, 'keep me', 3);
+  ctrlU(p, { shiftKey: true });
+  ctrlU(p, { metaKey: true });
+  ctrlU(p, { altKey: true });
+  const withMods = boxEl(p).value;
+  ctrlU(p);
+  check('Ctrl-U with another modifier deletes nothing; plain Ctrl-U then deletes the line',
+    withMods === 'keep me' && boxEl(p).value === '', { withMods, after: boxEl(p).value });
+
+  // An empty box with Claude idle forwards keys (D3); Ctrl-U must not be one.
+  put(p, '', 0);
+  const eFwd = ctrlU(p);
+  await flush(); advance(20); await flush();
+  check('Ctrl-U (one-line, several lines, a selection, the empty box) never reached the pty, each taken by the box',
+    ptyWrites().length === 0 && eFwd.defaultPrevented, { writes: ptyWrites(), prevented: eFwd.defaultPrevented });
+
+  drop(p);
+  delete doc.execCommand;
 }
 
 finished = true;
