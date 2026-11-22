@@ -488,8 +488,8 @@ async function pageRun(SCALES, GROUPS) {
     const third1 = Math.floor(paneH() / 3);
     const d1 = { h0, h1: paneH(), k0, k1, expected: expectedK(), box: { h: r1(b1.height), bottom: r1(b1.bottom) }, third1, contentBottom: r1(paneContentBottom()), cellH: r1(g1.cellH) };
     check(`${at} pane height: a shorter pane (${h0} -> ${paneH()} px) works k out again from the smaller cap (${k0} -> ${expectedK()})`, k1 === expectedK() && k1 < k0, d1);
-    check(`${at} pane height: the box is no taller than a third of the shorter pane plus a row, its bottom on the pane's`,
-      b1.height <= third1 + g1.cellH + 1 && Math.abs(b1.bottom - paneContentBottom()) <= 1, d1);
+    check(`${at} pane height: the box is no taller than a third of the shorter pane, its bottom at or below the terminal's last row (S61: no fill to the pane's bottom)`,
+      b1.height <= third1 + 1 && b1.bottom >= g1.screen.bottom - 1, d1);
     const seen1 = [];
     for (let i = 0; i < 3; i++) { await sleep(600); seen1.push(`${term().rows}/${kNow()}`); }
     check(`${at} pane height: no loop, the rows and k hold over 1.8 s after the settle`, new Set(seen1).size === 1, seen1);

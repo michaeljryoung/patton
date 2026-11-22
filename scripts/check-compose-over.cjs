@@ -31,7 +31,7 @@
 //  7. composeOverBar off: `under` throughout, still no Okay? anywhere.
 //  8. D15/D17 (docs/compose-box.md, "Design, part 3", `draftRoomChecks`): a draft taller than the rows below
 //     the bar leaves the box's top on row R-1's top, covers no row above it, makes the terminal k >= 1 rows
-//     shorter with the box's bottom on the pane's content bottom, logs `[COMPOSE] room` with rows = k; past a
+//     shorter with the box's bottom at or below the terminal's last row and no taller than a third of the pane (S61; no blank space under the textarea, Send on the box's first line, the caret kept in view after real paste events), logs `[COMPOSE] room` with rows = k; past a
 //     third of the pane the text scrolls; cleared, the terminal has its rows back and the box is over R-1..R+1;
 //     in `dock` no row above the last three is covered; three more redraws 600 ms apart leave k alone. Claude's
 //     redraw after a resize is stood in for by `redrawFor` (the stub pty sends no SIGWINCH): it clears the
@@ -579,6 +579,41 @@ async function pageRun(SCALES) {
     };
   }
 
+  /** S61: the box is its contents' height: nothing between the textarea's bottom and the box's own padding. */
+  function noBlankBelowText(label) {
+    const b = box().getBoundingClientRect();
+    const t = textarea().getBoundingClientRect();
+    const cs = getComputedStyle(box());
+    const chrome = parseFloat(cs.paddingBottom) + parseFloat(cs.borderBottomWidth);
+    const d = { boxBottom: r1(b.bottom), textareaBottom: r1(t.bottom), boxPaddingBottom: r1(chrome), blank: r1(b.bottom - t.bottom - chrome), boxH: r1(b.height), textareaH: r1(t.height) };
+    check(`${label}: no blank space below the textarea inside the box (within 1 px of the box's padding)`, d.blank <= 1 && d.blank >= -1, d);
+  }
+
+  /** The one-line box is three rows with its line and Send centred in it (the look the tall box keeps, S61). */
+  function sendCentredInOneLineBox(label) {
+    const b = box().getBoundingClientRect();
+    const sb = q('.editor-send').getBoundingClientRect();
+    const d = { sendCentreInBox: r1((sb.top + sb.bottom) / 2 - b.top), boxHalf: r1(b.height / 2) };
+    check(`${label}: Send centred in the three-row box (within 1.5 px)`, Math.abs(d.sendCentreInBox - d.boxHalf) <= 1.5, d);
+  }
+
+  /** S61: Send sits on the box's first line: centred on the textarea's first line (within 1.5 px), inside the box. */
+  function sendOnFirstLine(label) {
+    const b = box().getBoundingClientRect();
+    const ta = textarea();
+    const t = ta.getBoundingClientRect();
+    const tcs = getComputedStyle(ta);
+    const firstLineH = parseFloat(tcs.lineHeight) + parseFloat(tcs.paddingTop) + parseFloat(tcs.paddingBottom) + 2 * parseFloat(tcs.borderTopWidth);
+    const sb = q('.editor-send').getBoundingClientRect();
+    const d = { sendTop: r1(sb.top - b.top), sendBottom: r1(sb.bottom - b.top), sendCentre: r1((sb.top + sb.bottom) / 2 - t.top), firstLineCentre: r1(firstLineH / 2), boxH: r1(b.height) };
+    // At a UI scale where Send is taller than the textarea's line (1.5), it can't centre on the line without leaving
+    // the box: it sits at the box's top padding instead.
+    const taller = sb.height > firstLineH + 0.5;
+    check(`${label}: Send centred on the box's first line (within 1.5 px; at the box's top padding when taller than the line), not at the middle of the box`,
+      taller ? sb.top - b.top <= 3 && sb.top <= t.top + 0.5 : Math.abs(d.sendCentre - d.firstLineCentre) <= 1.5, { ...d, sendH: r1(sb.height), firstLineH: r1(firstLineH) });
+    check(`${label}: Send inside the box's rectangle`, sb.top >= b.top - 0.5 && sb.bottom <= b.bottom + 0.5 && sb.right <= b.right + 0.5, d);
+  }
+
   async function draftRoomChecks(at) {
     const D = `${at} D15`;
     // -------- over
@@ -618,6 +653,7 @@ async function pageRun(SCALES) {
     // 1. a one-line draft: box over R-1..R+1, the terminal keeps the pane's rows (a regression guard: true on main too)
     await typeDraft('one line');
     overGeometry(`${D} one-line draft`, R0);
+    sendCentredInOneLineBox(`${D} one-line draft`);
     check(`${D} one-line draft: the terminal's rows equal the pane's full rows`, term().rows === baseRows, { rows: term().rows, baseRows });
 
     // 2a. a draft that fits in room the cap allows: the pin to the pane's bottom is exact. (The box ends on
@@ -635,8 +671,10 @@ async function pageRun(SCALES) {
         const d6 = { placement: place(), R: bar6.R, rows: term().rows, baseRows, k: k6, box: { top: r1(b6.top), bottom: r1(b6.bottom), h: r1(b6.height) }, rowTop: r1(g6.top(bar6.R - 1)), paneContentBottom: r1(paneContentBottom()), rowsBelow, third };
         check(`${D} precondition: the 6-line draft is taller than the three bar rows plus the ${rowsBelow} rows below the bar, and under the cap`,
           b6.height > (3 + rowsBelow) * g6.cellH + 0.5 && b6.height < third - 0.5, d6);
-        check(`${D} 6-line draft: top within 1 px of row R-1's top, the terminal k >= 1 rows shorter, the box's bottom within 1 px of the pane's content bottom`,
-          place() === 'over' && Math.abs(b6.top - g6.top(bar6.R - 1)) <= 1 && k6 >= 1 && Math.abs(b6.bottom - paneContentBottom()) <= 1, d6);
+        check(`${D} 6-line draft: top within 1 px of row R-1's top, the terminal k >= 1 rows shorter, the box's bottom at or below the terminal's last row (Claude's footer covered, S61)`,
+          place() === 'over' && Math.abs(b6.top - g6.top(bar6.R - 1)) <= 1 && k6 >= 1 && b6.bottom >= g6.screen.bottom - 1, d6);
+        noBlankBelowText(`${D} 6-line draft`);
+        sendOnFirstLine(`${D} 6-line draft`);
         measures.push(`${D} 6-line draft: terminal ${term().cols}x${term().rows} (k=${k6}), box ${r1(b6.height)} px from ${r1(b6.top)} to ${r1(b6.bottom)}, pane content bottom ${r1(paneContentBottom())}`);
       }
     }
@@ -664,7 +702,10 @@ async function pageRun(SCALES) {
     for (let r = g.vy; r <= R1 - 2; r++) worst = Math.max(worst, g.top(r) + g.cellH);
     check(`${D} tall draft: no terminal row above R-1 intersects the box`, b.top >= worst - 1, { ...dTall, lowestRowAboveBottom: r1(worst) });
     check(`${D} tall draft: the terminal gives up k >= 1 whole rows at its bottom (fewer rows than the pane's ${baseRows})`, k >= 1, dTall);
-    check(`${D} tall draft: the box's bottom within 1 px of the pane's content bottom`, Math.abs(b.bottom - paneContentBottom()) <= 1, dTall);
+    check(`${D} tall draft: the box's bottom at or below the terminal's last row, so Claude's footer is under it, and never past a third of the pane (S61)`,
+      b.bottom >= g.screen.bottom - 1 && b.height <= third + 1, dTall);
+    noBlankBelowText(`${D} tall draft`);
+    sendOnFirstLine(`${D} tall draft`);
     measures.push(`${D} 8-line draft: terminal ${term().cols}x${term().rows} (k=${k}), box ${r1(b.height)} px from ${r1(b.top)} to ${r1(b.bottom)}, pane content bottom ${r1(paneContentBottom())}, row R-1 top ${r1(g.top(R1 - 1))}`);
     // the room line (only if the stub captures renderer logs)
     if (logs.some((l) => l.tag === '[COMPOSE] place')) {
@@ -681,10 +722,51 @@ async function pageRun(SCALES) {
     g = grid();
     const ta = textarea();
     const dCap = { placement: place(), rows: term().rows, h: r1(b.height), third, scrollH: ta.scrollHeight, clientH: ta.clientHeight, top: r1(b.top), bottom: r1(b.bottom), paneContentBottom: r1(paneContentBottom()) };
-    check(`${D} 40-line draft: the box stops growing (height <= a third of the pane + 2 rows: rounding up to whole rows, plus the 20 px the pane has below its last row)`, b.height <= third + 2 * g.cellH + 1, dCap);
+    check(`${D} 40-line draft: the box stops growing at a third of the pane (S61: no fill to the pane's bottom, so no rounding allowance)`, b.height <= third + 1, dCap);
+    noBlankBelowText(`${D} 40-line draft`);
+    sendOnFirstLine(`${D} 40-line draft`);
     check(`${D} 40-line draft: the textarea scrolls (scrollHeight > clientHeight)`, ta.scrollHeight > ta.clientHeight, dCap);
-    check(`${D} 40-line draft: the box's bottom within 1 px of the pane's content bottom, its top on row R-1's top`,
-      Boolean(bar && bar.empty) && Math.abs(b.bottom - paneContentBottom()) <= 1 && Math.abs(b.top - g.top(bar.R - 1)) <= 1, dCap);
+    check(`${D} 40-line draft: the box's bottom at or below the terminal's last row, its top on row R-1's top`,
+      Boolean(bar && bar.empty) && b.bottom >= g.screen.bottom - 1 && Math.abs(b.top - g.top(bar.R - 1)) <= 1, dCap);
+    // S61: the caret stays in view after any change of the text. typeDraft sets the value and fires `input`
+    // (a restored or typed draft: the caret at the end); a real paste event, at the end and at the start.
+    check(`${D} 40-line draft typed: the textarea is scrolled to the caret at its end (scrollTop ${r1(ta.scrollTop)} of ${ta.scrollHeight - ta.clientHeight})`,
+      ta.scrollTop >= ta.scrollHeight - ta.clientHeight - 2, dCap);
+    {
+      const realPaste = (text) => {
+        const dt = new DataTransfer();
+        dt.setData('text', text);
+        ta.focus();
+        ta.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+      };
+      await typeDraft('');
+      await settle(900);
+      realPaste(room(40));
+      await settle(900);
+      const dEnd = { scrollTop: r1(ta.scrollTop), max: ta.scrollHeight - ta.clientHeight, sel: ta.selectionEnd, len: ta.value.length };
+      check(`${D} real paste of 40 lines into an empty box: the textarea is scrolled to the caret at the end`, dEnd.max > 50 && ta.scrollTop >= dEnd.max - 2, dEnd);
+      ta.setSelectionRange(0, 0);
+      ta.scrollTop = 0;
+      realPaste('ZZ');
+      await settle(300);
+      const dStart = { scrollTop: r1(ta.scrollTop), max: ta.scrollHeight - ta.clientHeight, sel: ta.selectionEnd };
+      check(`${D} real paste at the start of a long draft scrolled to its end: the textarea scrolls back to the caret`, ta.scrollTop <= 2 && dStart.sel === 2, dStart);
+      ta.scrollTop = 100;
+      ta.setSelectionRange(ta.value.length, ta.value.length);
+      realPaste('tail');
+      await settle(300);
+      const dMid = { scrollTop: r1(ta.scrollTop), max: ta.scrollHeight - ta.clientHeight };
+      check(`${D} real paste at the end after scrolling up: the textarea scrolls down to the caret`, ta.scrollTop >= dMid.max - 2, dMid);
+      pane.editorInput.setValue(room(40));
+      await settle(300);
+      check(`${D} a draft restored with setValue: scrolled to the caret at its end`, ta.scrollTop >= ta.scrollHeight - ta.clientHeight - 2, { scrollTop: r1(ta.scrollTop), max: ta.scrollHeight - ta.clientHeight });
+      ta.scrollTop = 0;
+      pane.editorInput.insertText('\n/path/to/dropped/file.png', { focus: false });
+      await settle(300);
+      check(`${D} a dropped file's path inserted with insertText: scrolled to the caret`, ta.scrollTop >= ta.scrollHeight - ta.clientHeight - 2, { scrollTop: r1(ta.scrollTop), max: ta.scrollHeight - ta.clientHeight });
+      await typeDraft(room(40));
+      await settle(900);
+    }
     measures.push(`${D} 40-line draft: terminal ${term().rows} rows, box ${r1(b.height)} px, a third ${third} px`);
 
     // 6. stability (D15: "Claude's redraw after the resize can't feed back"): back to the 8-line draft, let it settle,

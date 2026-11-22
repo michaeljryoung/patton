@@ -148,6 +148,19 @@
   background: transparent;
 }
 
+/* The compose box grows down (D15): what sits beside the text (Send, the image
+   chips) stays on the box's first line, where it sat while the box was one
+   line, as tall as that line (EditorInput sets --compose-first-line-h) and
+   centred in it, not floating at the middle of a tall box. */
+.editor-container.compose-first .editor-field {
+  align-items: flex-start;
+}
+
+.editor-container.compose-first .editor-send-slot,
+.editor-container.compose-first .compose-images {
+  min-height: var(--compose-first-line-h, 0px);
+}
+
 /* One typing bar (docs/compose-box.md D9): the box laid over Claude Code's own
    input bar ('over') or on the terminal's bottom edge when scrolled up ('dock').
    Out of the flow, so the terminal takes the pane's whole height (less the

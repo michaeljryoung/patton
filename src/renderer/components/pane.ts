@@ -3121,14 +3121,13 @@ export class Pane {
     const third = Math.floor(pr.height * COMPOSE_OVERLAY_MAX_FRACTION);
     const toPaneBottom = Math.floor(pr.height - topEdge);
     const maxPx = Math.max(3 * cellH, Math.min(third, toPaneBottom));
-    // With rows given up (D15) the box reaches the pane's bottom, cap or not:
-    // k is whole rows from the capped need, so the cap alone would stop the
-    // box up to a row and a half short and show Claude's footer in the gap.
-    // The box then passes a third of the pane by under a row; the textarea's
-    // own cap (overlayMaxPx) stays a third, so the text still scrolls inside.
-    const fillPx = this.composeRoomRows > 0 ? Math.max(maxPx, toPaneBottom) : 0;
-    st.minHeight = `${fillPx > 0 ? fillPx : 3 * cellH}px`;
-    st.maxHeight = `${Math.max(maxPx, fillPx)}px`;
+    // The box is its contents' height, three rows at least, and never more
+    // than maxPx (a third of the pane, D15): no blank space below the text.
+    // With rows given up, k is whole rows from the capped need, so the box
+    // reaches past the terminal's last row into the rows given up; Claude's
+    // footer, k rows higher after its redraw, is under the box, not in a gap.
+    st.minHeight = `${3 * cellH}px`;
+    st.maxHeight = `${maxPx}px`;
     this.applyOverlayColor();
     this.placePasteStrip();
     // The textarea's own cap follows the room below the box's top (its text
