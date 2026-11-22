@@ -11,8 +11,8 @@
  */
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, statSync, unwatchFile, watchFile, type Stats } from 'node:fs';
-import { chmod, mkdir, open, readdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
+import { constants as fsConstants, existsSync, statSync, unwatchFile, watchFile, type Stats } from 'node:fs';
+import { access, chmod, mkdir, open, readdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir, userInfo } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { app, ipcMain, shell, type WebContents } from 'electron';
@@ -159,10 +159,33 @@ function versionOf(st: { mtimeMs: number; size: number }): string {
   return `${st.mtimeMs}:${st.size}`;
 }
 
+/** `name` cut to at most `max` UTF-8 bytes, whole characters only: the temp
+ *  and backup names add ~55 bytes to his file's, and macOS refuses a name
+ *  over 255 (ENAMETOOLONG). */
+export function fitName(name: string, max: number): string {
+  if (Buffer.byteLength(name, 'utf8') <= max) return name;
+  let out = '';
+  let bytes = 0;
+  for (const ch of name) {
+    const n = Buffer.byteLength(ch, 'utf8');
+    if (bytes + n > max) break;
+    out += ch;
+    bytes += n;
+  }
+  return out;
+}
+
+/** What the replace found just before the rename, when it isn't safe. */
+export class ReplaceRefused extends Error {
+  constructor(readonly why: 'word-open' | 'changed-while-saving') { super(why); }
+}
+
 /** Write the file through a uniquely named temporary file beside it, synced,
- *  then rename over it (atomic on one volume). */
-async function replaceFile(real: string, bytes: Buffer, mode: number): Promise<void> {
-  const tmp = join(dirname(real), `.${basename(real)}.patton-${randomUUID()}.tmp`);
+ *  then rename over it (atomic on one volume). `stillSafe` runs right before
+ *  the rename (Word may have opened the file, or another writer saved it,
+ *  while the temp was written); a refusal leaves his file as it was. */
+async function replaceFile(real: string, bytes: Buffer, mode: number, stillSafe: () => Promise<void>): Promise<void> {
+  const tmp = join(dirname(real), `.${fitName(basename(real), 100)}.patton-${randomUUID()}.tmp`);
   try {
     const fh = await open(tmp, 'wx', mode & 0o666);
     try {
@@ -172,6 +195,7 @@ async function replaceFile(real: string, bytes: Buffer, mode: number): Promise<v
       await fh.close();
     }
     await chmod(tmp, mode & 0o666);
+    await stillSafe();
     await rename(tmp, real);
   } catch (err) {
     await unlink(tmp).catch(() => {});
@@ -179,18 +203,26 @@ async function replaceFile(real: string, bytes: Buffer, mode: number): Promise<v
   }
 }
 
+const BACKUP_DIR = (): string => join(app.getPath('userData'), 'review-backups');
+
 /** Keep `bytes` (his file before the comment) in userData/review-backups,
- *  private, the newest BACKUP_KEEP kept. Never beside his file. */
-async function keepBackup(real: string, bytes: Buffer): Promise<string> {
-  const dir = join(app.getPath('userData'), 'review-backups');
+ *  private, never beside his file. Not pruned here: pruneBackups runs only
+ *  once the replace succeeded, so a failed one evicts nothing. */
+async function writeBackup(real: string, bytes: Buffer): Promise<string> {
+  const dir = BACKUP_DIR();
   await mkdir(dir, { recursive: true, mode: 0o700 });
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const name = `${stamp}-${randomUUID().slice(0, 8)}-${basename(real).replace(/\.docx$/i, '')}.patton-backup.docx`;
+  const name = `${stamp}-${randomUUID().slice(0, 8)}-${fitName(basename(real).replace(/\.docx$/i, ''), 120)}.patton-backup.docx`;
   const file = join(dir, name);
   await writeFile(file, bytes, { mode: 0o600, flag: 'wx' });
+  return file;
+}
+
+/** The newest BACKUP_KEEP backups kept. */
+async function pruneBackups(): Promise<void> {
+  const dir = BACKUP_DIR();
   const all = (await readdir(dir)).filter((n) => n.endsWith('.patton-backup.docx')).sort();
   for (const old of all.slice(0, Math.max(0, all.length - BACKUP_KEEP))) await unlink(join(dir, old)).catch(() => {});
-  return file;
 }
 
 /** One write at a time per file: each comment reads the file the last one wrote. */
@@ -231,6 +263,9 @@ const COMMENT_MESSAGES: Record<string, string> = {
   unsafe: 'Patton made a copy with the comment that would not open cleanly, so your file was left as it was.',
   'no-soffice': 'LibreOffice is needed to check the file before saving a comment into it, and it is not installed.',
   'backup-failed': 'Patton could not keep a backup of the file first, so it left the file as it was.',
+  'read-only': 'This file is read-only, so Patton left it as it was. Make it writable (Finder, Get Info), then add the comment again.',
+  'word-open': 'Word opened this file while the comment was being saved, so Patton left it as it was. Close it in Word, then add the comment again.',
+  'replace-failed': 'Patton could not save into the file (its folder may not let it), so it left the file as it was.',
 };
 
 function refuse(why: string, detail?: Record<string, unknown>): Refusal {
@@ -247,6 +282,9 @@ async function addCommentSafely(real: string, c: { quote: string; occurrence: nu
     return { ok: false, why: 'word-open', message: 'Word has this file open. Close it in Word, then add the comment again.' };
   }
   const before = await stat(real);
+  // A file he made read-only (or can't write) is left alone, not replaced
+  // through its folder.
+  if ((before.mode & 0o200) === 0 || !(await access(real, fsConstants.W_OK).then(() => true, () => false))) return refuse('read-only');
   const bytes = await readFile(real);
   const current = versionOf(before);
   const same = sameText.get(real);
@@ -276,15 +314,27 @@ async function addCommentSafely(real: string, c: { quote: string; occurrence: nu
   // Guard 3: nothing else wrote the file meanwhile.
   const again = await stat(real);
   if (versionOf(again) !== current) return refuse('changed-while-saving');
-  // Guard 4: the file as it was, kept first.
+  // Guard 4: the file as it was, kept first; removed again if the replace
+  // doesn't happen, and older backups pruned only once it has.
+  let backup: string;
   try {
-    await keepBackup(real, bytes);
+    backup = await writeBackup(real, bytes);
   } catch (err) {
     return refuse('backup-failed', { error: String((err as NodeJS.ErrnoException).code ?? 'error') });
   }
-  const last = await stat(real);
-  if (versionOf(last) !== current) return refuse('changed-while-saving');
-  await replaceFile(real, out, before.mode);
+  // Guard 5, right before the rename: Word hasn't opened it, nothing wrote it.
+  const stillSafe = async (): Promise<void> => {
+    if (wordHoldsOpen(real)) throw new ReplaceRefused('word-open');
+    if (versionOf(await stat(real)) !== current) throw new ReplaceRefused('changed-while-saving');
+  };
+  try {
+    await replaceFile(real, out, before.mode, stillSafe);
+  } catch (err) {
+    await unlink(backup).catch(() => {});
+    if (err instanceof ReplaceRefused) return refuse(err.why);
+    return refuse('replace-failed', { error: String((err as NodeJS.ErrnoException).code ?? 'error') });
+  }
+  await pruneBackups().catch((err: unknown) => console.warn('[REVIEW] backup prune failed', { error: String((err as NodeJS.ErrnoException).code ?? 'error') }));
   const now = versionOf(await stat(real));
   const set = same?.has(current) ? same : new Set([current]);
   set.add(now);

@@ -15,11 +15,15 @@
 //     writer left it, no backup taken;
 //  5. an addComment that writes broken XML (faked) is caught before the file
 //     is touched, and the reply says why;
-//  6. verifyOpens refuses a .docx LibreOffice can't open.
+//  6. verifyOpens refuses a .docx LibreOffice can't open;
+//  7. a failed replace leaves no backup and evicts none; a read-only file is
+//     refused with a message; Word opening the file mid-save is caught right
+//     before the rename; a ~230-byte file name saves (temp and backup names
+//     fit macOS's 255).
 // Run: node scripts/check-review-write.mjs
 // Prints `ok <what>` or `not ok <what>: <detail>`; exit 1 on any failure.
 import { build } from 'esbuild';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -146,6 +150,49 @@ try {
     setTimeout(() => writeFileSync(file, other), 150);
     const raced = await pending;
     ok(raced.ok === false && raced.why === 'changed-while-saving' && Buffer.compare(readFileSync(file), other) === 0 && backups().length === backupsBefore, 'a file changed mid-save is left as the other writer left it', raced);
+
+    // 7. the replace: backups only for a replace that happened, read-only files, Word's late lock, long names
+    {
+      const mk = (name, words) => { const p = join(docsDir, name); writeFileSync(p, docx(Z, words)); return p; };
+      const beside7 = () => readdirSync(docsDir).filter((n) => n.startsWith('.'));
+      // a failed replace (the folder won't take the temp file) leaves no backup and evicts none
+      const subDir = join(docsDir, 'locked');
+      mkdirSync(subDir);
+      const inLocked = join(subDir, 'Locked.docx');
+      writeFileSync(inLocked, docx(Z, ['Kappa lambda mu.']));
+      const lockedId = open(inLocked);
+      const kept7 = backups();
+      chmodSync(subDir, 0o555);
+      const failed = await add(ev, lockedId, { quote: 'lambda', occurrence: 0, text: 'Nope' });
+      chmodSync(subDir, 0o755);
+      ok(failed.ok === false && /left the file as it was/.test(failed.message ?? '') && backups().join() === kept7.join(), 'a failed replace leaves no backup and evicts none', { failed, before: kept7.length, after: backups().length });
+      // a read-only file is refused with a message, untouched, no backup
+      const ro = mk('Readonly.docx', ['Nu xi omicron.']);
+      const roId = open(ro);
+      chmodSync(ro, 0o444);
+      const roBefore = readFileSync(ro);
+      const kept7b = backups().length;
+      const roReply = await add(ev, roId, { quote: 'xi', occurrence: 0, text: 'Nope' });
+      ok(roReply.ok === false && roReply.why === 'read-only' && /read-only/.test(roReply.message) && Buffer.compare(roBefore, readFileSync(ro)) === 0 && (statSync(ro).mode & 0o777) === 0o444 && backups().length === kept7b, 'a read-only file is refused with a message, left as it was', roReply);
+      chmodSync(ro, 0o644);
+      // Word opening the file mid-save is seen right before the rename
+      const wf = mk('Wordy.docx', ['Pi rho sigma.']);
+      const wfId = open(wf);
+      const wfBefore = readFileSync(wf);
+      const kept7c = backups().length;
+      const pendingW = add(ev, wfId, { quote: 'rho', occurrence: 0, text: 'Late lock' });
+      setTimeout(() => writeFileSync(join(docsDir, '~$Wordy.docx'), 'owner'), 150);
+      const wordLate = await pendingW;
+      rmSync(join(docsDir, '~$Wordy.docx'), { force: true });
+      ok(wordLate.ok === false && wordLate.why === 'word-open' && Buffer.compare(wfBefore, readFileSync(wf)) === 0 && backups().length === kept7c, 'Word opening the file mid-save is caught before the rename, file and backups untouched', wordLate);
+      // a name of ~230 bytes (temp and backup names add ~55) still saves
+      const longName = `${'Quarterly board pack é '.repeat(10).slice(0, 220)}.docx`;
+      const lf = mk(longName, ['Tau upsilon phi.']);
+      const lfId = open(lf);
+      const longReply = await add(ev, lfId, { quote: 'upsilon', occurrence: 0, text: 'Long name' });
+      ok(longReply.ok === true && C.listComments(Z.readZip(readFileSync(lf))).length === 1 && beside7().length === 0, `a ${Buffer.byteLength(longName)}-byte file name saves (no ENAMETOOLONG), nothing left beside it`, { longReply, beside: beside7() });
+      ok(backups().some((n) => n.includes('Quarterly board pack') && Buffer.byteLength(n) <= 255), 'its backup is kept under a name macOS takes', backups().slice(-2));
+    }
 
     // 6
     const broken = docx(Z, [], '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:rPr></w:r></w:p></w:body></w:document>');
