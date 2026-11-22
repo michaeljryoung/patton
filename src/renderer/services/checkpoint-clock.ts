@@ -42,6 +42,10 @@ export interface CheckpointView {
   /** Claude is working or waiting on a dialog, so a click does nothing. */
   blocked: boolean;
   label: string;
+  /** Total share of the context window used, null before the first reading (the session bar's figure). */
+  pct: number | null;
+  /** Unix seconds of the session's last /checkpoint, null without one (the session bar's "last … ago"). */
+  checkpointAt: number | null;
 }
 
 export function percentOfWindow(tokens: number): number {
@@ -71,12 +75,14 @@ export function checkpointView(
   const parts: string[] = [];
   let text = '✓ —';
   let due = false;
+  let pct: number | null = null;
   if (src.ctxTokens === null || src.sinceTokens === null) {
     parts.push('No context reading yet: it arrives when Claude next stops');
   } else {
     const total = percentOfWindow(src.ctxTokens);
     const growth = percentOfWindow(src.sinceTokens);
     text = `✓ ${total}%`;
+    pct = total;
     due = growth >= thresholdPct;
     parts.push(`${total}% of the context window used`);
     if (src.checkpointAt === null) {
@@ -93,5 +99,5 @@ export function checkpointView(
   parts.push('Click to run /checkpoint');
   if (!src.ready) parts.push(src.claudeWorking ? 'available when Claude stops' : "available after Claude's next reply");
   // The visible text first, so a screen reader's label starts with what is on screen.
-  return { text, due, blocked: !src.ready, label: `${text} · ${parts.join(' · ')}` };
+  return { text, due, blocked: !src.ready, label: `${text} · ${parts.join(' · ')}`, pct, checkpointAt: src.checkpointAt };
 }
