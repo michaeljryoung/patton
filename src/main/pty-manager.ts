@@ -151,7 +151,30 @@ export class PtyManager {
   private instances = new Map<number, PtyInstance>();
   private nextId = 1;
   private countByWindow = new Map<number, number>();
+  private exitListeners: Array<(id: number) => void> = [];
   shellIntegrationEnabled = true;
+
+  /** Called once per PTY when it ends, by exit or destroy(). */
+  addExitListener(listener: (id: number) => void): void {
+    this.exitListeners.push(listener);
+  }
+
+  private notifyExit(id: number): void {
+    for (const listener of this.exitListeners) {
+      try { listener(id); } catch (err) { console.warn('[PTY] exit listener failed', { id, err: String(err) }); }
+    }
+  }
+
+  /** The shell's pid (null for an unknown id). */
+  getPid(id: number): number | null {
+    const pid = this.instances.get(id)?.process.pid;
+    return typeof pid === 'number' && pid > 0 ? pid : null;
+  }
+
+  /** The window that owns this PTY (null for an unknown id). */
+  getWindow(id: number): BrowserWindow | null {
+    return this.instances.get(id)?.window ?? null;
+  }
 
   get size(): number {
     return this.instances.size;
@@ -294,6 +317,7 @@ export class PtyManager {
       }
       const c = this.countByWindow.get(winId) ?? 0;
       this.countByWindow.set(winId, Math.max(0, c - 1));
+      this.notifyExit(id);
     });
 
     return id;
@@ -373,6 +397,7 @@ export class PtyManager {
       } catch {
         // Process already dead or permission error — cleanup already done above
       }
+      this.notifyExit(id);
     }
   }
 
