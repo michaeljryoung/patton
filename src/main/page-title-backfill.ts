@@ -3,28 +3,46 @@
  * title learned and not searched in the last 7 days, find where each page was
  * published in the Claude Code transcripts and read its title.
  *
- * `~/.claude/projects` can hold 15 GB, so the search is one low-priority
- * child process (`nice grep -l -F`, no shell) over the top-level `*.jsonl`
- * of each project folder (subagent transcripts sit in subfolders and are
- * skipped); only the files it names are then read, line by line, and only
- * lines holding an id (or an Artifact call, for its `input.title`) are parsed,
- * by the same parser that follows live transcripts. Newest file first; within
- * a file the last publish wins. No Electron import.
+ * `~/.claude/projects` can hold 15 GB, so the search is a low-priority child
+ * process (`nice grep -H -o -E`, no shell) over the top-level `*.jsonl` of
+ * each project folder (subagent transcripts sit in subfolders and are
+ * skipped). One pattern for every publish, whatever the ids, so its cost does
+ * not grow with the number of bookmarks (about 20 s for 2.6 GB here); run in
+ * sequential batches of at most BATCH_FILES files, each with its own timeout
+ * and output cap, so the command line stays far below ARG_MAX and one failed
+ * batch keeps the others' results. The output itself names the file, the
+ * published path, the page address and (on 95% of real publishes) the version
+ * id, whose first number is the publish time in Unix seconds; without it the
+ * transcript's mtime stands in.
+ *
+ * A path can be published under several ids over time, and the reader sees the
+ * file as it is now, so a bookmarked id takes the file's `<title>` only when it
+ * is the newest publish of that path among all found; an older id of a reused
+ * path gets no title. No Electron import.
  */
 import { execFile } from 'node:child_process';
-import { createReadStream, promises as fsp } from 'node:fs';
+import { promises as fsp } from 'node:fs';
 import { join } from 'node:path';
-import { createInterface } from 'node:readline';
-import { ARTIFACT_ID } from '../shared/artifact-id';
+import { ARTIFACT_ID, artifactIdOf } from '../shared/artifact-id';
 import type { PageTitleBook } from './page-titles';
-import { TranscriptParser, type PagePublish } from './transcript-parser';
+import { publishPath } from './transcript-parser';
 
-/** The grep may take minutes under nice on a big folder; past this it is stopped. */
-const GREP_TIMEOUT_MS = 10 * 60 * 1000;
+/** Files per grep: 200 paths of ~120 characters is ~24 KB of argv (ARG_MAX 1 MB). */
+export const BATCH_FILES = 200;
+/** One batch may take a while under nice; past this it is stopped. */
+const BATCH_TIMEOUT_MS = 3 * 60 * 1000;
+/** One batch's output cap (the real output is ~300 KB for all 501 files here). */
+const BATCH_MAX_BYTES = 4 * 1024 * 1024;
+
+/** Every publish line Claude Code writes, with its version id when there is one. */
+export const PUBLISH_PATTERN = 'Published /[^"\\\\]* at https://claude\\.ai/[^ )"\\\\]+( \\(Version [0-9]+, version id [0-9]+-[0-9a-f]+\\))?';
+const PUBLISH_LINE = /^Published (\/[^"\\]*) at (https:\/\/claude\.ai\/[^ )"\\]+)(?: \(Version [0-9]+, version id ([0-9]+)-[0-9a-f]+\))?$/;
+
+export interface Transcript { path: string; mtime: number }
 
 /** Top-level `*.jsonl` files of each folder in `projectsDir`, newest mtime first. */
-export async function listTranscripts(projectsDir: string): Promise<string[]> {
-  const found: Array<{ path: string; mtime: number }> = [];
+export async function listTranscripts(projectsDir: string): Promise<Transcript[]> {
+  const found: Transcript[] = [];
   let dirs: import('node:fs').Dirent[];
   try {
     dirs = await fsp.readdir(projectsDir, { withFileTypes: true });
@@ -51,13 +69,22 @@ export async function listTranscripts(projectsDir: string): Promise<string[]> {
     }
   }
   found.sort((a, b) => b.mtime - a.mtime);
-  return found.map((f) => f.path);
+  return found;
 }
 
-export type GrepRunner = (file: string, args: string[]) => Promise<{ code: number; stdout: string }>;
+export type GrepRunner = (file: string, args: string[], signal?: AbortSignal) => Promise<{ code: number; stdout: string }>;
 
-export const runGrep: GrepRunner = (file, args) => new Promise((resolve, reject) => {
-  execFile(file, args, { maxBuffer: 8 * 1024 * 1024, timeout: GREP_TIMEOUT_MS, encoding: 'utf8' }, (err, stdout) => {
+/** A grep that failed: what may be logged (never its message, which holds the whole argv). */
+export interface GrepFailure { code: string | number | null; killed: boolean; signal: string | null }
+
+export function grepFailure(err: unknown): GrepFailure {
+  const e = (err ?? {}) as { code?: unknown; killed?: unknown; signal?: unknown };
+  const code = typeof e.code === 'string' || typeof e.code === 'number' ? e.code : null;
+  return { code, killed: e.killed === true, signal: typeof e.signal === 'string' ? e.signal : null };
+}
+
+export const runGrep: GrepRunner = (file, args, signal) => new Promise((resolve, reject) => {
+  execFile(file, args, { maxBuffer: BATCH_MAX_BYTES, timeout: BATCH_TIMEOUT_MS, encoding: 'utf8', signal }, (err, stdout) => {
     if (!err) return resolve({ code: 0, stdout });
     const code = (err as { code?: unknown }).code;
     // Exit 1: no match. Exit 2: an unreadable file, matches still printed.
@@ -66,37 +93,49 @@ export const runGrep: GrepRunner = (file, args) => new Promise((resolve, reject)
   });
 });
 
-/** The arguments of the one grep: ids as fixed strings, files after `--`. */
-export function grepArgs(ids: readonly string[], files: readonly string[]): string[] {
-  const args = ['-n', '10', '/usr/bin/grep', '-l', '-s', '-F'];
-  for (const id of ids) args.push('-e', id);
-  args.push('--', ...files);
-  return args;
+/** The arguments of one batch's grep: the one publish pattern, files after `--`. */
+export function grepArgs(files: readonly string[]): string[] {
+  return ['-n', '10', '/usr/bin/grep', '-H', '-o', '-s', '-E', '-e', PUBLISH_PATTERN, '--', ...files];
 }
 
-/** The files naming any of `ids`, in `files`' order. */
-export async function grepFiles(ids: readonly string[], files: readonly string[], run: GrepRunner = runGrep): Promise<string[]> {
-  if (ids.length === 0 || files.length === 0) return [];
-  const { stdout } = await run('/usr/bin/nice', grepArgs(ids, files));
-  const hit = new Set(stdout.split('\n').filter(Boolean));
-  return files.filter((f) => hit.has(f));
+/** One publish the search found. */
+export interface FoundPublish { id: string; path: string; at: number }
+
+/** The publishes in one batch's output. `mtimes` gives each file's mtime (ms),
+ *  the publish time of a line with no version id. */
+export function parseGrepOutput(stdout: string, mtimes: ReadonlyMap<string, number>): FoundPublish[] {
+  const out: FoundPublish[] = [];
+  for (const line of stdout.split('\n')) {
+    const cut = line.indexOf(':Published /');
+    if (cut < 0) continue;
+    const mtime = mtimes.get(line.slice(0, cut));
+    if (mtime === undefined) continue;
+    const m = line.slice(cut + 1).match(PUBLISH_LINE);
+    if (!m) continue;
+    const id = artifactIdOf(m[2]);
+    const path = publishPath(m[1]);
+    if (!id || !path) continue;
+    const secs = m[3] === undefined ? NaN : Number(m[3]);
+    out.push({ id, path, at: Number.isSafeInteger(secs) && secs > 0 ? secs * 1000 : mtime });
+  }
+  return out;
 }
 
-/** The last publish of each id in `pending` within one file. */
-export async function publishesIn(file: string, pending: ReadonlySet<string>): Promise<Map<string, PagePublish>> {
-  const out = new Map<string, PagePublish>();
-  const parser = new TranscriptParser({
-    home: '',
-    onPublish: (p) => { if (pending.has(p.id)) out.set(p.id, p); },
-  });
-  const rl = createInterface({ input: createReadStream(file, { encoding: 'utf8' }), crlfDelay: Infinity });
-  for await (const line of rl) {
-    if (!line.includes('"Artifact"')) {
-      let named = false;
-      for (const id of pending) if (line.includes(id)) { named = true; break; }
-      if (!named) continue;
-    }
-    parser.parseLine(line);
+/** For each wanted id, the path whose current `<title>` is its title: its newest
+ *  publish's path, when no other id was published there later. */
+export function pathsToRead(found: readonly FoundPublish[], wanted: ReadonlySet<string>): Map<string, string> {
+  const newestOfId = new Map<string, FoundPublish>();
+  const newestOfPath = new Map<string, FoundPublish>();
+  for (const p of found) {
+    const byId = newestOfId.get(p.id);
+    if (!byId || p.at > byId.at) newestOfId.set(p.id, p);
+    const byPath = newestOfPath.get(p.path);
+    if (!byPath || p.at > byPath.at) newestOfPath.set(p.path, p);
+  }
+  const out = new Map<string, string>();
+  for (const id of wanted) {
+    const pub = newestOfId.get(id);
+    if (pub && newestOfPath.get(pub.path)?.id === id) out.set(id, pub.path);
   }
   return out;
 }
@@ -104,11 +143,13 @@ export async function publishesIn(file: string, pending: ReadonlySet<string>): P
 export interface BackfillDeps {
   projectsDir: string;
   run?: GrepRunner;
+  /** Aborted on quit: the running grep is killed and no further batch starts. */
+  signal?: AbortSignal;
   log?: (msg: string, data: Record<string, unknown>) => void;
   now?: () => number;
 }
 
-export interface BackfillResult { ids: number; found: number; missed: number; ms: number }
+export interface BackfillResult { ids: number; found: number; missed: number; batches: number; failed: number; ms: number }
 
 /** The ids worth searching: well-formed, no title yet, not missed within 7 days. */
 export function idsToSearch(book: PageTitleBook, ids: readonly string[]): string[] {
@@ -124,33 +165,38 @@ export function idsToSearch(book: PageTitleBook, ids: readonly string[]): string
 export async function runBackfill(book: PageTitleBook, bookmarkIds: readonly string[], deps: BackfillDeps): Promise<BackfillResult> {
   const now = deps.now ?? Date.now;
   const log = deps.log ?? ((msg, data) => console.info(msg, data));
+  const run = deps.run ?? runGrep;
   const started = now();
   const ids = idsToSearch(book, bookmarkIds);
-  if (ids.length === 0) return { ids: 0, found: 0, missed: 0, ms: 0 };
+  if (ids.length === 0) return { ids: 0, found: 0, missed: 0, batches: 0, failed: 0, ms: 0 };
   const files = await listTranscripts(deps.projectsDir);
-  const matched = await grepFiles(ids, files, deps.run);
-  const pending = new Set(ids);
-  let found = 0;
-  for (const file of matched) {
-    if (pending.size === 0) break;
-    let pubs: Map<string, PagePublish>;
+  const mtimes = new Map(files.map((f) => [f.path, f.mtime] as const));
+  const found: FoundPublish[] = [];
+  let batches = 0;
+  let failed = 0;
+  for (let i = 0; i < files.length; i += BATCH_FILES) {
+    if (deps.signal?.aborted) { failed++; break; }
+    const batch = files.slice(i, i + BATCH_FILES).map((f) => f.path);
+    batches++;
     try {
-      pubs = await publishesIn(file, pending);
-    } catch {
-      continue;
-    }
-    for (const [id, pub] of pubs) {
-      pending.delete(id);
-      const title = await book.titleOf(pub);
-      if (title) {
-        book.learn(id, title, 'backfill');
-        found++;
-      }
+      const { stdout } = await run('/usr/bin/nice', grepArgs(batch), deps.signal);
+      found.push(...parseGrepOutput(stdout, mtimes));
+    } catch (err) {
+      failed++;
+      log('[TITLE] backfill batch failed', { batch: batches, files: batch.length, ...grepFailure(err) });
     }
   }
+  const learned: Array<[string, string]> = [];
+  for (const [id, path] of pathsToRead(found, new Set(ids))) {
+    if (deps.signal?.aborted) break;
+    const title = await book.fileTitle(id, path);
+    if (title) learned.push([id, title]);
+  }
+  book.learnMany(learned, 'backfill');
   const missed = ids.filter((id) => !book.has(id));
-  book.recordMisses(missed);
-  const result = { ids: ids.length, found, missed: missed.length, ms: now() - started };
+  // A miss is recorded only when every batch finished: a page in a failed one may be there.
+  if (failed === 0 && !deps.signal?.aborted) book.recordMisses(missed);
+  const result = { ids: ids.length, found: learned.length, missed: missed.length, batches, failed, ms: now() - started };
   log('[TITLE] backfill', { ...result });
   return result;
 }

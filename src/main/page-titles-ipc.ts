@@ -8,7 +8,7 @@ import { BrowserWindow, ipcMain } from 'electron';
 import { artifactIdOf } from '../shared/artifact-id';
 import { IPC } from '../shared/constants';
 import type { PageTitleMap } from '../shared/types';
-import { runBackfill } from './page-title-backfill';
+import { grepFailure, runBackfill } from './page-title-backfill';
 import { PageTitleBook } from './page-titles';
 import { RateLimiter } from './rate-limiter';
 import { claudeHome } from './session-link';
@@ -16,6 +16,27 @@ import * as store from './store';
 
 /** The backfill waits this long after launch, so it never competes with start-up. */
 const BACKFILL_DELAY_MS = 60 * 1000;
+
+let backfillTimer: ReturnType<typeof setTimeout> | null = null;
+const backfillAbort = new AbortController();
+
+/** On quit: no backfill starts, and a running grep is killed (it would outlive the app). */
+export function stopPageTitleBackfill(): void {
+  if (backfillTimer) clearTimeout(backfillTimer);
+  backfillTimer = null;
+  backfillAbort.abort();
+}
+
+/** The artifact ids the bookmarks use (their titles are never evicted). */
+function bookmarkedIds(): string[] {
+  const ids: string[] = [];
+  for (const b of store.getBookmarks()) {
+    if (b.kind !== 'artifact') continue;
+    const id = artifactIdOf(b.url);
+    if (id && !ids.includes(id)) ids.push(id);
+  }
+  return ids;
+}
 
 export function registerPageTitleHandlers(): PageTitleBook {
   const book = new PageTitleBook({
@@ -30,6 +51,7 @@ export function registerPageTitleHandlers(): PageTitleBook {
         if (!win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send(IPC.PAGE_TITLES_CHANGED, titles);
       }
     },
+    keep: () => new Set(bookmarkedIds()),
   });
 
   // Each window asks once at start; changes come by push.
@@ -42,17 +64,20 @@ export function registerPageTitleHandlers(): PageTitleBook {
     return book.titles();
   });
 
-  const timer = setTimeout(() => {
-    const ids: string[] = [];
-    for (const b of store.getBookmarks()) {
-      if (b.kind !== 'artifact') continue;
-      const id = artifactIdOf(b.url);
-      if (id) ids.push(id);
+  backfillTimer = setTimeout(() => {
+    backfillTimer = null;
+    let ids: string[];
+    try {
+      ids = bookmarkedIds();
+    } catch (err) {
+      console.warn('[TITLE] backfill failed', { stage: 'bookmarks', ...grepFailure(err) });
+      return;
     }
-    runBackfill(book, ids, { projectsDir: join(claudeHome(), 'projects') })
-      .catch((err) => console.warn('[TITLE] backfill failed', { error: (err as Error).message }));
+    // Logs carry counts and error codes only: an error's message can hold every path and id.
+    runBackfill(book, ids, { projectsDir: join(claudeHome(), 'projects'), signal: backfillAbort.signal })
+      .catch((err) => console.warn('[TITLE] backfill failed', { stage: 'run', ...grepFailure(err) }));
   }, BACKFILL_DELAY_MS);
-  timer.unref?.();
+  backfillTimer.unref?.();
 
   return book;
 }

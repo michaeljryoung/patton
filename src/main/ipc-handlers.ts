@@ -1000,7 +1000,7 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
   registerClipboardImageHandlers();
   const pageTitles = registerPageTitleHandlers();
   registerSessionFeedHandlers(ptyManager, (p) => {
-    pageTitles.learnPublish(p).catch((err) => console.warn('[TITLE] learn failed', { error: (err as Error).message }));
+    pageTitles.learnPublish(p).catch((err) => console.warn('[TITLE] learn failed', { code: (err as { code?: unknown } | null)?.code ?? null }));
   });
   // --- end image paste ---
 }

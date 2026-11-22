@@ -32,6 +32,8 @@ export interface PageTitleDeps {
   store: PageTitleStore;
   /** Every window hears the new map. */
   onChange?: (titles: PageTitleMap) => void;
+  /** The ids bookmarks use: never evicted by the cap. */
+  keep?: () => ReadonlySet<string>;
   log?: (msg: string, data: Record<string, unknown>) => void;
   now?: () => number;
 }
@@ -40,58 +42,89 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
-/** The newest `max` entries by `at`. */
-function newest<T>(entries: Array<[string, T]>, at: (v: T) => number, max: number): Array<[string, T]> {
-  if (entries.length <= max) return entries;
-  return [...entries].sort((a, b) => at(b[1]) - at(a[1])).slice(0, max);
+/** Own enumerable entries only: an id named like an Object.prototype member is just an id. */
+function ownEntries(v: Record<string, unknown>): Array<[string, unknown]> {
+  const out: Array<[string, unknown]> = [];
+  for (const k of Object.keys(v)) out.push([k, v[k]]);
+  return out;
 }
+
+/** The entries in `keep`, plus the newest of the rest by `at`, up to `max` in all
+ *  (never fewer than the kept ones). */
+function capped<T>(map: Map<string, T>, at: (v: T) => number, max: number, keep: ReadonlySet<string>): Record<string, T> {
+  const out = Object.create(null) as Record<string, T>;
+  if (map.size <= max) {
+    for (const [k, v] of map) out[k] = v;
+    return out;
+  }
+  const rest: Array<[string, T]> = [];
+  let kept = 0;
+  for (const [k, v] of map) {
+    if (keep.has(k)) { out[k] = v; kept++; } else rest.push([k, v]);
+  }
+  rest.sort((a, b) => at(b[1]) - at(a[1]));
+  for (const [k, v] of rest.slice(0, Math.max(0, max - kept))) out[k] = v;
+  return out;
+}
+
+const NO_KEEP: ReadonlySet<string> = new Set();
 
 export class PageTitleBook {
   private readonly log: (msg: string, data: Record<string, unknown>) => void;
   private readonly now: () => number;
+  /** "id reason" already logged as a refused read this launch. */
+  private readonly refusedLogged = new Set<string>();
 
   constructor(private readonly deps: PageTitleDeps) {
     this.log = deps.log ?? ((msg, data) => console.info(msg, data));
     this.now = deps.now ?? Date.now;
   }
 
+  private keep(): ReadonlySet<string> {
+    try {
+      return this.deps.keep?.() ?? NO_KEEP;
+    } catch {
+      return NO_KEEP;
+    }
+  }
+
   /** The stored titles, read defensively (electron-store fills defaults only at the top level). */
-  private stored(): Record<string, StoredTitle> {
+  private stored(): Map<string, StoredTitle> {
     const raw = this.deps.store.getTitles();
-    const out: Record<string, StoredTitle> = {};
+    const out = new Map<string, StoredTitle>();
     if (!isRecord(raw)) return out;
-    for (const [id, v] of Object.entries(raw)) {
+    for (const [id, v] of ownEntries(raw)) {
       if (ARTIFACT_ID.test(id) && isRecord(v) && typeof v.title === 'string' && v.title && typeof v.at === 'number') {
-        out[id] = { title: v.title, at: v.at };
+        out.set(id, { title: v.title, at: v.at });
       }
     }
     return out;
   }
 
-  private misses(): Record<string, number> {
+  private misses(): Map<string, number> {
     const raw = this.deps.store.getMisses();
-    const out: Record<string, number> = {};
+    const out = new Map<string, number>();
     if (!isRecord(raw)) return out;
-    for (const [id, at] of Object.entries(raw)) {
-      if (ARTIFACT_ID.test(id) && typeof at === 'number' && Number.isFinite(at)) out[id] = at;
+    for (const [id, at] of ownEntries(raw)) {
+      if (ARTIFACT_ID.test(id) && typeof at === 'number' && Number.isFinite(at)) out.set(id, at);
     }
     return out;
   }
 
-  /** id → title, for the renderer. */
+  /** id → title, for the renderer (a prototype-free object). */
   titles(): PageTitleMap {
-    const out: PageTitleMap = {};
-    for (const [id, v] of Object.entries(this.stored())) out[id] = v.title;
+    const out = Object.create(null) as PageTitleMap;
+    for (const [id, v] of this.stored()) out[id] = v.title;
     return out;
   }
 
   has(id: string): boolean {
-    return this.stored()[id] !== undefined;
+    return this.stored().has(id);
   }
 
   /** A backfill searched for this id within MISS_RETRY_MS and found nothing. */
   missedRecently(id: string): boolean {
-    const at = this.misses()[id];
+    const at = this.misses().get(id);
     return at !== undefined && this.now() - at < MISS_RETRY_MS;
   }
 
@@ -99,36 +132,55 @@ export class PageTitleBook {
     if (ids.length === 0) return;
     const misses = this.misses();
     const t = this.now();
-    for (const id of ids) if (ARTIFACT_ID.test(id)) misses[id] = t;
-    this.deps.store.setMisses(Object.fromEntries(newest(Object.entries(misses), (at) => at, MISSES_KEPT)));
+    for (const id of ids) if (ARTIFACT_ID.test(id)) misses.set(id, t);
+    this.deps.store.setMisses(capped(misses, (at) => at, MISSES_KEPT, this.keep()));
   }
 
   /** Keep a title; true when it is new or changed (and the windows were told). */
   learn(id: string, title: string, source: 'live' | 'backfill'): boolean {
-    if (!ARTIFACT_ID.test(id) || !title) return false;
+    return this.learnMany([[id, title]], source) > 0;
+  }
+
+  /** Keep several titles with one store write and one push; the count new or changed. */
+  learnMany(entries: ReadonlyArray<readonly [string, string]>, source: 'live' | 'backfill'): number {
     const titles = this.stored();
-    const had = titles[id];
-    if (had && had.title === title) return false;
-    titles[id] = { title, at: this.now() };
-    this.deps.store.setTitles(Object.fromEntries(newest(Object.entries(titles), (v) => v.at, TITLES_KEPT)));
     const misses = this.misses();
-    if (misses[id] !== undefined) {
-      delete misses[id];
-      this.deps.store.setMisses(misses);
+    const t = this.now();
+    let changed = 0;
+    let missesChanged = false;
+    for (const [id, title] of entries) {
+      if (!ARTIFACT_ID.test(id) || typeof title !== 'string' || !title) continue;
+      if (titles.get(id)?.title === title) continue;
+      titles.set(id, { title, at: t });
+      if (misses.delete(id)) missesChanged = true;
+      changed++;
+      this.log('[TITLE] learned', { id: id.slice(0, 8), source, chars: title.length });
     }
-    this.log('[TITLE] learned', { id: id.slice(0, 8), source, chars: title.length });
+    if (changed === 0) return 0;
+    const keep = this.keep();
+    this.deps.store.setTitles(capped(titles, (v) => v.at, TITLES_KEPT, keep));
+    if (missesChanged) this.deps.store.setMisses(capped(misses, (at) => at, MISSES_KEPT, keep));
     this.deps.onChange?.(this.titles());
-    return true;
+    return changed;
+  }
+
+  /** The title of a page file: its `<title>`, else ''. A refused read is logged
+   *  once per id and reason per launch, with the id's first 8 characters. */
+  async fileTitle(id: string, path: string | null): Promise<string> {
+    if (!path) return '';
+    const read = await readPageTitle(path);
+    if (read.title) return read.title;
+    const key = `${id} ${read.reason}`;
+    if (read.reason !== 'no-title' && !this.refusedLogged.has(key)) {
+      this.refusedLogged.add(key);
+      this.log('[TITLE] read refused', { id: id.slice(0, 8), reason: read.reason });
+    }
+    return '';
   }
 
   /** The title a publish names: the file's `<title>`, else Claude's `input.title`, else ''. */
-  async titleOf(pub: Pick<PagePublish, 'path' | 'inputTitle'>): Promise<string> {
-    if (pub.path) {
-      const read = await readPageTitle(pub.path);
-      if (read.title) return read.title;
-      if (read.reason !== 'no-title') this.log('[TITLE] read refused', { reason: read.reason });
-    }
-    return cleanText(pub.inputTitle, TITLE_MAX);
+  async titleOf(pub: Pick<PagePublish, 'id' | 'path' | 'inputTitle'>): Promise<string> {
+    return (await this.fileTitle(pub.id, pub.path)) || cleanText(pub.inputTitle, TITLE_MAX);
   }
 
   /** A publish seen in a followed transcript. */

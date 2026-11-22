@@ -36,7 +36,8 @@
  * - Timestamps: top-level ISO `timestamp`.
  * - Page publish: Artifact `input {file_path, description, title?, url?}`;
  *   result text "Published <absolute path> at https://claude.ai/code/artifact/<id>
- *   (Version N, …)". The same result line can be written twice. Handed to
+ *   (Version N, version id <unix seconds>-<hex>)". The same result line can be
+ *   written twice. Only an Artifact call's own result counts. Handed to
  *   `onPublish` (page titles, main/page-titles.ts), never sent to the bar.
  */
 import { ARTIFACT_ID, ARTIFACT_URL } from '../shared/artifact-id';
@@ -57,15 +58,24 @@ const ID_MEMORY = 5000;
 
 const TASK_ID = /^[A-Za-z0-9_-]{1,80}$/;
 
-// C0 and C1 controls, DEL, and the bidi overrides and isolates that can make
-// shown text read differently from what it is.
+// C0 and C1 controls and DEL: shown as a space.
 // eslint-disable-next-line no-control-regex
-const CONTROL = /[\u0000-\u001f\u007f-\u009f‎‏‪-‮⁦-⁩]/g;
+const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/g;
+// Invisible and bidi format characters that can make shown text read
+// differently from what it is (or two different names look the same): soft
+// hyphen, Arabic letter mark, Mongolian vowel separator, zero-width space,
+// LRM/RLM, the bidi embeddings, overrides and isolates, word joiner and the
+// invisible operators, BOM. Removed. U+200C/U+200D (ZWNJ/ZWJ) stay: some
+// scripts and emoji need them.
+const FORMAT_CHARS = /[\u00ad\u061c\u180e\u200b\u200e\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/g;
+// Either kind: a path holding one is refused.
+// eslint-disable-next-line no-control-regex
+const CONTROL = /[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u180e\u200b\u200e\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/g;
 
 /** Strip control characters, collapse whitespace, cap the length. */
 export function cleanText(value: unknown, max: number): string {
   if (typeof value !== 'string') return '';
-  const flat = value.replace(CONTROL, ' ').replace(/\s+/g, ' ').trim();
+  const flat = value.replace(FORMAT_CHARS, '').replace(CONTROL_CHARS, ' ').replace(/\s+/g, ' ').trim();
   if (flat.length <= max) return flat;
   return flat.slice(0, max - 1).trimEnd() + '…';
 }
@@ -398,7 +408,7 @@ export interface PagePublish {
 const PUBLISHED = /^\s*Published (\/[^\n]*?) at (https:\/\/claude\.ai\/[^\s)]+)/;
 
 /** A path from transcript text that may be handed to the title reader. */
-function publishPath(p: unknown): string | null {
+export function publishPath(p: unknown): string | null {
   if (typeof p !== 'string' || !p.startsWith('/') || p.length > PATH_MAX) return null;
   return p === p.replace(CONTROL, '') ? p : null;
 }
@@ -644,13 +654,15 @@ export class TranscriptParser {
 }
 
 /** A tool result that says a page was published, at the start of its text.
- *  A quoting tool's result (a `cat` of a log, a Read) is never one. */
+ *  Only the result of a call named exactly `Artifact` counts (an allow-list):
+ *  a quoting tool, an MCP tool, an agent or a result whose call was never seen
+ *  (the tail starting mid-file) could carry any text, so never one. */
 function publishOf(use: ToolUse | undefined, text: string, at: number): PagePublish | null {
-  if (use && QUOTING_TOOLS.has(use.name)) return null;
+  if (use?.name !== 'Artifact') return null;
   const m = text.match(PUBLISHED);
   if (!m) return null;
   const id = m[2].match(ARTIFACT_URL)?.[1] ?? '';
   if (!ARTIFACT_ID.test(id)) return null;
-  const path = publishPath(m[1]) ?? publishPath(use?.filePath);
-  return { id, path, inputTitle: use?.title ?? '', at };
+  const path = publishPath(m[1]) ?? publishPath(use.filePath);
+  return { id, path, inputTitle: use.title, at };
 }
