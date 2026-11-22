@@ -19,7 +19,7 @@ import { app, ipcMain, shell, type WebContents } from 'electron';
 import { REVIEW_COMMENT_MAX, REVIEW_IPC, REVIEW_QUOTE_MAX, type ReviewAddReply, type ReviewComment, type ReviewDocInfo, type ReviewDriveReply, type ReviewLayoutReply, type ReviewLindusReply } from '../shared/review';
 import { addComment, initialsOf, listComments } from './docx-comments';
 import { entryText, readZip, writeZip, ZipError, type ZipEntry } from './docx-zip';
-import { LINDUS_SIGNAL_WORDS, lindusSignal, sendToDrive } from './drive-upload';
+import { LINDUS_SIGNAL_WORDS, lindusSignal, sendToDrive, type LindusSignal } from './drive-upload';
 import { extensionOf } from './link-open-policy';
 import { layout, verifyOpens, type LayoutFailure } from './review-layout';
 import { checkWellFormed } from './xml-wellformed';
@@ -107,10 +107,25 @@ function watch(docId: string, doc: OpenDoc): void {
   });
 }
 
+/** The Lindus check's answer for each open document, by the version it read,
+ *  kept from the panel's ask until the send that follows it. */
+const lindusChecked = new Map<string, { version: string; signal: LindusSignal | null }>();
+
+/** The file's bytes, with its version (inode, mtime, size) when the file
+ *  stayed the same across the read, else null. */
+async function readVersioned(real: string): Promise<{ bytes: Buffer; version: string | null }> {
+  const key = (st: Stats): string => `${st.ino}:${st.mtimeMs}:${st.size}`;
+  const before = key(await stat(real));
+  const bytes = await readFile(real);
+  const after = key(await stat(real));
+  return { bytes, version: before === after ? after : null };
+}
+
 function forget(docId: string): void {
   const doc = docs.get(docId);
   if (!doc) return;
   docs.delete(docId);
+  lindusChecked.delete(docId);
   if (doc.watching && ![...docs.values()].some((d) => d.real === doc.real && d.watching)) unwatchFile(doc.real);
 }
 
@@ -333,15 +348,19 @@ export function registerReviewHandlers(): void {
     return !error;
   });
 
-  // Main's full Lindus check, for the panel to ask before Send to Drive; the
-  // send itself checks again (the file may change between the two).
+  // Main's full Lindus check, for the panel to ask before Send to Drive. The
+  // send reuses its answer when the file is byte-for-byte the version checked
+  // (same inode, mtime and size), so one click scans the file once; a file
+  // changed in between is checked again.
   ipcMain.handle(REVIEW_IPC.LINDUS, async (event, docId: unknown): Promise<ReviewLindusReply> => {
     const doc = docFor(event.sender, docId);
     if (!doc || !stillReviewable(doc.real)) return { why: null };
-    let bytes: Buffer;
-    try { bytes = await readFile(doc.real); } catch { return { why: LINDUS_SIGNAL_WORDS.unreadable }; }
-    const signal = lindusSignal(doc.real, bytes);
-    console.info('[REVIEW] lindus check', { signal });
+    let read: { bytes: Buffer; version: string | null };
+    try { read = await readVersioned(doc.real); } catch { return { why: LINDUS_SIGNAL_WORDS.unreadable }; }
+    const started = Date.now();
+    const signal = await lindusSignal(doc.real, read.bytes);
+    if (read.version) lindusChecked.set(docId as string, { version: read.version, signal });
+    console.info('[REVIEW] lindus check', { signal, ms: Date.now() - started, bytes: read.bytes.length });
     return { why: signal ? LINDUS_SIGNAL_WORDS[signal] : null };
   });
 
@@ -350,8 +369,12 @@ export function registerReviewHandlers(): void {
     if (!doc) return { ok: false, why: 'unknown', message: 'This document is no longer open.' };
     if (!stillReviewable(doc.real)) return { ok: false, why: 'missing', message: LAYOUT_MESSAGES.missing };
     const confirmLindus = (raw as { confirmLindus?: unknown } | null)?.confirmLindus === true;
-    const bytes = await readFile(doc.real);
-    const signal = lindusSignal(doc.real, bytes);
+    const { bytes, version } = await readVersioned(doc.real);
+    const checked = lindusChecked.get(docId as string);
+    lindusChecked.delete(docId as string);
+    const reused = checked !== undefined && version !== null && checked.version === version;
+    const signal = reused ? checked.signal : await lindusSignal(doc.real, bytes);
+    if (!reused) console.info('[REVIEW] lindus checked again at send', { signal });
     if (signal && !confirmLindus) {
       console.info('[REVIEW] drive asks first', { signal });
       return { ok: false, why: 'confirm-lindus', message: `This may be a Lindus document (${LINDUS_SIGNAL_WORDS[signal]}). Send it to your personal Drive anyway?` };

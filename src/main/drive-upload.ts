@@ -18,8 +18,8 @@
 import { execFile } from 'node:child_process';
 import { existsSync, realpathSync } from 'node:fs';
 import { driveAccountValid } from '../shared/drive-settings';
-import { bodyText } from './docx-comments';
-import { entryText, readZip, type ZipEntry } from './docx-zip';
+import { readZip, type ZipEntry } from './docx-zip';
+import { LINDUS_SCAN_MAX, partSaysLindus, ScanTooLarge } from './lindus-scan';
 
 export const DEFAULT_DRIVE_FOLDER = 'Patton';
 const API = 'https://www.googleapis.com/drive/v3/files';
@@ -198,22 +198,31 @@ export const LINDUS_SIGNAL_WORDS: Record<LindusSignal, string> = {
 /** Why this file may be Lindus work, or null: the symlink-resolved path (the
  *  Lindus Drive mount, a Lindus folder or name), the document's properties
  *  (creator, last editor, company, an @lindushealth.com author) and its text
- *  (body, headers, footers, notes, comments). A file that can't be read as a
- *  .docx counts as unknown, so it is asked about too. */
-export function lindusSignal(path: string, bytes: Buffer): LindusSignal | null {
+ *  (body, headers, footers, notes, comments), "Lindus" as a word with the
+ *  gaps between words kept (`lindus-scan.ts`: "medical industry" is not it).
+ *  The parts are read streaming, at most LINDUS_SCAN_MAX of XML in all. A file
+ *  that can't be read as a .docx, or holds too much text to check, counts as
+ *  unknown, so it is asked about too. */
+export async function lindusSignal(path: string, bytes: Buffer): Promise<LindusSignal | null> {
   let real = path;
   try { real = realpathSync(path); } catch { /* the path as given */ }
   if (LINDUS_DRIVE.test(real) || LINDUS_DRIVE.test(path)) return 'lindus-drive';
   if (isLindusPath(real, '') || isLindusPath(path, '')) return 'path';
   let entries: ZipEntry[];
   try { entries = readZip(bytes); } catch { return 'unreadable'; }
-  for (const part of ['docProps/core.xml', 'docProps/app.xml', 'docProps/custom.xml']) {
-    if (/lindus/i.test(entryText(entries, part) ?? '')) return 'properties';
-  }
-  for (const e of entries) {
-    if (!/^word\/[^/]+\.xml$/i.test(e.name)) continue;
-    const xml = entryText(entries, e.name) ?? '';
-    if (/lindus/i.test(bodyText(xml).key)) return 'text';
+  const budget = { left: LINDUS_SCAN_MAX };
+  try {
+    for (const part of ['docProps/core.xml', 'docProps/app.xml', 'docProps/custom.xml']) {
+      const entry = entries.find((e) => e.name === part);
+      if (entry && await partSaysLindus(entry, budget, true)) return 'properties';
+    }
+    for (const e of entries) {
+      if (!/^word\/[^/]+\.xml$/i.test(e.name)) continue;
+      if (await partSaysLindus(e, budget)) return 'text';
+    }
+  } catch (err) {
+    console.info('[REVIEW] lindus check could not read the file', { error: err instanceof ScanTooLarge ? err.message : 'inflate failed' });
+    return 'unreadable';
   }
   return null;
 }

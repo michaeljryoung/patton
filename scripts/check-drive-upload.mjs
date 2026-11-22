@@ -14,7 +14,10 @@
 //  2. isLindusPath: Lindus anywhere in the path, any case; lindusSignal also
 //     reads the Lindus Drive mount, a symlink's target, the document's
 //     properties (creator, company, an @lindushealth.com author) and its
-//     text (body, header), and asks about a file it can't read;
+//     text (body, header), "Lindus" as a word with gaps kept ("medical
+//     industry" never), streaming (a 40 MB-text file off the event loop, a
+//     part inflating past its declared size unreadable), and asks about a
+//     file it can't read; one Send to Drive click scans the file once;
 //  3. main's review:drive handler: a Lindus file (by name, or by its text
 //     alone) is refused without confirmLindus (nothing sent), sent with it; a plain file sends without
 //     asking; failures come back as his words; another window's id is refused;
@@ -80,7 +83,10 @@ try {
   writeFileSync(fakeStore, `export let current = { driveFolder: 'Reviews', driveAccount: '' };\nexport const getSettings = () => current;\n`);
   const fakeDrive = join(work, 'drive-fake.mjs');
   writeFileSync(fakeDrive, `
-    export { isLindusPath, lindusSignal, LINDUS_SIGNAL_WORDS } from ${JSON.stringify(join(root, 'src/main/drive-upload.ts'))};
+    import { lindusSignal as realSignal } from ${JSON.stringify(join(root, 'src/main/drive-upload.ts'))};
+    export { isLindusPath, LINDUS_SIGNAL_WORDS } from ${JSON.stringify(join(root, 'src/main/drive-upload.ts'))};
+    export const scans = { count: 0 };
+    export async function lindusSignal(...a) { scans.count++; return realSignal(...a); }
     export const sent = [];
     export let reply = { ok: true, dryRun: false, link: 'https://docs.google.com/document/d/x/edit', name: 'x', account: 'michael@gmail.com' };
     export function setReply(r) { reply = r; }
@@ -195,20 +201,55 @@ try {
   ok(!D.isLindusPath('/Users/me/Downloads/Quarterly plan.docx', home), 'a plain file is not');
   {
     const plainBytes = docxOf();
-    const sig = (p, b = plainBytes) => D.lindusSignal(p, b);
-    ok(sig('/Users/me/Library/CloudStorage/GoogleDrive-michael@lindushealth.com/My Drive/plan.docx') === 'lindus-drive', 'the Lindus Google Drive mount asks first');
-    ok(sig('/Users/me/Documents/Lindus/plan.docx') === 'path', 'a Lindus folder asks first');
-    ok(sig('/Users/me/Downloads/plan.docx') === null, 'a plain file in Downloads with plain contents does not ask');
-    ok(sig('/Users/me/Downloads/plan.docx', docxOf({ core: 'Jo Bloggs jo@lindushealth.com' })) === 'properties', 'an @lindushealth.com author asks first');
-    ok(sig('/Users/me/Downloads/plan.docx', docxOf({ app: 'Lindus Health Ltd' })) === 'properties', 'a Lindus company asks first');
-    ok(sig('/Users/me/Downloads/plan.docx', docxOf({ text: 'Notes from the Lin</w:t></w:r><w:r><w:t>dus call.' })) === 'text', 'Lindus in the text, split across runs, asks first');
-    ok(sig('/Users/me/Downloads/plan.docx', docxOf({ header: 'LINDUS HEALTH CONFIDENTIAL' })) === 'text', 'Lindus in a header asks first');
-    ok(sig('/Users/me/Downloads/plan.docx', Buffer.from('not a zip, long enough to be scanned for one')) === 'unreadable', 'a file that cannot be read asks first');
+    const sig = async (p, b = plainBytes) => await D.lindusSignal(p, b);
+    ok(await sig('/Users/me/Library/CloudStorage/GoogleDrive-michael@lindushealth.com/My Drive/plan.docx') === 'lindus-drive', 'the Lindus Google Drive mount asks first');
+    ok(await sig('/Users/me/Documents/Lindus/plan.docx') === 'path', 'a Lindus folder asks first');
+    ok(await sig('/Users/me/Downloads/plan.docx') === null, 'a plain file in Downloads with plain contents does not ask');
+    ok(await sig('/Users/me/Downloads/plan.docx', docxOf({ core: 'Jo Bloggs jo@lindushealth.com' })) === 'properties', 'an @lindushealth.com author asks first');
+    ok(await sig('/Users/me/Downloads/plan.docx', docxOf({ app: 'Lindus Health Ltd' })) === 'properties', 'a Lindus company asks first');
+    ok(await sig('/Users/me/Downloads/plan.docx', docxOf({ text: 'Notes from the Lin</w:t></w:r><w:r><w:t>dus call.' })) === 'text', 'Lindus in the text, split across runs, asks first');
+    ok(await sig('/Users/me/Downloads/plan.docx', docxOf({ header: 'LINDUS HEALTH CONFIDENTIAL' })) === 'text', 'Lindus in a header asks first');
+    // Lindus as a word, the gaps between words kept (review: "medical industry" asked first)
+    for (const t of ['A report on the medical industry.', 'Global industry outlook', 'A small industrial estate', 'Notes on the medical</w:t></w:r></w:p><w:p><w:r><w:t>industry']) {
+      ok(await sig('/Users/me/Downloads/plan.docx', docxOf({ text: t })) === null, `text "${t.replace(/<[^>]+>/g, ' ')}" does not ask`);
+    }
+    ok(await sig('/Users/me/Downloads/plan.docx', docxOf({ text: 'Write to jo@lindushealth.com or LindusHealth.' })) === 'text', 'an @lindushealth.com address or LindusHealth in the text asks first');
+    ok(await sig('/Users/me/Downloads/plan.docx', docxOf({ app: 'Global Industries Ltd' })) === null, 'a company of Global Industries does not ask');
+    {
+      // Streaming and capped: a 40 MB-text file is checked off the event loop
+      const para = 'The quick brown fox jumps over the lazy dog near the medical industry park. '.repeat(13);
+      const n = Math.ceil(40e6 / para.length);
+      const big = docxOf({ text: Array.from({ length: n }, () => para).join('</w:t></w:r></w:p><w:p><w:r><w:t>') });
+      let maxGap = 0; let last = performance.now();
+      const timer = setInterval(() => { const now = performance.now(); maxGap = Math.max(maxGap, now - last); last = now; }, 5);
+      const rss0 = process.memoryUsage().rss; let rssPeak = rss0;
+      const memTimer = setInterval(() => { rssPeak = Math.max(rssPeak, process.memoryUsage().rss); }, 20);
+      const t0 = performance.now();
+      const bigSig = await sig('/Users/me/Downloads/plan.docx', big);
+      const ms = performance.now() - t0;
+      maxGap = Math.max(maxGap, performance.now() - last); rssPeak = Math.max(rssPeak, process.memoryUsage().rss);
+      clearInterval(timer); clearInterval(memTimer);
+      console.log(`  40 MB text (${(big.length / 1e6).toFixed(1)} MB file): ${ms.toFixed(0)} ms, longest event-loop stall ${maxGap.toFixed(0)} ms, rss +${((rssPeak - rss0) / 1e6).toFixed(0)} MB`);
+      ok(bigSig === null && maxGap < 250 && rssPeak - rss0 < 200e6, 'a 40 MB-text file is checked without holding the event loop or its text in memory', { bigSig, ms, maxGap, rss: rssPeak - rss0 });
+    }
+    {
+      // A part that inflates past its declared size is never read further: unreadable, asked about.
+      const lying = Buffer.from(docxOf({ text: 'x'.repeat(5000) }));
+      for (let i = lying.length - 22; i >= 0; i--) {
+        if (lying.readUInt32LE(i) !== 0x02014b50) continue;
+        const nameLen = lying.readUInt16LE(i + 28);
+        if (lying.subarray(i + 46, i + 46 + nameLen).toString() === 'word/document.xml') { lying.writeUInt32LE(100, i + 24); break; }
+      }
+      let lyingSig;
+      try { lyingSig = await sig('/Users/me/Downloads/plan.docx', lying); } catch (err) { lyingSig = `threw ${err.message}`; }
+      ok(lyingSig === 'unreadable', 'a part inflating past its declared size stops the check as unreadable', lyingSig);
+    }
+    ok(await sig('/Users/me/Downloads/plan.docx', Buffer.from('not a zip, long enough to be scanned for one')) === 'unreadable', 'a file that cannot be read asks first');
     const linkDir = join(work, 'links');
     mkdirSync(join(linkDir, 'Lindus share'), { recursive: true });
     writeFileSync(join(linkDir, 'Lindus share', 'target.docx'), plainBytes);
     symlinkSync(join(linkDir, 'Lindus share', 'target.docx'), join(linkDir, 'innocent.docx'));
-    ok(sig(join(linkDir, 'innocent.docx')) === 'path', 'a symlink is resolved first (it points into a Lindus folder)');
+    ok(await sig(join(linkDir, 'innocent.docx')) === 'path', 'a symlink is resolved first (it points into a Lindus folder)');
   }
 
   // ---- 3. main's review:drive handler
@@ -252,6 +293,20 @@ try {
   ok(F.sent[0].settings.driveFolder === 'Reviews' && F.sent[0].opts.dryRun === false, 'the folder setting reaches sendToDrive', F.sent[0]);
   const plainSent = await drive(ev, plainId.docId, {});
   ok(plainSent.ok === true && F.sent.length === 2, 'a plain file sends without asking');
+  {
+    // One click scans the file once: the send reuses the panel's ask for the same version.
+    const before = F.scans.count;
+    await lindusAsk(ev, plainId.docId);
+    const once = await drive(ev, plainId.docId, {});
+    ok(once.ok === true && F.scans.count - before === 1, 'one Send to Drive click (ask, then send) scans the file once', { scans: F.scans.count - before });
+    // A file changed between the ask and the send is checked again.
+    await lindusAsk(ev, plainId.docId);
+    writeFileSync(plain, docxOf({ text: 'Board notes for Lindus, a longer text than before.' }));
+    const changed = await drive(ev, plainId.docId, {});
+    ok(changed.ok === false && changed.why === 'confirm-lindus', 'a file that came to say Lindus after the ask is asked about at the send', changed);
+    writeFileSync(plain, docxOf());
+    F.sent.length = 2;
+  }
   F.setReply({ ok: false, why: 'token' });
   const tokenFail = await drive(ev, plainId.docId, {});
   ok(tokenFail.ok === false && /gcloud auth login/.test(tokenFail.message), 'a token failure comes back in his words', tokenFail);
