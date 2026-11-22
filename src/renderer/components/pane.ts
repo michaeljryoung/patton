@@ -38,7 +38,7 @@ import {
 import { readClaudeBar, claudeBarInputText, type BarMissReason } from '../services/claude-bar';
 import {
   ESC_RESTORE_UNSTARTED_MS, ESC_RESTORE_WATCH_MS, describeClearKeys, isEscKey, isTypedInput, planEscRestore,
-  readClaudeBarInput,
+  planHoldsSent, readClaudeBarInput,
 } from '../services/esc-restore';
 import {
   COMPOSE_BAR_LOST_MS, COMPOSE_BAR_NOT_FOUND_LOG_MS, COMPOSE_OVERLAY_MAX_FRACTION, COMPOSE_OWN_TYPING_MS,
@@ -3573,7 +3573,11 @@ export class Pane {
     const timer = setTimeout(() => {
       if (this.escRestore?.timer !== timer) return;
       this.checkEscRestore();
-      if (this.escRestore?.timer === timer) this.endEscRestore(this.claudeWorking ? 'still-working' : 'no-text');
+      if (this.escRestore?.timer !== timer) return;
+      this.endEscRestore(this.claudeWorking ? 'still-working' : 'no-text');
+      // Given up with text in Claude's bar (its restore while the root stays
+      // working, unproven): his next send would join it, so say so.
+      if (readClaudeBarInput(this.terminalView.terminal.buffer.active).kind === 'text') this.setBarTextNote(true);
     }, ESC_RESTORE_WATCH_MS);
     this.escRestore = { send: { text: send.text, chips: send.chips }, deadline: Date.now() + ESC_RESTORE_WATCH_MS, timer };
     rlog('info', '[COMPOSE] restore watch', { pane: this.id, from, sinceSendMs: Date.now() - send.atMs, started: send.started });
@@ -3608,10 +3612,18 @@ export class Pane {
     if (this.ptyId === null) { this.endEscRestore('no-pty'); return; }
     if (!this.statusReporting) { this.endEscRestore('no-status'); return; }
     if (this.claudeAsksNow()) { this.endEscRestore('blocked'); return; }
-    if (this.claudeWorking) return; // the Esc hasn't stopped the turn yet
+    // Claude Code keeps its root `working` while a subagent it launched runs,
+    // and the Esc that stops the send's turn changes nothing in 7501 (probed
+    // in 2.1.321: the message back in the bar 75 ms after the Esc, the root
+    // still working, the subagent running on): then only a bar that provably
+    // holds what Patton sent counts as stopped. Ctrl+C with text in the bar
+    // only empties it; the subagent runs on (probed).
+    const overAgents = this.claudeWorking && turnEndedOverWork(this.lastRootState, this.lastWorkingChildren);
+    if (this.claudeWorking && !overAgents) return; // the Esc hasn't stopped the turn yet
     const input = readClaudeBarInput(this.terminalView.terminal.buffer.active);
     if (input.kind !== 'text') return; // not back yet (or not readable mid-redraw)
     const plan = planEscRestore(watch.send.text, input);
+    if (overAgents && !planHoldsSent(plan, watch.send.text)) return; // not Claude's restore (yet)
     if ('skip' in plan) {
       this.endEscRestore(plan.skip);
       this.setBarTextNote(true);
@@ -3629,7 +3641,9 @@ export class Pane {
         this.addPasteChip(chip.dataUrl, w, h);
       }
     }
-    rlog('info', '[COMPOSE] restored', { pane: this.id, chars: plan.text.length, source: plan.source });
+    rlog('info', '[COMPOSE] restored', {
+      pane: this.id, chars: plan.text.length, source: plan.source, ...(overAgents ? { rootWorking: true } : {}),
+    });
   }
 
   /** D18's note in the box: Claude's bar holds text that goes first. */

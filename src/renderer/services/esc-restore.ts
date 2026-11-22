@@ -205,6 +205,22 @@ export function planEscRestore(sent: string, input: { rows: string[]; images: nu
   return { skip: 'not-readable' };
 }
 
+/**
+ * Whether a plan's bar provably holds the message Patton sent: the bar shows
+ * exactly it, or one readable row that ends with it (his own text typed in
+ * Claude's bar before the send, which Claude puts back with it). Used while
+ * Claude Code keeps its 7501 root `working` for a subagent it launched: the
+ * Esc that stops the send's turn then changes nothing in 7501 (probed in
+ * 2.1.321), so only Claude's restore, the sent text back in its bar, shows
+ * the turn has stopped. A bar holding anything else is left alone.
+ */
+export function planHoldsSent(plan: EscRestorePlan, sent: string): boolean {
+  if ('skip' in plan) return false;
+  if (plan.source === 'sent') return true;
+  const whole = squeeze(sent);
+  return whole !== '' && squeeze(plan.text).endsWith(whole);
+}
+
 /** Esc as the terminal sends it (plain, or CSI u when Claude asks for it). */
 export function isEscKey(data: string): boolean {
   return data === '\x1b' || data === '\x1b[27u';

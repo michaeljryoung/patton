@@ -1258,6 +1258,78 @@ const newPane = async () => {
       { v: p.editorInput.getValue(), sk: ofTag('restore skipped') });
     p.dispose();
   }
+
+  // 9.13 A background subagent keeps Claude's 7501 root `working` (probed in
+  //      2.1.321, scratch recordings 22 Nov: an Esc on a turn sent while the
+  //      subagent ran put the message back in the bar 75 ms later, the root
+  //      never left working, the subagent ran on, and Ctrl+C only emptied the
+  //      bar). Until this, the watch waited for a non-working root and ended
+  //      `still-working`, leaving the message in Claude's bar.
+  {
+    const agentRuns = (p) => report(p, 'state=working:id=agent1');
+    // a. No feed (no ring): the send's turn over the working subagent.
+    let p = await sent(S1, { before: (q) => { state(q, 'working'); agentRuns(q); } });
+    await escInBox(p);
+    await drawBar(p, [S1]);
+    check('9.13a subagent running, root stays working: the box takes the message back, Claude\'s bar emptied with Ctrl+C',
+      p.editorInput.getValue() === S1 && strings().join('|') === '\x1b|\x03', { v: p.editorInput.getValue(), s: strings() });
+    check('9.13a ...logged restored {source sent, rootWorking true}',
+      ofTag('restored')[0]?.source === 'sent' && ofTag('restored')[0]?.rootWorking === true, ofTag('restored'));
+    p.dispose();
+    // b. The turn-end ring showed (a Stop over the working root), then the send.
+    p = await newPane();
+    await drawBar(p, ['']);
+    state(p, 'working'); agentRuns(p);
+    p.applyFeedEvent(p.ptyId, { type: 'attached', sessionId: 's1', how: 'hook' });
+    p.handleHookStop(1, 0);
+    check('9.13b setup: the ring showed over the working root', logs.some((l) => l.tag === '[DOT] Turn ended over a working root' && l.data.feed === true),
+      logs.filter((l) => l.tag.startsWith('[DOT]')).map((l) => l.tag));
+    // c. Esc while only the subagent runs (the turn ended): Claude restores
+    //    nothing (probed); no watch, nothing typed.
+    writes.length = 0; logs.length = 0;
+    await escInBox(p);
+    await drawBar(p, ['']);
+    advance(3000);
+    check('9.13c Esc while only the subagent runs: no watch, nothing typed but the Esc',
+      ofTag('restore watch').length === 0 && strings().join('|') === '\x1b', { w: ofTag('restore watch'), s: strings() });
+    // b, continued: a send after the ring, Esc 1.5 s later, the message back.
+    await sendFromBox(p, S1);
+    advance(1500);
+    writes.length = 0; logs.length = 0;
+    await escInBox(p);
+    check('9.13b a send after the ring arms the watch', ofTag('restore watch')[0]?.started === true, ofTag('restore watch'));
+    await drawBar(p, [S1]);
+    check('9.13b ...the message back: taken into the box, Ctrl+C', p.editorInput.getValue() === S1 && strings().join('|') === '\x1b|\x03',
+      { v: p.editorInput.getValue(), s: strings() });
+    p.dispose();
+    // d. His own text before the send: the row ends with what Patton sent.
+    p = await sent(S1, { before: async (q) => { state(q, 'working'); agentRuns(q); await drawBar(q, ['Note: ']); } });
+    await escInBox(p);
+    await drawBar(p, [`Note: ${S1}`]);
+    check('9.13d his text then the send, over the subagent: the whole row into the box, Ctrl+C',
+      p.editorInput.getValue() === `Note: ${S1}` && strings().join('|') === '\x1b|\x03', { v: p.editorInput.getValue(), s: strings() });
+    p.dispose();
+    // e. Text that isn't the sent message: never Ctrl+C while the root works;
+    //    at 3 s the watch ends still-working and the note shows.
+    p = await sent(S1, { before: (q) => { state(q, 'working'); agentRuns(q); } });
+    await escInBox(p);
+    await drawBar(p, ['something else']);
+    advance(3000);
+    check('9.13e other text over the subagent: nothing typed but the Esc, the box empty',
+      strings().join('|') === '\x1b' && p.editorInput.getValue() === '', strings());
+    check('9.13e ...restore skipped {reason still-working}, the note shows',
+      ofTag('restore skipped')[0]?.reason === 'still-working' && noteShown(p), { sk: ofTag('restore skipped'), note: noteShown(p) });
+    p.dispose();
+    // f. The subagent asks (its 7501 record blocked): nothing typed.
+    p = await sent(S1, { before: (q) => { state(q, 'working'); agentRuns(q); } });
+    await escInBox(p);
+    report(p, 'state=blocked:id=agent1:kind=permission');
+    await drawBar(p, [S1]);
+    check('9.13f the subagent asks: nothing typed but the Esc, restore skipped {reason blocked}',
+      strings().join('|') === '\x1b' && p.editorInput.getValue() === '' && ofTag('restore skipped')[0]?.reason === 'blocked',
+      { s: strings(), sk: ofTag('restore skipped') });
+    p.dispose();
+  }
 }
 
 finished = true;
