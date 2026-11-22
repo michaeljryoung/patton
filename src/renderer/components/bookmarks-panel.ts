@@ -73,8 +73,10 @@ function newId(): string {
  *
  * One tab per project: clicking a project that already has a tab in this
  * window activates that tab instead of opening a second one. Rows whose project
- * has a tab open are marked (dot + bold); the row for the active tab's project
- * gets the accent background and `aria-current`.
+ * has a tab open are marked by a bold name and their "1 open" line, never a
+ * dot (a blue one read as a status); the dot is only green for a session
+ * waiting on him or a ring for one parked. The row for the active tab's
+ * project gets the accent background and `aria-current`.
  *
  * Rows drag to reorder within their group (projects among projects, links
  * among links); the row menu's Move Up / Move Down is the keyboard route.

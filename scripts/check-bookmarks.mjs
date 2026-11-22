@@ -1,9 +1,10 @@
 // Check of the bookmarks bar's two seams that need no window: main's web-open
 // (what an artifact bookmark's click becomes in main, and what is logged) and
-// the row text rules (name alone; full path or address kept for the tooltip).
+// the row text rules (name alone; full path or address kept for the tooltip),
+// and the row's dot, a status only (no blue dot for a project merely open).
 // Run: node scripts/check-bookmarks.mjs
 import { build } from 'esbuild';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -72,6 +73,23 @@ try {
     check('a new-style name is kept', labels.displayLabel(A('t', 'Artifact 8bf5f5bc', ART)) === 'Artifact 8bf5f5bc');
     const two = [A('u', 'claude.ai', ART), A('v', 'claude.ai', 'https://claude.ai/code/artifact/503c49fd-8ae5-4501-be32-fe371f388337')];
     check('two old bookmarks tell apart by their displayed names, no second line', two.every((b) => labels.disambiguator(b, two) === ''), two.map((b) => labels.displayLabel(b)));
+  }
+  // --- the row's dot is a status only: no blue dot for a project merely open (his "genome
+  // isnt waiting for anything from me but is wrong in bookmark"); bold name, green waiting
+  // dot and parked ring stay
+  {
+    const css = readFileSync('src/renderer/styles/main.css', 'utf8');
+    const rules = [...css.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/([^{}]+)\{([^}]*)\}/g)].map((m) => ({ sel: m[1].trim(), body: m[2] }));
+    const dotRules = rules.filter((r) => r.sel.split(',').some((s) => /\.bookmark-dot\s*$/.test(s.trim())));
+    const openDot = dotRules.filter((r) => /is-open|is-current/.test(r.sel) && /background|border|box-shadow/.test(r.body));
+    check('a project merely open draws no dot', openDot.length === 0, openDot.map((r) => r.sel));
+    const base = dotRules.find((r) => r.sel === '.bookmark-dot');
+    check('the dot is empty by default', base && /background:\s*transparent/.test(base.body), base);
+    check('a waiting session keeps its green dot', dotRules.some((r) => r.sel === '.bookmark-row.has-waiting .bookmark-dot' && /var\(--prompt-ready\)/.test(r.body)));
+    check('a parked session keeps its ring', dotRules.some((r) => r.sel === '.bookmark-row.has-parked .bookmark-dot' && /border:[^;]*var\(--parked\)/.test(r.body)));
+    check('an open project keeps its bold name', rules.some((r) => r.sel === '.bookmark-row.is-open .bookmark-label' && /font-weight:\s*600/.test(r.body)));
+    const panel = readFileSync('src/renderer/components/bookmarks-panel.ts', 'utf8');
+    check('the panel still marks open rows (is-open) and shows their open count', /classList\.toggle\('is-open', isOpen\)/.test(panel) && /countText\(rowState\)/.test(panel));
   }
 } finally {
   rmSync(dir, { recursive: true, force: true });

@@ -525,7 +525,9 @@ html, body {
   color: var(--error-text);
 }
 
-/* Open marker: the project has a tab open in this window. */
+/* State marker, empty unless a session of the project waits for you or is
+ * parked (below). A project merely open has no dot: its bold name and its
+ * "1 open" line say that, and a blue dot read as a status (S61). */
 .bookmark-dot {
   flex: 0 0 auto;
   width: 6px;
@@ -537,10 +539,6 @@ html, body {
 
 .bookmark-row.is-open {
   color: var(--ink);
-}
-
-.bookmark-row.is-open .bookmark-dot {
-  background: var(--blue);
 }
 
 /* A session of the project waits for you (green dot) or is parked on its own
