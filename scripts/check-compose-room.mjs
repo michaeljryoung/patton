@@ -28,6 +28,7 @@ try {
         export { composeRoomRows } from './src/renderer/services/compose-room';
         export { fitGrid, roomPadding } from './src/renderer/services/terminal-fit';
         export { killLineRange } from './src/renderer/services/kill-line';
+        export { scrollForCaret } from './src/renderer/services/textarea-caret';
       `,
       resolveDir: repo, loader: 'ts',
     },
@@ -119,6 +120,15 @@ for (const [name, v, a, b, want, caretAt, lines] of cases) {
   check(`Ctrl-U range: ${name}`, r && after(v, r) === want && r.start === caretAt && r.lines === lines, { r, left: after(v, r), want });
 }
 check('Ctrl-U range: an empty box gives nothing to delete', kill('', 0) === null, kill('', 0));
+
+// S61: the scroll that keeps the caret's line in view (services/textarea-caret.ts). Args: the line's top and
+// height, scrollTop, the viewport height, the textarea's top and bottom padding.
+const sc = (...a) => M.scrollForCaret?.(...a);
+check('caret scroll: a line already in view leaves the scroll alone', sc(50, 17.5, 30, 100, 7, 7) === 30, sc(50, 17.5, 30, 100, 7, 7));
+check('caret scroll: a caret line below the view scrolls just far enough (padding kept)', sc(300, 17.5, 0, 100, 7, 7) === 224.5, sc(300, 17.5, 0, 100, 7, 7));
+check('caret scroll: a caret line above the view scrolls up to it (padding kept)', sc(40, 17.5, 200, 100, 7, 7) === 33, sc(40, 17.5, 200, 100, 7, 7));
+check('caret scroll: the first line scrolls to the very top', sc(7, 17.5, 90, 100, 7, 7) === 0, sc(7, 17.5, 90, 100, 7, 7));
+check('caret scroll: no layout (0 height) leaves the scroll alone', sc(300, 17.5, 12, 0, 7, 7) === 12, sc(300, 17.5, 12, 0, 7, 7));
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

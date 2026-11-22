@@ -1,6 +1,7 @@
 import { stripPasteControls } from '../services/paste-sanitize';
 import { rlog } from '../services/renderer-logger';
 import { killLineRange } from '../services/kill-line';
+import { caretInView, scrollCaretIntoView } from '../services/textarea-caret';
 
 export interface EditorInputCallbacks {
   /** Send the box's text. Return false to refuse: the draft stays in the box. */
@@ -120,7 +121,7 @@ export class EditorInput {
     });
 
     // Auto-resize textarea to content
-    const inputHandler = () => this.autoResize();
+    const inputHandler = () => this.autoResize(true);
     this.textarea.addEventListener('input', inputHandler);
     this.disposables.push(() => this.textarea.removeEventListener('input', inputHandler));
 
@@ -142,7 +143,7 @@ export class EditorInput {
       if (!text) return;
       this.textarea.focus();
       document.execCommand('insertText', false, text);
-      this.autoResize();
+      this.autoResize(true);
     };
     this.textarea.addEventListener('paste', pasteHandler as EventListener);
     this.disposables.push(() => this.textarea.removeEventListener('paste', pasteHandler as EventListener));
@@ -300,14 +301,14 @@ export class EditorInput {
     // No editing command (never in Chromium): the same edit, without an undo step.
     if (!done) ta.setRangeText('', range.start, range.end, 'start');
     ta.setSelectionRange(range.start, range.start);
-    this.autoResize();
+    this.autoResize(true);
     this.callbacks.onKillLine?.(range.lines);
   }
 
   /** The box's contents at their natural height (px): the textarea uncapped,
    *  or whatever beside it in the row is taller (Send, the image chips). */
   naturalHeight(): number {
-    let h = this.naturalTextHeight;
+    let h = this.naturalTextHeight + (parseFloat(getComputedStyle(this.textarea).marginTop) || 0); // the text's inset counts
     for (const child of Array.from(this.field.children)) {
       if (child === this.textarea || child === this.liveRegion || !(child instanceof HTMLElement)) continue;
       h = Math.max(h, child.offsetHeight);
@@ -325,25 +326,55 @@ export class EditorInput {
     return this.naturalTextHeight - padV < 1.5 * line;
   }
 
-  private autoResize(): void {
+  /** `followCaret`: the text changed (typing, a paste, a dropped path, a
+   *  restored draft, a deleted line), so scroll the caret into view. Setting
+   *  the height leaves the scroll where it was, which after a long paste was
+   *  the top of the draft with the caret out of sight (D15). */
+  private autoResize(followCaret = false): void {
     // In a hidden tab (display:none) scrollHeight is 0, and writing it would
     // leave a zero-height box; Pane.show() redoes this once it's visible.
     if (this.textarea.getClientRects().length === 0) return;
-    const cap = this.callbacks.getMaxHeight?.() ?? 200;
+    // The first line's size and the text's inset first: the cap leaves room for the inset (the box is
+    // exactly as tall as asked, nothing clipped at its bottom).
+    this.setFirstLineHeight();
+    const cap = Math.max(1, (this.callbacks.getMaxHeight?.() ?? 200) - (parseFloat(getComputedStyle(this.textarea).marginTop) || 0));
+    const keptScroll = this.textarea.scrollTop; // 'auto' height below clamps it to 0
     this.textarea.style.height = 'auto';
     const full = this.textarea.scrollHeight;
     this.textarea.style.height = Math.min(full, cap) + 'px';
     // Past the cap the textarea scrolls itself, with a visible scrollbar.
     this.textarea.style.overflowY = full > cap ? 'auto' : 'hidden';
+    this.textarea.scrollTop = keptScroll;
+    if (followCaret) scrollCaretIntoView(this.textarea);
     if (full !== this.naturalTextHeight) {
       this.naturalTextHeight = full;
       this.callbacks.onContentHeight?.();
     }
   }
 
-  /** Re-apply the height cap (after the cap or the pane's size changed). */
+  /** The height of the box's first line (px): the textarea's own one-line
+   *  height (its line and padding; borders sit inside a border-box height) or
+   *  Send's, whichever is taller. Send and the image chips are this tall, so
+   *  they stay on the box's first line while the box grows down, and the text
+   *  is centred on it (editor.css, --compose-first-line-h and
+   *  --compose-first-line-inset). */
+  private setFirstLineHeight(): void {
+    const cs = getComputedStyle(this.textarea);
+    const line = parseFloat(cs.lineHeight);
+    if (!(line > 0)) return;
+    const textLine = Math.round(line + (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0));
+    const sendH = this.sendButton.getBoundingClientRect().height;
+    const first = Math.max(textLine, sendH > 0 ? sendH : 0);
+    this.field.style.setProperty('--compose-first-line-h', `${first}px`);
+    this.field.style.setProperty('--compose-first-line-inset', `${(first - textLine) / 2}px`);
+  }
+
+  /** Re-apply the height cap (after the cap or the pane's size changed). His
+   *  scroll stays where it is (scrolled up to reread a long draft, a resize
+   *  must not snap it back to the caret); only a caret the box holds that was
+   *  in view stays in view when the cap shrinks. */
   refreshSize(): void {
-    this.autoResize();
+    this.autoResize(document.activeElement === this.textarea && caretInView(this.textarea));
   }
 
   setPlaceholder(text: string): void {
@@ -378,7 +409,7 @@ export class EditorInput {
       this.textarea.focus();
       document.execCommand('insertText', false, text);
     }
-    this.autoResize();
+    this.autoResize(true);
   }
 
   /** Every label Send's slot may show: the slot takes the widest, so it keeps
@@ -439,7 +470,7 @@ export class EditorInput {
     this.textarea.value = text;
     this.textarea.selectionStart = text.length;
     this.textarea.selectionEnd = text.length;
-    this.autoResize();
+    this.autoResize(true);
   }
 
   getValue(): string {

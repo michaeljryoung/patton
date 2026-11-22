@@ -360,7 +360,6 @@ export class Pane {
   private static readonly COMPOSE_FIRST_MAX_FRACTION = 0.4; // of the pane's height
   private static readonly COMPOSE_FIRST_MIN_PX = 60;
   private static readonly COMPOSE_DEFAULT_MAX_PX = 200;
-  private static readonly COMPOSE_OVERLAY_CHROME_PX = 8; // editor.css: the overlay's padding and rules
 
   // --- One typing bar (docs/compose-box.md D8–D10, D12) ---
   // The box over Claude Code's own input bar ('over'), on the terminal's
@@ -3270,14 +3269,13 @@ export class Pane {
     const third = Math.floor(pr.height * COMPOSE_OVERLAY_MAX_FRACTION);
     const toPaneBottom = Math.floor(pr.height - topEdge);
     const maxPx = Math.max(3 * cellH, Math.min(third, toPaneBottom));
-    // With rows given up (D15) the box reaches the pane's bottom, cap or not:
-    // k is whole rows from the capped need, so the cap alone would stop the
-    // box up to a row and a half short and show Claude's footer in the gap.
-    // The box then passes a third of the pane by under a row; the textarea's
-    // own cap (overlayMaxPx) stays a third, so the text still scrolls inside.
-    const fillPx = this.composeRoomRows > 0 ? Math.max(maxPx, toPaneBottom) : 0;
-    st.minHeight = `${fillPx > 0 ? fillPx : 3 * cellH}px`;
-    st.maxHeight = `${Math.max(maxPx, fillPx)}px`;
+    // The box is its contents' height, three rows at least, and never more
+    // than maxPx (a third of the pane, D15): no blank space below the text.
+    // With rows given up, k is whole rows from the capped need, so the box
+    // reaches past the terminal's last row into the rows given up; Claude's
+    // footer, k rows higher after its redraw, is under the box, not in a gap.
+    st.minHeight = `${3 * cellH}px`;
+    st.maxHeight = `${maxPx}px`;
     this.applyOverlayColor();
     this.placePasteStrip();
     // The textarea's own cap follows the room below the box's top (its text
@@ -3491,7 +3489,13 @@ export class Pane {
       // overlay's own padding and rules.
       const cap = this.overlayMaxPx > 0 ? this.overlayMaxPx
         : Math.floor(this.element.clientHeight * COMPOSE_OVERLAY_MAX_FRACTION);
-      return Math.max(1, cap - Pane.COMPOSE_OVERLAY_CHROME_PX);
+      // The chrome is read from the overlay itself (editor.css: its padding,
+      // and the dock's rule), so a capped box is exactly `cap` tall, which is
+      // what k (composeRoomRows) assumes.
+      const cs = getComputedStyle(this.editorContainer);
+      const px = (v: string) => parseFloat(v) || 0;
+      const chrome = px(cs.paddingTop) + px(cs.paddingBottom) + px(cs.borderTopWidth) + px(cs.borderBottomWidth);
+      return Math.max(1, cap - chrome);
     }
     const share = Math.floor(this.element.clientHeight * Pane.COMPOSE_FIRST_MAX_FRACTION);
     return Math.max(Pane.COMPOSE_FIRST_MIN_PX, share);
