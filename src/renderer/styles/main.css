@@ -60,6 +60,13 @@
   --compose-aside-rule: var(--grey);
   --compose-aside-hint: var(--muted);
 
+  /* The typing box's fill (editor.css .editor-textarea): a very faint yellow
+   * so the box stands out from the terminal around it (Michael, 22 Nov 2026:
+   * "a v faint yellow fill so you know where it is easily, just v faint").
+   * About 8% of #facc15 over --bg; the dark block has its own. A box that
+   * stepped aside goes back to --bg. */
+  --compose-fill: #fefbea;
+
   /* The session bar (session-bar.css): derived from the palette; the dark
    * block brightens the two blues that sit on text. */
   --sb-bg: var(--bg);
@@ -112,6 +119,7 @@
        default terminal. State cues that must stay bright read --ink directly. */
     --hairline: color-mix(in srgb, var(--ink) 45%, var(--bg));
     --amber-text: var(--amber);
+    --compose-fill: #1f1d14; /* about 6% of #facc15 over #111214 */
     /* Session bar: --accent (#2f6bff) is 4.17:1 on #111214; --focus is 7.53:1 (light: --accent 4.5:1 on #fff). */
     --sb-long: var(--focus);
     --sb-link: var(--focus);

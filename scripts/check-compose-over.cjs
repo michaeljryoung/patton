@@ -786,6 +786,19 @@ async function pageRun(SCALES) {
     pane.setTerminalTheme(null);
     check(`${at} theme reset: the box follows the terminal's frame colour again`,
       getComputedStyle(box()).backgroundColor === frameBg(), { box: getComputedStyle(box()).backgroundColor, frame: frameBg() });
+    // The typing box itself wears --compose-fill, a very faint yellow (Michael,
+    // 22 Nov 2026), so it stands out from the terminal's ground around it.
+    {
+      const fillProbe = document.createElement('div');
+      fillProbe.style.background = 'var(--compose-fill)';
+      document.body.appendChild(fillProbe);
+      const fill = getComputedStyle(fillProbe).backgroundColor;
+      fillProbe.remove();
+      const ta = getComputedStyle(textarea()).backgroundColor;
+      const [fr, fg, fb] = (ta.match(/[\d.]+/g) || []).slice(0, 3).map(Number);
+      check(`${at} the typing box is filled with --compose-fill (a faint yellow), not the terminal's ground`,
+        ta === fill && ta !== frameBg() && fr > fb + 8 && fg > fb + 8, { textarea: ta, fill, frame: frameBg() });
+    }
     // (b) A reading that finds the bar where it was measures nothing.
     {
       const screen = q('.xterm-screen');

@@ -48,7 +48,7 @@
   border: 1px solid var(--hairline);
   border-radius: 0;
   outline: none;
-  background: var(--bg);
+  background: var(--compose-fill);
   color: var(--ink);
   font-family: var(--font-mono);
   font-size: 12.5px;
@@ -200,6 +200,7 @@
 .editor-container.compose-first.aside.command-running .editor-textarea {
   color: var(--compose-aside-ink);
   border-color: var(--compose-aside-rule);
+  background: var(--bg);
 }
 
 .editor-container.compose-first.aside .editor-textarea::placeholder {
