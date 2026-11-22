@@ -158,6 +158,8 @@ Object.defineProperty(w.navigator, 'clipboard', {
 });
 
 let ptySeq = 0;
+const copyCalls = [];
+let copyAnswer = 'refused';
 w.patton = stubWith({
   pty: stubWith({
     create: () => Promise.resolve(++ptySeq),
@@ -170,6 +172,12 @@ w.patton = stubWith({
     onExit: () => () => {},
   }),
   history: stubWith({ get: () => Promise.resolve([]), add: () => Promise.resolve(), clear: () => Promise.resolve() }),
+  // Copying Claude's original text (main/copy-original.ts): calls recorded,
+  // the answer set per test ('refused' means main wrote nothing).
+  clipboard: stubWith({
+    copySelection: (...a) => { copyCalls.push(a); return Promise.resolve(copyAnswer); },
+    readImage: () => Promise.resolve(null),
+  }),
   getPathForFile: (f) => f.__path,
   log: { send: (lvl, args) => logs.push({ lvl, tag: String(args[0]), data: args[1] }) },
 });
@@ -593,6 +601,71 @@ const mouseDown = (el, init = {}) => {
   box.dispatchEvent(ce);
   check('the copy event (Edit > Copy) with nothing selected in the box carries the terminal selection',
     ce.defaultPrevented && stored['text/plain'] === 'from the menu', { prevented: ce.defaultPrevented, stored });
+  w.__selection = '';
+  drop(p);
+}
+
+// ── 5b. Copy in a Claude tab: main gets the selection (main/copy-original.ts) ──
+{
+  const p = await engagedPane();
+  // The real xterm's textarea sits inside .xterm; the capture listener keys on it.
+  const wrap = doc.createElement('div');
+  wrap.className = 'xterm';
+  termEl(p).parentNode.insertBefore(wrap, termEl(p));
+  wrap.appendChild(termEl(p));
+  const copyEvent = () => {
+    const stored = {};
+    const ce = new w.Event('copy', { bubbles: true, cancelable: true });
+    Object.defineProperty(ce, 'clipboardData', { value: { setData: (t, v) => { stored[t] = v; } } });
+    let reachedXterm = false;
+    const own = () => { reachedXterm = true; };
+    termEl(p).addEventListener('copy', own);
+    termEl(p).dispatchEvent(ce);
+    termEl(p).removeEventListener('copy', own);
+    return { ce, stored, reachedXterm };
+  };
+  w.__selection = '  ▎ Hi Sarah, thanks for the call';
+  copyCalls.length = 0;
+  clipboard.length = 0;
+  copyAnswer = 'original';
+  const a = copyEvent();
+  await flush();
+  check('Claude tab: ⌘C in the terminal goes to main with the pty and the selection, mode copy',
+    copyCalls.length === 1 && copyCalls[0][0] === p.ptyId && copyCalls[0][1] === '  ▎ Hi Sarah, thanks for the call' && copyCalls[0][2] === 'copy', copyCalls);
+  check('...xterm\'s own copy never runs, and main\'s write stands (nothing written here)',
+    a.ce.defaultPrevented && !a.reachedXterm && clipboard.length === 0, { prevented: a.ce.defaultPrevented, reached: a.reachedXterm, clipboard });
+  copyCalls.length = 0;
+  copyAnswer = 'refused';
+  copyEvent();
+  await flush();
+  check('Claude tab: main refusing, the drawn selection is copied here', copyCalls.length === 1 && clipboard.length === 1 && clipboard[0] === '  ▎ Hi Sarah, thanks for the call', { copyCalls, clipboard });
+  // The compose box's ⌘C copies the drawn text itself, then asks main to upgrade.
+  copyCalls.length = 0;
+  clipboard.length = 0;
+  boxEl(p).focus();
+  p.editorInput.setValue('');
+  boxEl(p).dispatchEvent(new w.KeyboardEvent('keydown', { key: 'c', metaKey: true, bubbles: true, cancelable: true }));
+  await flush();
+  check('Claude tab, compose box ⌘C: the drawn selection at once, then an upgrade request to main',
+    clipboard[0] === '  ▎ Hi Sarah, thanks for the call' && copyCalls.length === 1 && copyCalls[0][2] === 'upgrade', { clipboard, copyCalls });
+  w.__selection = '';
+  copyCalls.length = 0;
+  const none = copyEvent();
+  check('Claude tab, nothing selected: the copy is left alone', !none.ce.defaultPrevented && none.reachedXterm && copyCalls.length === 0);
+  drop(p);
+}
+{
+  const p = await newPane(); // a plain shell: no Claude
+  const wrap = doc.createElement('div');
+  wrap.className = 'xterm';
+  termEl(p).parentNode.insertBefore(wrap, termEl(p));
+  wrap.appendChild(termEl(p));
+  w.__selection = 'ls output';
+  copyCalls.length = 0;
+  const ce = new w.Event('copy', { bubbles: true, cancelable: true });
+  termEl(p).dispatchEvent(ce);
+  await flush();
+  check('plain shell tab: ⌘C is today\'s copy (xterm\'s), main never asked', !ce.defaultPrevented && copyCalls.length === 0, copyCalls);
   w.__selection = '';
   drop(p);
 }

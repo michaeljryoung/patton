@@ -12,6 +12,7 @@ import { getResourcesPath } from './resources-path';
 import * as store from './store';
 import { registerClipboardImageHandlers } from './clipboard-image';
 import { registerSessionFeedHandlers } from './session-feed-ipc';
+import { registerCopyOriginalHandlers } from './copy-original-ipc';
 import { registerPageTitleHandlers } from './page-titles-ipc';
 import { getSystemFonts } from './system-fonts';
 import { RateLimiter } from './rate-limiter';
@@ -1006,8 +1007,9 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
   // --- image paste ---
   registerClipboardImageHandlers();
   const pageTitles = registerPageTitleHandlers();
-  registerSessionFeedHandlers(ptyManager, (p) => {
+  const sessionFeed = registerSessionFeedHandlers(ptyManager, (p) => {
     pageTitles.learnPublish(p).catch((err) => console.warn('[TITLE] learn failed', { code: (err as { code?: unknown } | null)?.code ?? null }));
   });
+  registerCopyOriginalHandlers(ptyManager, sessionFeed);
   // --- end image paste ---
 }

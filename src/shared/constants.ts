@@ -113,6 +113,8 @@ export const IPC = {
   // --- end Claude Code Stop hook ---
   // --- image paste ---
   CLIPBOARD_READ_IMAGE: 'clipboard:readImage',
+  /** Copy a Claude tab's selection with Claude's original text (main/copy-original-ipc.ts). */
+  CLIPBOARD_COPY_SELECTION: 'clipboard:copySelection',
   // --- end image paste ---
   // --- Project board (new empty tabs) ---
   BOARD_GET: 'board:get',

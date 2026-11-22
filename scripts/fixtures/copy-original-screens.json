@@ -1,0 +1,60 @@
+{
+ "note": "Claude Code 2.1.x drawing two replies at 64 columns, recorded in a pty (claude --settings '{\"disableAllHooks\":true}') and replayed through xterm.js; made-up content. drawn = the screen rows from the reply's first line, right-trimmed, as xterm's getSelection joins them.",
+ "cols": 64,
+ "replies": [
+  {
+   "original": "## Draft email\n\nHere is the draft for **Sarah Thompson** about the *quarterly review*, with the `budget.xlsx` figures and a [link to the deck](https://example.com/deck) included in full.\n\n> Hi Sarah, thanks for the call this morning. I have gone through the numbers again and I think we can **close the gap** before the end of the month if we move the second payment forward.\n>\n> Best, Michael\n\n- first item with a long tail of words that will certainly wrap at sixty four columns wide\n- second item has **bold** text\n  - nested item\n\n1. one numbered\n2. two numbered",
+   "drawn": [
+    "⏺ Draft email",
+    "",
+    "  Here is the draft for Sarah Thompson about the quarterly",
+    "  review, with the budget.xlsx figures and a link to the deck",
+    "  included in full.",
+    "",
+    "  ▎ Hi Sarah, thanks for the call this morning. I have gone",
+    "  ▎ through the numbers again and I think we can close the gap",
+    "  ▎ before the end of the month if we move the second payment",
+    "  ▎ forward.",
+    "  ▎",
+    "  ▎ Best, Michael",
+    "",
+    "  - first item with a long tail of words that will certainly",
+    "    wrap at sixty four columns wide",
+    "  - second item has bold text",
+    "    - nested item",
+    "",
+    "  1. one numbered",
+    "  2. two numbered"
+   ]
+  },
+  {
+   "original": "# Big heading\n\nA paragraph with a soft\nbreak inside it and __under bold__ and a bare https://example.org/page link.\n\n```ts\nconst x = 1; // code\n```\n\n| Name | Value |\n|------|-------|\n| alpha | 10 |\n| beta | 20 |\n\n* star item\n* another star\n\n1. first\n1. second\n1. third\n\nEnds with <script>alert(1)</script> and snake_case_name.",
+   "drawn": [
+    "⏺ Big heading",
+    "",
+    "  A paragraph with a soft",
+    "  break inside it and under bold and a bare",
+    "  https://example.org/page link.",
+    "",
+    "  const x = 1; // code",
+    "",
+    "  ┌───────┬───────┐",
+    "  │ Name  │ Value │",
+    "  ├───────┼───────┤",
+    "  │ alpha │ 10    │",
+    "  ├───────┼───────┤",
+    "  │ beta  │ 20    │",
+    "  └───────┴───────┘",
+    "",
+    "  - star item",
+    "  - another star",
+    "",
+    "  1. first",
+    "  2. second",
+    "  3. third",
+    "",
+    "  Ends with <script>alert(1)</script> and snake_case_name."
+   ]
+  }
+ ]
+}

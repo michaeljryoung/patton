@@ -23,6 +23,9 @@ export interface EditorInputCallbacks {
   /** ⌘C with nothing selected in the box: text to copy instead (the pane's
    *  terminal selection), or '' to let the copy run as usual. */
   getCopyFallback?: () => string;
+  /** The fallback text went on the clipboard (a Claude tab may then replace
+   *  it with Claude's original text). */
+  onFallbackCopied?: (text: string) => void;
   /** The textarea's natural height (its contents, uncapped) changed: a line
    *  added or gone, a wrap, a font change. */
   onContentHeight?: () => void;
@@ -157,6 +160,7 @@ export class EditorInput {
       if (!text || !e.clipboardData) return;
       e.clipboardData.setData('text/plain', text);
       e.preventDefault();
+      this.callbacks.onFallbackCopied?.(text);
     };
     this.textarea.addEventListener('copy', copyHandler);
     this.disposables.push(() => this.textarea.removeEventListener('copy', copyHandler));
@@ -166,7 +170,7 @@ export class EditorInput {
         const text = copyFallback();
         if (text) {
           e.preventDefault();
-          void navigator.clipboard.writeText(text).catch((err) => {
+          void navigator.clipboard.writeText(text).then(() => this.callbacks.onFallbackCopied?.(text), (err) => {
             rlog('warn', '[COMPOSE] copy failed', { error: String(err) });
             this.copyByCommand();
           });

@@ -104,6 +104,11 @@ export class SessionFeed {
     return this.watches.has(ptyId);
   }
 
+  /** The transcript the pty's Claude session writes, once attached (copy-original.ts). */
+  transcriptFor(ptyId: number): string | null {
+    return this.watches.get(ptyId)?.attached?.transcriptPath ?? null;
+  }
+
   /** Start (or refresh) following the pty's session. False for no such pty. */
   watch(ptyId: number, hint?: string): boolean {
     const shellPid = this.deps.shellPid(ptyId);

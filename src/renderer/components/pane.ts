@@ -43,6 +43,7 @@ import { composeRoomRows } from '../services/compose-room';
 import { onUiTextScaleApplied } from '../services/ui-text-scale';
 import { SessionBarModel, stopListsOf, type ModelNote, type StopState } from '../services/session-bar-model';
 import { SessionFeedWatch } from '../services/session-feed-watch';
+import { canCopyOriginal, copyClaudeSelection, upgradeClaudeSelection } from '../services/copy-selection';
 import type { SessionFeedEvent } from '../../shared/session-feed';
 
 /** Background work a parked Claude Code session is waiting on: from the Stop
@@ -169,6 +170,8 @@ export class Pane {
   private startedShell = '';
   private lastCwdCheckMs = 0;
   private static readonly CWD_POLL_MS = 2000;
+  /** Copy-on-select: how long a selection must hold before main looks up Claude's original. */
+  private static readonly COPY_UPGRADE_SETTLE_MS = 300;
   private static readonly CWD_SAFETY_NET_MS = 30_000;
 
   // --- "Needs you" signals (green dot, sound, notification) ---
@@ -1420,6 +1423,12 @@ export class Pane {
       onEmptyBoxKey: (e) => this.forwardEmptyBoxKey(e),
       getMaxHeight: () => this.composeMaxHeight(),
       getCopyFallback: () => this.terminalCopyFallback(),
+      // The box copied the terminal's selection as drawn: in a Claude tab,
+      // main may put Claude's original over it (main/copy-original.ts).
+      onFallbackCopied: (text) => {
+        const ptyId = this.claudeCopyPty();
+        if (ptyId !== null) void upgradeClaudeSelection(ptyId, text);
+      },
       onContentHeight: () => this.syncComposeRoom('content'),
       onKillLine: (lines) => rlog('info', '[COMPOSE] kill line', { pane: this.id, lines }),
     });
@@ -1814,6 +1823,40 @@ export class Pane {
       else void this.pasteImage('paste');
     };
     this.terminalContainer.addEventListener('paste', onPasteCapture as EventListener, true);
+
+    // ⌘C or Edit ▸ Copy in a Claude tab copies Claude's original text
+    // (main/copy-original.ts). xterm's own copy handler sits on its textarea,
+    // so capture runs first; anywhere else, xterm's copy runs unchanged.
+    const onCopyCapture = (e: ClipboardEvent) => {
+      if (!(e.target as Element | null)?.closest?.('.xterm')) return;
+      const ptyId = this.claudeCopyPty();
+      const sel = this.terminalView.terminal.getSelection();
+      if (ptyId === null || !sel) return;
+      e.preventDefault();
+      e.stopPropagation();
+      void copyClaudeSelection(ptyId, sel);
+    };
+    this.terminalContainer.addEventListener('copy', onCopyCapture as EventListener, true);
+    this.disposables.push(() => this.terminalContainer.removeEventListener('copy', onCopyCapture as EventListener, true));
+
+    // Copy-on-select already wrote the drawn text; once the selection settles,
+    // main may replace it with Claude's original.
+    let upgradeTimer: ReturnType<typeof setTimeout> | null = null;
+    const selectionSub = this.terminalView.terminal.onSelectionChange(() => {
+      if (upgradeTimer) clearTimeout(upgradeTimer);
+      upgradeTimer = null;
+      if (!this.terminalView.copyOnSelect || this.claudeCopyPty() === null) return;
+      upgradeTimer = setTimeout(() => {
+        upgradeTimer = null;
+        const ptyId = this.claudeCopyPty();
+        const sel = this.terminalView.terminal.getSelection();
+        if (ptyId !== null && sel && this.terminalView.copyOnSelect) void upgradeClaudeSelection(ptyId, sel);
+      }, Pane.COPY_UPGRADE_SETTLE_MS);
+    });
+    this.disposables.push(() => {
+      selectionSub.dispose();
+      if (upgradeTimer) clearTimeout(upgradeTimer);
+    });
     this.disposables.push(() => this.terminalContainer.removeEventListener('paste', onPasteCapture as EventListener, true));
 
     // Right-click context menu
@@ -1826,7 +1869,7 @@ export class Pane {
           shortcut: shortcutKeys('copy'),
           action: () => {
             const sel = this.terminalView.terminal.getSelection();
-            if (sel) navigator.clipboard.writeText(sel);
+            if (sel) this.copyTerminalText(sel);
           },
         }] : []),
         {
@@ -3203,6 +3246,18 @@ export class Pane {
     if (this.composePlacement !== 'under') this.openComposeSettle('aside-end', false);
     this.scheduleBarReading();
     this.syncComposeRoom('aside-end');
+  }
+
+  /** The pty to copy Claude's original text through, or null for today's copy. */
+  private claudeCopyPty(): number | null {
+    return this.claudeActive && !this.disposed && this.ptyId !== null && !this.ptyExited && canCopyOriginal() ? this.ptyId : null;
+  }
+
+  /** Copies terminal text: Claude's original in a Claude tab, else as drawn. */
+  private copyTerminalText(text: string): void {
+    const ptyId = this.claudeCopyPty();
+    if (ptyId !== null) void copyClaudeSelection(ptyId, text);
+    else navigator.clipboard.writeText(text).catch(() => { /* as before: nothing to tell */ });
   }
 
   /** ⌘C in a box with nothing selected: this pane's terminal selection. */
