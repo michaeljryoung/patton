@@ -11,7 +11,7 @@
 // whether the kinds after match the kinds before. Copied files can't be put
 // back that way: the check then skips, saying so, rather than lose them.
 //
-// Run: node scripts/check-copy-clipboard-electron.cjs
+// Run: PATTON_CLIPBOARD_CHECK=1 node scripts/check-copy-clipboard-electron.cjs
 // Under Node it bundles the real sources with esbuild and starts Electron on
 // itself; under Electron it opens a window that is never shown (show:false,
 // dock hidden, its own userData folder, removed after) and exits.
@@ -21,6 +21,14 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const HARD_TIMEOUT_MS = 30000;
+
+// Opt-in: the Mac's clipboard is his, live, while checks run in a session
+// beside him; a copy he makes in the check's half second could be overwritten
+// on restore. Run it on purpose with PATTON_CLIPBOARD_CHECK=1 (S61).
+if (!process.versions.electron && process.env.PATTON_CLIPBOARD_CHECK !== '1') {
+  console.log('SKIP  touches the real system clipboard; run with PATTON_CLIPBOARD_CHECK=1');
+  process.exit(0);
+}
 
 if (process.versions.electron) {
   electronMain();
