@@ -137,6 +137,7 @@ const electron = new Proxy({
 const store = { getSettings: () => ({}), getWindowState: () => ({ width: 800, height: 600 }), setWindowState() {}, setSession() {} };
 const live = new Map(); // window → live PTY count
 const ptyManager = {
+  addExitListener: () => {}, // the session feed (session-feed-ipc.ts) subscribes
   liveCountForWindow: (w) => live.get(w) ?? 0,
   destroyByWindow: (w) => { ptyManager.destroyed.push(w.id); live.delete(w); },
   // By id, as the real one: the window is destroyed in the 'closed' handler.

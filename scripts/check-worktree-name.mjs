@@ -108,7 +108,7 @@ const origWarn = console.warn;
 console.info = (...a) => logs.push(['info', ...a]);
 console.warn = (...a) => logs.push(['warn', ...a]);
 const m = await import(pathToFileURL(join(work, 'main.mjs')).href);
-m.registerIpcHandlers({});
+m.registerIpcHandlers({ addExitListener: () => {} });
 const setName = handlers.get(m.IPC.PROJECT_NAME_SET);
 check('the PROJECT_NAME_SET handler registered', typeof setName === 'function');
 

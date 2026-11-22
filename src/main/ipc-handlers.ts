@@ -11,6 +11,7 @@ import { getHookStatus, installHook, refreshInstalledScript, removeHook, type Cl
 import { getResourcesPath } from './resources-path';
 import * as store from './store';
 import { registerClipboardImageHandlers } from './clipboard-image';
+import { registerSessionFeedHandlers } from './session-feed-ipc';
 import { getSystemFonts } from './system-fonts';
 import { RateLimiter } from './rate-limiter';
 import { titleBarActionFor } from './title-bar-action';
@@ -1008,5 +1009,6 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
   // --- end Claude Code Stop hook ---
   // --- image paste ---
   registerClipboardImageHandlers();
+  registerSessionFeedHandlers(ptyManager);
   // --- end image paste ---
 }
