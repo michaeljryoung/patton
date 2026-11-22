@@ -143,6 +143,8 @@ const api = {
   projects: { getNames: async () => ({}), onNamesChanged: () => () => {}, resolve: async () => null, setName: async () => {} },
   history: { get: async () => [], add: () => {}, clear: () => {} },
   log: { send: () => {} },
+  // The session bar's feed bridge: watch() and unwatch() return promises, as the real one does.
+  sessionFeed: { watch: async () => true, unwatch: async () => {}, onEvent: () => () => {} },
 };
 w.patton = new Proxy(api, { get: (t, p) => (p in t ? t[p] : loose) });
 
