@@ -58,6 +58,9 @@ const PX_PER_PT = 96 / 72;
 const MAX_SCALE = PX_PER_PT;
 /** Space around the pages column. */
 const PAGES_GUTTER = 48;
+/** A selection over more pages than this keeps only its two end pages drawn
+ *  (a comment quote is at most 2,000 characters, under a page). */
+const SELECTION_KEEP_PAGES = 3;
 
 export interface ReviewViewDeps {
   info: ReviewDocInfo;
@@ -400,15 +403,32 @@ export class ReviewView {
   /** Let a page's canvas and text layer go (drawn again when it comes near). */
   private freeSlot(slot: PageSlot): void {
     if (slot.drawnScale === 0 && !slot.el.firstChild) return;
-    // Never pull the text out from under a selection he is making or made.
-    const sel = document.getSelection();
-    if (sel && sel.rangeCount > 0 && !sel.isCollapsed && sel.getRangeAt(0).intersectsNode(slot.el)) return;
+    // Never pull the text out from under a selection he is making or made,
+    // up to a few pages of it; a longer one (Cmd+A) keeps only the pages its
+    // two ends sit on, so it can't hold every canvas.
+    if (this.selectionHolds(slot)) return;
     slot.drawnScale = 0;
     slot.drawing = null;
     for (const c of slot.el.querySelectorAll('canvas')) { c.width = 0; c.height = 0; }
     slot.el.replaceChildren();
     const pdf = this.pdf;
     if (pdf) void pdf.doc.getPage(slot.index + 1).then((p) => p.cleanup()).catch(() => {});
+  }
+
+  /** Whether a selection keeps this page drawn: any page of one touching at
+   *  most SELECTION_KEEP_PAGES pages, else only the pages its ends are on. */
+  private selectionHolds(slot: PageSlot): boolean {
+    const sel = document.getSelection();
+    if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return false;
+    const range = sel.getRangeAt(0);
+    if (!range.intersectsNode(slot.el)) return false;
+    let touched = 0;
+    for (const s of this.slots) {
+      if (range.intersectsNode(s.el)) touched++;
+      if (touched > SELECTION_KEEP_PAGES) break;
+    }
+    if (touched <= SELECTION_KEEP_PAGES) return true;
+    return slot.el.contains(range.startContainer) || slot.el.contains(range.endContainer);
   }
 
   /** Pages with a canvas now (a check reads it). */

@@ -448,6 +448,8 @@ function electronMain() {
       check(`the long file shows soffice's ${longWant} pages, each drawn when scrolled to`, long.pages === longWant && long.allDrew, long);
       check('only pages near the view keep a canvas (memory stays bounded)', long.maxDrawn <= 8 && long.drawnAtEnd <= 8, long);
       check('switching to another tab and back keeps the page in view drawn', long.backShows && long.drawnWhileHidden > 0, long);
+      check('Cmd+A over the long file still lets far pages go (at most 8 drawn while scrolling through it)', long.maxDrawnSelectAll > 0 && long.maxDrawnSelectAll <= 8, long);
+      check('a selection over two pages keeps both drawn while scrolled away', long.twoPageKept, long);
 
       // 6b. the file goes away and comes back; the session; closing the tab
       const open = await js(pageReviewState);
@@ -1054,7 +1056,34 @@ async function pageLong(arg) {
   await sleep(50);
   const last = root.querySelector(`.review-page[data-page="${view.pageCount - 1}"]`);
   const backShows = !!last.querySelector('canvas') && root.querySelector('.review-status').textContent === statusBefore;
-  return { pages: view.pageCount, maxDrawn, maxMB: Math.round(maxBytes / 1048576), allDrew, drawnAtEnd, drawnWhileHidden, backShows, dpr: window.devicePixelRatio };
+  // Cmd+A, then a scroll through the whole file: the selection doesn't keep every canvas.
+  const pageEl = (i) => root.querySelector(`.review-page[data-page="${i}"]`);
+  const drawnHere = async (i) => { for (let k = 0; k < 60; k++) { if (pageEl(i).querySelector('canvas') && pageEl(i).querySelector('.review-text-layer span')) return true; await sleep(50); } return false; };
+  const sel = document.getSelection();
+  sel.selectAllChildren(document.body);
+  let maxDrawnSelectAll = 0;
+  for (let i = 0; i < view.pageCount; i++) {
+    pageEl(i).scrollIntoView({ block: 'start' });
+    await drawnHere(i);
+    await sleep(30);
+    maxDrawnSelectAll = Math.max(maxDrawnSelectAll, root.querySelectorAll('.review-page canvas').length);
+  }
+  // A selection over two pages keeps both drawn while he scrolls away.
+  sel.removeAllRanges();
+  pageEl(0).scrollIntoView({ block: 'start' });
+  await drawnHere(0); await drawnHere(1);
+  const span0 = pageEl(0).querySelector('.review-text-layer span');
+  const span1 = pageEl(1).querySelector('.review-text-layer span');
+  const range = document.createRange();
+  range.setStart(span0.firstChild, 0);
+  range.setEnd(span1.firstChild, 1);
+  sel.addRange(range);
+  for (let i = 2; i < view.pageCount; i += 4) { pageEl(i).scrollIntoView({ block: 'start' }); await sleep(60); }
+  pageEl(view.pageCount - 1).scrollIntoView({ block: 'start' });
+  await sleep(400);
+  const twoPageKept = !!pageEl(0).querySelector('canvas') && !!pageEl(1).querySelector('canvas');
+  sel.removeAllRanges();
+  return { pages: view.pageCount, maxDrawn, maxMB: Math.round(maxBytes / 1048576), allDrew, drawnAtEnd, drawnWhileHidden, backShows, maxDrawnSelectAll, twoPageKept, dpr: window.devicePixelRatio };
 }
 
 async function pageDrive() {
