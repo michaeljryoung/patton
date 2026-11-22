@@ -5,7 +5,7 @@
 
 **Goal:** (S61) A .docx Claude links to opens in a Patton tab laid out as LibreOffice prints it, printable, sendable to his Drive as a Google Doc, with comments he adds on selected text saved into the file as real Word comments and sent to Claude in one message; Open in Word one click away.
 **Done when:** a .docx opened from a file link (terminal or the session bar's Links) shows the same page count as `soffice --headless --convert-to pdf` of it; Print opens the print dialog with exactly those pages; Send to Drive uploads it as a Google Doc and shows the Doc's link (proven against a dry run until his yes); a comment added on selected text lands in `word/comments.xml` and LibreOffice renders it in the margin; "Send comments to Claude" types them into the tab's Claude session as one message; Open in Word is one click.
-**Last verified:** 2026-11-22 (Session 61: main half built and checked; renderer half not started)
+**Last verified:** 2026-11-22 (Session 61: main and renderer halves built; `check-review-tab.cjs` 30 ok; full verifier, packaged-worker check, Drive stub check and Settings fields still to do)
 
 ```mermaid
 flowchart TD
@@ -15,10 +15,10 @@ flowchart TD
   subgraph B["Build"]
     rt_open[a docx link opens a review tab]:::live
     rt_layout[soffice layout, cache, re-layout]:::live
-    rt_print[print exactly the laid-out pages]:::todo
+    rt_print[print exactly the laid-out pages]:::live
     rt_drive[send to Drive as a Google Doc]:::live
     rt_comments[comments panel writes Word comments]:::live
-    rt_claude[send comments to Claude]:::todo
+    rt_claude[send comments to Claude]:::live
   end
   subgraph V["Verify and ship"]
     rt_check[suite, package, screenshots]:::todo
@@ -49,13 +49,13 @@ flowchart TD
 | ID | Task | Status | Depends on | Evidence |
 |----|------|--------|------------|----------|
 | `rt_spike` | Answer the open questions (R5-R9) by probe | live | — | R5-R10 below; spikes (a), (c), (d) proven by probe; (b) print designed (R6), not yet probed |
-| `rt_open` | A .docx file link (terminal, session bar) opens the review tab; .docm refused; other Office files unchanged | live | `rt_spike` | main half only: `ipc-handlers.ts` sends `review:open` for a .docx (`review-docs.ts::openReview`); NO renderer listener yet, so on this branch a .docx link does nothing until the renderer half lands |
-| `rt_layout` | soffice to PDF in a private profile, timeout, cached by mtime, re-laid out on change; pdf.js pages; missing soffice message | live | `rt_open` | main half: `src/main/review-layout.ts` (private seeded profile, execFile, 90 s timeout, cache by path+mtime+size, VBA refused), probe: 2 pages in 2.0 s, cached 1 ms, profile keeps macros off after first run; pdf.js view not built |
-| `rt_print` | Print opens the dialog with exactly the laid-out pages | todo | `rt_layout` | — |
-| `rt_drive` | Send to Drive as a Google Doc, link shown and added to Links; Lindus files ask first | live | `rt_open` | main half: `src/main/drive-upload.ts` (Drive API, dry run via `PATTON_DRIVE_DRY_RUN=1`); no check yet; no UI |
-| `rt_comments` | Comment on selected text, saved as a real Word comment | live | `rt_layout` | main half done: `src/main/docx-zip.ts`, `docx-comments.ts`, `review-docs.ts` ADD_COMMENT (atomic replace, Word lock refused) · `node scripts/check-review-comments.mjs` 22 ok incl. LibreOffice margin render and .odt with 2 annotations; panel not built |
-| `rt_claude` | Send comments to Claude as one message | todo | `rt_comments` | — |
-| `rt_check` | Lint, types, `npm run check`, package (asar mtime), light and dark screenshots | todo | `rt_print`, `rt_drive`, `rt_claude` | — |
+| `rt_open` | A .docx file link (terminal, session bar) opens the review tab; .docm refused; other Office files unchanged | live | `rt_spike` | renderer half built (`services/review-tabs.ts`, `components/review-view.ts`); `node scripts/check-review-tab.cjs` (hidden Electron, real main half and LibreOffice) 30 ok, S61: review:open makes a tab titled with the file name; not yet seen in the installed app |
+| `rt_layout` | soffice to PDF in a private profile, timeout, cached by mtime, re-laid out on change; pdf.js pages; missing soffice message | live | `rt_open` | main half as before; pdf.js pages + text layer drawn (`services/review-pdf.ts`), worker mode logged; check: 2 pages = soffice's 2, pdf.js in its Web Worker (dev bundle); the packaged asar's worker NOT yet checked (`REVIEW_ASAR=<out asar> node scripts/check-review-tab.cjs`) |
+| `rt_print` | Print opens the dialog with exactly the laid-out pages | live | `rt_layout` | pages at 200 dpi in a print-only container, @page per size, `window.print()`; check: printToPDF of the window 2 pages = soffice's 2, afterprint cleans up; the real print dialog not yet seen |
+| `rt_drive` | Send to Drive as a Google Doc, link shown and added to Links; Lindus files ask first | live | `rt_open` | UI built: Lindus files ask in Patton's confirm, link shown and added to the origin pane's session bar Links (check, fake upload); main's Lindus gate checked for real; NOT done: a Drive check of `drive-upload.ts` with gcloud and fetch stubbed, the Settings fields (Drive folder, account); first real upload waits for his yes |
+| `rt_comments` | Comment on selected text, saved as a real Word comment | live | `rt_layout` | panel built; check: text selected on page 2 -> comment in `word/comments.xml`, anchored in page 2's paragraph, listed in the panel, LibreOffice still 2 pages; `check-review-comments.mjs` 21 ok |
+| `rt_claude` | Send comments to Claude as one message | live | `rt_comments` | `Pane.pasteReviewComments`: one bracketed paste then Enter, refused while 7501 blocked (re-checked at write); check: pasted message holds the comment, origin tab shown, blocked -> visible note and no pty write |
+| `rt_check` | Lint, types, `npm run check`, package (asar mtime), light and dark screenshots | todo | `rt_print`, `rt_drive`, `rt_claude` | not yet: the full verifier (lint, tsc, `npm run check`, package with asar mtime), the packaged-worker check; screenshots from the check exist in the S61 builder's scratch folder (light, dark) |
 | `rt_review` | Fresh reviews with probes, every finding fixed | todo | `rt_check` | — |
 | `rt_release` | Merge to main, push, CI release | todo | `rt_review` | — |
 | `rt_ship` | Install on his word; the first real Drive upload on his yes | todo | `rt_release` | — |
@@ -81,7 +81,7 @@ He approved the design for building on 22 Nov 2026 ("ok").
 
 ## Decisions from the spikes (S61)
 
-- **R5. pdf.js, not Electron's PDF viewer.** A hidden Electron 44.9.3 window with `plugins: true` showing the PDF exposes no guest webContents (`getAllWebContents()` lists only the window), and after `selectAll()` the page's `getSelection()` is empty: the viewer's text is out of Patton's reach. Patton's window also runs sandboxed with `object-src 'none'`. So pages are drawn by `pdfjs-dist` 6.5.438 (devDependency: Vite bundles it into the renderer; no install scripts; its optional `@napi-rs/canvas` is unused in the renderer) on canvases with pdf.js's text layer, so selection, print and highlights are Patton's own. Run it with `isEvalSupported: false`; its worker is a bundled `?url` asset under `script-src 'self'` (to prove in the packaged build).
+- **R5. pdf.js, not Electron's PDF viewer.** A hidden Electron 44.9.3 window with `plugins: true` showing the PDF exposes no guest webContents (`getAllWebContents()` lists only the window), and after `selectAll()` the page's `getSelection()` is empty: the viewer's text is out of Patton's reach. Patton's window also runs sandboxed with `object-src 'none'`. So pages are drawn by `pdfjs-dist` 6.5.438 (devDependency: Vite bundles it into the renderer; no install scripts; its optional `@napi-rs/canvas` is unused in the renderer) on canvases with pdf.js's text layer, so selection, print and highlights are Patton's own. (`isEvalSupported` no longer exists in 6.5: pdf.js has no eval to turn off, read S61); its worker is a bundled `?url` asset under `script-src 'self'` (to prove in the packaged build).
 - **R6. Print (designed, not yet probed).** Render each page to an image at print resolution into a print-only container, `@page { size: <page size>; margin: 0 }`, one page per sheet, everything else hidden under `@media print`, then `window.print()`. Proof: `webContents.printToPDF` of the tab gives the same page count as `soffice --convert-to pdf`.
 - **R7. Comments.** Anchored by quote: both sides stripped of whitespace, NFKC-normalised, soft hyphens and zero-width marks dropped; the occurrence is the count of the same key in the PDF text before the selection; a count past the body's last match takes the last (headers, footers and margin comments are in the PDF, not the body). Written as real OOXML (`commentRangeStart/End`, a `commentReference` run, `word/comments.xml`, its relationship and content type), splitting runs with their own properties; other parts copied byte for byte. Proven: a python-docx file with two comments re-opens in LibreOffice 26.8 with both in the margin, page count unchanged (2). The file is replaced atomically; refused while Word holds it (`~$` owner file).
 - **R8. Drive: the Drive API with his personal gcloud login, not rclone.** This Mac's `gdrive:` remote is the Lindus Drive (its folders are Lindus trial material) with scope `drive.readonly`, so it could neither take an upload nor reach his personal Drive. `gcloud auth print-access-token --account <personal>` already carries the `drive` scope (tokeninfo, 22 Nov), so no new access is asked for. Multipart upload with `mimeType: application/vnd.google-apps.document` converts it; the folder (setting `driveFolder`, default "Patton") is found or made at the top of My Drive; the reply's `webViewLink` is the Doc's link. The account is the setting `driveAccount`, else the one @gmail.com account gcloud holds. Each send makes a new Doc (not yet checked live).
