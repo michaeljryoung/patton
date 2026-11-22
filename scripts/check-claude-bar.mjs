@@ -231,6 +231,12 @@ for (const [label, line, col, want] of [
     p = planEscRestore('héllo 👍🏽\nx', one(['[Image #1] héllo 👍🏽', 'x'], { images: 1 }));
     check('D18 plan: with images, Backspace per character of the text (graphemes, the break included), images kept',
       p.source === 'sent' && p.keepImages && p.keys === CLAUDE_BACKSPACE.repeat(9), { keys: p.keys?.length });
+    // Integration probe (S61, Claude Code 2.1.321 through a pty): Claude puts the message back trimmed at both ends
+    // ("  hello there  " -> "hello there", "line one\nline two\n" -> two rows), so the Backspaces count the trimmed
+    // text: one more per leading blank would delete into the [Image #1] before it.
+    p = planEscRestore('  look at this \n', one(['[Image #1] look at this'], { images: 1 }));
+    check('D18 plan: with images and blanks at the ends, Backspace per character of the trimmed text (images kept), the box gets his copy as sent',
+      p.source === 'sent' && p.keepImages && p.keys === CLAUDE_BACKSPACE.repeat(12) && p.text === '  look at this \n', { keys: p.keys?.length, text: p.text });
     const forty = Array.from({ length: 41 }, (_, i) => `line ${i + 1}`).join('\n'); // 40 line breaks
     p = planEscRestore(`intro ${forty}`, one(['intro [Pasted text #1 +40 lines]'], { pasted: true }));
     check('D18 plan: a [Pasted text] placeholder after the start of what was sent, its +40 lines the hidden part\'s 40 breaks -> sent',

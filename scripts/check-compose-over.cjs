@@ -675,6 +675,20 @@ async function pageRun(SCALES) {
     await settle(1500);
     check(`${D} caret at the end in view: a resize that shrinks the cap keeps it in view`, ta.scrollTop >= ta.scrollHeight - ta.clientHeight - 2, { before: r1(atEnd), scrollTop: r1(ta.scrollTop), max: ta.scrollHeight - ta.clientHeight });
 
+    // integration (D18 x S61): D18's note "Claude's bar has text" sits left of the text, so in a tall box it is on
+    // the first line with Send, centred on it, not at the box's top edge or middle
+    pane.setBarTextNote(true);
+    await settle(300);
+    {
+      const nr = q('.compose-bar-text-note').getBoundingClientRect();
+      const t = ta.getBoundingClientRect();
+      const b = box().getBoundingClientRect();
+      const d = { noteCentre: r1((nr.top + nr.bottom) / 2), lineCentre: r1(lineCentre(t)), noteH: r1(nr.height), boxH: r1(b.height), boxMid: r1((b.top + b.bottom) / 2) };
+      check(`${D} long draft with D18's note: the note is centred on the first line (within 1.5 px)`, nr.height > 0 && Math.abs(d.noteCentre - d.lineCentre) <= 1.5, d);
+    }
+    pane.setBarTextNote(false);
+    await settle(300);
+
     // a composition (IME): synthetic events, the text and the caret are as typed, the caret's line in view
     await typeDraft('');
     await settle(600);

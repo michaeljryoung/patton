@@ -457,6 +457,26 @@ async function paneChecks() {
     advance(30_000); t.hook(1, 0); advance(100);
     check(`prompt (${via}): that turn's end (subagent still running) rings again`, t.pane.claudeState.activity === 'parked', t.pane.claudeState.activity);
   }
+  // P: D18 x the ring (integration). A box send's turn ends at the ring's Stop, though the root
+  // stays working (a subagent runs on): an Esc after that is not "during the send's turn".
+  {
+    logs.length = 0;
+    const t = newPane({ feed: true });
+    t.pane.ptyId = 1;
+    t.root('working'); advance(1000); t.child('a1', 'working', { title: 'agent' }); advance(500);
+    t.pane.composeFirstEngaged = true;
+    t.pane.lastBoxSend = { text: 'look into it', atMs: now, chips: [], started: true };
+    t.child('a1', 'working', { title: 'agent', msg: 'still' }); // a report mid-turn keeps the send's turn
+    check('d18 x ring: a report mid-turn keeps the send current', t.pane.lastBoxSend !== null, t.pane.lastBoxSend);
+    advance(5000); t.hook(1, 0); advance(100);
+    check('d18 x ring: ringed', t.pane.claudeState.activity === 'parked', t.pane.claudeState.activity);
+    check('d18 x ring: the ring ends the send\'s turn', t.pane.lastBoxSend === null, t.pane.lastBoxSend);
+    t.child('a1', 'working', { title: 'agent', msg: 'later' }); advance(100);
+    check('d18 x ring: a report during the ring does not revive it', t.pane.lastBoxSend === null, t.pane.lastBoxSend);
+    t.pane.composeFirstEngaged = true; // the stubbed editor's sync may have dropped it
+    t.pane.armEscRestore('box');
+    check('d18 x ring: an Esc during the ring arms no restore watch', !logs.some((l) => l[0] === '[COMPOSE] restore watch') && t.pane.escRestore === null, logs.filter((l) => String(l[0]).startsWith('[COMPOSE]')));
+  }
   // Q: BLOCKED STOP. Another Stop hook (the closing-block gate) blocks the stop the ring came from:
   // Claude carries on with the root still working. main's transcript feed shows the block (and then
   // Claude writing again): the ring goes back to working, and the continuation's own Stop rings again.

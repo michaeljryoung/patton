@@ -191,7 +191,11 @@ export function planEscRestore(sent: string, input: { rows: string[]; images: nu
   if (matches) {
     if (input.images > 0) {
       if (input.pasted) return { skip: 'images-and-paste' };
-      return { source: 'sent', text: sent, keys: CLAUDE_BACKSPACE.repeat(graphemes(sent.trimEnd())), keepImages: true };
+      // Claude puts the message back trimmed at both ends (probed in 2.1.321:
+      // "  hello there  " came back as "hello there", a paste's trailing line
+      // break dropped), so one Backspace more per leading blank would eat into
+      // the `[Image #N]` before the text.
+      return { source: 'sent', text: sent, keys: CLAUDE_BACKSPACE.repeat(graphemes(sent.trim())), keepImages: true };
     }
     return { source: 'sent', text: sent, keys: CLAUDE_CLEAR_INPUT, keepImages: false };
   }

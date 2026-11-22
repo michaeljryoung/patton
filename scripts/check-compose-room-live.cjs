@@ -13,7 +13,7 @@
 // Run: node scripts/check-compose-room-live.cjs
 //   COMPOSE_SRC_ROOT=<folder holding src/>   bundle another source tree (to prove the check bites)
 //   COMPOSE_ROOMLIVE_CHECK_DIR=<folder>      where the bundle, userData and result go (default: a temp folder, removed after)
-//   COMPOSE_ROOMLIVE_GROUPS=<a,b,...>         run only these groups (hidden,height,stale,delay,split,font,aside,window,late,holdwrap,send)
+//   COMPOSE_ROOMLIVE_GROUPS=<a,b,...>         run only these groups (hidden,height,stale,delay,split,splitcap,font,aside,window,late,holdwrap,send)
 // Prints `ok <what>` or `not ok <what>: <measured>` per assertion; exit 1 on any failure.
 'use strict';
 
@@ -668,6 +668,54 @@ async function pageRun(SCALES, GROUPS) {
     pane.show(); // as Tab does after a split
     return () => { if (typeof sc.dispose === 'function') sc.dispose(); sc.element.remove(); };
   });
+  /** Integration (S61): in a split pane (stacked, then side by side) the long-draft cap is a third of THAT pane,
+   *  Send sits on the box's first line, and an edit keeps the caret in view. */
+  async function splitCapCase(at) {
+    for (const dir of ['horizontal', 'vertical']) {
+      const name = `${at} F1b split ${dir === 'horizontal' ? 'stacked' : 'side by side'}`;
+      const s = await setupPane();
+      if (!s) { check(`${name}: Claude's bar found`, false, null); continue; }
+      const stop = startStandIn(s.barLines, 150);
+      const other = document.createElement('div');
+      const sc = new U.SplitContainer(dir, 0.5, pane.element, other, () => {});
+      host.appendChild(sc.element);
+      pane.show();
+      await settle(1800);
+      await typeDraft(room(40));
+      await settle(2500);
+      await frame();
+      const pr = pane.element.getBoundingClientRect();
+      const hr = host.getBoundingClientRect();
+      const b = box().getBoundingClientRect();
+      const ta = textarea();
+      const t = ta.getBoundingClientRect();
+      const tcs = getComputedStyle(ta);
+      const firstLineH = parseFloat(tcs.lineHeight) + parseFloat(tcs.paddingTop) + parseFloat(tcs.paddingBottom) + 2 * parseFloat(tcs.borderTopWidth);
+      const sb = q('.editor-send').getBoundingClientRect();
+      const d = {
+        hostH: Math.round(hr.height), paneH: Math.round(pr.height), paneW: Math.round(pr.width), hostW: Math.round(hr.width),
+        boxH: Math.round(b.height * 10) / 10, third: Math.floor(pr.height / 3), boxBottom: Math.round(b.bottom - pr.top), k: kNow(),
+        sendCentre: Math.round(((sb.top + sb.bottom) / 2 - t.top) * 10) / 10, firstLineCentre: Math.round(firstLineH / 2 * 10) / 10,
+        scrollTop: Math.round(ta.scrollTop), maxScroll: ta.scrollHeight - ta.clientHeight,
+      };
+      measures.push(`${name}: ${JSON.stringify(d)}`);
+      const halved = dir === 'horizontal' ? pr.height < hr.height * 0.6 : pr.width < hr.width * 0.6;
+      check(`${name}: precondition, the pane is half the host`, halved, d);
+      check(`${name}: a 40-line draft's box is exactly the cap: a third of the split pane (not the window), or less to its bottom (within 1 px)`, Math.abs(b.height - Math.min(Math.floor(pr.height / 3), Math.floor(pr.bottom - b.top))) <= 1, d);
+      check(`${name}: the box stays inside the split pane`, b.bottom <= pr.bottom + 0.5 && b.right <= pr.right + 0.5 && b.left >= pr.left - 0.5, d);
+      // Stacked, the capped box (a third of a half-height pane) fits over the rows below Claude's bar: k is 0, as F1's
+      // from-scratch k; side by side the pane keeps the window's height and the draft gives rows up.
+      if (dir === 'vertical') check(`${name}: the draft gives up rows in the split pane (k > 0)`, kNow() >= 1, d);
+      const taller = sb.height > firstLineH + 0.5;
+      check(`${name}: Send on the box's first line (centred within 1.5 px; at the top padding when taller)`,
+        taller ? sb.top - b.top <= 3 && sb.top <= t.top + 0.5 : Math.abs(d.sendCentre - d.firstLineCentre) <= 1.5, d);
+      check(`${name}: Send inside the split pane's box`, sb.right <= b.right + 0.5 && sb.bottom <= b.bottom + 0.5, d);
+      check(`${name}: the caret (at the end of the draft) is in view`, ta.scrollTop >= ta.scrollHeight - ta.clientHeight - 2, d);
+      stop();
+      if (typeof sc.dispose === 'function') sc.dispose();
+      sc.element.remove();
+    }
+  }
   const fontCase = (at) => kAfterCase(at, 'F2 font', 150,
     async () => { pane.setFontSize(term().options.fontSize + 2); },
     async () => { pane.setFontSize(term().options.fontSize); }); // the box takes the terminal's size first
@@ -790,7 +838,7 @@ async function pageRun(SCALES, GROUPS) {
       const at = `x${S}`;
       for (const [name, run] of [['hidden', hiddenPaneChecks], ['height', paneHeightChecks], ['stale', staleBarChecks]]) await guarded(at, name, run);
       if (i > 0) continue; // the settling cases at the first scale only: they are long
-      for (const [name, run] of [['delay', delayChecks], ['split', splitCase], ['font', fontCase], ['aside', asideCase], ['window', windowCase], ['late', lateCase], ['holdwrap', holdWrapCase], ['send', sendCase]]) await guarded(at, name, run);
+      for (const [name, run] of [['delay', delayChecks], ['split', splitCase], ['splitcap', splitCapCase], ['font', fontCase], ['aside', asideCase], ['window', windowCase], ['late', lateCase], ['holdwrap', holdWrapCase], ['send', sendCase]]) await guarded(at, name, run);
     }
   } finally {
     if (pane) pane.dispose();

@@ -3498,11 +3498,13 @@ export class Pane {
     rlog('info', '[COMPOSE] restore watch', { pane: this.id, from, sinceSendMs: Date.now() - send.atMs, started: send.started });
   }
 
-  /** D18: the send's turn from Claude's 7501 root: begun, or over. */
+  /** D18: the send's turn from Claude's 7501 root: begun, or over. The
+   *  turn-end ring (turnEnded: a Stop over a root kept working by a subagent)
+   *  is that turn's end too, though the root never leaves working. */
   private noteSendTurn(rootState: string | null): void {
     const send = this.lastBoxSend;
     if (send === null) return;
-    if (rootState === 'working' || rootState === 'blocked') send.started = true;
+    if ((rootState === 'working' || rootState === 'blocked') && !this.turnEnded) send.started = true;
     else if (send.started) this.lastBoxSend = null;
   }
 

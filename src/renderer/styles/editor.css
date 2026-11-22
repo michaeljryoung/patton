@@ -161,6 +161,12 @@
   min-height: var(--compose-first-line-h, 0px);
 }
 
+/* D18's note (one bordered line of UI text: 1.3em plus its 1 px rules) sits
+   left of the text too: centred on the first line, as Send and the chips. */
+.editor-container.compose-first .compose-bar-text-note {
+  margin-top: max(0px, calc((var(--compose-first-line-h, 0px) - 1.3em - 2px) / 2));
+}
+
 /* Where Send is taller than the text's line (a larger UI scale), the text
    sits centred on that first line, as it did while the row centred it. */
 .editor-container.compose-first .editor-textarea {
