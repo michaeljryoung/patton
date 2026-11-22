@@ -18,9 +18,9 @@ flowchart TD
     hook_lists[Stop hook sends task and loop lists]:::todo
   end
   subgraph B["The bar"]
-    bar_model[bar state per pane]:::todo
-    bar_ui[bar, minimize strip, narrow fold]:::todo
-    ckpt_move[checkpoint clock moves into the bar]:::todo
+    bar_model[bar state per pane]:::done
+    bar_ui[bar, minimize strip, narrow fold]:::done
+    ckpt_move[checkpoint clock moves into the bar]:::done
   end
   subgraph V["Verify and ship"]
     bar_e2e[end-to-end check by a fresh agent]:::todo
@@ -55,9 +55,9 @@ flowchart TD
 | `session_link` | D8: main finds a pane's Claude process, its `~/.claude/sessions/<pid>.json`, and the transcript; re-resolves on `/clear` and resume; the Stop hook's `tp` as a fallback | done | `bar_design` | `src/main/session-link.ts`, `session-feed.ts`, `session-feed-ipc.ts` · `scripts/check-session-link.mjs` (live, temporary HOME), `check-session-feed-ipc.mjs` (not yet reviewed) |
 | `transcript_feed` | D9: main tails the transcript and sends `SessionFeedEvent`s (task start and end, links, wake-ups, attach and detach) to the pane's renderer; pure parser with fixtures | done | `bar_design` | `src/main/transcript-parser.ts`, `transcript-tail.ts` · `scripts/check-session-feed.mjs` over `scripts/fixtures/session-feed-lines.jsonl` (not yet reviewed) |
 | `hook_lists` | D10: the Stop hook adds `tl`, `cl` and `tp`; the renderer parses them; probe cases and a size cap | todo | `bar_design` | — |
-| `bar_model` | D3–D6: per-pane state merging 7501 children, the feed and the Stop lists; ended rows linger 30 s; failures until dismissed; links keyed and versioned; pure, with checks | todo | `bar_design`, `transcript_feed`, `hook_lists` | — |
-| `bar_ui` | D1, D2, D11: the bar beside the terminal on Claude tabs, ⇥ and the strip, narrow fold, persisted per window, ARIA, `[BAR]` logs; layout check at UI scale 1, 1.1, 1.5 | todo | `bar_model` | — |
-| `ckpt_move` | D7: the checkpoint clock and its button leave the tab strip for the bar and the strip; tabs keep the red circle | todo | `bar_ui` | — |
+| `bar_model` | D3–D6: per-pane state merging 7501 children, the feed and the Stop lists; ended rows linger 30 s; failures until dismissed; links keyed and versioned; pure, with checks | done | `bar_design`, `transcript_feed`, `hook_lists` | `check-session-bar-model.mjs` 72 ok (a list the hook cut ends nothing), S60 |
+| `bar_ui` | D1, D2, D11: the bar beside the terminal on Claude tabs, ⇥ and the strip, narrow fold, persisted per window, ARIA, `[BAR]` logs; layout check at UI scale 1, 1.1, 1.5 | done | `bar_model` | `check-session-bar-layout.cjs` 96 ok (32 a scale), all 96 fail on `0f4e3dd`, S60 |
+| `ckpt_move` | D7: the checkpoint clock and its button leave the tab strip for the bar and the strip; tabs keep the red circle | done | `bar_ui` | no `.tab-bar-checkpoint` (layout check, `check-tab-strip-dblclick`, `check-pause-all`, `check-ui-text-scale`: 13 tabs fit from 810 / 880 px), S60 |
 | `bar_e2e` | D13's end-to-end check, written by an agent that didn't build; every assertion fails on main | todo | `session_link`, `ckpt_move` | — |
 | `bar_review` | Fresh reviews with probes until no open major | todo | `bar_e2e` | — |
 | `bar_release` | Merge by fast-forward, push, CI release, cask matches the DMG | todo | `bar_review` | — |
