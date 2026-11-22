@@ -24,7 +24,7 @@ flowchart TD
   end
   subgraph V["Verify and ship"]
     bar_e2e[end-to-end check by a fresh agent]:::done
-    bar_review[fresh reviews, no open major]:::todo
+    bar_review[fresh reviews, no open major]:::done
     bar_release[merge, push, CI release, cask]:::todo
     bar_ship[install on his word, live check]:::todo
   end
@@ -59,7 +59,7 @@ flowchart TD
 | `bar_ui` | D1, D2, D11: the bar beside the terminal on Claude tabs, ⇥ and the strip, narrow fold, persisted per window, ARIA, `[BAR]` logs; layout check at UI scale 1, 1.1, 1.5 | done | `bar_model` | `check-session-bar-layout.cjs` 96 ok (32 a scale), all 96 fail on `0f4e3dd`, S60 |
 | `ckpt_move` | D7: the checkpoint clock and its button leave the tab strip for the bar and the strip; tabs keep the red circle | done | `bar_ui` | no `.tab-bar-checkpoint` (`scripts/check-session-bar-layout.cjs`, `scripts/check-tab-strip-dblclick.mjs`, `scripts/check-pause-all.mjs`, `scripts/check-ui-text-scale.cjs`: 13 tabs fit from 810 / 880 px), S60 |
 | `bar_e2e` | D13's end-to-end check, written by an agent that didn't build; every assertion fails on main | done | `session_link`, `ckpt_move` | `scripts/check-session-bar-e2e.cjs` 57 ok, 0 not ok in `npm run check` on `feat/sb-barui` (real pty, session feed, TabManager and bar in hidden Electron, UI scale 1, 1.1, 1.5), S60 |
-| `bar_review` | Fresh reviews with probes until no open major | todo | `bar_e2e` | — |
+| `bar_review` | Fresh reviews with probes until no open major | done | `bar_e2e` | three fresh reviews with probes: 0 major / 6 minor, fixed in `41ff187`, `7e3b2f6`, `4520173`; then 0 major; then the final one, 0 major / 3 minor (a stale `tp` hint re-attaching an exited session, a transcript swapped for a symlink, a refused Checkpoint click invisible on the strip) plus 2 nits, fixed in `5f8ab6d` with assertions failing before (`scripts/check-session-feed-robust.mjs` 29 ok, `check-session-bar-layout.cjs` 102 ok); `scripts/probe-stop-hook.sh` 111 ok |
 | `bar_release` | Merge by fast-forward, push, CI release, cask matches the DMG | todo | `bar_review` | — |
 | `bar_ship` | Install on his word with Patton quit; live: `[BAR] attach` lines, a shell row appears and goes, a link listed, the clock in the bar | todo | `bar_release` | — |
 <!-- MAP:END -->
