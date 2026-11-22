@@ -32,7 +32,9 @@ for PARSER in jq osascript; do
     "{$COMMON,\"background_tasks\":[{\"id\":\"b1\",\"type\":\"shell\",\"status\":\"completed\",\"description\":\"d\",\"command\":\"ls\"}],\"session_crons\":[]}"
   expect_seq "mixed: missing status + pending + failed" 2 0 \
     "{$COMMON,\"background_tasks\":[{\"id\":\"1\"},{\"id\":\"2\",\"status\":\"pending\"},{\"id\":\"3\",\"status\":\"Failed\"}],\"session_crons\":[]}"
-  for AMB in dream auto_mode_scan local_memory_import; do
+  # Claude Code 2.1.321 sends friendly labels (cLe maps local_agent to
+  # "subagent", auto_mode_scan to "auto-mode scan", ...), so match both forms.
+  for AMB in dream auto_mode_scan local_memory_import "auto-mode scan" "memory import"; do
     expect_seq "ambient $AMB task not counted" 0 0 \
       "{$COMMON,\"background_tasks\":[{\"id\":\"x\",\"type\":\"$AMB\",\"status\":\"running\"}],\"session_crons\":[]}"
   done

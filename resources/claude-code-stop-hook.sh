@@ -13,7 +13,9 @@
 # Claude Code already lists only running/pending work, so FINISHED is a
 # belt-and-braces filter. AMBIENT: dreams, auto-mode scans and memory
 # imports, which Claude Code stops with `ambient: true` and which never wake
-# the session, so counting them would park a pane that is waiting on you. Patton parses it in
+# the session, so counting them would park a pane that is waiting on you. They
+# are matched by the friendly `type` label Claude Code sends ("auto-mode scan",
+# "memory import") and by the raw name. Patton parses it in
 # terminal-view.ts and pane.ts (handleHookStop).
 #
 # Context reading (the tab strip's checkpoint clock and its red "checkpoint
@@ -94,7 +96,11 @@
 
 input=$(cat 2>/dev/null) || exit 0
 FINISHED='["completed","failed","killed","cancelled","canceled","done","finished","stopped"]'
-AMBIENT='["dream","auto_mode_scan","local_memory_import"]'
+# Claude Code 2.1.321 puts a friendly label in background_tasks[].type (its
+# cLe maps auto_mode_scan to "auto-mode scan", local_memory_import to
+# "memory import", dream to "dream"), so both forms are listed: the raw names
+# are for builds that send them.
+AMBIENT='["dream","auto_mode_scan","auto-mode scan","local_memory_import","memory import"]'
 
 counts=""
 JQ=$(command -v jq 2>/dev/null || { [ -x /usr/bin/jq ] && echo /usr/bin/jq; })
