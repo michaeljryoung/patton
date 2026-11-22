@@ -21,7 +21,10 @@
  * file has none. Nothing here reads or writes markup it did not find: other
  * parts stay byte for byte (docx-zip.ts).
  */
+import { keyOf, matchesOf, textKey } from '../shared/review-text';
 import { entryText, setEntryText, type ZipEntry } from './docx-zip';
+
+export { keyOf, matchesOf, textKey };
 
 const W_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 const COMMENTS_REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments';
@@ -55,21 +58,6 @@ export interface BodyText {
   key: string;
   /** key[i] came from keyChars[i]. */
   keyChars: KeyChar[];
-}
-
-const DROP = /[\s\u00ad\u200b-\u200f\u2060\ufeff]/u;
-
-/** Normalise one source character into its key characters ('' to drop). */
-export function keyOf(ch: string): string {
-  if (DROP.test(ch)) return '';
-  return ch.normalize('NFKC').replace(/[\s\u00ad\u200b-\u200f\u2060\ufeff]/gu, '');
-}
-
-/** The key of any text (the PDF side uses the same rule). */
-export function textKey(text: string): string {
-  let out = '';
-  for (const ch of text) out += keyOf(ch);
-  return out;
 }
 
 const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
@@ -145,14 +133,6 @@ export function bodyText(xml: string): BodyText {
     }
   }
   return { spans, key, keyChars };
-}
-
-/** Start indexes of every match of `needle` in `hay` (overlapping). */
-export function matchesOf(hay: string, needle: string): number[] {
-  const out: number[] = [];
-  if (!needle) return out;
-  for (let i = hay.indexOf(needle); i !== -1; i = hay.indexOf(needle, i + 1)) out.push(i);
-  return out;
 }
 
 export function escapeXml(text: string): string {
