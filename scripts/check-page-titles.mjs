@@ -85,7 +85,7 @@ try {
     check('a symlink loop is refused', r.title === '' && r.reason !== null && r.reason !== 'no-title', r);
     // m10: invisible and bidi format characters go, ZWNJ and ZWJ stay
     r = await t(page('fmt.html', '<title>A\u00adB\u061cC\u180eD\u200bE\u200eF\u202eG\u2060H\u2064I\u2068J\ufeffK\u200cL\u200dM</title>'));
-    check('invisible and bidi format characters are removed; ZWNJ and ZWJ kept', r.title === 'ABCDEFGHIJK\u200cL\u200dM', [...r.title].map((c) => c.codePointAt(0).toString(16)));
+    check('invisible characters removed, bidi marks and controls made spaces; ZWNJ and ZWJ kept', r.title === 'AB CDE F GHI JK\u200cL\u200dM', [...r.title].map((c) => c.codePointAt(0).toString(16)));
   });
 
   // ── fixture transcript lines (the real shapes, made-up content)

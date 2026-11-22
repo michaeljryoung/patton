@@ -58,16 +58,16 @@ const ID_MEMORY = 5000;
 
 const TASK_ID = /^[A-Za-z0-9_-]{1,80}$/;
 
-// C0 and C1 controls and DEL: shown as a space.
+// C0 and C1 controls, DEL, and the bidi marks, embeddings, overrides and
+// isolates (LRM, RLM, ALM, U+202A-202E, U+2066-2069), which can make shown
+// text read differently from what it is: shown as a space.
 // eslint-disable-next-line no-control-regex
-const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/g;
-// Invisible and bidi format characters that can make shown text read
-// differently from what it is (or two different names look the same): soft
-// hyphen, Arabic letter mark, Mongolian vowel separator, zero-width space,
-// LRM/RLM, the bidi embeddings, overrides and isolates, word joiner and the
-// invisible operators, BOM. Removed. U+200C/U+200D (ZWNJ/ZWJ) stay: some
-// scripts and emoji need them.
-const FORMAT_CHARS = /[\u00ad\u061c\u180e\u200b\u200e\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/g;
+const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
+// Invisible characters inside a word (soft hyphen, Mongolian vowel separator,
+// zero-width space, word joiner and the invisible operators, BOM), which can
+// make two different names look the same: removed. U+200C/U+200D (ZWNJ/ZWJ)
+// stay: some scripts and emoji need them.
+const FORMAT_CHARS = /[\u00ad\u180e\u200b\u2060-\u2064\ufeff]/g;
 // Either kind: a path holding one is refused.
 // eslint-disable-next-line no-control-regex
 const CONTROL = /[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u180e\u200b\u200e\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/g;
