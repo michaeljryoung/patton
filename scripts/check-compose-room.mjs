@@ -108,6 +108,11 @@ const cases = [
   ['a backward selection (end before start)', 'one\ntwo\nthree\nfour', 10, 1, 'four', 0, 3],
   ['a selection ending just after a line break leaves the next line', 'one\ntwo\nthree', 0, 4, 'two\nthree', 0, 1],
   ['a selection of the whole draft', 'one\ntwo', 0, 7, '', 0, 2],
+  ['a draft starting with a line break, caret at 0: the empty first line goes, not the second', '\nabc', 0, 0, 'abc', 0, 1],
+  ['...selection 0..3 over an empty first line and the start of the next: both lines go', '\nabc\ndef', 0, 3, 'def', 0, 2],
+  ['...a backward selection 3..0 does the same', '\nabc\ndef', 3, 0, 'def', 0, 2],
+  ['...only line breaks, caret at 0', '\n\n', 0, 0, '\n', 0, 1],
+  ['...the caret on the second line of a draft that starts with a line break', '\nabc', 2, 2, '', 0, 1],
 ];
 for (const [name, v, a, b, want, caretAt, lines] of cases) {
   const r = kill(v, a, b);

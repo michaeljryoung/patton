@@ -22,7 +22,9 @@ export function killLineRange(value: string, selStart: number, selEnd: number): 
   if (value === '') return null;
   const lo = Math.max(0, Math.min(selStart, selEnd, value.length));
   let hi = Math.min(Math.max(selStart, selEnd), value.length);
-  const lineStart = value.lastIndexOf('\n', lo - 1) + 1;
+  // lastIndexOf with a negative index clamps to 0, so at 0 it would find a
+  // line break at index 0 that is after the caret, not before it.
+  const lineStart = lo === 0 ? 0 : value.lastIndexOf('\n', lo - 1) + 1;
   if (hi > lo && hi > lineStart && value[hi - 1] === '\n') hi -= 1;
   const nl = value.indexOf('\n', hi);
   const lineEnd = nl === -1 ? value.length : nl;
