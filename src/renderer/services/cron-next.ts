@@ -5,7 +5,9 @@
  *
  * Each field: `*`, a number, a range `a-b`, a step `*\/n` or `a-b/n`, or a comma list of
  * those; months and weekdays also by their three-letter names; weekday 0 and 7 are Sunday.
- * As in Vixie cron, when both day fields are restricted a day matching either one fires.
+ * As in Vixie cron, when both day fields are restricted (neither starts with `*`) a day
+ * matching either one fires, otherwise both must match. A time a clock change skips fires
+ * when the clock gets past it.
  * Pure: no DOM, no timers. Anything it can't read gives null, and the bar shows the
  * schedule itself.
  */
@@ -26,7 +28,8 @@ function parseNumber(s: string, names: string[] | null, nameBase: number): numbe
 
 function parseField(text: string, min: number, max: number, names: string[] | null = null, nameBase = 0): Field | null {
   const values = new Set<number>();
-  let star = false;
+  // Vixie cron: a field whose text starts with `*` (`*/2` included) is "star".
+  const star = text.startsWith('*');
   for (const part of text.split(',')) {
     const m = /^([^/]+)(?:\/(\d{1,2}))?$/.exec(part);
     if (!m) return null;
@@ -36,7 +39,6 @@ function parseField(text: string, min: number, max: number, names: string[] | nu
     let hi: number;
     if (m[1] === '*') {
       lo = min; hi = max;
-      if (m[2] === undefined) star = true;
     } else {
       const range = m[1].split('-');
       if (range.length > 2) return null;
@@ -77,9 +79,9 @@ function dayMatches(s: CronSchedule, d: Date): boolean {
   if (!s.month.values.has(d.getMonth() + 1)) return false;
   const domOk = s.dom.values.has(d.getDate());
   const dowOk = s.dow.values.has(d.getDay());
-  if (s.dom.star && s.dow.star) return true;
-  if (s.dom.star) return dowOk;
-  if (s.dow.star) return domOk;
+  // Vixie cron: when either day field starts with `*` both must match (a `*/n` still
+  // applies its step); only when both are restricted does either one do.
+  if (s.dom.star || s.dow.star) return domOk && dowOk;
   return domOk || dowOk;
 }
 
@@ -102,8 +104,8 @@ export function nextCronFire(expr: string, now: number): number | null {
       for (const h of hours) {
         for (const m of minutes) {
           const t = new Date(day.getFullYear(), day.getMonth(), day.getDate(), h, m, 0, 0);
-          // A clock change can skip an hour: a time that isn't the one asked for doesn't fire.
-          if (t.getHours() !== h || t.getMinutes() !== m) continue;
+          // A clock change can skip an hour: Date moves that time on by the gap (01:30
+          // becomes 02:30), which is when cron runs it, so it is a candidate like any other.
           if (t.getTime() >= start.getTime()) return t.getTime();
         }
       }

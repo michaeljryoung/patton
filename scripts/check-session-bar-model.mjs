@@ -116,6 +116,11 @@ const MIN = 60 * S;
   check('cron 7 = Sunday: 0 12 * * 7 → today 12:00', M.nextCronFire('0 12 * * 7', now) === at(12, 0));
   check('cron dom+dow either: 0 0 1 * 1 → Mon 23 Nov', M.nextCronFire('0 0 1 * 1', now) === at(0, 0, 23));
   check('cron 0 0 29 2 * → 29 Feb 2028', M.nextCronFire('0 0 29 2 *', now) === new Date(2028, 1, 29, 0, 0).getTime());
+  // Vixie cron: a day field that starts with `*` (so `*/2` too) counts as unrestricted, so
+  // the two day fields are ANDed, not ORed. The 22nd is a Sunday.
+  check('cron */2 dom AND Tuesday: 0 0 */2 * 2 → Tue 1 Dec (odd and Tuesday; Tue 24 Nov is even)', M.nextCronFire('0 0 */2 * 2', now) === new Date(2026, 11, 1, 0, 0).getTime(), new Date(M.nextCronFire('0 0 */2 * 2', now)).toString());
+  check('cron every 2nd dom, any weekday: 0 0 */2 * * → 23 Nov 00:00 (odd days)', M.nextCronFire('0 0 */2 * *', now) === at(0, 0, 23), new Date(M.nextCronFire('0 0 */2 * *', now)).toString());
+  check('cron */2 dow AND dom 25: 0 0 25 * */2 → 25 Feb 2027 (a Thursday)', M.nextCronFire('0 0 25 * */2', now) === new Date(2027, 1, 25, 0, 0).getTime(), new Date(M.nextCronFire('0 0 25 * */2', now)).toString());
   check('cron unparseable → null', M.nextCronFire('every 20 minutes', now) === null && M.nextCronFire('61 * * * *', now) === null && M.nextCronFire('* * * *', now) === null);
   const m = new M.SessionBarModel();
   m.applyStop({ tasks: 0, taskList: null, transcriptPath: null, cronList: [
@@ -137,6 +142,21 @@ const MIN = 60 * S;
   m.applyStop({ tasks: 0, taskList: null, transcriptPath: null, cronList: [{ id: 'k3', s: '5 12 22 11 *', r: false, p: 'one-off' }] }, now);
   v = m.view(now);
   check('a wake-up the cron list also carries is one row', v.scheduled.filter((r) => r.prompt === 'one-off').length === 1, v.scheduled);
+}
+
+// ── 3b. Cron across a spring-forward (needs TZ=Europe/London; the check re-runs itself) ──
+if (process.env.TZ === 'Europe/London') {
+  // 29 Mar 2026: at 01:00 GMT clocks go to 02:00 BST, so 01:30 local never happens.
+  const now = new Date(2026, 2, 28, 12, 0, 0).getTime();
+  const fire = M.nextCronFire('30 1 * * *', now);
+  const got = fire === null ? null : new Date(fire).toISOString();
+  // The skipped 01:30 runs as soon as the clock allows: 02:30 BST = 01:30 UTC, that day.
+  check('DST: 30 1 * * * across 29 Mar 2026 London → that night, 01:30 UTC', got === '2026-03-29T01:30:00.000Z', got);
+  const once = M.nextCronFire('30 1 29 3 *', now);
+  const gotOnce = once === null ? null : new Date(once).toISOString();
+  check('DST: 30 1 29 3 * → 29 Mar 2026, not a year later', gotOnce === '2026-03-29T01:30:00.000Z', gotOnce);
+  const after = M.nextCronFire('30 1 * * *', new Date('2026-03-29T01:45:00Z').getTime());
+  check('DST: after the shifted fire, the next is 30 Mar 01:30 local', after === new Date(2026, 2, 30, 1, 30).getTime(), after && new Date(after).toISOString());
 }
 
 // ── 4. Failures ──
@@ -286,5 +306,13 @@ const MIN = 60 * S;
   check('reset (Claude left): every section empty', v.running.length === 0 && v.failures.length === 0 && v.links.length === 0 && v.scheduled.length === 0);
 }
 
+if (process.env.TZ !== 'Europe/London') {
+  // The spring-forward assertions need London time: run them in a child with TZ set.
+  const { spawnSync } = await import('node:child_process');
+  const r = spawnSync(process.execPath, [fileURLToPath(import.meta.url)], { env: { ...process.env, TZ: 'Europe/London' }, encoding: 'utf8' });
+  const lines = (r.stdout || '').split('\n').filter((l) => /^(ok|not ok) DST/.test(l));
+  for (const l of lines) { console.log(l); if (l.startsWith('not ok')) failed++; else passed++; }
+  if (lines.length === 0) { failed++; console.log(`not ok the London run produced no DST lines: ${(r.stderr || '').slice(0, 200)}`); }
+}
 console.log(`\n${passed} ok, ${failed} not ok`);
 process.exit(failed ? 1 : 0);
