@@ -220,6 +220,7 @@ export class SessionFeed {
         if (w.stopped || w.attached?.tail !== tail) return;
         w.lastError = ''; // a good read: the next error of a kind logs again
         for (const ev of parser.push(text)) this.emit(w, ev);
+        for (const ev of parser.turnActivity()) this.emit(w, ev);
       },
       onReset: () => {
         if (!w.stopped && w.attached?.tail === tail) parser.resetLine();

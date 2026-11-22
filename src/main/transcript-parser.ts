@@ -90,6 +90,10 @@ function timeOf(line: Record<string, unknown>, fallback: number): number {
   return Number.isFinite(t) ? t : fallback;
 }
 
+function hasTimestamp(line: Record<string, unknown>): boolean {
+  return typeof line.timestamp === 'string' && Number.isFinite(Date.parse(line.timestamp));
+}
+
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
@@ -462,6 +466,12 @@ export class TranscriptParser {
   private readonly now: () => number;
   /** Lines that were not JSON (counted, never thrown). */
   badLines = 0;
+  /** The last push's newest assistant line and newest blocked Stop (a
+   *  `hook_blocking_error` attachment for Stop, or a "Stop hook feedback"
+   *  prompt), by line time; null when it had none. Read by the feed after
+   *  each push (`turnActivity`), so the parser's own events stay as they are. */
+  lastAssistantAt: number | null = null;
+  lastStopBlockedAt: number | null = null;
 
   constructor(opts: ParserOptions) {
     this.home = opts.home;
@@ -479,6 +489,8 @@ export class TranscriptParser {
   /** Feed raw file text; events come only from whole lines. */
   push(chunk: string): SessionFeedEvent[] {
     const out: SessionFeedEvent[] = [];
+    this.lastAssistantAt = null;
+    this.lastStopBlockedAt = null;
     let text = chunk;
     if (this.skipping) {
       const nl = text.indexOf('\n');
@@ -514,17 +526,38 @@ export class TranscriptParser {
     }
     if (!isRecord(obj) || obj.isSidechain === true) return [];
     const at = timeOf(obj, this.now());
+    // Turn activity is timed by the line's own stamp only: the read-time
+    // fallback would make an old backlog line read as written just now.
+    const stamped = hasTimestamp(obj);
     switch (obj.type) {
-      case 'assistant': return this.assistant(obj, at);
-      case 'user': return this.user(obj, at);
+      case 'assistant':
+        if (stamped) this.lastAssistantAt = Math.max(this.lastAssistantAt ?? at, at);
+        return this.assistant(obj, at);
+      case 'user':
+        if (stamped && isRecord(obj.message) && typeof obj.message.content === 'string'
+            && obj.message.content.startsWith('Stop hook feedback')) this.noteStopBlocked(at);
+        return this.user(obj, at);
       case 'queue-operation':
         return obj.operation === 'enqueue' && typeof obj.content === 'string' ? this.ends(obj.content, at) : [];
       case 'attachment': {
         const a = obj.attachment;
+        if (stamped && isRecord(a) && a.type === 'hook_blocking_error' && a.hookEvent === 'Stop') this.noteStopBlocked(at);
         return isRecord(a) && a.type === 'queued_command' && typeof a.prompt === 'string' ? this.ends(a.prompt, at) : [];
       }
       default: return [];
     }
+  }
+
+  private noteStopBlocked(at: number): void {
+    this.lastStopBlockedAt = Math.max(this.lastStopBlockedAt ?? at, at);
+  }
+
+  /** The last push's turn activity as feed events (at most one of each kind). */
+  turnActivity(): SessionFeedEvent[] {
+    const out: SessionFeedEvent[] = [];
+    if (this.lastStopBlockedAt !== null) out.push({ type: 'turn-activity', why: 'stop-blocked', at: this.lastStopBlockedAt });
+    if (this.lastAssistantAt !== null) out.push({ type: 'turn-activity', why: 'assistant', at: this.lastAssistantAt });
+    return out;
   }
 
   private ends(text: string, at: number): SessionFeedEvent[] {

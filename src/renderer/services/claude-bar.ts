@@ -135,6 +135,13 @@ export function readClaudeBar(buffer: BarBuffer): ClaudeBarReading {
   return { found: true, empty: inputIsEmpty(line, buffer.getNullCell?.()), row };
 }
 
+/** The text on the bar's input line (after `❯ `), for a reading that found
+ *  the bar holding text; image chips come through as their `[Image #N]` text. */
+export function claudeBarInputText(buffer: BarBuffer, row: number): string {
+  const line = buffer.getLine(row);
+  return line ? line.translateToString(true).slice(INPUT_START_X).trim() : '';
+}
+
 /** The reading as one word: 'empty', 'holds-text' or 'none' (the fixture's verdicts). */
 export function claudeBarVerdict(r: ClaudeBarReading): 'empty' | 'holds-text' | 'none' {
   if (!r.found) return 'none';

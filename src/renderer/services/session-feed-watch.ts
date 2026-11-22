@@ -62,6 +62,12 @@ export class SessionFeedWatch {
     });
   }
 
+  /** Whether main has attached the session (an `attached` event, no
+   *  `detached` since): the transcript feed's events can arrive. */
+  get isAttached(): boolean {
+    return this.attached;
+  }
+
   /** A 7501 report from Claude Code in the pane. */
   claudeReport(): void {
     const ptyId = this.deps.current();

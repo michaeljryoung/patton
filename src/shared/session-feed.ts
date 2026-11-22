@@ -36,6 +36,11 @@ export type SessionFeedEvent =
   | { type: 'link'; url?: string; path?: string; label: string; at: number; fallback?: true }
   /** A one-off ScheduleWakeup (D4). */
   | { type: 'wake'; fireAt: number; prompt?: string; at: number }
+  /** The session's own turn moved on: an assistant message, or a Stop hook
+   *  blocking the stop (Claude carries on). The latest of each kind per read;
+   *  `at` is the transcript line's time. The pane's turn-end ring reads it
+   *  (Claude Code reports the root working all along while a subagent runs). */
+  | { type: 'turn-activity'; why: 'assistant' | 'stop-blocked'; at: number }
   /** main couldn't read or parse something; the bar keeps what it has. */
   | { type: 'error'; why: string };
 
