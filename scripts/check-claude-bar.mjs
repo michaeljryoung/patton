@@ -193,5 +193,58 @@ for (const [label, line, col, want] of [
   term.dispose();
 }
 
+// ── D18: the bar's input over several rows, and the Esc-restore plan ──
+{
+  let er = null;
+  try {
+    const b = await build({
+      stdin: { contents: `export * from ${JSON.stringify(join(srcRoot, 'src/renderer/services/esc-restore'))};`, resolveDir: repo, loader: 'ts' },
+      bundle: true, format: 'esm', platform: 'neutral', write: false, logLevel: 'silent',
+    });
+    er = await import('data:text/javascript;base64,' + Buffer.from(b.outputFiles[0].text).toString('base64'));
+  } catch (err) {
+    check('D18 services/esc-restore builds', false, String(err?.message ?? err).slice(0, 200));
+  }
+  if (er) {
+    const { readClaudeBarInput, planEscRestore, CLAUDE_CLEAR_INPUT, CLAUDE_BACKSPACE } = er;
+    const term = new Terminal({ cols, rows, allowProposedApi: true });
+    const rule = '─'.repeat(cols);
+    // A two-row bar, cursor on its last row, a footer below.
+    await write(term, `\x1b[2J\x1b[H${rule}\r\n❯ first row\r\n  second row\r\n${rule}\r\n  footer\x1b[3;14H`);
+    let r = readClaudeBarInput(term.buffer.active);
+    check('D18 two-row bar read whole', r.kind === 'text' && r.rows.join('|') === 'first row|second row' && r.images === 0 && !r.pasted, r);
+    await write(term, '\x1b[5;3H'); // cursor on the footer (mid-redraw)
+    r = readClaudeBarInput(term.buffer.active);
+    check('D18 cursor on the footer: none', r.kind === 'none', r);
+    await write(term, `\x1b[2J\x1b[H${rule}\r\n❯ [Image #1] look\r\n${rule}\x1b[2;18H`);
+    r = readClaudeBarInput(term.buffer.active);
+    check('D18 an image placeholder counted', r.kind === 'text' && r.images === 1, r);
+    await write(term, `\x1b[2J\x1b[H${rule}\r\n❯ \r\n${rule}\x1b[2;3H`);
+    check('D18 an empty bar: empty', readClaudeBarInput(term.buffer.active).kind === 'empty');
+    term.dispose();
+
+    const one = (rowsIn, extra = {}) => ({ rows: rowsIn, images: 0, pasted: false, ...extra });
+    let p = planEscRestore('hello there', one(['hello there']));
+    check('D18 plan: the sent line back -> sent, Ctrl+C', p.source === 'sent' && p.text === 'hello there' && p.keys === CLAUDE_CLEAR_INPUT && !p.keepImages, p);
+    p = planEscRestore('a long line that Claude wrapped', one(['a long line that Cla', 'ude wrapped']));
+    check('D18 plan: a wrapped row matches without its break', p.source === 'sent', p);
+    p = planEscRestore('héllo 👍🏽\nx', one(['[Image #1] héllo 👍🏽', 'x'], { images: 1 }));
+    check('D18 plan: with images, Backspace per character of the text (graphemes, the break included), images kept',
+      p.source === 'sent' && p.keepImages && p.keys === CLAUDE_BACKSPACE.repeat(9), { keys: p.keys?.length });
+    p = planEscRestore('intro then a long paste', one(['intro [Pasted text #1 +40 lines]'], { pasted: true }));
+    check('D18 plan: a [Pasted text] placeholder after the start of what was sent -> sent', p.source === 'sent' && p.keys === CLAUDE_CLEAR_INPUT, p);
+    p = planEscRestore('x', one(['[Image #1] x [Pasted text #1 +40 lines]'], { images: 1, pasted: true }));
+    check('D18 plan: images and a pasted placeholder -> skip', p.skip === 'images-and-paste', p);
+    p = planEscRestore('sent', one(['typed in the bar sent']));
+    check('D18 plan: one foreign row -> screen, Ctrl+C', p.source === 'screen' && p.text === 'typed in the bar sent' && p.keys === CLAUDE_CLEAR_INPUT, p);
+    p = planEscRestore('sent', one(['typed', 'sent']));
+    check('D18 plan: foreign rows -> not-readable', p.skip === 'not-readable', p);
+    p = planEscRestore('sent', one(['[Image #1] typed sent'], { images: 1 }));
+    check('D18 plan: a foreign row with an image -> not-readable (Ctrl+C would drop the image)', p.skip === 'not-readable', p);
+    p = planEscRestore('sent', one(['typed [Pasted text #2 +9 lines]'], { pasted: true }));
+    check('D18 plan: a foreign row with a pasted placeholder -> not-readable', p.skip === 'not-readable', p);
+  }
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

@@ -913,6 +913,175 @@ const newPane = async () => {
   }
 }
 
+// ── 9. D18: Esc soon after a send. Claude Code puts the message back in its
+//       own bar; the box takes it back and empties Claude's bar, so the next
+//       Enter sends only what the box shows. Real Claude Code v2.1.321 screens
+//       (scripts/fixtures/esc-restore.json) at the timing of the five cases in
+//       main.log (20-22 Nov 2026). ──
+{
+  const er = JSON.parse(readFileSync(join(here, 'scripts/fixtures/esc-restore.json'), 'utf8'));
+  const T = er.texts;
+  const erFeeder = (p) => {
+    let i = 0;
+    return {
+      async to(mark) {
+        while (i < er.recording.length) {
+          const e = er.recording[i++];
+          if (e.mark === mark) break;
+          if (e.b) await write(term(p), Buffer.from(e.b, 'base64'));
+        }
+        await frames();
+      },
+    };
+  };
+  const ofTag = (tag) => logs.filter((l) => l.tag === `[COMPOSE] ${tag}`).map((l) => l.data);
+  const escInBox = async (p) => {
+    const box = boxOf(p);
+    box.focus();
+    box.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    await frames();
+  };
+  const barRow = (p) => {
+    const b = term(p).buffer.active;
+    return b.getLine(b.baseY + b.cursorY)?.translateToString(true) ?? '';
+  };
+  const strings = () => writes.filter((d) => typeof d === 'string');
+  const noteShown = (p) => {
+    const n = p.editorContainer.querySelector('.compose-bar-text-note');
+    return n !== null && !n.hidden;
+  };
+
+  /** One scene: send `text` from the box at the `<scene>-send` mark, Claude
+   *  reports working at `at.working`, Esc in the box at `at.esc`, Claude's
+   *  restore screen, then `idle` (or `endState`) at `at.idle`. */
+  const scene = async (name, text, at, { endState = 'idle', before } = {}) => {
+    const p = await newPane();
+    const f = erFeeder(p);
+    await f.to(`${name}-send`);
+    if (before) await before(p);
+    await sendFromBox(p, text);
+    advance(text.includes('\n') ? 60 : 10); // the Enter
+    advance(at.working - (text.includes('\n') ? 60 : 10));
+    state(p, 'working');
+    await f.to(`${name}-esc`);
+    advance(at.esc - at.working);
+    writes.length = 0; logs.length = 0;
+    await escInBox(p);
+    const afterEsc = strings().slice();
+    await f.to(`${name}-restored`);
+    const beforeIdle = strings().slice();
+    advance(at.idle - at.esc);
+    if (endState === 'blocked') state(p, 'blocked', 'permission');
+    else state(p, endState);
+    await frames();
+    return { p, f, afterEsc, beforeIdle };
+  };
+
+  // 9.1 The five cases, each with the single-line recording.
+  for (const [n, c] of er.cases.entries()) {
+    const tag = `9.1.${n + 1} (${c.at.slice(0, 16)}, ${c.pane})`;
+    const { p, f, afterEsc, beforeIdle } = await scene('single', T.single, c);
+    check(`${tag} the Esc goes to Claude, alone`, afterEsc.length === 1 && afterEsc[0] === '\x1b', afterEsc);
+    check(`${tag} ...nothing typed while Claude still works (the message already back)`,
+      beforeIdle.length === 1, beforeIdle);
+    check(`${tag} after idle the box holds the sent message, caret at its end`,
+      p.editorInput.getValue() === T.single && boxOf(p).selectionStart === T.single.length, p.editorInput.getValue());
+    check(`${tag} ...Claude's bar emptied with Ctrl+C, once`,
+      strings().slice(1).join('|') === '\x03', strings());
+    const r = ofTag('restored'); const cl = ofTag('bar cleared');
+    check(`${tag} ...logged restored {chars, source sent} and bar cleared {keys ctrl-c}, no text`,
+      r.length === 1 && r[0].source === 'sent' && r[0].chars === T.single.length && r[0].pane === p.id
+      && cl.length === 1 && cl[0].keys === 'ctrl-c' && !JSON.stringify(logs).includes('Count from'), { r, cl });
+    // Claude's answer to the Ctrl+C, only if Patton sent one: else its bar
+    // keeps the message (the recording's own Ctrl+C was not Patton's).
+    if (strings().includes('\x03')) await f.to('single-cleared');
+    const bar = barRow(p).replace(/^❯/, '').trim();
+    check(`${tag} ...Claude's bar reads empty`, bar === '', barRow(p));
+    advance(c.nextSend - c.idle);
+    writes.length = 0;
+    const edited = `${p.editorInput.getValue()} And one more thing.`;
+    await sendFromBox(p, edited);
+    advance(10);
+    // What Claude receives: whatever its bar held, then what the box typed.
+    const typed = strings().filter((d) => d !== '\r');
+    check(`${tag} the next send: Claude receives exactly the box's text, the sent message and his edit`,
+      typed.length === 1 && bar + typed[0] === edited && edited.startsWith(T.single), { bar, typed, edited });
+    p.dispose();
+  }
+
+  // 9.2 A multi-line draft (sent as a bracketed paste) comes back whole.
+  {
+    const at = { working: 300, esc: 1500, idle: 1600 };
+    // The terminal is never opened, so xterm's own paste can't run: the
+    // bracketed paste is recorded as written instead.
+    const { p } = await scene('multi', T.multi, at, { before: (q) => { term(q).paste = (d) => writes.push(`paste:${d}`); } });
+    check('9.2 multi-line: the box holds the sent draft, line breaks and all', p.editorInput.getValue() === T.multi, p.editorInput.getValue());
+    check('9.2 ...Claude\'s three rows emptied with one Ctrl+C', strings().slice(1).join('|') === '\x03', strings());
+    p.dispose();
+  }
+
+  // 9.3 Text he typed in Claude's own bar, then a send from the box: the bar
+  //     holds both on one row, read whole from the screen, not lost.
+  {
+    const at = { working: 300, esc: 1500, idle: 1600 };
+    // The recording typed his part into Claude's bar before `foreign-send`.
+    const { p } = await scene('foreign', T.foreign, at);
+    check('9.3 foreign one row: the box holds all of Claude\'s bar, his typed part first',
+      p.editorInput.getValue() === T.foreignTyped + T.foreign, p.editorInput.getValue());
+    const r = ofTag('restored');
+    check('9.3 ...source screen, bar emptied with Ctrl+C',
+      r.length === 1 && r[0].source === 'screen' && strings().slice(1).join('|') === '\x03', { r, w: strings() });
+    p.dispose();
+  }
+
+  // 9.4 Two lines typed in Claude's bar: not readable whole, so nothing typed,
+  //     the bar keeps them and the box says they go first.
+  {
+    const at = { working: 300, esc: 1500, idle: 1600 };
+    const { p, f } = await scene('foreign2', T.foreign2, at);
+    check('9.4 foreign two rows: nothing typed after the Esc, the box empty', strings().length === 1 && p.editorInput.getValue() === '', strings());
+    const sk = ofTag('restore skipped');
+    check('9.4 ...restore skipped {reason not-readable}', sk.length === 1 && sk[0].reason === 'not-readable', sk);
+    check('9.4 ...the note "Claude\'s bar has text: it goes first" shows in the box', noteShown(p)
+      && p.editorContainer.querySelector('.compose-bar-text-note').textContent === "Claude's bar has text: it goes first");
+    await f.to('foreign2-cleared'); // the bar emptied (here by the recording's own Ctrl+C)
+    check('9.4 ...the note goes once Claude\'s bar reads empty', !noteShown(p));
+    p.dispose();
+  }
+
+  // 9.5 Claude asks (7501 blocked) when the Esc's turn ends: nothing typed.
+  {
+    const c = er.cases[4];
+    const { p } = await scene('single', T.single, c, { endState: 'blocked' });
+    check('9.5 blocked: nothing typed after the Esc, the box empty', strings().length === 1 && p.editorInput.getValue() === '', strings());
+    const sk = ofTag('restore skipped');
+    check('9.5 ...restore skipped {reason blocked}', sk.length === 1 && sk[0].reason === 'blocked', sk);
+    advance(5000);
+    check('9.5 ...and nothing later either', strings().length === 1, strings());
+    p.dispose();
+  }
+
+  // 9.6 An Esc long after the send (a menu, not the turn): no watch.
+  {
+    const p = await newPane();
+    const f = erFeeder(p);
+    await f.to('single-send');
+    await sendFromBox(p, T.single);
+    advance(10);
+    state(p, 'working');
+    await f.to('single-esc');
+    advance(12_000);
+    writes.length = 0; logs.length = 0;
+    await escInBox(p);
+    await f.to('single-restored');
+    state(p, 'idle');
+    await frames();
+    check('9.6 Esc 12 s after the send: nothing taken back, nothing typed but the Esc',
+      p.editorInput.getValue() === '' && strings().length === 1 && ofTag('restored').length === 0, strings());
+    p.dispose();
+  }
+}
+
 finished = true;
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

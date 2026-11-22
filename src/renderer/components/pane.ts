@@ -34,6 +34,9 @@ import {
 } from '../services/compose-aside';
 import { readClaudeBar, type BarMissReason } from '../services/claude-bar';
 import {
+  ESC_RESTORE_AFTER_SEND_MS, ESC_RESTORE_WATCH_MS, describeClearKeys, planEscRestore, readClaudeBarInput,
+} from '../services/esc-restore';
+import {
   COMPOSE_BAR_LOST_MS, COMPOSE_BAR_NOT_FOUND_LOG_MS, COMPOSE_OVERLAY_MAX_FRACTION, COMPOSE_OWN_TYPING_MS,
   COMPOSE_ROOM_HOLD_MS, COMPOSE_SETTLE_MAX_MS, COMPOSE_SETTLED_LOG_MS, COMPOSE_SWITCH_MIN_MS,
   barRowsInView, placementForReading,
@@ -429,6 +432,14 @@ export class Pane {
   // D10: "Draft kept" at the pane's bottom right while an aside hides the box
   // in the overlays with a draft in it; announced once per aside.
   private draftNote!: HTMLElement;
+  // D18: the last send from the box (Patton's own copy, its images with it),
+  // and the watch an Esc soon after it arms: Claude Code puts an interrupted
+  // message back into its own bar, and the box takes it back from there.
+  private lastBoxSend: { text: string; atMs: number; chips: { dataUrl: string; label: string }[] } | null = null;
+  private escRestore: { send: { text: string; chips: { dataUrl: string; label: string }[] }; deadline: number; timer: ReturnType<typeof setTimeout> } | null = null;
+  // D18: shown in the box when Claude's bar holds text Patton couldn't take
+  // in whole: it goes before the box's text on the next send.
+  private barTextNote!: HTMLElement;
   // D10: "Type here", in the note's place during a `menu` aside in the overlays.
   private typeHereButton!: HTMLButtonElement;
   private draftNoteAnnounced = false;
@@ -624,6 +635,7 @@ export class Pane {
       if (this.takeVerdict()) rlog('info', '[DOT] Hook verdict dropped: 7501 reports', { pane: this.id });
     }
     this.applyProgramStatus();
+    this.checkEscRestore(); // Claude stopped working (or asks): the watch may act now
   }
 
   /** Turn this pane's 7501 records into the pane state (see programSignal). */
@@ -1471,6 +1483,14 @@ export class Pane {
     this.boxImages.hidden = true;
     this.boxImages.addEventListener('mousedown', (e) => e.preventDefault());
     this.editorInput.insertBeforeText(this.boxImages);
+    // D18: Claude's bar holds text the box couldn't take in whole.
+    this.barTextNote = document.createElement('span');
+    this.barTextNote.className = 'compose-bar-text-note';
+    this.barTextNote.setAttribute('role', 'status');
+    this.barTextNote.textContent = "Claude's bar has text: it goes first";
+    this.barTextNote.title = "Claude Code's own input bar still holds text you typed there. Your next send from this box goes after it, as one message.";
+    this.barTextNote.hidden = true;
+    this.editorInput.insertBeforeText(this.barTextNote);
 
     this.wireComposePlacement();
 
@@ -1932,12 +1952,17 @@ export class Pane {
     // the Enter, as main's tracker counts slashSubmitAt for Pause all's
     // `menu`. Only on a pane with 7501 reports: nothing else would end it.
     const menu = this.composeFirstEngaged && this.statusReporting && isMenuLine(stripPasteControls(command));
+    // D18: Patton's own copy of what goes, with its images (the send clears them).
+    const chips = this.pasteChips.map((c) => ({ dataUrl: c.dataUrl, label: c.label }));
+    this.endEscRestore(null);
+    this.setBarTextNote(false);
     command = this.queueSubmit(command, true, {
       own: true, ...(menu ? { onEnterSent: () => this.noteComposeMenuSent() } : {}),
     });
     if (command.trim()) {
       this.historyManager.add(command);
     }
+    this.lastBoxSend = this.composeFirstEngaged && command.trim() !== '' ? { text: command, atMs: Date.now(), chips } : null;
     this.historyManager.resetCursor();
     return true;
   }
@@ -2627,6 +2652,8 @@ export class Pane {
       term.onWriteParsed(() => {
         this.composeWriteSeq++;
         this.scheduleBarReading();
+        this.checkEscRestore();
+        this.checkBarTextNote();
       }),
       term.onScroll(() => this.scheduleBarReading()),
       term.onResize(() => this.scheduleBarReading()),
@@ -3280,6 +3307,81 @@ export class Pane {
     if (key === 'Escape') this.terminalView.focus(); // a click focuses xterm itself
   }
 
+  /** D18: Esc forwarded from the empty box. Soon after a send from the box it
+   *  most likely stopped that turn, and Claude Code then puts the message back
+   *  into its own bar (probed: 60-80 ms): watch for it. One watch per send. */
+  private armEscRestore(): void {
+    const send = this.lastBoxSend;
+    if (send === null || Date.now() - send.atMs > ESC_RESTORE_AFTER_SEND_MS) return;
+    this.lastBoxSend = null;
+    this.endEscRestore(null);
+    // Claude's redraw with the message back is caused by this key: like the
+    // box's own typing, it doesn't count toward going under (D9).
+    this.noteOwnTyping();
+    const timer = setTimeout(() => {
+      if (this.escRestore?.timer !== timer) return;
+      this.checkEscRestore();
+      if (this.escRestore?.timer === timer) this.endEscRestore(this.claudeWorking ? 'still-working' : 'no-text');
+    }, ESC_RESTORE_WATCH_MS);
+    this.escRestore = { send: { text: send.text, chips: send.chips }, deadline: Date.now() + ESC_RESTORE_WATCH_MS, timer };
+  }
+
+  /** End the watch; with a reason, log why nothing was restored. */
+  private endEscRestore(skipped: string | null): void {
+    if (this.escRestore === null) return;
+    clearTimeout(this.escRestore.timer);
+    this.escRestore = null;
+    if (skipped !== null) rlog('info', '[COMPOSE] restore skipped', { pane: this.id, reason: skipped });
+  }
+
+  /** D18: after each write and each 7501 report while the watch is on. Acts
+   *  once Claude has stopped working and its bar holds text; never while the
+   *  live 7501 `blocked` fact is set (a question or permission prompt would
+   *  take the keys). */
+  private checkEscRestore(): void {
+    const watch = this.escRestore;
+    if (watch === null || this.disposed) return;
+    if (Date.now() > watch.deadline) { this.endEscRestore('no-text'); return; }
+    if (this.ptyId === null) { this.endEscRestore('no-pty'); return; }
+    if (!this.statusReporting) { this.endEscRestore('no-status'); return; }
+    if (this.claudeAsksNow()) { this.endEscRestore('blocked'); return; }
+    if (this.claudeWorking) return; // the Esc hasn't stopped the turn yet
+    const input = readClaudeBarInput(this.terminalView.terminal.buffer.active);
+    if (input.kind !== 'text') return; // not back yet (or not readable mid-redraw)
+    const plan = planEscRestore(watch.send.text, input);
+    if ('skip' in plan) {
+      this.endEscRestore(plan.skip);
+      this.setBarTextNote(true);
+      return;
+    }
+    this.endEscRestore(null);
+    window.patton.pty.write(this.ptyId, plan.keys, 'patton');
+    this.noteOwnTyping();
+    rlog('info', '[COMPOSE] bar cleared', { pane: this.id, keys: describeClearKeys(plan.keys) });
+    const existing = this.editorInput.getValue();
+    this.editorInput.setValue(existing.trim() === '' ? plan.text : `${plan.text}\n${existing}`);
+    if (plan.keepImages) {
+      for (const chip of watch.send.chips) {
+        const [w, h] = chip.label.split('\u00d7').map((n) => Number(n) || 0);
+        this.addPasteChip(chip.dataUrl, w, h);
+      }
+    }
+    rlog('info', '[COMPOSE] restored', { pane: this.id, chars: plan.text.length, source: plan.source });
+  }
+
+  /** D18's note in the box: Claude's bar holds text that goes first. */
+  private setBarTextNote(show: boolean): void {
+    if (!this.barTextNote || this.barTextNote.hidden === !show) return;
+    this.barTextNote.hidden = !show;
+    this.editorInput.refreshSize();
+  }
+
+  /** The note goes once Claude's bar reads empty. */
+  private checkBarTextNote(): void {
+    if (!this.barTextNote || this.barTextNote.hidden) return;
+    if (readClaudeBarInput(this.terminalView.terminal.buffer.active).kind === 'empty') this.setBarTextNote(false);
+  }
+
   /** Claude started working again: the box takes the keyboard back after a hand-off. */
   private reclaimCompose(reason: string): void {
     if (!this.composeFirstEngaged || !this.composeHandedOff) return;
@@ -3307,6 +3409,7 @@ export class Pane {
     if (seq === null) return false;
     window.patton.pty.write(this.ptyId, seq);
     if (seq === '\r') this.noteEnterSent();
+    if (seq === '\x1b') this.armEscRestore();
     this.terminalView.terminal.scrollToBottom(); // as xterm's scrollOnUserInput would
     rlog('info', '[COMPOSE] handoff', {
       pane: this.id, key: e.shiftKey ? `Shift+${e.key}` : e.key, route: 'pty',
@@ -3604,6 +3707,7 @@ export class Pane {
     this.clearComposeKeyboardTimer();
     this.clearBarLostTimer();
     this.clearComposeRoomTimer();
+    if (this.escRestore !== null) clearTimeout(this.escRestore.timer);
     if (this.composeSettleTimer !== null) clearTimeout(this.composeSettleTimer);
     if (this.barReadFrame !== null) cancelAnimationFrame(this.barReadFrame);
     this.clearPasteChips();

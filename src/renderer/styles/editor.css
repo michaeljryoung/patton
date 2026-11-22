@@ -312,6 +312,23 @@
   background: var(--surface);
 }
 
+/* D18: Claude's own bar holds text that goes before the box's on the next
+   send. Left of the text, in the note's outline and tones. */
+.compose-bar-text-note {
+  flex: 0 0 auto;
+  padding: 0 6px;
+  border: 1px solid var(--compose-aside-rule);
+  color: var(--compose-aside-hint);
+  font-family: var(--font-ui);
+  font-size: var(--ui);
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+.compose-bar-text-note[hidden] {
+  display: none;
+}
+
 .compose-images-more {
   flex: 0 0 auto;
   font-family: var(--font-ui);
