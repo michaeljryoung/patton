@@ -13,7 +13,7 @@
 // Run: node scripts/check-compose-room-live.cjs
 //   COMPOSE_SRC_ROOT=<folder holding src/>   bundle another source tree (to prove the check bites)
 //   COMPOSE_ROOMLIVE_CHECK_DIR=<folder>      where the bundle, userData and result go (default: a temp folder, removed after)
-//   COMPOSE_ROOMLIVE_GROUPS=<a,b,...>         run only these groups (hidden,height,stale,delay,split,font,aside,window,send)
+//   COMPOSE_ROOMLIVE_GROUPS=<a,b,...>         run only these groups (hidden,height,stale,delay,split,font,aside,window,late,holdwrap,send)
 // Prints `ok <what>` or `not ok <what>: <measured>` per assertion; exit 1 on any failure.
 'use strict';
 
@@ -690,6 +690,76 @@ async function pageRun(SCALES, GROUPS) {
     host.style.height = `${parseFloat(host.style.height) - 120}px`;
   });
 
+  /** A draft typed inside a settling, and Claude's redraw later than the settling's ceiling (3 s) but inside the
+   *  lost wait: the k decision the ceiling left waiting runs at the reading that finds the bar again, so k ends
+   *  as it would from scratch (it stayed 0 until the next height change before the fix). */
+  async function lateCase(at) {
+    const s = await setupPane();
+    if (!s) { check(`${at} late redraw: Claude's bar found`, false, null); return; }
+    let stop = startStandIn(s.barLines, 3200);
+    const w = startWatch();
+    host.style.height = `${parseFloat(host.style.height) - 120}px`; // fewer rows: xterm trims the bar; the settling opens
+    await sleep(300);
+    const draft = room(8);
+    await typeDraft(draft); // a content change inside the settling: its k waits for the bar
+    await sleep(3200 + 2200);
+    await frame();
+    const r = w.stop();
+    const k1 = kNow();
+    const place = pane.element.dataset.composePlacement;
+    stop();
+    stop = startStandIn(s.barLines, 150);
+    const ref = await refK(150, draft);
+    stop();
+    measures.push(`${at} late redraw: ${summary(r)}, k ${r.kSeq.join('>')}, placement ${place} (from scratch ${ref})`);
+    check(`${at} late redraw: precondition, the ceiling ended the settling without a reading and the box stayed over`,
+      r.settled.some((x) => x.endsWith('!')) && place === 'over', summary(r));
+    check(`${at} late redraw: k after the redraw (${k1}) is the k the same screen and draft give from scratch (${ref})`,
+      ref >= 1 && k1 === ref, summary(r));
+  }
+
+  /** The anti-flap hold when the box goes under and the draft wraps differently there: the box is wider under
+   *  the terminal (the pane's width, not the grid's), so a draft wrapping over the bar can be shorter under it, and
+   *  the under refit's own height change could take the rows back (k 0) before the hold read k, so no hold was set
+   *  (pane.ts reads k and its time before refreshSize now). A guard only: in this harness the wider box's first
+   *  refreshSize still wraps at the old width, its height change comes after the hold is set, so it passes on the
+   *  base too (the reviewer's probe didn't reproduce it either). */
+  async function holdWrapCase(at) {
+    const s = await setupPane();
+    if (!s) { check(`${at} hold wrap: Claude's bar found`, false, null); return; }
+    const ta = textarea();
+    const inner = () => { const cs = getComputedStyle(ta); return ta.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight); };
+    const span = document.createElement('span');
+    span.style.cssText = `position:absolute;visibility:hidden;white-space:pre;font:${getComputedStyle(ta).font}`;
+    span.textContent = '0'.repeat(100);
+    document.body.appendChild(span);
+    const chW = span.getBoundingClientRect().width / 100;
+    span.remove();
+    const wOver = inner();
+    pane.setComposeOverBar(false);
+    await sleep(700);
+    const wUnder = inner();
+    pane.setComposeOverBar(true);
+    await sleep(1500);
+    const nUnder = Math.floor(wUnder / chW);
+    const draft = Array.from({ length: 5 }, () => 'x'.repeat(nUnder)).join('\n'); // fits under, wraps over
+    const stop = startStandIn(s.barLines, 150);
+    await typeDraft(draft);
+    await sleep(1800); // past D9's second, the room resize still inside the hold's 5 s
+    const k0 = kNow();
+    stop();
+    const w = startWatch();
+    await write(`\x1b[0m\x1b[2J\x1b[Houtput that is not Claude's bar\r\n`); // the bar is gone: lost, the box goes under
+    await sleep(1500);
+    const r = w.stop();
+    const place = pane.element.dataset.composePlacement;
+    measures.push(`${at} hold wrap: widths over ${Math.round(wOver)} / under ${Math.round(wUnder)} px, k ${k0}, placement ${place}, held ${pane.composeRoomHeld}, ${summary(r)}`);
+    check(`${at} hold wrap: precondition, the draft gave up rows over the bar (k ${k0}) and the box is wider under`, k0 >= 1 && wUnder > wOver, { k0, wOver, wUnder });
+    check(`${at} hold wrap: precondition, the bar was lost and the box went under`, place === 'under', { place });
+    check(`${at} hold wrap: the hold is set though the box's height changed under (no rows given up again until the draft changes)`,
+      pane.composeRoomHeld === true, { held: pane.composeRoomHeld, summary: summary(r) });
+  }
+
   async function sendCase(at) {
     const s = await setupPane();
     if (!s) { check(`${at} send: Claude's bar found`, false, null); return; }
@@ -720,7 +790,7 @@ async function pageRun(SCALES, GROUPS) {
       const at = `x${S}`;
       for (const [name, run] of [['hidden', hiddenPaneChecks], ['height', paneHeightChecks], ['stale', staleBarChecks]]) await guarded(at, name, run);
       if (i > 0) continue; // the settling cases at the first scale only: they are long
-      for (const [name, run] of [['delay', delayChecks], ['split', splitCase], ['font', fontCase], ['aside', asideCase], ['window', windowCase], ['send', sendCase]]) await guarded(at, name, run);
+      for (const [name, run] of [['delay', delayChecks], ['split', splitCase], ['font', fontCase], ['aside', asideCase], ['window', windowCase], ['late', lateCase], ['holdwrap', holdWrapCase], ['send', sendCase]]) await guarded(at, name, run);
     }
   } finally {
     if (pane) pane.dispose();

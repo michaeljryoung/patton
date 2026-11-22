@@ -384,6 +384,12 @@ export class Pane {
   // and which run (a room resize asks once more, run 2, to confirm k against
   // the redrawn bar; never a third time for the same trigger).
   private composeRoomPending: { reason: string; run: number } | null = null;
+  // The k decision a settling's ceiling ended without a reading (Claude redrew
+  // later than COMPOSE_SETTLE_MAX_MS): kept for the first empty-bar reading
+  // while the box is still over or docked. It is still the non-reading
+  // trigger's ask (that reading only says when the bar's row can be trusted);
+  // cleared on disengage, under and a room resize, and handed to a new settling.
+  private composeRoomKept: { reason: string; run: number } | null = null;
   // Anti-flap: the bar went lost within COMPOSE_ROOM_HOLD_MS of a room resize
   // and the box went under: no rows are given up again until the draft's
   // content changes. Logged once per hold, when it first refuses.
@@ -2586,6 +2592,7 @@ export class Pane {
         if (!settle.resize || this.composeWriteSeq > settle.writeSeq) this.endComposeSettle(true);
         else settle.foundEarly = true;
       }
+      this.runKeptComposeRoom();
     }
     if (step.reason !== 'setting' && step.reason !== 'handoff' && !this.switchMayHappen(step.placement)) return;
     this.setComposePlacement(step.placement, step.reason);
@@ -2707,13 +2714,19 @@ export class Pane {
     // The height cap differs between under and the overlays: apply it before
     // the refit, so a long draft refits once (a box that changes height after
     // the refit would make the resize observer refit again).
+    // The hold's inputs are read first: refreshSize can fire onContentHeight,
+    // which (placement already `under`) takes the rows back through
+    // syncComposeRoom, so afterwards a room resize more than a second old reads
+    // as k 0 and no hold would be set.
+    const roomRowsBefore = this.composeRoomRows;
+    const roomMsBefore = this.composeRoomMs;
     this.editorInput.refreshSize();
     if (next === 'under') {
       // Anti-flap (D15, S60): the bar lost soon after a room resize (Claude
       // slower to redraw than the settling's ceiling): no rows are given up
       // again until the draft's content changes.
-      if ((reason === 'lost' || reason === 'aside-end') && this.composeRoomRows > 0
-        && Date.now() - this.composeRoomMs < COMPOSE_ROOM_HOLD_MS) {
+      if ((reason === 'lost' || reason === 'aside-end') && roomRowsBefore > 0
+        && Date.now() - roomMsBefore < COMPOSE_ROOM_HOLD_MS) {
         this.composeRoomHeld = true;
         this.composeRoomHeldLogged = false;
         this.composeRoomHeldDraft = this.editorInput.getValue();
@@ -2813,6 +2826,10 @@ export class Pane {
   private openComposeSettle(cause: string, resize: boolean): void {
     if (this.disposed || !this.composeFirstEngaged || !this.composeOverBarSetting) return;
     const prev = this.composeSettle;
+    if (this.composeRoomKept !== null) { // a ceiling's kept ask: this settling takes it over
+      if (this.composeRoomPending === null) this.composeRoomPending = this.composeRoomKept;
+      this.composeRoomKept = null;
+    }
     this.composeSettle = {
       sinceMs: Date.now(), cause, resize: resize || (prev?.resize ?? false), writeSeq: this.composeWriteSeq, foundEarly: false,
     };
@@ -2852,7 +2869,20 @@ export class Pane {
     const pending = this.composeRoomPending;
     this.composeRoomPending = null;
     if (pending !== null && (found || s.foundEarly)) this.syncComposeRoom(pending.reason, pending.run);
+    else if (pending !== null) this.composeRoomKept = pending; // the ceiling, no reading: the next one runs it
     if (!found) this.scheduleBarReading();
+  }
+
+  /** A found-empty reading after a ceiling that left a k decision waiting
+   *  (composeRoomKept) runs that decision once, while the box is over or
+   *  docked and no settling is open (an open one has taken it over). The
+   *  reading starts nothing itself: the ask is the trigger's. */
+  private runKeptComposeRoom(): void {
+    const kept = this.composeRoomKept;
+    if (kept === null || this.composeSettle !== null) return;
+    this.composeRoomKept = null;
+    if (this.composePlacement === 'under') return;
+    this.syncComposeRoom(kept.reason, kept.run);
   }
 
   /** Give up k rows at the terminal's bottom (0: take them back), tell the
@@ -2869,6 +2899,7 @@ export class Pane {
     this.composeRoomMs = now;
     this.composeRefitMs = now;
     this.composeRoomPending = null;
+    this.composeRoomKept = null;
     this.terminalView.setRowsGivenUp(rows);
     this.refitTerminal('room', before);
     if (this.composeSettle !== null && run < 2) this.composeRoomPending = { reason, run: run + 1 };
@@ -2880,6 +2911,7 @@ export class Pane {
   private clearComposeRoom(reason: string): void {
     this.clearComposeRoomTimer();
     this.composeRoomPending = null;
+    this.composeRoomKept = null;
     if (this.composeRoomRows === 0) return;
     const from = this.composeRoomRows;
     this.composeRoomRows = 0;
@@ -3069,6 +3101,7 @@ export class Pane {
   private disengageComposeFirst(reason: string): void {
     const hadFocus = this.editorInput.hasFocus();
     this.composeFirstEngaged = false;
+    this.composeRoomKept = null;
     this.syncPasteChipViews(false); // D14: the thumbnails back in the strip
     this.composeHandedOff = false;
     this.editorContainer.classList.remove('compose-first');
