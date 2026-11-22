@@ -4,7 +4,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir, userInfo } from 'node:os';
-import { DEFAULTS, isNotificationSoundType } from '../shared/constants';
+import { DEFAULTS, isNotificationSoundName } from '../shared/constants';
 import { ALLOWED_SHELLS } from './pty-manager';
 import { cleanProjectName, type ProjectNameTarget } from './projects';
 import { sanitiseSessionGroups } from './session-groups';
@@ -81,8 +81,8 @@ const defaults: StoreSchema = {
     uiTextScale: DEFAULTS.UI_TEXT_SCALE,
     scrollback: DEFAULTS.SCROLLBACK,
     shell: DEFAULTS.SHELL,
-    notificationSound: DEFAULTS.NOTIFICATION_SOUND,
-    notificationSoundType: DEFAULTS.NOTIFICATION_SOUND_TYPE,
+    notificationSoundName: DEFAULTS.NOTIFICATION_SOUND_NAME,
+    notificationSoundVolume: DEFAULTS.NOTIFICATION_SOUND_VOLUME,
     copyOnSelect: false,
     globalHotkey: 'Control+`',
     theme: 'system',
@@ -243,14 +243,16 @@ export function setSettings(partial: Partial<AppSettings>): void {
     }
   }
 
-  if (partial.notificationSound !== undefined) {
-    validated.notificationSound = !!partial.notificationSound;
+  if (partial.notificationSoundName !== undefined) {
+    if (isNotificationSoundName(partial.notificationSoundName)) {
+      validated.notificationSoundName = partial.notificationSoundName;
+    }
   }
 
-  if (partial.notificationSoundType !== undefined) {
-    const t = partial.notificationSoundType;
-    if (isNotificationSoundType(t)) {
-      validated.notificationSoundType = t;
+  if (partial.notificationSoundVolume !== undefined) {
+    const v = partial.notificationSoundVolume;
+    if (typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 100) {
+      validated.notificationSoundVolume = Math.round(v);
     }
   }
 

@@ -1,5 +1,5 @@
 import type { AppSettings, ClaudeHookStatus } from '../../shared/types';
-import { DEFAULTS, isNotificationSoundType, uiTextScaleOf } from '../../shared/constants';
+import { DEFAULTS, isNotificationSoundName, notificationVolumeOf, resolveNotificationSound, uiTextScaleOf } from '../../shared/constants';
 import { settingsShortcuts, displayKeys, acceleratorToDisplay } from '../../shared/shortcuts';
 import { trapFocus } from '../services/focus-trap';
 import { rlog } from '../services/renderer-logger';
@@ -23,7 +23,12 @@ export class SettingsPanel {
    *  panel doesn't rebuild an unchanged grid. */
   private renderedHotkey: string | null = null;
 
-  constructor(container: HTMLElement, onSettingsChanged: (settings: Partial<AppSettings>) => void) {
+  constructor(
+    container: HTMLElement,
+    onSettingsChanged: (settings: Partial<AppSettings>) => void,
+    /** Plays the chosen sound (the Preview button). */
+    private onPreviewSound: () => void = () => {},
+  ) {
     this.onSettingsChanged = onSettingsChanged;
 
     this.overlay = document.createElement('div');
@@ -95,21 +100,28 @@ export class SettingsPanel {
               <option value="ayu-light">Ayu Light</option>
             </select>
           </div>
-          <div class="settings-group settings-group-toggle">
-            <label class="settings-label" for="setting-notification-sound">Notification Sound</label>
-            <label class="settings-toggle">
-              <input type="checkbox" id="setting-notification-sound" />
-              <span class="settings-toggle-slider"></span>
-            </label>
-            <span class="settings-hint">Play a sound when a command finishes</span>
+          <div class="settings-group">
+            <label class="settings-label" for="setting-notification-sound-name">Notification sound</label>
+            <div class="settings-range-row">
+              <select class="settings-input" id="setting-notification-sound-name">
+                <option value="off">Off</option>
+                <option value="soft">Soft chime</option>
+                <option value="marimba">Marimba (low)</option>
+                <option value="pop">Gentle pop</option>
+                <option value="classic">Classic</option>
+                <option value="bugle">Bugle</option>
+                <option value="bullet">Bullet</option>
+              </select>
+              <button type="button" class="claude-hook-button" id="setting-notification-sound-preview">Preview</button>
+            </div>
+            <span class="settings-hint">Played when a tab needs you or a command finishes</span>
           </div>
           <div class="settings-group">
-            <label class="settings-label" for="setting-notification-sound-type">Notification Sound Type</label>
-            <select class="settings-input" id="setting-notification-sound-type">
-              <option value="chime">Chime</option>
-              <option value="bugle">Bugle</option>
-              <option value="bullet">Bullet</option>
-            </select>
+            <label class="settings-label" for="setting-notification-volume">Notification volume</label>
+            <div class="settings-range-row">
+              <input class="settings-range" id="setting-notification-volume" type="range" min="0" max="100" step="5" />
+              <span class="settings-range-value" id="setting-notification-volume-value">100%</span>
+            </div>
           </div>
           <div class="settings-group settings-group-toggle">
             <label class="settings-label" for="setting-copy-on-select">Copy on Select</label>
@@ -287,11 +299,6 @@ export class SettingsPanel {
       }
     });
 
-    const notifInput = this.overlay.querySelector('#setting-notification-sound') as HTMLInputElement;
-    listen(notifInput, 'change', () => {
-      this.saveAndNotify({ notificationSound: notifInput.checked });
-    });
-
     const copyOnSelectInput = this.overlay.querySelector('#setting-copy-on-select') as HTMLInputElement;
     listen(copyOnSelectInput, 'change', () => {
       this.saveAndNotify({ copyOnSelect: copyOnSelectInput.checked });
@@ -325,11 +332,25 @@ export class SettingsPanel {
       this.saveAndNotify({ confirmMultilinePaste: confirmPasteInput.checked });
     });
 
-    const soundTypeInput = this.overlay.querySelector('#setting-notification-sound-type') as HTMLSelectElement;
-    listen(soundTypeInput, 'change', () => {
-      if (isNotificationSoundType(soundTypeInput.value)) {
-        this.saveAndNotify({ notificationSoundType: soundTypeInput.value });
+    const soundNameInput = this.overlay.querySelector('#setting-notification-sound-name') as HTMLSelectElement;
+    const soundPreviewButton = this.overlay.querySelector('#setting-notification-sound-preview') as HTMLButtonElement;
+    listen(soundNameInput, 'change', () => {
+      if (isNotificationSoundName(soundNameInput.value)) {
+        soundPreviewButton.disabled = soundNameInput.value === 'off';
+        this.saveAndNotify({ notificationSoundName: soundNameInput.value });
       }
+    });
+    listen(soundPreviewButton, 'click', () => this.onPreviewSound());
+
+    const soundVolumeInput = this.overlay.querySelector('#setting-notification-volume') as HTMLInputElement;
+    const soundVolumeValue = this.overlay.querySelector('#setting-notification-volume-value') as HTMLSpanElement;
+    // The number follows the drag; the save (debounced, since settings:set
+    // allows 10/s) and the one preview wait for the release.
+    listen(soundVolumeInput, 'input', () => {
+      soundVolumeValue.textContent = `${soundVolumeInput.value}%`;
+    });
+    listen(soundVolumeInput, 'change', () => {
+      this.saveAndNotify({ notificationSoundVolume: notificationVolumeOf(Number(soundVolumeInput.value)) }, true);
     });
 
     const hookButton = this.overlay.querySelector('#claude-hook-button') as HTMLButtonElement;
@@ -493,8 +514,12 @@ export class SettingsPanel {
     (this.overlay.querySelector('#setting-renderer') as HTMLSelectElement).value = settings.renderer || 'dom';
     (this.overlay.querySelector('#setting-shell') as HTMLInputElement).value = settings.shell;
 
-    (this.overlay.querySelector('#setting-notification-sound') as HTMLInputElement).checked = settings.notificationSound !== false;
-    (this.overlay.querySelector('#setting-notification-sound-type') as HTMLSelectElement).value = settings.notificationSoundType || 'chime';
+    const soundName = resolveNotificationSound(settings);
+    const soundVolume = notificationVolumeOf(settings.notificationSoundVolume);
+    (this.overlay.querySelector('#setting-notification-sound-name') as HTMLSelectElement).value = soundName;
+    (this.overlay.querySelector('#setting-notification-sound-preview') as HTMLButtonElement).disabled = soundName === 'off';
+    (this.overlay.querySelector('#setting-notification-volume') as HTMLInputElement).value = String(soundVolume);
+    (this.overlay.querySelector('#setting-notification-volume-value') as HTMLSpanElement).textContent = `${soundVolume}%`;
     (this.overlay.querySelector('#setting-copy-on-select') as HTMLInputElement).checked = settings.copyOnSelect === true;
     (this.overlay.querySelector('#setting-compose-box') as HTMLInputElement).checked = settings.composeBox !== false;
     (this.overlay.querySelector('#setting-compose-over-bar') as HTMLInputElement).checked = settings.composeOverBar !== false;
