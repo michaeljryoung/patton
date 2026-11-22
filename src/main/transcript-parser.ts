@@ -40,7 +40,7 @@
  *   written twice. Only an Artifact call's own result counts. Handed to
  *   `onPublish` (page titles, main/page-titles.ts), never sent to the bar.
  */
-import { ARTIFACT_ID, ARTIFACT_URL } from '../shared/artifact-id';
+import { ARTIFACT_URL, completeArtifactIdOf } from '../shared/artifact-id';
 import type { FeedTaskEndStatus, FeedTaskKind, SessionFeedEvent } from '../shared/session-feed';
 
 export const DESCRIPTION_MAX = 200;
@@ -58,19 +58,24 @@ const ID_MEMORY = 5000;
 
 const TASK_ID = /^[A-Za-z0-9_-]{1,80}$/;
 
-// C0 and C1 controls, DEL, and the bidi marks, embeddings, overrides and
+// C0 and C1 controls, DEL, the bidi marks, embeddings, overrides and
 // isolates (LRM, RLM, ALM, U+202A-202E, U+2066-2069), which can make shown
-// text read differently from what it is: shown as a space.
+// text read differently from what it is, and the blank fillers (Hangul
+// U+115F, U+1160, U+3164, U+FFA0; braille blank U+2800), which draw as
+// nothing: shown as a space.
 // eslint-disable-next-line no-control-regex
-const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
-// Invisible characters inside a word (soft hyphen, Mongolian vowel separator,
-// zero-width space, word joiner and the invisible operators, BOM), which can
-// make two different names look the same: removed. U+200C/U+200D (ZWNJ/ZWJ)
-// stay: some scripts and emoji need them.
-const FORMAT_CHARS = /[\u00ad\u180e\u200b\u2060-\u2064\ufeff]/g;
+const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f\u061c\u115f\u1160\u200e\u200f\u202a-\u202e\u2066-\u2069\u2800\u3164\uffa0]/g;
+// Invisible characters inside a word (soft hyphen, combining grapheme joiner,
+// Khmer inherent vowels, Mongolian vowel separator, zero-width space, word
+// joiner and the invisible operators, the deprecated format controls
+// U+206A-206F, BOM, the tag characters U+E0000-E007F), which can make two
+// different names look the same or hide text: removed. U+200C/U+200D
+// (ZWNJ/ZWJ) stay: some scripts and emoji need them.
+// (The combining ones sit outside the class: inside one, a linter reads them as joined to the character before.)
+const FORMAT_CHARS = /[\u00ad\u180e\u200b\u2060-\u2064\u206a-\u206f\ufeff\u{e0000}-\u{e007f}]|\u034f|\u17b4|\u17b5/gu;
 // Either kind: a path holding one is refused.
 // eslint-disable-next-line no-control-regex
-const CONTROL = /[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u180e\u200b\u200e\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/g;
+const CONTROL = /[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u115f\u1160\u180e\u200b\u200e\u200f\u202a-\u202e\u2060-\u2064\u2066-\u206f\u2800\u3164\ufeff\uffa0\u{e0000}-\u{e007f}]|\u034f|\u17b4|\u17b5/gu;
 
 /** Strip control characters, collapse whitespace, cap the length. */
 export function cleanText(value: unknown, max: number): string {
@@ -661,8 +666,9 @@ function publishOf(use: ToolUse | undefined, text: string, at: number): PagePubl
   if (use?.name !== 'Artifact') return null;
   const m = text.match(PUBLISHED);
   if (!m) return null;
-  const id = m[2].match(ARTIFACT_URL)?.[1] ?? '';
-  if (!ARTIFACT_ID.test(id)) return null;
+  // Only a whole id (shared with the backfill): a cut one would be another page.
+  const id = completeArtifactIdOf(m[2]);
+  if (!id) return null;
   const path = publishPath(m[1]) ?? publishPath(use.filePath);
   return { id, path, inputTitle: use.title, at };
 }

@@ -12,6 +12,7 @@
 import { ARTIFACT_ID } from '../shared/artifact-id';
 import type { PageTitleMap } from '../shared/types';
 import { readPageTitle, TITLE_MAX } from './page-title-read';
+import { FUTURE_SLACK_MS, NewestPublish, type RankedPublish } from './publish-order';
 import { cleanText, type PagePublish } from './transcript-parser';
 
 export const TITLES_KEPT = 500;
@@ -74,6 +75,8 @@ export class PageTitleBook {
   private readonly now: () => number;
   /** "id reason" already logged as a refused read this launch. */
   private readonly refusedLogged = new Set<string>();
+  /** The newest live publish of each path this launch (publish-order.ts). */
+  private readonly livePaths = new NewestPublish<RankedPublish>((p) => p.path);
 
   constructor(private readonly deps: PageTitleDeps) {
     this.log = deps.log ?? ((msg, data) => console.info(msg, data));
@@ -128,11 +131,25 @@ export class PageTitleBook {
     return at !== undefined && this.now() - at < MISS_RETRY_MS;
   }
 
-  recordMisses(ids: readonly string[]): void {
-    if (ids.length === 0) return;
+  /** Of `ids`, those with no title and not missed within MISS_RETRY_MS, in
+   *  order: one read of the titles and one of the misses, whatever the count. */
+  untitled(ids: readonly string[]): string[] {
+    const titles = this.stored();
     const misses = this.misses();
     const t = this.now();
-    for (const id of ids) if (ARTIFACT_ID.test(id)) misses.set(id, t);
+    return ids.filter((id) => {
+      const at = misses.get(id);
+      return !titles.has(id) && (at === undefined || t - at >= MISS_RETRY_MS);
+    });
+  }
+
+  /** Record a search that found nothing; an id given a title meanwhile (live) is skipped. */
+  recordMisses(ids: readonly string[]): void {
+    if (ids.length === 0) return;
+    const titles = this.stored();
+    const misses = this.misses();
+    const t = this.now();
+    for (const id of ids) if (ARTIFACT_ID.test(id) && !titles.has(id)) misses.set(id, t);
     this.deps.store.setMisses(capped(misses, (at) => at, MISSES_KEPT, this.keep()));
   }
 
@@ -178,14 +195,24 @@ export class PageTitleBook {
     return '';
   }
 
-  /** The title a publish names: the file's `<title>`, else Claude's `input.title`, else ''. */
-  async titleOf(pub: Pick<PagePublish, 'id' | 'path' | 'inputTitle'>): Promise<string> {
-    return (await this.fileTitle(pub.id, pub.path)) || cleanText(pub.inputTitle, TITLE_MAX);
-  }
-
-  /** A publish seen in a followed transcript. */
+  /** A publish seen in a followed transcript: the file's `<title>`, else
+   *  Claude's `input.title`. The tail replays the last 2 MB of a transcript on
+   *  attach, so an old publish of a path since reused arrives with the file as
+   *  it is now: as in the backfill, only the newest publish of a path seen this
+   *  launch takes the file's title (checked again after the read, since the
+   *  rest of the replay arrives meanwhile). An older one takes its own
+   *  `input.title`, and only when the id has no title yet. */
   async learnPublish(pub: PagePublish, source: 'live' | 'backfill' = 'live'): Promise<boolean> {
-    const title = await this.titleOf(pub);
-    return title ? this.learn(pub.id, title, source) : false;
+    const isNewest = (): boolean => !pub.path || this.livePaths.get(pub.path)?.id === pub.id;
+    if (pub.path) {
+      const at = pub.at > this.now() + FUTURE_SLACK_MS ? 0 : pub.at;
+      this.livePaths.see({ id: pub.id, path: pub.path, at, start: true, versioned: true });
+    }
+    const fileTitle = isNewest() ? await this.fileTitle(pub.id, pub.path) : '';
+    if (fileTitle && isNewest()) return this.learn(pub.id, fileTitle, source);
+    const given = cleanText(pub.inputTitle, TITLE_MAX);
+    if (!given) return false;
+    if (!isNewest() && this.has(pub.id)) return false;
+    return this.learn(pub.id, given, source);
   }
 }
