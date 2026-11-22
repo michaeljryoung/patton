@@ -53,12 +53,26 @@ try {
   const proj = [P('a', 'Alpha', '/Users/m/Projects/alpha'), P('b', 'Beta', '/Users/m/Projects/beta'), P('c', 'app', '/Users/m/Projects/lindus/app'), P('d', 'app', '/Users/m/Projects/personal/app')];
   check('a unique name has no second line', labels.disambiguator(proj[0], proj) === '');
   check('two projects of one name differ by parent folder', labels.disambiguator(proj[2], proj) === 'lindus' && labels.disambiguator(proj[3], proj) === 'personal', [labels.disambiguator(proj[2], proj), labels.disambiguator(proj[3], proj)]);
-  const arts = [A('x', 'claude.ai', ART), A('y', 'claude.ai', 'https://claude.ai/code/artifact/503c49fd-8ae5-4501-be32-fe371f388337'), A('z', 'Notes', 'https://example.com/n')];
+  const arts = [A('x', 'Notes', ART), A('y', 'Notes', 'https://claude.ai/code/artifact/503c49fd-8ae5-4501-be32-fe371f388337'), A('z', 'Notes', 'https://example.com/n')];
   check('two artifacts of one name differ by the id start', labels.disambiguator(arts[0], arts) === '8bf5f5bc' && labels.disambiguator(arts[1], arts) === '503c49fd');
   check('no disambiguator is a path', [...proj, ...arts].every((b) => !labels.disambiguator(b, b.kind === 'project' ? proj : arts).includes('/')));
   check('a new artifact bookmark is named by its id start', labels.defaultArtifactLabel(ART) === 'Artifact 8bf5f5bc', labels.defaultArtifactLabel(ART));
   check('a non-artifact link is named by its host', labels.defaultArtifactLabel('https://example.com/some/page') === 'example.com');
   check('the tooltip target is the full folder or address', labels.fullTarget(proj[0]) === '~/Projects/alpha' && labels.fullTarget(arts[0]) === ART);
+
+  // --- artifact bookmarks saved before id-start naming (named by the bare host)
+  {
+    const old = A('o', 'claude.ai', ART);
+    check('an old artifact bookmark named by the bare host shows as Artifact <id start>', labels.displayLabel(old) === 'Artifact 8bf5f5bc', labels.displayLabel(old));
+    check('display does not rewrite the saved name', old.label === 'claude.ai');
+    check('a name the user set is kept', labels.displayLabel(A('p', 'Design notes', ART)) === 'Design notes');
+    check('a user name that merely contains the host is kept', labels.displayLabel(A('q', 'claude.ai notes', ART)) === 'claude.ai notes');
+    check('a non-artifact link named by its host is kept', labels.displayLabel(A('r', 'example.com', 'https://example.com/n')) === 'example.com');
+    check('a project named claude.ai is kept', labels.displayLabel(P('s', 'claude.ai', '/Users/m/Projects/claude.ai')) === 'claude.ai');
+    check('a new-style name is kept', labels.displayLabel(A('t', 'Artifact 8bf5f5bc', ART)) === 'Artifact 8bf5f5bc');
+    const two = [A('u', 'claude.ai', ART), A('v', 'claude.ai', 'https://claude.ai/code/artifact/503c49fd-8ae5-4501-be32-fe371f388337')];
+    check('two old bookmarks tell apart by their displayed names, no second line', two.every((b) => labels.disambiguator(b, two) === ''), two.map((b) => labels.displayLabel(b)));
+  }
 } finally {
   rmSync(dir, { recursive: true, force: true });
 }

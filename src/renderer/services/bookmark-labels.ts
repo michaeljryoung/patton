@@ -41,9 +41,26 @@ export function defaultArtifactLabel(url: string): string {
   return isArtifact && id ? `Artifact ${id.slice(0, 8)}` : host;
 }
 
+/** The name a row shows. Artifact bookmarks saved before the id-start naming were all
+ *  named by their host ("claude.ai"), the automatic name: those show as "Artifact <id start>"
+ *  like new ones. A name that is anything but the bare host was set by the user and stays.
+ *  Display only: the saved name is never rewritten here. */
+export function displayLabel(bookmark: Bookmark): string {
+  if (bookmark.kind !== 'artifact' || !bookmark.url) return bookmark.label;
+  let host = '';
+  try {
+    host = new URL(bookmark.url).host;
+  } catch {
+    return bookmark.label;
+  }
+  if (bookmark.label !== host) return bookmark.label;
+  const generated = defaultArtifactLabel(bookmark.url);
+  return generated.startsWith('Artifact ') ? generated : bookmark.label;
+}
+
 /** The text that tells a row from another of the same name, or '' when its name is unique in `group`. */
 export function disambiguator(bookmark: Bookmark, group: readonly Bookmark[]): string {
-  const twin = group.some((b) => b.id !== bookmark.id && b.label === bookmark.label);
+  const twin = group.some((b) => b.id !== bookmark.id && displayLabel(b) === displayLabel(bookmark));
   if (!twin) return '';
   if (bookmark.kind === 'project') {
     const parts = segments(bookmark.path ?? '');

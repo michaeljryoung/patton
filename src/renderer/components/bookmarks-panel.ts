@@ -6,7 +6,7 @@ import { projectRootName } from '../services/project-names';
 import { openProject, type OpenProjectHost } from '../services/open-project';
 import { CLOSED_STATE, projectLiveState, type ProjectLiveState } from '../services/project-live-state';
 import { rlog } from '../services/renderer-logger';
-import { defaultArtifactLabel, disambiguator, fullTarget } from '../services/bookmark-labels';
+import { defaultArtifactLabel, disambiguator, displayLabel, fullTarget } from '../services/bookmark-labels';
 import { ConfirmDialog } from './confirm-dialog';
 import { ContextMenu } from './context-menu';
 import type { Tab } from './tab';
@@ -258,7 +258,7 @@ export class BookmarksPanel {
 
     const existing = this.bookmarks.find((b) => b.kind === 'project' && b.path === path);
     if (existing) {
-      announce(`${existing.label} is already bookmarked`);
+      announce(`${displayLabel(existing)} is already bookmarked`);
       this.focusRow(existing.id);
       return;
     }
@@ -352,7 +352,7 @@ export class BookmarksPanel {
       if (handed === false) {
         // Main refused the address or the browser hand-off failed (main.log says which).
         rlog('warn', '[BOOKMARK] open not handed to the browser', { kind: 'artifact', host: hostOf(bookmark.url) });
-        announce(`Could not open ${bookmark.label}`, 'assertive');
+        announce(`Could not open ${displayLabel(bookmark)}`, 'assertive');
       }
       return;
     }
@@ -360,19 +360,19 @@ export class BookmarksPanel {
     if (!path) return;
     if (!this.ready) return; // startup is still restoring tabs
     if (bookmark.missing || (await this.isMissingNow(bookmark))) {
-      announce(`${bookmark.label}'s folder is missing — remove the bookmark or restore the folder`, 'assertive');
+      announce(`${displayLabel(bookmark)}'s folder is missing — remove the bookmark or restore the folder`, 'assertive');
       return;
     }
 
     // The open logic is shared with the project board (services/open-project.ts).
     try {
-      const { action } = await openProject(this.host, path, '[BOOKMARK]', bookmark.label);
+      const { action } = await openProject(this.host, path, '[BOOKMARK]', displayLabel(bookmark));
       if (action !== 'went to waiting session' && action !== 'already opening') {
         rlog('info', '[BOOKMARK] open', { kind: 'project', label: bookmark.label, action });
       }
     } catch (err) {
       rlog('error', '[BOOKMARK] open failed', { label: bookmark.label, err: String(err) });
-      announce(`Could not open ${bookmark.label}`, 'assertive');
+      announce(`Could not open ${displayLabel(bookmark)}`, 'assertive');
     } finally {
       this.scheduleRefresh();
     }
@@ -495,12 +495,12 @@ export class BookmarksPanel {
     const counts = bookmark.kind === 'project' && !bookmark.missing && rowState.open > 0 ? countText(rowState) : '';
     const subtitle = bookmark.missing ? 'Folder missing' : counts || disambiguator(bookmark, group);
     const state = isCurrent ? ', open in the active tab' : isOpen && !counts ? ', open' : '';
-    row.setAttribute('aria-label', `${bookmark.label}, ${fullTarget(bookmark)}${counts ? `, ${counts}` : ''}${bookmark.missing ? ', folder missing' : ''}${state}`);
+    row.setAttribute('aria-label', `${displayLabel(bookmark)}, ${fullTarget(bookmark)}${counts ? `, ${counts}` : ''}${bookmark.missing ? ', folder missing' : ''}${state}`);
     // Green dot: a session here waits for you; hollow ring: one is parked on
     // its own background work. The tab bar's glyphs, static here.
     row.classList.toggle('has-waiting', rowState.waiting > 0);
     row.classList.toggle('has-parked', rowState.waiting === 0 && rowState.parked > 0);
-    row.title = `${bookmark.label}\n${bookmark.kind === 'project' ? (bookmark.path ?? '') : (bookmark.url ?? '')}`;
+    row.title = `${displayLabel(bookmark)}\n${bookmark.kind === 'project' ? (bookmark.path ?? '') : (bookmark.url ?? '')}`;
     if (bookmark.missing) row.setAttribute('aria-disabled', 'true');
 
     const dot = document.createElement('span');
@@ -512,7 +512,7 @@ export class BookmarksPanel {
     text.className = 'bookmark-text';
     const label = document.createElement('span');
     label.className = 'bookmark-label';
-    label.textContent = bookmark.label;
+    label.textContent = displayLabel(bookmark);
     const sub = document.createElement('span');
     sub.className = 'bookmark-subtitle';
     sub.textContent = subtitle;
@@ -667,7 +667,7 @@ export class BookmarksPanel {
     const to = group(next).findIndex((b) => b.id === dragId);
     if (await this.saveOrder(next)) {
       rlog('info', '[BOOKMARK] reordered', { kind: bookmark.kind, from, to, via: 'drag' });
-      announce(`Moved ${bookmark.label} to position ${to + 1} of ${group(next).length}`);
+      announce(`Moved ${displayLabel(bookmark)} to position ${to + 1} of ${group(next).length}`);
     }
   }
 
@@ -723,14 +723,14 @@ export class BookmarksPanel {
     this.focusRow(bookmark.id);
     if (moved) {
       rlog('info', '[BOOKMARK] reordered', { kind: bookmark.kind, via: 'menu', direction });
-      announce(`Moved ${bookmark.label} ${direction < 0 ? 'up' : 'down'}`);
+      announce(`Moved ${displayLabel(bookmark)} ${direction < 0 ? 'up' : 'down'}`);
     }
   }
 
   private async remove(bookmark: Bookmark): Promise<void> {
     const ok = await this.confirmDialog.confirm({
       title: 'Remove bookmark?',
-      message: `"${bookmark.label}" will be removed from the sidebar. Its folder or page is not touched.`,
+      message: `"${displayLabel(bookmark)}" will be removed from the sidebar. Its folder or page is not touched.`,
       confirmLabel: 'Remove',
     });
     if (!ok) {
@@ -744,7 +744,7 @@ export class BookmarksPanel {
     const saved = await this.save(this.bookmarks.filter((b) => b.id !== bookmark.id));
     if (saved) {
       rlog('info', '[BOOKMARK] removed', { kind: bookmark.kind, label: bookmark.label });
-      announce(`Removed ${bookmark.label}`);
+      announce(`Removed ${displayLabel(bookmark)}`);
       const rows = this.listEl.querySelectorAll<HTMLElement>('.bookmark-row');
       // The row now at the removed row's position, else the one before it.
       (rows[Math.min(Math.max(index, 0), rows.length - 1)] ?? this.addButton).focus();
@@ -760,7 +760,7 @@ export class BookmarksPanel {
     const input = document.createElement('input');
     input.type = 'text';
     input.className = 'bookmark-rename';
-    input.value = bookmark.label;
+    input.value = displayLabel(bookmark);
     input.maxLength = DEFAULTS.BOOKMARK_LABEL_MAX_CHARS;
     input.spellcheck = false;
     input.setAttribute('aria-label', 'Rename bookmark');
@@ -777,7 +777,7 @@ export class BookmarksPanel {
       const label = input.value.trim();
       input.remove();
       row.hidden = false;
-      if (commit && label && label !== bookmark.label) {
+      if (commit && label && label !== displayLabel(bookmark)) {
         const next = this.bookmarks.map((b) => (b.id === bookmark.id ? { ...b, label } : b));
         this.save(next).then(() => this.focusRow(bookmark.id)).catch(console.error);
       } else {
