@@ -1,0 +1,315 @@
+<title>Patton Session Bar</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: one reading column; the sketches are Patton windows drawn in Patton's own tokens (ink hairlines, square corners), the bar on the right of the terminal */
+:root {
+  --ink: #0b0d12;
+  --bg: #ffffff;
+  --page: #f6f7f9;
+  --muted: #596170;
+  --hairline: #0b0d12;
+  --soft: #d9dde4;
+  --term-bg: #ffffff;
+  --strip: #eef0f4;
+  --cc-rule: #8a8a8a;
+  --cc-dim: #8b8b8b;
+  --cc-accent: #c8603f;
+  --cc-mode: #b8264f;
+  --needs: #1f9d55;
+  --mark-bg: #2f6bff;
+  --mark-fg: #ffffff;
+  --font-ui: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Monaco, monospace;
+  --row: 18px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --ink: #dbe3ee; --bg: #111214; --page: #0b0c0e; --muted: #8b95a5; --hairline: #6b717a; --soft: #2a2d33;
+    --term-bg: #111214; --strip: #1a1c20; --cc-rule: #6f6f6f; --cc-dim: #8a8a8a; --cc-accent: #d77757;
+    --cc-mode: #ff6b80; --needs: #3ecf7a; --mark-bg: #7aa2ff; --mark-fg: #0b0d12;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ink: #dbe3ee; --bg: #111214; --page: #0b0c0e; --muted: #8b95a5; --hairline: #6b717a; --soft: #2a2d33;
+  --term-bg: #111214; --strip: #1a1c20; --cc-rule: #6f6f6f; --cc-dim: #8a8a8a; --cc-accent: #d77757;
+  --cc-mode: #ff6b80; --needs: #3ecf7a; --mark-bg: #7aa2ff; --mark-fg: #0b0d12;
+}
+
+body { background: var(--page); color: var(--ink); font: 15px/1.55 var(--font-ui); }
+.wrap {
+  max-width: 1120px; margin: 0 auto;
+  padding-block: 36px 72px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 44px;
+}
+h1 { font-size: 30px; line-height: 1.15; margin: 0 0 12px; letter-spacing: -0.01em; text-wrap: balance; }
+h2 { font-size: 19px; margin: 0 0 6px; text-wrap: balance; }
+p { margin: 0; max-width: 68ch; }
+.lede { font-size: 17px; display: grid; gap: 10px; }
+.intro { color: var(--muted); }
+section { display: grid; gap: 16px; }
+.label { font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+.label .rec { color: var(--mark-bg); }
+.scroll { overflow-x: auto; padding-bottom: 2px; }
+figure { margin: 0; display: grid; gap: 10px; align-content: start; }
+figcaption { font-size: 14px; color: var(--muted); max-width: 64ch; }
+figcaption b { color: var(--ink); font-weight: 600; }
+code { font-family: var(--font-mono); font-size: 13px; }
+
+/* A Patton window: tab strip, then the terminal and (when open) the bar */
+.win { border: 1px solid var(--hairline); background: var(--term-bg); width: 900px; box-sizing: border-box; }
+.win.small { width: 340px; }
+.strip { display: flex; gap: 0; border-bottom: 1px solid var(--hairline); background: var(--strip); font: 12px/1 var(--font-ui); }
+.tab { flex: 1 1 0; min-width: 0; padding: 8px 10px; display: flex; gap: 7px; align-items: center; justify-content: center; border-right: 1px solid var(--soft); white-space: nowrap; overflow: hidden; }
+.tab.on { background: var(--term-bg); font-weight: 700; box-shadow: inset 0 -3px 0 var(--ink); }
+.dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; background: var(--needs); }
+.dot.ring { background: transparent; box-shadow: inset 0 0 0 1.5px var(--ink); }
+.dot.none { background: transparent; }
+.badge { font: 700 10px/1 var(--font-ui); border: 1px solid var(--hairline); padding: 2px 4px; }
+.body { display: flex; height: 380px; }
+.small .body { height: 300px; }
+.term { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; justify-content: flex-end; padding: 0 10px; font: 12.5px/var(--row) var(--font-mono); overflow: hidden; }
+.small .term { font-size: 11px; line-height: 16px; }
+.l { white-space: pre; overflow: hidden; text-overflow: clip; }
+.rule { color: var(--cc-rule); }
+.dim { color: var(--cc-dim); }
+.acc { color: var(--cc-accent); }
+.mode { color: var(--cc-mode); }
+.box { border: 1px solid var(--hairline); margin: 0 -10px; padding: 5px 10px; font: 12.5px/1.35 var(--font-mono); color: var(--muted); background: var(--term-bg); display: flex; gap: 8px; align-items: center; }
+.small .box { font-size: 11px; }
+.box .ta { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.box .send { font: 12px/1.2 var(--font-ui); color: var(--ink); border: 1px solid var(--hairline); padding: 3px 10px; }
+
+/* The bar */
+.bar { flex: 0 0 248px; border-left: 1px solid var(--hairline); background: var(--bg); font: 12.5px/1.35 var(--font-ui); display: flex; flex-direction: column; overflow: hidden; }
+.small .bar { flex-basis: 132px; font-size: 11px; }
+.sec { padding: 10px 12px; display: grid; gap: 6px; border-bottom: 1px solid var(--soft); }
+.sec:last-child { border-bottom: 0; }
+.sec h3 { margin: 0; font: 700 10.5px/1.2 var(--font-ui); letter-spacing: 0.08em; text-transform: uppercase; display: flex; justify-content: space-between; color: var(--ink); }
+.sec h3 span { color: var(--muted); font-weight: 600; letter-spacing: 0.02em; text-transform: none; }
+.item { display: grid; grid-template-columns: 52px 1fr auto; gap: 6px; align-items: baseline; }
+.small .item { grid-template-columns: 1fr auto; }
+.kind { font: 600 10px/1.4 var(--font-ui); letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+.small .kind { display: none; }
+.what { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.what code { font-size: 11.5px; }
+.t { font-variant-numeric: tabular-nums; color: var(--muted); white-space: nowrap; }
+.item.long .t { color: var(--cc-accent); font-weight: 700; }
+.item.ask .what { font-weight: 700; }
+.item.ask .t { color: var(--needs); font-weight: 700; }
+.item.done { opacity: 0.5; }
+.item.done .what { text-decoration: line-through; }
+.meter { height: 5px; background: var(--soft); position: relative; }
+.meter i { position: absolute; inset: 0 auto 0 0; background: var(--ink); }
+.kv { display: flex; justify-content: space-between; gap: 8px; font-variant-numeric: tabular-nums; }
+.kv .warn { color: var(--cc-accent); font-weight: 700; }
+.note { font-size: 11px; color: var(--muted); }
+
+/* B's rail */
+.rail { flex: 0 0 30px; border-left: 1px solid var(--hairline); background: var(--bg); display: flex; flex-direction: column; align-items: center; gap: 10px; padding-top: 10px; font: 700 11px/1 var(--font-ui); }
+.rail span { display: grid; place-items: center; width: 20px; height: 20px; border: 1px solid var(--hairline); }
+
+.row2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: 28px 24px; }
+
+table { border-collapse: collapse; width: 100%; min-width: 760px; font-size: 14px; }
+th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--soft); }
+th { font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); border-bottom: 1px solid var(--hairline); }
+td.st { white-space: nowrap; font-weight: 600; }
+.ok { color: var(--needs); }
+.hook { color: var(--mark-bg); }
+.no { color: var(--muted); }
+.facts { display: grid; gap: 10px; max-width: 74ch; padding: 0; margin: 0; list-style: none; }
+.facts li { padding-left: 18px; position: relative; }
+.facts li::before { content: ""; position: absolute; left: 2px; top: 0.65em; width: 6px; height: 6px; background: var(--ink); }
+.qs { display: grid; gap: 12px; padding-left: 22px; margin: 0; max-width: 74ch; }
+a { color: var(--mark-bg); }
+a:focus-visible { outline: 2px solid var(--mark-bg); outline-offset: 2px; }
+/* v3: the bar's own header with its minimize button; the minimized strip; failures and links rows */
+.barhead { display: flex; align-items: center; justify-content: space-between; padding: 7px 8px 7px 12px; border-bottom: 1px solid var(--hairline); font: 700 11px/1.2 var(--font-ui); letter-spacing: 0.08em; text-transform: uppercase; }
+.btn { font: 12px/1 var(--font-ui); letter-spacing: 0; text-transform: none; border: 1px solid var(--hairline); background: var(--bg); color: var(--ink); padding: 4px 8px; white-space: nowrap; }
+.btn.icon { padding: 3px 7px; font-weight: 700; }
+.fail .what { color: var(--cc-mode); }
+.link .what { color: var(--mark-bg); text-decoration: underline; text-underline-offset: 2px; }
+.ckpt { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.ckpt .big { font: 700 15px/1 var(--font-ui); font-variant-numeric: tabular-nums; }
+.strip-min { flex: 0 0 26px; border-left: 1px solid var(--hairline); background: var(--bg); display: flex; flex-direction: column; align-items: center; gap: 8px; padding-top: 6px; font: 700 10.5px/1 var(--font-ui); }
+.strip-min .btn { padding: 3px 5px; }
+.strip-min .n { display: grid; place-items: center; width: 18px; height: 18px; border: 1px solid var(--hairline); font-variant-numeric: tabular-nums; }
+.strip-min .n.f { color: var(--cc-mode); border-color: var(--cc-mode); }
+.small .barhead { padding: 6px 6px 6px 9px; font-size: 10px; }
+.small .sec { padding: 8px 9px; }
+.decided { display: grid; gap: 10px; max-width: 74ch; padding: 0; margin: 0; list-style: none; }
+.decided li { padding-left: 18px; position: relative; }
+.decided li::before { content: "✓"; position: absolute; left: 0; top: 0; font-weight: 700; color: var(--needs); }
+</style>
+
+<div class="wrap">
+
+<header>
+  <h1>Patton Session Bar</h1>
+  <div class="lede">
+    <p>Today, what Claude has running in the background is hidden at the bottom of its screen. The session bar sits on the right of every Claude tab and lists it, with how long each job has run, what failed, the links Claude has given you, and the checkpoint. A button folds it away when you want the width back.</p>
+    <p class="intro">Version 3, with your choices from 22 Nov: permanent, with a minimize button rather than a shortcut; no checklist and no changes; failures and links added; the checkpoint moved here from the top bar. Modelled on the Claude desktop app's session details panel. The sketch's rows come from this morning's work; the monitor, loop and failure rows are made up to show those kinds.</p>
+  </div>
+</header>
+
+<section aria-labelledby="h-sketch">
+  <h2 id="h-sketch">The bar</h2>
+  <figure>
+    <div class="scroll">
+      <div class="win" role="img" aria-label="A Patton window: tab strip without the checkpoint clock, a Claude session in the terminal, and the session bar on the right with a minimize button, running jobs, a scheduled loop, failures, links and the checkpoint">
+        <div class="strip">
+          <div class="tab on"><span class="dot ring"></span>patton</div>
+          <div class="tab"><span class="dot"></span>lifesci</div>
+          <div class="tab"><span class="dot none"></span>ai-brain</div>
+          <div class="tab"><span class="dot ring"></span>defence</div>
+        </div>
+        <div class="body">
+          <div class="term">
+            <div class="l">⏺ Both fixes are in. The builder reports all 34 checks</div>
+            <div class="l">  passing and the long resize check at 71 of 71.</div>
+            <div class="l"> </div>
+            <div class="l">⏺ <span class="acc">Bash</span>(gh run watch 45015717603 --exit-status)</div>
+            <div class="l">  ⎿  Running in the background</div>
+            <div class="l"> </div>
+            <div class="l">⏺ Pushed. The release run has started, and I'm</div>
+            <div class="l">  watching it.</div>
+            <div class="l"> </div>
+            <div class="l">⏺ <span class="acc">Agent</span>(Map what Patton can show per Claude session)</div>
+            <div class="l">  ⎿  Running in the background</div>
+            <div class="l"> </div>
+            <div class="l"><span class="acc">✻</span> <span class="acc">Pondering…</span> <span class="dim">(41s · esc to interrupt)</span></div>
+            <div class="l"> </div>
+            <div class="box"><span class="ta">Message Claude · Enter sends</span><span class="send">Send</span></div>
+            <div class="l"> <span class="dim">[Opus 5.5 · xhigh] Context: 31% · Week: 37%</span></div>
+            <div class="l"> <span class="mode">⏵⏵ bypass permissions on</span> <span class="dim">(shift+tab to cycle)</span></div>
+          </div>
+          <aside class="bar" aria-label="Session bar">
+            <div class="barhead"><span>Session</span><span class="btn icon" title="Minimize the session bar">⇥</span></div>
+            <div class="sec">
+              <h3>Running <span>4</span></h3>
+              <div class="item"><span class="kind">Agent</span><span class="what">Map what Patton can show</span><span class="t">6 min</span></div>
+              <div class="item"><span class="kind">Agent</span><span class="what">Fix Stop hook task filter</span><span class="t">1 min</span></div>
+              <div class="item"><span class="kind">Shell</span><span class="what"><code>gh run watch 45015717603</code></span><span class="t">40 s</span></div>
+              <div class="item long"><span class="kind">Monitor</span><span class="what">main.log for [COMPOSE] room</span><span class="t">3 h 34</span></div>
+              <div class="item done"><span class="kind">Agent</span><span class="what">Second review of D15</span><span class="t">done</span></div>
+            </div>
+            <div class="sec">
+              <h3>Scheduled <span>1</span></h3>
+              <div class="item"><span class="kind">Loop</span><span class="what">/loop 20m check the release</span><span class="t">11:40</span></div>
+            </div>
+            <div class="sec">
+              <h3>Failures <span>2</span></h3>
+              <div class="item fail"><span class="kind">Shell</span><span class="what"><code>npm run check</code>: exit 1</span><span class="t">11:02</span></div>
+              <div class="item fail"><span class="kind">Claude</span><span class="what">API error 529, overloaded</span><span class="t">10:48</span></div>
+            </div>
+            <div class="sec">
+              <h3>Links <span>3</span></h3>
+              <div class="item link"><span class="kind">Page</span><span class="what">Patton Session Bar</span><span class="t">11:43</span></div>
+              <div class="item link"><span class="kind">Release</span><span class="what">Patton v1.34.1</span><span class="t">11:42</span></div>
+              <div class="item link"><span class="kind">File</span><span class="what">Install steps v2.docx</span><span class="t">10:15</span></div>
+            </div>
+            <div class="sec">
+              <h3>Checkpoint</h3>
+              <div class="ckpt"><span><span class="big">31%</span> <span class="note">context · last 2 h 10 ago</span></span><span class="btn">Checkpoint</span></div>
+            </div>
+          </aside>
+        </div>
+      </div>
+    </div>
+    <figcaption><b>Running</b> lists each agent, shell, monitor and workflow under its own description, with its age; a shell or monitor shows within a second of starting. Anything over an hour shows in orange, since a job that old is sometimes a forgotten wait loop, like the two that kept agents in your panel for 16.5 to 18.4 hours on 6 and 7 Nov. A finished job stays 30 seconds, struck through, then goes. <b>Scheduled</b> shows each loop or cron and when it next fires. <b>Failures</b> keeps a job that failed, or an error from Claude, until you've seen it. <b>Links</b> lists the pages, releases and files Claude has given you this session, newest first: the same link shared again moves to the top, and a newer version of a file (v2 after v1) replaces the old row. <b>Checkpoint</b> is the clock from the top bar: context used, time since the last checkpoint, and the button that runs it. The top bar loses its clock; a tab's red circle for a finished checkpoint stays.</figcaption>
+  </figure>
+</section>
+
+<section aria-labelledby="h-min">
+  <h2 id="h-min">Minimized</h2>
+  <div class="row2">
+    <figure>
+      <div class="label">Open</div>
+      <div class="scroll">
+        <div class="win small" role="img" aria-label="A narrow window with the session bar open beside the terminal">
+          <div class="strip"><div class="tab on"><span class="dot ring"></span>patton</div><div class="tab"><span class="dot none"></span>notes</div></div>
+          <div class="body">
+            <div class="term">
+              <div class="l">⏺ Released as v1.34.1;</div>
+              <div class="l">  the cask matches.</div>
+              <div class="l"> </div>
+              <div class="box"><span class="ta">Message Claude</span></div>
+              <div class="l"> <span class="mode">⏵⏵ bypass</span></div>
+            </div>
+            <aside class="bar" aria-label="Session bar, open">
+              <div class="barhead"><span>Session</span><span class="btn icon">⇥</span></div>
+              <div class="sec"><h3>Running <span>2</span></h3><div class="item"><span class="what">Map what Patton…</span><span class="t">6 min</span></div><div class="item"><span class="what"><code>gh run watch</code></span><span class="t">40 s</span></div></div>
+              <div class="sec"><h3>Failures <span>1</span></h3><div class="item fail"><span class="what">check: exit 1</span><span class="t">11:02</span></div></div>
+            </aside>
+          </div>
+        </div>
+      </div>
+      <figcaption>The ⇥ button at the top of the bar folds it away.</figcaption>
+    </figure>
+    <figure>
+      <div class="label">Minimized</div>
+      <div class="scroll">
+        <div class="win small" role="img" aria-label="The same window with the bar minimized to a thin strip showing a restore button, a count of 2 running jobs and 1 failure">
+          <div class="strip"><div class="tab on"><span class="dot ring"></span>patton</div><div class="tab"><span class="dot none"></span>notes</div></div>
+          <div class="body">
+            <div class="term">
+              <div class="l">⏺ Released as v1.34.1; the cask</div>
+              <div class="l">  matches the release.</div>
+              <div class="l"> </div>
+              <div class="box"><span class="ta">Message Claude</span><span class="send">Send</span></div>
+              <div class="l"> <span class="mode">⏵⏵ bypass permissions on</span></div>
+            </div>
+            <div class="strip-min" aria-hidden="true"><span class="btn">⇤</span><span class="n">2</span><span class="n f">1</span></div>
+          </div>
+        </div>
+      </div>
+      <figcaption>Minimized, it leaves a thin strip with the ⇤ button that opens it again, the number of running jobs, and the number of failures in red. The choice holds for that window until you press the button again. In a very narrow window it minimizes itself.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section aria-labelledby="h-src">
+  <h2 id="h-src">Where each part comes from</h2>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>Part</th><th>Source</th><th>Updates</th><th>What it needs</th></tr></thead>
+      <tbody>
+        <tr><td>Agents, workflows, teammates</td><td>Claude Code's status reports, which Patton already reads</td><td class="st ok">Live</td><td>Nothing new.</td></tr>
+        <tr><td>Shells, monitors</td><td>A new hook after each background command starts, then the Stop hook's task list</td><td class="st ok">Live</td><td>The new hook (you said yes) and a Stop hook that sends the list, not just a count.</td></tr>
+        <tr><td>Loops, crons</td><td>The Stop hook's schedule list</td><td class="st hook">At turn end</td><td>The same Stop hook change.</td></tr>
+        <tr><td>Failures</td><td>Claude's status reports (errors); its notices when a job fails</td><td class="st hook">Live, and at turn end</td><td>Reading the failure notices from the session at each turn end.</td></tr>
+        <tr><td>Links</td><td>The links in Claude's replies</td><td class="st hook">At turn end</td><td>Reading them from the session at each turn end; matching versions of the same file.</td></tr>
+        <tr><td>Checkpoint</td><td>Patton's checkpoint clock</td><td class="st ok">At turn end, as today</td><td>Moving the clock and its button from the top bar into the bar.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="intro">Left out: Claude's checklist (none of your 61 sessions in the last 4 days kept one), changes, your open decisions, other tabs waiting, the release run, local servers, files touched, and an agent's current step.</p>
+</section>
+
+<section aria-labelledby="h-seen">
+  <h2 id="h-seen">What the logs and probes show</h2>
+  <ul class="facts">
+    <li><b>Work is common and long.</b> From 19 to 22 Nov in main.log, some tab had an agent or workflow running 45% of the time: 434 busy stretches (about 840 agents, since overlapping ones merge), a median of 4 minutes each. Background work of any kind, agents included, left some tab on the hollow ring 79% of the time.</li>
+    <li><b>Why shells hide today.</b> Claude Code's status reports carry agents, workflows, teammates and cloud sessions, but never shells, monitors or loops: its code lists the four kinds it reports. That is likely also why a tab can show done while an agent's own shell still runs.</li>
+    <li><b>A bug found along the way.</b> The Stop hook meant to ignore Claude's auto-mode scan and memory import, but matched internal names while Claude sends display names, so either could turn a finished tab's dot into the hollow ring. Fixed and released as v1.34.1.</li>
+    <li><b>Not possible.</b> Patton can't stop a job, as the desktop app's pane can, because the job belongs to Claude Code. Stopping stays with Claude.</li>
+  </ul>
+</section>
+
+<section aria-labelledby="h-q">
+  <h2 id="h-q">Decided</h2>
+  <ul class="decided">
+    <li>Permanent on Claude tabs, with a minimize button, not a shortcut.</li>
+    <li>Running, Scheduled, Failures, Links and Checkpoint; no checklist, no changes.</li>
+    <li>Shells and monitors live, through a second hook.</li>
+    <li>The checkpoint clock and its button move here from the top bar.</li>
+    <li>Links keep the newest: the same link moves up; a newer version of a file replaces the old one.</li>
+  </ul>
+  <p class="intro">Sources: <a href="https://code.claude.com/docs/en/desktop">Claude Code desktop docs</a> (session details panel, Background tasks pane), <a href="https://code.claude.com/docs/en/hooks">hooks reference</a>, <a href="https://github.com/anthropics/claude-code/issues/105734">issue #105734</a> (a progress sidebar), <a href="https://github.com/anthropics/claude-code/issues/104047">issue #104047</a> (a session shown finished while its background tasks run).</p>
+</section>
+
+</div>
