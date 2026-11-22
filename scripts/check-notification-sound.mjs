@@ -66,7 +66,7 @@ const store = createRequire(import.meta.url)(storeOut);
 
 await group('store', async () => {
   const S = () => store.getSettings();
-  check('a fresh store defaults to the soft chime', S().notificationSoundName === 'soft', S().notificationSoundName);
+  check('a fresh store defaults to the low marimba', S().notificationSoundName === 'marimba', S().notificationSoundName);
   check('a fresh store defaults to full volume', S().notificationSoundVolume === 100, S().notificationSoundVolume);
   for (const n of ['off', 'soft', 'marimba', 'pop', 'classic', 'bugle', 'bullet']) {
     store.setSettings({ notificationSoundName: n });
@@ -269,7 +269,7 @@ await group('settings reach the sound', async () => {
   // an old file
   nowMs.t += 1000; reset();
   s.applySettings({ notificationSound: true, notificationSoundType: 'chime' }, false);
-  check('an old file with the default type reads as the soft chime', s.getType() === 'soft', s.getType());
+  check('an old file with the default type reads as the low marimba', s.getType() === 'marimba', s.getType());
   s.applySettings({ notificationSound: false, notificationSoundType: 'chime' }, false);
   check('an old file with the sound off stays off', s.getType() === 'off', s.getType());
   s.applySettings({ notificationSound: true, notificationSoundType: 'bugle' }, false);
@@ -277,8 +277,8 @@ await group('settings reach the sound', async () => {
   s.applySettings({ notificationSound: false, notificationSoundType: 'bugle', notificationSoundName: 'classic' }, false);
   check('a saved name wins over the old flag', s.getType() === 'classic', s.getType());
   s.applySettings({}, false);
-  check('a file with none of the fields gets the soft chime', s.getType() === 'soft' && K.resolveNotificationSound({}) === 'soft');
-  check('the default name is the soft chime at 100%', K.DEFAULTS.NOTIFICATION_SOUND_NAME === 'soft' && K.DEFAULTS.NOTIFICATION_SOUND_VOLUME === 100);
+  check('a file with none of the fields gets the low marimba', s.getType() === 'marimba' && K.resolveNotificationSound({}) === 'marimba');
+  check('the default name is the low marimba at 100%', K.DEFAULTS.NOTIFICATION_SOUND_NAME === 'marimba' && K.DEFAULTS.NOTIFICATION_SOUND_VOLUME === 100);
 });
 
 await group('settings panel', async () => {
@@ -297,7 +297,7 @@ await group('settings panel', async () => {
   check('the setting is there: a select, a Preview button and a volume slider', !!sel && prev?.tagName === 'BUTTON' && vol?.type === 'range', { sel: !!sel, prev: prev?.tagName, vol: vol?.type });
   check('the Preview button is a visible, labelled button', prev?.textContent.trim() === 'Preview' && prev.type === 'button');
   check('the choices are Off, soft chime, low marimba, gentle pop and Classic (and the old two)', JSON.stringify([...sel.options].map((o) => o.value)) === '["off","soft","marimba","pop","classic","bugle","bullet"]', [...sel.options].map((o) => o.value));
-  check('an old file shows the new default, soft chime', sel.value === 'soft', sel.value);
+  check('an old file shows the new default, low marimba', sel.value === 'marimba' && sel.selectedOptions[0]?.textContent === 'Low marimba', sel.value);
   check('the slider shows 100% by default', vol.value === '100' && q('setting-notification-volume-value').textContent === '100%');
 
   open({ ...base, notificationSoundName: 'marimba', notificationSoundVolume: 60 });

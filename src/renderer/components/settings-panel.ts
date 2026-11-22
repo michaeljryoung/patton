@@ -106,7 +106,7 @@ export class SettingsPanel {
               <select class="settings-input" id="setting-notification-sound-name">
                 <option value="off">Off</option>
                 <option value="soft">Soft chime</option>
-                <option value="marimba">Marimba (low)</option>
+                <option value="marimba">Low marimba</option>
                 <option value="pop">Gentle pop</option>
                 <option value="classic">Classic</option>
                 <option value="bugle">Bugle</option>

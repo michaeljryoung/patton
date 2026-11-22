@@ -143,7 +143,7 @@ export function isNotificationSoundName(value: unknown): value is NotificationSo
  *  A saved `notificationSoundName` wins. A file from before the choice has only
  *  the old on/off flag and type: off stays off, a chosen bugle or bullet stays,
  *  and everyone else (the old default 'chime' can't be told from a choice)
- *  gets the new default, the soft chime. Classic is one click away. */
+ *  gets the new default, the low marimba. Classic is one click away. */
 export function resolveNotificationSound(s: {
   notificationSoundName?: unknown;
   notificationSound?: unknown;
@@ -194,8 +194,9 @@ export const DEFAULTS = {
   UI_TEXT_SCALE: 1,
   UI_TEXT_SCALES: [0.9, 1, 1.1, 1.25, 1.5] as readonly number[],
   FONT_SIZE_MAX: 72,
-  // The calmest choice; see resolveNotificationSound for who gets it.
-  NOTIFICATION_SOUND_NAME: 'soft' as const,
+  // Michael's pick after hearing them all (22 Nov 2026: "low marimba");
+  // see resolveNotificationSound for who gets it.
+  NOTIFICATION_SOUND_NAME: 'marimba' as const,
   NOTIFICATION_SOUND_VOLUME: 100,
   STARTUP_COMMAND: '' as const,
   // The compose box under Claude Code tabs (Settings, per tab from the palette).
