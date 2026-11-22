@@ -308,6 +308,15 @@ export class SessionBar {
       btn.setAttribute('aria-label', label);
       btn.title = label;
     }
+    // Folded, the note above is hidden: a refused click shows its reason on the
+    // strip's button for the same few seconds (a "!" and the reason as its label).
+    const refused = !!this.reasonText;
+    this.stripCkpt.classList.toggle('reason', refused);
+    this.stripCkpt.textContent = refused ? '!' : '✓';
+    if (this.reasonText) {
+      this.stripCkpt.setAttribute('aria-label', this.reasonText);
+      this.stripCkpt.title = this.reasonText;
+    }
     this.ckptBig.classList.toggle('due', !!v?.due);
   }
 

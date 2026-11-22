@@ -339,6 +339,19 @@ async function pageRun(SCALES) {
     check(`${at} ⇥: the saved choice is minimized`, saved.length > savesBefore && lastSaved() === true, { saves: saved.length - savesBefore, minimized: lastSaved() });
     const sc = barEl()?.querySelector('.sb-strip-ckpt');
     check(`${at} the strip has its small checkpoint button`, !!sc && !sc.hidden && sc.getBoundingClientRect().width > 0, sc && sc.outerHTML);
+    // A refused Checkpoint click, folded: the note is hidden, so the strip's button carries the reason for 4 s.
+    {
+      const reason = 'Claude is busy: not sent';
+      tm.sessionBar.showCheckpointReason(reason);
+      const b = barEl()?.querySelector('.sb-strip-ckpt');
+      const noteHidden = !barEl().querySelector('.sb-note') || barEl().querySelector('.sb-note').getBoundingClientRect().width === 0;
+      check(`${at} ⇥ a refused checkpoint click: the strip's button shows "!" and the reason as its title and label`,
+        !!b && b.textContent === '!' && b.title === reason && b.getAttribute('aria-label') === reason && b.classList.contains('reason') && noteHidden,
+        b && { text: b.textContent, title: b.title, noteHidden });
+      await settle(4300);
+      check(`${at} ⇥ ... and 4 s later the button is its old self (✓, its own label)`,
+        !!b && b.textContent === '✓' && b.title !== reason && !b.classList.contains('reason'), b && { text: b.textContent, title: b.title });
+    }
     const hadRestore = await press('.sb-restore');
     check(`${at} ⇤: the bar opens again at ${r1(want)} px`, hadRestore && barState() === 'open' && Math.abs(barW() - want) <= 0.5, { state: barState(), width: r1(barW()) });
     check(`${at} ⇤: the terminal has its columns with the bar back`, hadRestore && termOf(pane).cols === openCols, { cols: termOf(pane).cols, openCols });

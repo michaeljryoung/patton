@@ -186,7 +186,8 @@ export class SessionFeed {
         return;
       }
       // A sessions file that names a session not yet written outranks the hint
-      // (after /clear the last Stop's `tp` is the old session's).
+      // (after /clear the last Stop's `tp` is the old session's). A hint is
+      // dropped when its session ends (detach), so a dead one never re-attaches.
       if (!found && !w.attached && w.hint) {
         const checked = await checkTranscriptPath(home, w.hint);
         if (w.stopped || w.attached) return;
@@ -215,6 +216,7 @@ export class SessionFeed {
     const tail = new TranscriptTail(a.transcriptPath, {
       onText: (text) => {
         if (w.stopped || w.attached?.tail !== tail) return;
+        w.lastError = ''; // a good read: the next error of a kind logs again
         for (const ev of parser.push(text)) this.emit(w, ev);
       },
       onReset: () => {
@@ -225,6 +227,8 @@ export class SessionFeed {
         if (why === 'transcript gone') {
           this.detach(w, why, true);
           void this.resolve(w);
+        } else if (why === 'transcript is a symlink') {
+          this.detach(w, why, true);
         } else {
           this.feedError(w, why);
         }
@@ -247,8 +251,13 @@ export class SessionFeed {
     a.tail.stop();
     w.attached = null;
     w.fastSince = Date.now();
+    // The last Stop's `tp` names the session that just ended: left set, the next
+    // resolve would attach the dead transcript as a "hook" session.
+    if (reason === 'claude exited' || reason === 'session changed') w.hint = null;
     this.log('[BAR] detach', { pty: w.ptyId, reason });
-    if (tell) this.deps.send(w.ptyId, { type: 'detached', reason });
+    if (tell && !this.deps.send(w.ptyId, { type: 'detached', reason }) && !w.stopped) {
+      this.unwatch(w.ptyId, 'window closed');
+    }
   }
 
   private feedError(w: Watch, why: string): void {

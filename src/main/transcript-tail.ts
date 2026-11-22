@@ -46,6 +46,7 @@ export class TranscriptTail {
       this.handlers.onError('transcript unreadable');
       return false;
     }
+    if (await this.refuseSymlink()) return false;
     await this.readBacklog(st);
     if (this.stopped) return true;
     try {
@@ -55,6 +56,22 @@ export class TranscriptTail {
       this.watcher = null; // the poll still runs
     }
     this.timer = setInterval(() => { void this.poll(); }, POLL_MS);
+    return true;
+  }
+
+  /** The path was checked as a real file inside ~/.claude/projects before the
+   *  attach; one swapped for a symbolic link since then is refused, and the tail
+   *  stops (a link could lead anywhere the user can read). */
+  private async refuseSymlink(): Promise<boolean> {
+    let link = false;
+    try {
+      link = (await fsp.lstat(this.path)).isSymbolicLink();
+    } catch {
+      return false; // gone: the caller's stat already said so
+    }
+    if (!link) return false;
+    this.stop();
+    this.handlers.onError('transcript is a symlink');
     return true;
   }
 
@@ -100,6 +117,7 @@ export class TranscriptTail {
         const why = st.ino !== this.ino ? 'transcript replaced'
           : st.size < this.offset ? 'transcript shrank'
             : st.size - this.offset > BACKLOG_BYTES ? 'transcript jumped' : '';
+        if (why === 'transcript replaced' && (await this.refuseSymlink())) return;
         if (why) {
           // Re-attach (E): the last 2 MB, never the whole file in one poll.
           this.handlers.onError(why);
