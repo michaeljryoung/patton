@@ -35,7 +35,7 @@ import {
 import { readClaudeBar, type BarMissReason } from '../services/claude-bar';
 import {
   COMPOSE_BAR_LOST_MS, COMPOSE_BAR_NOT_FOUND_LOG_MS, COMPOSE_OVERLAY_MAX_FRACTION, COMPOSE_OWN_TYPING_MS,
-  COMPOSE_REFIT_SETTLE_MS, COMPOSE_SWITCH_MIN_MS,
+  COMPOSE_ROOM_HOLD_MS, COMPOSE_SETTLE_MAX_MS, COMPOSE_SETTLED_LOG_MS, COMPOSE_SWITCH_MIN_MS,
   barRowsInView, placementForReading,
   type ComposePlacement, type ComposePlacementReason,
 } from '../services/compose-placement';
@@ -340,9 +340,9 @@ export class Pane {
   // toward the lost wait (D9 as amended).
   private composeOwnTypingMs = -Infinity;
   // D9, no loop: when Patton last refitted the terminal for a change between
-  // `under` and the overlays (readings within COMPOSE_REFIT_SETTLE_MS don't
-  // count toward the lost wait), and when a reading last made such a change
-  // (the next waits COMPOSE_SWITCH_MIN_MS).
+  // `under` and the overlays (the refit opens a settling, composeSettle, in
+  // which misses don't count toward the lost wait), and when a reading last
+  // made such a change (the next waits COMPOSE_SWITCH_MIN_MS).
   private composeRefitMs = -Infinity;
   private composeSwitchMs = -Infinity;
   // What the overlay was last laid out from (see layoutComposeOverlay).
@@ -359,14 +359,39 @@ export class Pane {
   // D15: the pane's height k was last worked out for (a height change of the
   // pane re-works it out; Patton's own padding change is not one).
   private composeRoomPaneH = 0;
-  // D15: for COMPOSE_REFIT_SETTLE_MS after Patton's own resize of the terminal
-  // for room (or a window resize that changed its rows; composeRoomResizeMs)
-  // `barRow` is not to be trusted: it is from before
-  // the resize, or from a reading between the resize and Claude's redraw, which
-  // reads a screen xterm has trimmed. A content change in that window waits
-  // (composeRoomPendingReason) for the window's end.
-  private composeRoomPendingReason: string | null = null;
-  private composeRoomResizeMs = -Infinity;
+  // D15, settling (S60): Patton's own resize of the terminal (room, a
+  // placement change, show, a font change, a pane resize) trims Claude's
+  // screen until Claude redraws after SIGWINCH: xterm pops the lines below the
+  // cursor, which Claude parks on its `❯` line, so the bar's lower rule and
+  // footer vanish and `barRow` is stale. From the resize until the first
+  // reading that finds the bar empty after a write (Claude's redraw), or
+  // COMPOSE_SETTLE_MAX_MS, misses don't count toward the lost wait, and a k
+  // decision that needs the bar's row waits (composeRoomPending), then runs
+  // once. An aside's end opens one too (Claude's screen moved with readings
+  // frozen), ended by any empty-bar reading; its misses still count (no resize).
+  private composeSettle: {
+    sinceMs: number; cause: string; resize: boolean; writeSeq: number;
+    // A reading found the bar empty before any write (at the ceiling, the k
+    // that waited may run from it: the bar was there, Claude just didn't redraw).
+    foundEarly: boolean;
+  } | null = null;
+  private composeSettleTimer: ReturnType<typeof setTimeout> | null = null;
+  // Bumped on every parsed write: a resize's settling ends only on a reading
+  // after a write that followed it (a reading straight after a resize that
+  // grew the terminal still finds the bar, at its pre-redraw row).
+  private composeWriteSeq = 0;
+  // The k decision waiting for the settling's end: the trigger that asked
+  // and which run (a room resize asks once more, run 2, to confirm k against
+  // the redrawn bar; never a third time for the same trigger).
+  private composeRoomPending: { reason: string; run: number } | null = null;
+  // Anti-flap: the bar went lost within COMPOSE_ROOM_HOLD_MS of a room resize
+  // and the box went under: no rows are given up again until the draft's
+  // content changes. Logged once per hold, when it first refuses.
+  private composeRoomHeld = false;
+  private composeRoomHeldLogged = false;
+  private composeRoomHeldDraft = '';
+  private composeSettledLogMs = -Infinity;
+  private composeSettledSkipped = 0;
   private barNotFoundLoggedMs = 0;
   private barLostTimer: ReturnType<typeof setTimeout> | null = null;
   private barReadFrame: number | null = null;
@@ -1619,14 +1644,12 @@ export class Pane {
       this.resizeTimer = setTimeout(() => {
         // D15: rows given up stay given up at the new size (the padding that
         // gives them up is measured from the container's size).
-        const rowsBefore = this.terminalView.terminal.rows;
+        const before = this.terminalView.getDimensions();
         if (this.composeRoomRows > 0) this.terminalView.setRowsGivenUp(this.composeRoomRows);
         else this.terminalView.fit();
-        if (this.terminalView.terminal.rows !== rowsBefore) this.noteOwnRowsChange();
-        if (this.ptyId !== null) {
-          const dims = this.terminalView.getDimensions();
-          window.patton.pty.resize(this.ptyId, dims.cols, dims.rows);
-        }
+        const dims = this.terminalView.getDimensions();
+        if (this.ptyId !== null) window.patton.pty.resize(this.ptyId, dims.cols, dims.rows);
+        if (dims.rows !== before.rows || dims.cols !== before.cols) this.openComposeSettle('resize', true);
         // The box's cap is a share of the pane's height, so follow resizes.
         if (this.composeFirstEngaged) this.editorInput.refreshSize();
         this.layoutComposeOverlay();
@@ -2112,14 +2135,15 @@ export class Pane {
   }
 
   /** A row under the terminal appeared or went: re-fit and tell the PTY now,
-   *  rather than on the resize observer's 100 ms debounce. */
-  private refitTerminal(): void {
+   *  rather than on the resize observer's 100 ms debounce. `before`: the grid
+   *  before the caller's own change (a caller that changed the padding has
+   *  already refit); a grid that changed opens a settling (D15, S60). */
+  private refitTerminal(cause = 'refit', before = this.terminalView.getDimensions()): void {
     if (this.disposed) return;
     this.terminalView.fit();
-    if (this.ptyId !== null) {
-      const dims = this.terminalView.getDimensions();
-      window.patton.pty.resize(this.ptyId, dims.cols, dims.rows);
-    }
+    const dims = this.terminalView.getDimensions();
+    if (this.ptyId !== null) window.patton.pty.resize(this.ptyId, dims.cols, dims.rows);
+    if (dims.rows !== before.rows || dims.cols !== before.cols) this.openComposeSettle(cause, true);
   }
 
   private clearPasteChips(): void {
@@ -2452,7 +2476,10 @@ export class Pane {
     // The theme or the OS light/dark mode changed the terminal's background.
     this.disposables.push(this.terminalView.onFrameColor(() => this.applyOverlayColor()));
     const subs = [
-      term.onWriteParsed(() => this.scheduleBarReading()),
+      term.onWriteParsed(() => {
+        this.composeWriteSeq++;
+        this.scheduleBarReading();
+      }),
       term.onScroll(() => this.scheduleBarReading()),
       term.onResize(() => this.scheduleBarReading()),
       // A scroll of the viewport alone (wheel, scrollbar) is caught here too,
@@ -2551,6 +2578,14 @@ export class Pane {
       this.barLostReason = 'lost';
       this.barWaitHoldsText = false;
       this.clearBarLostTimer();
+      // D15 settling: the bar as Claude redrew it (after a resize, only a
+      // reading after a write counts: one straight after a resize that grew
+      // the terminal still finds the bar at its pre-redraw row).
+      const settle = this.composeSettle;
+      if (settle !== null) {
+        if (!settle.resize || this.composeWriteSeq > settle.writeSeq) this.endComposeSettle(true);
+        else settle.foundEarly = true;
+      }
     }
     if (step.reason !== 'setting' && step.reason !== 'handoff' && !this.switchMayHappen(step.placement)) return;
     this.setComposePlacement(step.placement, step.reason);
@@ -2577,12 +2612,20 @@ export class Pane {
    *  takes a fresh reading, which decides. */
   private noteBarNotEmpty(why: BarMissReason | 'holds-text'): void {
     const now = Date.now();
-    // Readings in the window after this pane's own typing or its own refit don't count.
-    const ownEnd = Math.max(this.composeOwnTypingMs + COMPOSE_OWN_TYPING_MS, this.composeRefitMs + COMPOSE_REFIT_SETTLE_MS);
+    // Readings in the window after this pane's own typing don't count.
+    const ownEnd = this.composeOwnTypingMs + COMPOSE_OWN_TYPING_MS;
     if (now < ownEnd) {
       this.armBarLostTimer(ownEnd - now);
       return;
     }
+    // Nor does a miss while the screen is the one Patton's own resize trimmed
+    // and Claude has yet to redraw (D15 settling): the settling's end, at the
+    // latest its ceiling, reads again. Once a reading has found the bar whole
+    // after the resize (a resize that grew the terminal trims nothing) misses
+    // are Claude's own and count; so does a bar that holds text (both rules
+    // found).
+    const s = this.composeSettle;
+    if (why !== 'holds-text' && s !== null && s.resize && !s.foundEarly) return;
     if (why === 'holds-text') {
       this.barWaitHoldsText = true;
     } else {
@@ -2650,6 +2693,7 @@ export class Pane {
   private setComposePlacement(next: ComposePlacement, reason: ComposePlacementReason): void {
     if (next === this.composePlacement) return;
     const from = this.composePlacement;
+    const gridBefore = this.terminalView.getDimensions();
     this.composePlacement = next;
     rlog('info', '[COMPOSE] place', { pane: this.id, placement: next, from, reason });
     this.element.dataset.composePlacement = next;
@@ -2664,7 +2708,18 @@ export class Pane {
     // the refit, so a long draft refits once (a box that changes height after
     // the refit would make the resize observer refit again).
     this.editorInput.refreshSize();
-    if (next === 'under') this.clearComposeRoom(reason);
+    if (next === 'under') {
+      // Anti-flap (D15, S60): the bar lost soon after a room resize (Claude
+      // slower to redraw than the settling's ceiling): no rows are given up
+      // again until the draft's content changes.
+      if ((reason === 'lost' || reason === 'aside-end') && this.composeRoomRows > 0
+        && Date.now() - this.composeRoomMs < COMPOSE_ROOM_HOLD_MS) {
+        this.composeRoomHeld = true;
+        this.composeRoomHeldLogged = false;
+        this.composeRoomHeldDraft = this.editorInput.getValue();
+      }
+      this.clearComposeRoom(reason);
+    }
     if ((from === 'under') !== (next === 'under')) {
       const now = Date.now();
       this.composeRefitMs = now;
@@ -2672,7 +2727,7 @@ export class Pane {
       // own moves (the hand-off, the setting, closing the box) break any chain.
       const byReading = reason === 'found' || reason === 'holds-text' || reason === 'lost' || reason === 'aside-end';
       this.composeSwitchMs = byReading ? now : -Infinity;
-      this.refitTerminal();
+      this.refitTerminal('placement', gridBefore);
     }
     // D15: a placement change works k out again (into an overlay, after the
     // refit just made: D9's once-a-second rule holds it back a second).
@@ -2703,26 +2758,40 @@ export class Pane {
     });
   }
 
+  /** D15: k depends on the bar's row only in 'over' with a draft of more
+   *  than one line (one line: 0; 'dock': from the terminal's bottom; under: 0). */
+  private composeRoomNeedsBar(): boolean {
+    return this.composeFirstEngaged && this.composePlacement === 'over' && !this.editorInput.isOneLine();
+  }
+
   /** D15: bring the rows the terminal gives up in line with the box's
-   *  contents. Not during an aside or while Claude asks (the terminal keeps
-   *  its size, so the question is drawn once); a change due within a second
+   *  contents. Asked by a non-reading trigger only (content, chip, placement,
+   *  pane size, show, font, UI scale, an aside's end); `run` 2 is the one
+   *  confirmation a room resize asks for (setComposeRoom). Not during an aside
+   *  or while Claude asks (the terminal keeps its size, so the question is
+   *  drawn once). While Claude has yet to redraw after Patton's own resize
+   *  (settling) a k that needs the bar's row waits for the first fresh
+   *  reading, then runs once (endComposeSettle). A change due within a second
    *  of Patton's last resize waits for that second (D9) and is decided again. */
-  private syncComposeRoom(reason: string): void {
+  private syncComposeRoom(reason: string, run = 1): void {
     if (this.disposed || this.composePlacementFrozen) return;
-    if (this.composeRoomWindowOpen()) {
-      // barRow is not to be trusted yet (see composeRoomPendingReason): wait
-      // for the window's end, then decide again from the bar as Claude redrew it.
-      this.composeRoomPendingReason = reason;
+    if (this.composeRoomHeld && this.editorInput.getValue() !== this.composeRoomHeldDraft) this.composeRoomHeld = false;
+    if (this.composeSettle !== null && this.composeRoomNeedsBar()) {
+      this.composeRoomPending = { reason, run };
       this.clearComposeRoomTimer();
-      this.composeRoomTimer = setTimeout(() => {
-        this.composeRoomTimer = null;
-        this.flushComposeRoomPending();
-      }, Math.max(0, this.composeRoomResizeMs + COMPOSE_REFIT_SETTLE_MS - Date.now()) + 1);
       return;
     }
-    const want = this.composeRoomWanted();
-    if (want === null || want === this.composeRoomRows) {
-      if (want === this.composeRoomRows) this.clearComposeRoomTimer();
+    let want = this.composeRoomWanted();
+    if (want === null) return;
+    if (this.composeRoomHeld && want > this.composeRoomRows) {
+      if (!this.composeRoomHeldLogged) {
+        this.composeRoomHeldLogged = true;
+        rlog('info', '[COMPOSE] room held', { pane: this.id, reason });
+      }
+      want = this.composeRoomRows;
+    }
+    if (want === this.composeRoomRows) {
+      this.clearComposeRoomTimer();
       return;
     }
     const wait = Math.max(this.composeRefitMs, this.composeRoomMs) + COMPOSE_SWITCH_MIN_MS - Date.now();
@@ -2730,47 +2799,79 @@ export class Pane {
       this.clearComposeRoomTimer();
       this.composeRoomTimer = setTimeout(() => {
         this.composeRoomTimer = null;
-        this.syncComposeRoom(reason);
+        this.syncComposeRoom(reason, run);
       }, wait);
       return;
     }
-    this.setComposeRoom(want, reason);
+    this.setComposeRoom(want, reason, run);
   }
 
-  /** True for COMPOSE_REFIT_SETTLE_MS after Patton's own resize of the terminal. */
-  private composeRoomWindowOpen(): boolean {
-    return Date.now() < this.composeRoomResizeMs + COMPOSE_REFIT_SETTLE_MS;
+  /** D15 settling (S60): Patton resized the terminal itself (`resize`), or an
+   *  aside ended, so `barRow` may be stale until Claude redraws. Ends at the
+   *  first empty-bar reading (after a write, for a resize) or at
+   *  COMPOSE_SETTLE_MAX_MS. A second one before the end restarts the clock. */
+  private openComposeSettle(cause: string, resize: boolean): void {
+    if (this.disposed || !this.composeFirstEngaged || !this.composeOverBarSetting) return;
+    const prev = this.composeSettle;
+    this.composeSettle = {
+      sinceMs: Date.now(), cause, resize: resize || (prev?.resize ?? false), writeSeq: this.composeWriteSeq, foundEarly: false,
+    };
+    if (this.composeSettleTimer !== null) clearTimeout(this.composeSettleTimer);
+    this.composeSettleTimer = setTimeout(() => {
+      this.composeSettleTimer = null;
+      this.endComposeSettle(false);
+    }, COMPOSE_SETTLE_MAX_MS);
   }
 
-  /** Patton changed the terminal's rows itself (room, or a window resize). */
-  private noteOwnRowsChange(): void {
-    this.composeRoomResizeMs = Date.now();
-  }
-
-  /** Run a content change's k that waited for the window's end. */
-  private flushComposeRoomPending(): void {
-    const reason = this.composeRoomPendingReason;
-    if (reason === null || this.composeRoomWindowOpen()) return;
-    this.composeRoomPendingReason = null;
-    this.clearComposeRoomTimer();
-    this.syncComposeRoom(reason);
+  /** The settling ends: `found`, a fresh empty-bar reading (run the k that
+   *  waited, once), or the ceiling (misses count again from here; the k that
+   *  waited runs only if a reading found the bar meanwhile, else the lost
+   *  wait decides and a later `over` asks again). Logs `[COMPOSE] settled`,
+   *  at most once a second per pane (the rest counted in `skipped`). */
+  private endComposeSettle(found: boolean): void {
+    const s = this.composeSettle;
+    if (s === null) return;
+    this.composeSettle = null;
+    if (this.composeSettleTimer !== null) {
+      clearTimeout(this.composeSettleTimer);
+      this.composeSettleTimer = null;
+    }
+    const now = Date.now();
+    if (this.composeFirstEngaged) {
+      if (now - this.composeSettledLogMs >= COMPOSE_SETTLED_LOG_MS) {
+        const skipped = this.composeSettledSkipped;
+        rlog('info', '[COMPOSE] settled', {
+          pane: this.id, cause: s.cause, afterMs: now - s.sinceMs, found, ...(skipped > 0 ? { skipped } : {}),
+        });
+        this.composeSettledLogMs = now;
+        this.composeSettledSkipped = 0;
+      } else {
+        this.composeSettledSkipped++;
+      }
+    }
+    const pending = this.composeRoomPending;
+    this.composeRoomPending = null;
+    if (pending !== null && (found || s.foundEarly)) this.syncComposeRoom(pending.reason, pending.run);
+    if (!found) this.scheduleBarReading();
   }
 
   /** Give up k rows at the terminal's bottom (0: take them back), tell the
-   *  PTY, lay the box out again. Readings in the 500 ms after this refit don't
-   *  count toward the lost wait, as after any refit of Patton's own (D9). */
-  private setComposeRoom(rows: number, reason: string): void {
+   *  PTY, lay the box out again. The refit opens a settling; the trigger's
+   *  first run asks once more (run 2) for when Claude has redrawn, which by
+   *  then finds the same k (the bar back at the bottom with its footer). */
+  private setComposeRoom(rows: number, reason: string, run = 1): void {
     this.clearComposeRoomTimer();
     const from = this.composeRoomRows;
     if (rows === from) return;
+    const before = this.terminalView.getDimensions();
     this.composeRoomRows = rows;
     const now = Date.now();
     this.composeRoomMs = now;
     this.composeRefitMs = now;
-    this.composeRoomPendingReason = null;
+    this.composeRoomPending = null;
     this.terminalView.setRowsGivenUp(rows);
-    this.noteOwnRowsChange();
-    this.refitTerminal();
+    this.refitTerminal('room', before);
+    if (this.composeSettle !== null && run < 2) this.composeRoomPending = { reason, run: run + 1 };
     rlog('info', '[COMPOSE] room', { pane: this.id, rows, from, placement: this.composePlacement, reason });
     this.layoutComposeOverlay();
   }
@@ -2778,6 +2879,7 @@ export class Pane {
   /** k back to 0 as the box goes under or closes: in the caller's own refit. */
   private clearComposeRoom(reason: string): void {
     this.clearComposeRoomTimer();
+    this.composeRoomPending = null;
     if (this.composeRoomRows === 0) return;
     const from = this.composeRoomRows;
     this.composeRoomRows = 0;
@@ -2922,8 +3024,11 @@ export class Pane {
       this.barMissSinceMs = null;
       this.barLostReason = 'aside-end';
     }
+    // D15: the draft may have changed meanwhile, and output may have moved
+    // Claude's bar with readings frozen: k waits for the first fresh reading.
+    if (this.composePlacement !== 'under') this.openComposeSettle('aside-end', false);
     this.scheduleBarReading();
-    this.syncComposeRoom('aside-end'); // D15: the draft may have changed meanwhile
+    this.syncComposeRoom('aside-end');
   }
 
   /** ⌘C in a box with nothing selected: this pane's terminal selection. */
@@ -3142,8 +3247,13 @@ export class Pane {
     this.element.style.display = 'flex';
     // D15: the rows given up are given up again, measured, before the fit
     // (a font change or resize while hidden couldn't measure them).
+    const before = this.terminalView.getDimensions();
     if (this.composeRoomRows > 0) this.terminalView.setRowsGivenUp(this.composeRoomRows);
     else this.terminalView.fit();
+    const dims = this.terminalView.getDimensions();
+    // A new size (a split, a pane closed, zoom, swap): Claude redraws after the
+    // resize observer tells the PTY, so k waits for that (settling, S60).
+    if (dims.rows !== before.rows || dims.cols !== before.cols) this.openComposeSettle('show', true);
     // Always: a resize skipped while the tab was hidden (display:none) is redone here.
     this.editorInput.refreshSize();
     this.layoutComposeOverlay();
@@ -3156,24 +3266,27 @@ export class Pane {
   }
 
   setFontSize(size: number): void {
+    const before = this.terminalView.getDimensions();
     this.terminalView.setFontSize(size);
     this.editorInput.setFontSize(size);
-    this.composeRoomAfterFontChange();
+    this.afterFontChange(before);
   }
 
   setFontFamily(family: string): void {
+    const before = this.terminalView.getDimensions();
     this.terminalView.setFontFamily(family);
     this.editorInput.setFontFamily(family);
-    this.composeRoomAfterFontChange();
+    this.afterFontChange(before);
   }
 
-  /** D15: a new font changes the cell height the rows given up are measured
-   *  in and the draft's height: keep k rows given up, then work k out again. */
-  private composeRoomAfterFontChange(): void {
-    if (this.composeRoomRows > 0) {
-      this.terminalView.setRowsGivenUp(this.composeRoomRows);
-      this.refitTerminal();
-    }
+  /** A new font changes the grid without changing the container, so the
+   *  resize observer doesn't fire: tell the PTY here (until S60 a Font Size
+   *  change never reached it). D15: the cell height the rows given up are
+   *  measured in and the draft's height change too: keep k rows given up,
+   *  then work k out again once Claude has redrawn (settling). */
+  private afterFontChange(before: { cols: number; rows: number }): void {
+    if (this.composeRoomRows > 0) this.terminalView.setRowsGivenUp(this.composeRoomRows);
+    this.refitTerminal('font', before);
     this.editorInput.refreshSize();
     this.syncComposeRoom('font');
   }
@@ -3314,6 +3427,7 @@ export class Pane {
     this.clearComposeKeyboardTimer();
     this.clearBarLostTimer();
     this.clearComposeRoomTimer();
+    if (this.composeSettleTimer !== null) clearTimeout(this.composeSettleTimer);
     if (this.barReadFrame !== null) cancelAnimationFrame(this.barReadFrame);
     this.clearPasteChips();
     for (const d of this.disposables) d();

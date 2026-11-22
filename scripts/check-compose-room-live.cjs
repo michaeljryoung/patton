@@ -3,19 +3,25 @@
 // stay given up when it is shown), a pane that changes height only (k follows the third-of-the-pane cap, and
 // Patton's own padding change is no resize), and a content change that lands after Patton's own room resize
 // but before Claude's redraw (k is worked out from the fresh bar, not the pre-resize one).
+// Settling (S60, D15): Claude's redraw after Patton's own resize delayed 100 to 4000 ms (no flapping, k once),
+// and k after a split, a font change, an aside's end over scrolled output, and a window resize with a slow
+// redraw, each compared with the k the same screen and draft give from scratch; a send gives the rows back in
+// one resize. These run at the first scale only, and print one summary line each under "Measured".
 // The harness (stub bridge, real Pane, recorded screens, Claude's redraw stood in for) is copied from
 // check-compose-over.cjs; see its header.
 //
 // Run: node scripts/check-compose-room-live.cjs
 //   COMPOSE_SRC_ROOT=<folder holding src/>   bundle another source tree (to prove the check bites)
 //   COMPOSE_ROOMLIVE_CHECK_DIR=<folder>      where the bundle, userData and result go (default: a temp folder, removed after)
+//   COMPOSE_ROOMLIVE_GROUPS=<a,b,...>         run only these groups (hidden,height,stale,delay,split,font,aside,window,send)
 // Prints `ok <what>` or `not ok <what>: <measured>` per assertion; exit 1 on any failure.
 'use strict';
 
 const fs = require('node:fs');
 const path = require('node:path');
 
-const HARD_TIMEOUT_MS = 240000;
+const HARD_TIMEOUT_MS = 480000;
+const GROUPS = process.env.COMPOSE_ROOMLIVE_GROUPS ? process.env.COMPOSE_ROOMLIVE_GROUPS.split(',') : null;
 const SCALES = process.env.COMPOSE_ROOMLIVE_SCALES ? process.env.COMPOSE_ROOMLIVE_SCALES.split(',').map(Number) : [1, 1.5];
 
 if (process.versions.electron) {
@@ -46,8 +52,9 @@ async function nodeRunner() {
       loader: 'ts',
       contents: `
         import { Pane } from './src/renderer/components/pane';
+        import { SplitContainer } from './src/renderer/components/split-container';
         import { applyUiTextScale } from './src/renderer/services/ui-text-scale';
-        (window as any).__co = { Pane, applyUiTextScale };
+        (window as any).__co = { Pane, SplitContainer, applyUiTextScale };
       `,
     },
     bundle: true, platform: 'browser', format: 'iife', outfile: path.join(outDir, 'page.js'),
@@ -128,7 +135,7 @@ function electronMain() {
       });
       await win.loadFile(path.join(outDir, 'page.html'));
       win.webContents.focus(); // page focus, so the box's textarea can hold the keyboard; the window stays hidden
-      const result = await win.webContents.executeJavaScript(`(${pageRun.toString()})(${JSON.stringify(SCALES)})`);
+      const result = await win.webContents.executeJavaScript(`(${pageRun.toString()})(${JSON.stringify(SCALES)}, ${JSON.stringify(GROUPS)})`);
       write(result);
       app.exit(0);
     } catch (err) {
@@ -139,7 +146,7 @@ function electronMain() {
 }
 
 // Runs inside the page. Self-contained: it is sent as source text.
-async function pageRun(SCALES) {
+async function pageRun(SCALES, GROUPS) {
   const U = window.__co;
   const FX = window.__fixture;
   const checks = [];
@@ -152,6 +159,7 @@ async function pageRun(SCALES) {
 
   // --- the preload bridge, stubbed: every call answers; the pty is a sink
   const logs = [];
+  let ptyResizes = 0;
   const answers = {
     'pty.create': () => 1, 'pty.respawn': () => 2, 'pty.getShell': () => '/bin/zsh', 'pty.getCwd': () => '',
     'pty.inputState': () => [{ dirty: false, length: 0, lastInputAt: 0, slashSubmitAt: 0, userStashAt: 0, pattonStashAt: 0 }],
@@ -163,7 +171,8 @@ async function pageRun(SCALES) {
       if (name === 'log.send') { logs.push({ tag: String(args[1] && args[1][0]), data: args[1] && args[1][1], at: performance.now() }); return undefined; }
       const last = name.split('.').pop();
       if (/^on[A-Z]/.test(last)) return () => {};
-      if (name === 'pty.write' || name === 'pty.resize') return undefined;
+      if (name === 'pty.resize') { ptyResizes++; return undefined; }
+      if (name === 'pty.write') return undefined;
       return Promise.resolve(answers[name] ? answers[name]() : undefined);
     },
   });
@@ -348,23 +357,35 @@ async function pageRun(SCALES) {
    * terminal's row count every animation frame and, the frame it changes, calls redrawFor at once (in `over`
    * and in `dock`: the real Claude redraws whether or not he is scrolled up). Returns a stop function.
    */
-  function startStandIn(lines) {
+  function startStandIn(lines, delayMs = 0) {
     let last = term().rows;
+    let lastCols = term().cols;
     let stopped = false;
     let busy = false;
+    const timers = [];
     const tick = async () => {
       if (stopped) return;
+      if (delayMs > 0) { // a slower Claude: the redraw for each size change lands delayMs after it
+        if (term().rows !== last || term().cols !== lastCols) {
+          last = term().rows;
+          lastCols = term().cols;
+          timers.push(setTimeout(() => { if (!stopped) redrawFor(lines); }, delayMs));
+        }
+        requestAnimationFrame(tick);
+        return;
+      }
       if (!busy && term().rows !== last) {
         busy = true;
         last = term().rows;
         await redrawFor(lines);
-        last = term().rows;
+        // `last` stays the row count redrawn for: a resize made meanwhile (Patton working k out from this very
+        // redraw, S60) is redrawn for at the next frame, as Claude redraws after each SIGWINCH
         busy = false;
       }
       requestAnimationFrame(tick);
     };
     requestAnimationFrame(tick);
-    return () => { stopped = true; };
+    return () => { stopped = true; for (const t of timers) clearTimeout(t); };
   }
 
   const room = (n) => Array.from({ length: n }, (_, i) => `draft line ${i + 1}`).join('\n');
@@ -523,13 +544,183 @@ async function pageRun(SCALES) {
     }
   }
 
+  // ---------------------------------------------------------------- settling (S60): Claude slow to redraw
+  // Each scenario prints one summary line under "Measured": the room changes logged (rows given up, `>`
+  // between), placements under, room holds, the terminal's rows over time, pty.resize calls, the settled logs
+  // (cause:ms, `!` when the ceiling ended it) and k at the end against the k worked out from scratch.
+
+  /** From now until stop(): the terminal's rows and k each frame, and the logs and pty.resize calls meanwhile. */
+  function startWatch() {
+    const l0 = logs.length;
+    const p0 = ptyResizes;
+    const rowsSeq = [term().rows];
+    const kSeq = [kNow()];
+    let stopped = false;
+    const tick = () => {
+      if (stopped) return;
+      if (term().rows !== rowsSeq[rowsSeq.length - 1]) rowsSeq.push(term().rows);
+      if (kNow() !== kSeq[kSeq.length - 1]) kSeq.push(kNow());
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+    return {
+      stop() {
+        stopped = true;
+        const got = logs.slice(l0);
+        const of = (tag) => got.filter((x) => x.tag === tag);
+        return {
+          rowsSeq, kSeq,
+          rooms: of('[COMPOSE] room').map((x) => x.data.rows),
+          unders: of('[COMPOSE] place').filter((x) => x.data.placement === 'under').length,
+          held: of('[COMPOSE] room held').length,
+          settled: of('[COMPOSE] settled').map((x) => `${x.data.cause}:${x.data.afterMs}${x.data.found ? '' : '!'}`),
+          pty: ptyResizes - p0,
+        };
+      },
+    };
+  }
+  /** Times k went from 0 to more than 0 (each a give-up of rows: more than one in a run is the box flapping). */
+  const giveUps = (kSeq) => kSeq.filter((k, i) => i > 0 && k > 0 && kSeq[i - 1] === 0).length;
+  const summary = (r) => `room ${r.rooms.join('>') || '-'}, under ${r.unders}, held ${r.held}, rows ${r.rowsSeq.join('>')}, pty.resize ${r.pty}, settled [${r.settled.join(' ')}]`;
+
+  /** k for `draft` worked out from scratch on the screen as it now stands: a one-line draft (k 0), Claude's
+   *  redraw, then the draft again, typed on a settled screen. */
+  async function refK(delayMs, draft) {
+    await typeDraft('x');
+    await sleep(delayMs + 1700);
+    await typeDraft(draft);
+    await sleep(delayMs + 1900);
+    await frame();
+    return kNow();
+  }
+
+  async function delayChecks(at) {
+    const s0 = await setupPane();
+    if (!s0) { check(`${at} delay: Claude's bar found`, false, null); return; }
+    let stop = startStandIn(s0.barLines);
+    await typeDraft(room(8));
+    await settle(1800);
+    const clean = kNow();
+    stop();
+    check(`${at} delay: precondition, an 8-line draft gives up rows with a prompt redraw (k ${clean})`, clean >= 1, { clean });
+    for (const D of [100, 600, 1200, 2500, 4000]) {
+      const s = await setupPane();
+      if (!s) { check(`${at} delay ${D}: Claude's bar found`, false, null); continue; }
+      stop = startStandIn(s.barLines, D);
+      const w = startWatch();
+      await typeDraft(room(8));
+      await sleep(7700);
+      const r = w.stop();
+      stop();
+      const flaps = giveUps([0, ...r.kSeq]);
+      measures.push(`${at} delay ${D} ms: ${summary(r)}, k ${r.kSeq.join('>')} (clean ${clean})`);
+      if (D <= 2500) {
+        check(`${at} delay ${D}: at most one room resize in 8 s`, r.rooms.length <= 1, summary(r));
+        check(`${at} delay ${D}: k at the end is the clean k (${clean})`, kNow() === clean, { k: r.kSeq, clean });
+      }
+      if (D <= 1200) check(`${at} delay ${D}: the box never goes under`, r.unders === 0, summary(r));
+      check(`${at} delay ${D}: no flapping, rows given up at most once in 8 s`, flaps <= 1, { k: r.kSeq, rows: r.rowsSeq });
+      if (D > 3000) {
+        // Past the settling ceiling the box went under: a later trigger that isn't the draft's content (here
+        // the Interface Text Size changed and back) on the redrawn bar must not give rows up again.
+        await sleep(2000); // Claude's slow redraw after the box came back over
+        const w2 = startWatch();
+        U.applyUiTextScale(SCALES[0] + 0.1, 'change');
+        await sleep(1500);
+        U.applyUiTextScale(SCALES[0], 'change');
+        await sleep(1500);
+        const r2 = w2.stop();
+        measures.push(`${at} delay ${D} ms, then the text size changed and back: ${summary(r2)}, k ${r2.kSeq.join('>')}`);
+        check(`${at} delay ${D}: the box went under past the ceiling, and a later trigger gives no rows up (room held, logged)`,
+          r.unders >= 1 && kNow() === 0 && r2.held >= 1 && giveUps([0, ...r.kSeq, ...r2.kSeq]) <= 1, summary(r2));
+      }
+    }
+  }
+
+  /** k after `act` (a resize or an aside) with Claude's redraw `delayMs` late, against refK on the same screen. */
+  async function kAfterCase(at, name, delayMs, act, before) {
+    const s = await setupPane();
+    if (!s) { check(`${at} ${name}: Claude's bar found`, false, null); return; }
+    const stop = startStandIn(s.barLines, delayMs);
+    if (before) await before();
+    const draft = room(8);
+    await typeDraft(draft);
+    await settle(Math.max(1800, delayMs + 1300));
+    const k0 = kNow();
+    const w = startWatch();
+    const cleanup = await act(s);
+    await sleep(3200);
+    await frame();
+    const r = w.stop();
+    const k1 = kNow();
+    const ref = await refK(delayMs, draft);
+    stop();
+    if (cleanup) cleanup();
+    measures.push(`${at} ${name}: ${summary(r)}, k ${k0} -> ${r.kSeq.join('>')} (from scratch ${ref})`);
+    check(`${at} ${name}: precondition, the draft gave up rows (k ${k0})`, k0 >= 1, { k0 });
+    check(`${at} ${name}: k after (${k1}) is the k the same screen and draft give from scratch (${ref})`, k1 === ref, summary(r));
+  }
+
+  const splitCase = (at) => kAfterCase(at, 'F1 split', 150, async () => {
+    const other = document.createElement('div');
+    const sc = new U.SplitContainer('horizontal', 0.5, pane.element, other, () => {});
+    host.appendChild(sc.element);
+    pane.show(); // as Tab does after a split
+    return () => { if (typeof sc.dispose === 'function') sc.dispose(); sc.element.remove(); };
+  });
+  const fontCase = (at) => kAfterCase(at, 'F2 font', 150,
+    async () => { pane.setFontSize(term().options.fontSize + 2); },
+    async () => { pane.setFontSize(term().options.fontSize); }); // the box takes the terminal's size first
+  const asideCase = (at) => kAfterCase(at, 'F3 aside end', 150, async (s) => {
+    await report('blocked', 'permission');
+    await settle(400);
+    // Claude's question: output scrolls the screen and a dialog replaces the bar
+    const b = term().buffer.active;
+    const bar = findBar();
+    const top = bar ? bar.R - 1 - b.baseY + 1 : term().rows - 4;
+    let out = `\x1b[0m\x1b[${top};1H\x1b[J`;
+    for (let i = 1; i <= 14; i++) out += `output line ${i}\r\n`;
+    out += 'Do you want to proceed?\r\n\u276f 1. Yes\r\n  2. No';
+    await write(out);
+    await settle(300);
+    await redrawFor(s.barLines); // answered: Claude's bar again at the bottom
+    await report('idle');
+  });
+  const windowCase = (at) => kAfterCase(at, 'F4 window 120 px shorter, redraw 700 ms', 700, async () => {
+    host.style.height = `${parseFloat(host.style.height) - 120}px`;
+  });
+
+  async function sendCase(at) {
+    const s = await setupPane();
+    if (!s) { check(`${at} send: Claude's bar found`, false, null); return; }
+    const stop = startStandIn(s.barLines, 150);
+    await typeDraft(room(8));
+    await settle(1800);
+    const k0 = kNow();
+    const w = startWatch();
+    const ta = textarea();
+    ta.focus();
+    ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    await sleep(3000);
+    const r = w.stop();
+    stop();
+    measures.push(`${at} send: ${summary(r)}, k ${k0} -> ${r.kSeq.join('>')}, draft ${JSON.stringify(ta.value.slice(0, 20))}`);
+    check(`${at} send: precondition, the draft gave up rows (k ${k0})`, k0 >= 1, { k0 });
+    check(`${at} send: the rows come back in one resize and stay`, kNow() === 0 && r.rooms.length === 1 && r.rooms[0] === 0 && r.rowsSeq.length === 2, summary(r));
+  }
+
+  const wanted = (g) => !GROUPS || GROUPS.includes(g);
+  const guarded = async (at, name, run) => {
+    if (!wanted(name)) return;
+    try { await run(at); } catch (err) { check(`${at} ${name} ran to the end`, false, String((err && err.stack) || err).slice(0, 400)); }
+  };
   try {
-    for (const S of SCALES) {
+    for (const [i, S] of SCALES.entries()) {
       U.applyUiTextScale(S, 'change');
       const at = `x${S}`;
-      for (const [name, run] of [['hidden', hiddenPaneChecks], ['height', paneHeightChecks], ['stale', staleBarChecks]]) {
-        try { await run(at); } catch (err) { check(`${at} ${name} ran to the end`, false, String((err && err.stack) || err).slice(0, 400)); }
-      }
+      for (const [name, run] of [['hidden', hiddenPaneChecks], ['height', paneHeightChecks], ['stale', staleBarChecks]]) await guarded(at, name, run);
+      if (i > 0) continue; // the settling cases at the first scale only: they are long
+      for (const [name, run] of [['delay', delayChecks], ['split', splitCase], ['font', fontCase], ['aside', asideCase], ['window', windowCase], ['send', sendCase]]) await guarded(at, name, run);
     }
   } finally {
     if (pane) pane.dispose();

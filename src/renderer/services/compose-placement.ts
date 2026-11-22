@@ -35,10 +35,20 @@ export const COMPOSE_BAR_LOST_MS = 400;
  *  and the box must not jump under the terminal and back (D9 as amended). */
 export const COMPOSE_OWN_TYPING_MS = 1500;
 
-/** D9, no loop: a change between `under` and the overlays refits the terminal
- *  and Claude redraws; readings in this long after Patton's own refit never
- *  count toward the lost wait. */
-export const COMPOSE_REFIT_SETTLE_MS = 500;
+/** D15 settling (S60): after Patton's own resize of the terminal (room, a
+ *  placement change, show, font, a pane resize) Claude's bar is trimmed until
+ *  Claude redraws; misses don't count toward the lost wait, and a k decision
+ *  that needs the bar's row waits, until the first reading that finds the bar
+ *  after a write, or this long at most (then the lost wait runs as usual). */
+export const COMPOSE_SETTLE_MAX_MS = 3000;
+
+/** D15 anti-flap (S60): the bar lost within this long of a room resize and
+ *  the box under: no rows are given up again until the draft changes. */
+export const COMPOSE_ROOM_HOLD_MS = 5000;
+
+/** `[COMPOSE] settled` at most this often per pane (a window drag resizes
+ *  many times); the rest are counted in the next line's `skipped`. */
+export const COMPOSE_SETTLED_LOG_MS = 1000;
 
 /** D9, no loop: a pane changes between `under` and the overlays on a reading
  *  at most once in this long (a change due sooner waits, then is decided
