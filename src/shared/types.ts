@@ -1,4 +1,4 @@
-import type { BoardTint, NotificationSoundType } from './constants';
+import type { BoardTint, NotificationSoundName, NotificationSoundType } from './constants';
 
 export interface PtyCreateOptions {
   shell?: string;
@@ -50,8 +50,14 @@ export interface AppSettings {
   uiTextScale?: number;
   scrollback: number;
   shell: string;
-  notificationSound: boolean;
-  notificationSoundType: NotificationSoundType;
+  /** The chosen sound. Absent in settings saved before the choice existed:
+   *  read it through `resolveNotificationSound`. */
+  notificationSoundName?: NotificationSoundName;
+  /** Volume 0-100; absent reads as 100 (`notificationVolumeOf`). */
+  notificationSoundVolume?: number;
+  /** Legacy on/off flag and type, no longer written; only the resolver reads them. */
+  notificationSound?: boolean;
+  notificationSoundType?: NotificationSoundType;
   copyOnSelect: boolean;
   globalHotkey: string;
   theme: string;

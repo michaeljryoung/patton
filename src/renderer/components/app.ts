@@ -84,13 +84,7 @@ export class App {
         this.tabManager.setRenderer(settings.renderer);
         this.quickTerminal.setRenderer(settings.renderer);
       }
-      if (settings.notificationSound !== undefined) {
-        this.notificationSound.setEnabled(settings.notificationSound);
-      }
-      if (settings.notificationSoundType !== undefined) {
-        this.notificationSound.setType(settings.notificationSoundType);
-        this.notificationSound.playPreview();
-      }
+      this.notificationSound.applySettings(settings, true);
       if (settings.copyOnSelect !== undefined) {
         this.tabManager.setCopyOnSelect(settings.copyOnSelect);
       }
@@ -117,7 +111,7 @@ export class App {
         this.applyTheme(settings.theme);
       }
       announce('Settings saved');
-    });
+    }, () => this.notificationSound.playPreview());
 
     this.commandPalette = new CommandPalette(appEl, (actionId) => {
       this.executeAction(actionId);
@@ -208,10 +202,7 @@ export class App {
     if (settings.shell) {
       this.tabManager.setShell(settings.shell);
     }
-    this.notificationSound.setEnabled(settings.notificationSound !== false);
-    if (settings.notificationSoundType) {
-      this.notificationSound.setType(settings.notificationSoundType);
-    }
+    this.notificationSound.applySettings(settings, false);
     this.tabManager.setCopyOnSelect(settings.copyOnSelect === true);
     this.tabManager.setComposeFirst(settings.composeBox !== false);
     this.tabManager.setComposeOverBar(settings.composeOverBar !== false);

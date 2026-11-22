@@ -125,12 +125,40 @@ export const IPC = {
   // --- end system fonts ---
 } as const;
 
-/** The notification sounds Patton ships; settings outside this list are ignored. */
+/** The notification sounds Patton ships, calmest first; settings outside this
+ *  list are ignored. 'classic' is the two-tone ding every version before the
+ *  choice existed played (it was stored as 'chime'). */
+export const NOTIFICATION_SOUND_NAMES = ['off', 'soft', 'marimba', 'pop', 'classic', 'bugle', 'bullet'] as const;
+export type NotificationSoundName = (typeof NOTIFICATION_SOUND_NAMES)[number];
+
+/** The legacy `notificationSoundType` values, kept so an old settings file reads. */
 export const NOTIFICATION_SOUND_TYPES = ['chime', 'bugle', 'bullet'] as const;
 export type NotificationSoundType = (typeof NOTIFICATION_SOUND_TYPES)[number];
 
-export function isNotificationSoundType(value: unknown): value is NotificationSoundType {
-  return typeof value === 'string' && (NOTIFICATION_SOUND_TYPES as readonly string[]).includes(value);
+export function isNotificationSoundName(value: unknown): value is NotificationSoundName {
+  return typeof value === 'string' && (NOTIFICATION_SOUND_NAMES as readonly string[]).includes(value);
+}
+
+/** The one reader of the sound choice, in the renderer and the settings panel.
+ *  A saved `notificationSoundName` wins. A file from before the choice has only
+ *  the old on/off flag and type: off stays off, a chosen bugle or bullet stays,
+ *  and everyone else (the old default 'chime' can't be told from a choice)
+ *  gets the new default, the soft chime. Classic is one click away. */
+export function resolveNotificationSound(s: {
+  notificationSoundName?: unknown;
+  notificationSound?: unknown;
+  notificationSoundType?: unknown;
+}): NotificationSoundName {
+  if (isNotificationSoundName(s.notificationSoundName)) return s.notificationSoundName;
+  if (s.notificationSound === false) return 'off';
+  if (s.notificationSoundType === 'bugle' || s.notificationSoundType === 'bullet') return s.notificationSoundType;
+  return DEFAULTS.NOTIFICATION_SOUND_NAME;
+}
+
+/** Volume is a whole number 0-100 (a percent of the sound's own level). */
+export function notificationVolumeOf(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 100) return Math.round(value);
+  return DEFAULTS.NOTIFICATION_SOUND_VOLUME;
 }
 
 /** The window's ground before the renderer paints. Must equal --bg in main.css
@@ -166,8 +194,9 @@ export const DEFAULTS = {
   UI_TEXT_SCALE: 1,
   UI_TEXT_SCALES: [0.9, 1, 1.1, 1.25, 1.5] as readonly number[],
   FONT_SIZE_MAX: 72,
-  NOTIFICATION_SOUND: true,
-  NOTIFICATION_SOUND_TYPE: 'chime' as const,
+  // The calmest choice; see resolveNotificationSound for who gets it.
+  NOTIFICATION_SOUND_NAME: 'soft' as const,
+  NOTIFICATION_SOUND_VOLUME: 100,
   STARTUP_COMMAND: '' as const,
   // The compose box under Claude Code tabs (Settings, per tab from the palette).
   COMPOSE_BOX: true,
