@@ -182,6 +182,9 @@ export interface Bookmark {
 }
 // --- end bookmarks ---
 
+/** Page titles (main/page-titles.ts): claude.ai artifact id → the page's own title. */
+export type PageTitleMap = Record<string, string>;
+
 // --- Project board ---
 /** A theme on the project board: a named area with a faint tint. `projects`
  *  holds absolute folder paths in display order; paths not in the current list
@@ -344,6 +347,11 @@ export interface PattonAPI {
     onChanged: (callback: (bookmarks: Bookmark[]) => void) => () => void;
   };
   // --- end bookmarks ---
+  /** Page titles: the learned map (null when the call was refused), and every change to it. */
+  pageTitles: {
+    get: () => Promise<PageTitleMap | null>;
+    onChanged: (callback: (titles: PageTitleMap) => void) => () => void;
+  };
   // --- Project board ---
   board: {
     get: () => Promise<BoardPayload>;

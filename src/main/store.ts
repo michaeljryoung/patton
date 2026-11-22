@@ -71,6 +71,10 @@ interface StoreSchema {
   notes: string;
   projectNames: Record<string, string>;
   bookmarks: Bookmark[]; // bookmarks sidebar
+  /** Page titles (main/page-titles.ts): artifact id → { title, at }. */
+  pageTitles: Record<string, { title: string; at: number }>;
+  /** Backfill misses: artifact id → when it was last searched for. */
+  pageTitleMisses: Record<string, number>;
 }
 
 const defaults: StoreSchema = {
@@ -109,6 +113,8 @@ const defaults: StoreSchema = {
   notes: '',
   projectNames: {},
   bookmarks: [], // bookmarks sidebar
+  pageTitles: {},
+  pageTitleMisses: {},
 };
 
 let store: ElectronStore<StoreSchema> | null = null;
@@ -411,6 +417,23 @@ export function setBookmarks(list: Bookmark[]): void {
   getStore().set('bookmarks', list);
 }
 // --- end bookmarks ---
+
+// --- Page titles (shapes checked by main/page-titles.ts on read) ---
+export function getPageTitles(): unknown {
+  return getStore().get('pageTitles', {});
+}
+
+export function setPageTitles(titles: Record<string, { title: string; at: number }>): void {
+  getStore().set('pageTitles', titles);
+}
+
+export function getPageTitleMisses(): unknown {
+  return getStore().get('pageTitleMisses', {});
+}
+
+export function setPageTitleMisses(misses: Record<string, number>): void {
+  getStore().set('pageTitleMisses', misses);
+}
 
 export function getWindowState(): WindowState {
   return getStore().get('windowState', defaults.windowState);

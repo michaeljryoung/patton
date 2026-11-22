@@ -19,7 +19,7 @@
  */
 import { promises as fsp } from 'node:fs';
 import type { SessionFeedEvent } from '../shared/session-feed';
-import { TranscriptParser } from './transcript-parser';
+import { TranscriptParser, type PagePublish } from './transcript-parser';
 import { TranscriptTail } from './transcript-tail';
 import {
   checkTranscriptPath, claudeHome, listProcesses, readSessionsFile, resolveSession,
@@ -37,6 +37,8 @@ export interface SessionFeedDeps {
   home?: () => string;
   ps?: () => Promise<ProcRow[]>;
   log?: (msg: string, data: Record<string, unknown>) => void;
+  /** Told of each page Claude publishes in a followed transcript (page titles). */
+  onPagePublished?: (p: PagePublish) => void;
   /** How often to retry while unresolved (ms), for the first `resolveFastForMs`. */
   resolveEveryMs?: number;
   /** How long the fast retries last after a watch or a detach (ms). */
@@ -212,7 +214,7 @@ export class SessionFeed {
     w: Watch,
     a: Omit<Attached, 'tail' | 'sessionsMtime'>,
   ): Promise<void> {
-    const parser = new TranscriptParser({ home: this.home() });
+    const parser = new TranscriptParser({ home: this.home(), onPublish: (p) => this.deps.onPagePublished?.(p) });
     const tail = new TranscriptTail(a.transcriptPath, {
       onText: (text) => {
         if (w.stopped || w.attached?.tail !== tail) return;

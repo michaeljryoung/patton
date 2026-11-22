@@ -12,6 +12,7 @@ import { getResourcesPath } from './resources-path';
 import * as store from './store';
 import { registerClipboardImageHandlers } from './clipboard-image';
 import { registerSessionFeedHandlers } from './session-feed-ipc';
+import { registerPageTitleHandlers } from './page-titles-ipc';
 import { getSystemFonts } from './system-fonts';
 import { RateLimiter } from './rate-limiter';
 import { titleBarActionFor } from './title-bar-action';
@@ -997,6 +998,9 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
   // --- end Claude Code Stop hook ---
   // --- image paste ---
   registerClipboardImageHandlers();
-  registerSessionFeedHandlers(ptyManager);
+  const pageTitles = registerPageTitleHandlers();
+  registerSessionFeedHandlers(ptyManager, (p) => {
+    pageTitles.learnPublish(p).catch((err) => console.warn('[TITLE] learn failed', { error: (err as Error).message }));
+  });
   // --- end image paste ---
 }

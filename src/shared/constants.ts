@@ -30,6 +30,8 @@ export const IPC = {
   BOOKMARKS_CHANGED: 'bookmarks:changed',
   APP_TOGGLE_BOOKMARKS: 'app:toggle-bookmarks',
   // --- end bookmarks ---
+  PAGE_TITLES_GET: 'page-titles:get',
+  PAGE_TITLES_CHANGED: 'page-titles:changed',
 
   SETTINGS_UI_TEXT_SCALE: 'settings:ui-text-scale',
   APP_SETTINGS: 'app:settings',

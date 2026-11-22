@@ -8,6 +8,7 @@ import { SESSION_FEED_IPC, type SessionFeedEvent } from '../shared/session-feed'
 import type { PtyManager } from './pty-manager';
 import { RateLimiter } from './rate-limiter';
 import { SessionFeed } from './session-feed';
+import type { PagePublish } from './transcript-parser';
 
 function validId(id: unknown): id is number {
   return typeof id === 'number' && Number.isInteger(id) && id > 0;
@@ -19,8 +20,9 @@ function hintPath(hint: unknown): string | undefined {
   return typeof p === 'string' && p.length <= 4096 ? p : undefined;
 }
 
-export function registerSessionFeedHandlers(ptyManager: PtyManager): SessionFeed {
+export function registerSessionFeedHandlers(ptyManager: PtyManager, onPagePublished?: (p: PagePublish) => void): SessionFeed {
   const feed = new SessionFeed({
+    onPagePublished,
     shellPid: (ptyId) => ptyManager.getPid(ptyId),
     send: (ptyId, event: SessionFeedEvent) => {
       const win = ptyManager.getWindow(ptyId);

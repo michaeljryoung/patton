@@ -34,7 +34,12 @@
  *   this transcript never started (a subagent's own shell) is dropped.
  * - ScheduleWakeup: `input {delaySeconds, prompt, reason}` (or `{stop}`).
  * - Timestamps: top-level ISO `timestamp`.
+ * - Page publish: Artifact `input {file_path, description, title?, url?}`;
+ *   result text "Published <absolute path> at https://claude.ai/code/artifact/<id>
+ *   (Version N, …)". The same result line can be written twice. Handed to
+ *   `onPublish` (page titles, main/page-titles.ts), never sent to the bar.
  */
+import { ARTIFACT_ID, ARTIFACT_URL } from '../shared/artifact-id';
 import type { FeedTaskEndStatus, FeedTaskKind, SessionFeedEvent } from '../shared/session-feed';
 
 export const DESCRIPTION_MAX = 200;
@@ -92,7 +97,7 @@ function resultText(content: unknown): string {
 
 const URL_PATTERNS: Array<{ re: RegExp; id: (m: RegExpMatchArray) => string }> = [
   // claude.ai artifacts: /code/artifact/<id>, /artifact/<id>, /public/artifacts/<id>
-  { re: /^https:\/\/claude\.ai\/(?:[a-z]+\/)*artifacts?\/([A-Za-z0-9-]+)/, id: (m) => m[1] },
+  { re: ARTIFACT_URL, id: (m) => m[1] },
   { re: /^https:\/\/docs\.google\.com\/(?:document|spreadsheets|presentation)\/(?:u\/\d+\/)?d\/([A-Za-z0-9_-]+)/, id: (m) => m[1] },
   { re: /^https:\/\/drive\.google\.com\/(?:file\/(?:u\/\d+\/)?d\/|drive\/(?:u\/\d+\/)?folders\/|open\?id=)([A-Za-z0-9_-]+)/, id: (m) => m[1] },
   { re: /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/(\d+)/, id: (m) => m[1] },
@@ -378,7 +383,25 @@ export function parseNotifications(fullText: string, at: number): SessionFeedEve
 
 // ------------------------------------------------------------ the parser
 
-interface ToolUse { name: string; description: string; command: string; background: boolean }
+interface ToolUse { name: string; description: string; command: string; background: boolean; filePath: string; title: string }
+
+/** A page Claude published: where its file is, and the title Claude gave it. */
+export interface PagePublish {
+  id: string;
+  /** The published file (the result's path, else the call's `file_path`); untrusted. */
+  path: string | null;
+  /** The Artifact call's `input.title`, cleaned; '' when none. */
+  inputTitle: string;
+  at: number;
+}
+
+const PUBLISHED = /^\s*Published (\/[^\n]*?) at (https:\/\/claude\.ai\/[^\s)]+)/;
+
+/** A path from transcript text that may be handed to the title reader. */
+function publishPath(p: unknown): string | null {
+  if (typeof p !== 'string' || !p.startsWith('/') || p.length > PATH_MAX) return null;
+  return p === p.replace(CONTROL, '') ? p : null;
+}
 
 /** Tools whose results quote files, pages or command output: a launch
  *  sentence in their text is quoted, never a launch (B). */
@@ -389,6 +412,8 @@ export interface ParserOptions {
   home: string;
   /** Clock for lines without a timestamp (tests pass a fixed one). */
   now?: () => number;
+  /** Told of each page publish (once per tool call). */
+  onPublish?: (p: PagePublish) => void;
 }
 
 /** Remembers at most `max` keys, dropping the oldest. */
@@ -416,6 +441,8 @@ export class TranscriptParser {
   private toolUses = new Map<string, ToolUse>();
   private started = new BoundedSet(ID_MEMORY);
   private ended = new BoundedSet(ID_MEMORY);
+  private published = new BoundedSet(ID_MEMORY);
+  private readonly onPublish: ((p: PagePublish) => void) | undefined;
   private readonly home: string;
   private readonly now: () => number;
   /** Lines that were not JSON (counted, never thrown). */
@@ -424,6 +451,7 @@ export class TranscriptParser {
   constructor(opts: ParserOptions) {
     this.home = opts.home;
     this.now = opts.now ?? Date.now;
+    this.onPublish = opts.onPublish;
   }
 
   /** The next text starts a fresh line (the tail re-attached): drop the
@@ -513,6 +541,8 @@ export class TranscriptParser {
           description: cleanText(input.description, DESCRIPTION_MAX),
           command: cleanText(input.command, DESCRIPTION_MAX),
           background: input.run_in_background === true,
+          filePath: block.name === 'Artifact' && typeof input.file_path === 'string' ? input.file_path.slice(0, PATH_MAX + 1) : '',
+          title: block.name === 'Artifact' ? cleanText(input.title, DESCRIPTION_MAX) : '',
         });
         if (block.name === 'ScheduleWakeup' && typeof input.delaySeconds === 'number'
             && Number.isFinite(input.delaySeconds) && input.delaySeconds >= 0
@@ -550,10 +580,18 @@ export class TranscriptParser {
       }
       if (block.type !== 'tool_result' || typeof block.tool_use_id !== 'string') continue;
       const use = this.toolUses.get(block.tool_use_id);
-      const start = this.backgroundStart(use, tur, resultText(block.content), at);
+      const text = resultText(block.content);
+      const start = this.backgroundStart(use, tur, text, at);
       if (start && !this.started.has(start.id)) {
         this.started.add(start.id);
         out.push(start);
+      }
+      if (this.onPublish && !this.published.has(block.tool_use_id)) {
+        const pub = publishOf(use, text, at);
+        if (pub) {
+          this.published.add(block.tool_use_id);
+          this.onPublish(pub);
+        }
       }
     }
     return out;
@@ -603,4 +641,16 @@ export class TranscriptParser {
     if ((kind === 'shell' || kind === 'monitor') && use?.command) ev.command = use.command;
     return ev;
   }
+}
+
+/** A tool result that says a page was published, at the start of its text.
+ *  A quoting tool's result (a `cat` of a log, a Read) is never one. */
+function publishOf(use: ToolUse | undefined, text: string, at: number): PagePublish | null {
+  if (use && QUOTING_TOOLS.has(use.name)) return null;
+  const m = text.match(PUBLISHED);
+  if (!m) return null;
+  const id = m[2].match(ARTIFACT_URL)?.[1] ?? '';
+  if (!ARTIFACT_ID.test(id)) return null;
+  const path = publishPath(m[1]) ?? publishPath(use?.filePath);
+  return { id, path, inputTitle: use?.title ?? '', at };
 }

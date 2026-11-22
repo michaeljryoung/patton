@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { IPC, uiTextScaleFromArgv } from '../shared/constants';
-import type { BoardLayout, BoardPayload, Bookmark, ConfirmRequest, PattonAPI, PauseAllRunRequest, RenderSnapshot } from '../shared/types';
+import type { BoardLayout, BoardPayload, Bookmark, ConfirmRequest, PageTitleMap, PattonAPI, PauseAllRunRequest, RenderSnapshot } from '../shared/types';
 import { SESSION_FEED_IPC, type SessionFeedEvent } from '../shared/session-feed';
 
 const api: PattonAPI = {
@@ -80,6 +80,14 @@ const api: PattonAPI = {
     },
   },
   // --- end bookmarks ---
+  pageTitles: {
+    get: () => ipcRenderer.invoke(IPC.PAGE_TITLES_GET),
+    onChanged: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, titles: PageTitleMap) => callback(titles);
+      ipcRenderer.on(IPC.PAGE_TITLES_CHANGED, listener);
+      return () => ipcRenderer.removeListener(IPC.PAGE_TITLES_CHANGED, listener);
+    },
+  },
   // --- Project board ---
   board: {
     get: () => ipcRenderer.invoke(IPC.BOARD_GET),
