@@ -885,3 +885,22 @@ _Earlier entries archived → `docs/session-archive.md` (latest trim 2026-11-20,
 ## Gotchas (S59 trim 2026-11-20)
 
 - **The first Stop after a /checkpoint is not its finish** (S54). Its turn can end parked on its own background job, or he interrupts it and talks about something else; anything meaning "checkpoint finished" keys on the hook's `cpd`, never `cpt` (its start) or the first Stop after it. Check such a signal against real transcripts and main.log, not only synthetic probes.
+
+## Session Log (S60 trim 2026-11-22)
+
+### 2026-11-20 (Session 56 — v1.31.0 the always-open compose box; asar bump; map reality check; released not installed)
+- Michael, on a Windows review recommending the desktop app's "proper compose box": "How do we get that?", then on a box opened by hand: "what's the point of one that I have to open manually … I don't know which prompt I'm going to need it for", then "ok" to an always-open box that steps aside when Claude asks (page https://claude.ai/code/artifact/503c49fd-8ae5-4501-be32-fe371f388337). Evidence: 6 Nov compose-first (main.log.1) had 25 click hand-offs and 20 reclaims in seven hours before going off; main.log 10–20 Nov holds 25 real question episodes, 3 under 0.1 s. Claude Code's Ctrl+G editor hand-off was probed (works on v2.1.321) and dropped as opened by hand.
+- Built in worktrees: `eac1ef3` setting, `3a3094b` aside, menu and clicks, `ee2b218` file drop, `0465dab` replay check; review 1 (2 major) → `b7e0bac`, `03b1c02`; layout `6ef83af`; review 2 (1 major: Enter inside the 250 ms hold approved a prompt) → `2ebb0a7`, `0a7af2f` (broadcast skips a pane that's asking). `npm run check` 30/30 (`check-compose-box.mjs` 255, `check-file-drop.mjs` 48, `check-ui-text-scale.cjs` 210).
+- Pushed `eef0399`; run 44728983899 green, v1.31.0, cask `65ad2b08…` matches the DMG. Not installed: he quits Patton and installs from Terminal.app (hand-off in `docs/NEXT_STEPS.md`).
+- His "do 2 and 3 now": `@electron/asar` 4.3.2 (`2f83e1d`; audit 12 → 10, prod 0; typescript-eslint 8.73.0 waits on his `min-release-age` until 23 Nov). Reality check by a fresh auditor: done 25 → 30, none downgraded, 13 retired, `compose_box` pointer added, 11 open.
+- My mistake: running `/Applications/Patton.app/Contents/MacOS/Patton --version` started a second Patton on his data, which died of EPIPE ("Patton fatal error"); his Patton untouched, its autosave rewrote `config.json` 30 s later; note in `docs/reference/build-and-install.md`.
+
+_Earlier entries archived → `docs/session-archive.md` (latest trim 2026-11-20, S59)._
+
+## Decisions (S60 trim 2026-11-22)
+
+- **2026-11-20 (S56, S58) — One always-open compose box, laid over Claude Code's own bar.** The box is always open under Claude tabs (S56, Michael: "I don't know which prompt I'm going to need it for") and follows 7501 `blocked` to step aside; from S58 it lies over Claude Code's bar, found on screen, because Claude Code can't hide its bar ("two typing bars … doesn't look very good"; sketch A). My calls: under the terminal whenever the bar holds his text or isn't recognised, so it never covers what it can't read; a 400 ms wait counted from the first miss, a 1.5 s window after the pane's own sends and Okay? asks, and at most one resize-causing move a second; `[Image #N]` counts as images; no × on chips in the box (the old × hid only the preview); `composeOverBar` (on) to switch it off. S56's calls (250 ms hold, 1 s typing grace, clicks keep the box's keyboard) stand; all in `docs/compose-box.md`.
+
+## Gotchas (S60 trim 2026-11-22)
+
+- **A linked worktree resolves to its main repo, so anything keyed by `project.root` is shared by the repo and every worktree** (S52). The tab-name store was: a name set from the LifeSci worktree's tab renamed `next-venture` and its Defence worktree too (fixed in v1.27.0 by keying on `worktree.path`). Before keying new per-project state on `root`, decide whether a worktree should share it.
