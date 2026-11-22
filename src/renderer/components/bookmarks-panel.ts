@@ -6,6 +6,7 @@ import { projectRootName } from '../services/project-names';
 import { openProject, type OpenProjectHost } from '../services/open-project';
 import { CLOSED_STATE, projectLiveState, type ProjectLiveState } from '../services/project-live-state';
 import { rlog } from '../services/renderer-logger';
+import { defaultArtifactLabel, disambiguator, fullTarget } from '../services/bookmark-labels';
 import { ConfirmDialog } from './confirm-dialog';
 import { ContextMenu } from './context-menu';
 import type { Tab } from './tab';
@@ -347,7 +348,12 @@ export class BookmarksPanel {
     if (bookmark.kind === 'artifact' && bookmark.url) {
       // Log the host only: an artifact URL can carry a share token.
       rlog('info', '[BOOKMARK] open', { kind: 'artifact', host: hostOf(bookmark.url) });
-      await window.patton.openExternal(bookmark.url);
+      const handed = await window.patton.openExternal(bookmark.url);
+      if (handed === false) {
+        // Main refused the address or the browser hand-off failed (main.log says which).
+        rlog('warn', '[BOOKMARK] open not handed to the browser', { kind: 'artifact', host: hostOf(bookmark.url) });
+        announce(`Could not open ${bookmark.label}`, 'assertive');
+      }
       return;
     }
     const path = bookmark.path;
@@ -454,7 +460,7 @@ export class BookmarksPanel {
       const ul = document.createElement('ul');
       ul.className = 'bookmarks-items';
       for (const bookmark of items) {
-        ul.appendChild(this.renderRow(bookmark, states.get(bookmark.id) ?? CLOSED_STATE, items.length > 1));
+        ul.appendChild(this.renderRow(bookmark, states.get(bookmark.id) ?? CLOSED_STATE, items.length > 1, items));
       }
       section.appendChild(ul);
       this.listEl.appendChild(section);
@@ -469,7 +475,7 @@ export class BookmarksPanel {
     }
   }
 
-  private renderRow(bookmark: Bookmark, rowState: RowState, canDrag: boolean): HTMLElement {
+  private renderRow(bookmark: Bookmark, rowState: RowState, canDrag: boolean, group: readonly Bookmark[]): HTMLElement {
     const { isOpen, isCurrent } = rowState;
     const li = document.createElement('li');
     const row = document.createElement('button');
@@ -482,14 +488,14 @@ export class BookmarksPanel {
     row.setAttribute('aria-haspopup', 'menu');
 
     row.classList.toggle('is-missing', bookmark.missing === true);
-    // While the project has sessions open, the second line counts them
-    // ("2 open · 1 waiting"); the folder stays in the tooltip.
+    // The row is its name. A second line appears only for what is state, not
+    // address: the count of open sessions, a missing folder, or (for two rows
+    // of one name) the smallest thing that tells them apart. The full folder
+    // or address is the tooltip and the accessible name's detail.
     const counts = bookmark.kind === 'project' && !bookmark.missing && rowState.open > 0 ? countText(rowState) : '';
-    const subtitle = bookmark.kind === 'project'
-      ? (bookmark.missing ? 'Folder missing' : counts || (bookmark.displayPath ?? bookmark.path ?? ''))
-      : hostOf(bookmark.url ?? '');
+    const subtitle = bookmark.missing ? 'Folder missing' : counts || disambiguator(bookmark, group);
     const state = isCurrent ? ', open in the active tab' : isOpen && !counts ? ', open' : '';
-    row.setAttribute('aria-label', `${bookmark.label}, ${subtitle}${state}`);
+    row.setAttribute('aria-label', `${bookmark.label}, ${fullTarget(bookmark)}${counts ? `, ${counts}` : ''}${bookmark.missing ? ', folder missing' : ''}${state}`);
     // Green dot: a session here waits for you; hollow ring: one is parked on
     // its own background work. The tab bar's glyphs, static here.
     row.classList.toggle('has-waiting', rowState.waiting > 0);
@@ -510,7 +516,8 @@ export class BookmarksPanel {
     const sub = document.createElement('span');
     sub.className = 'bookmark-subtitle';
     sub.textContent = subtitle;
-    text.append(label, sub);
+    text.appendChild(label);
+    if (subtitle) text.appendChild(sub);
     row.appendChild(text);
 
     if (canDrag) {
@@ -884,7 +891,7 @@ export class BookmarksPanel {
       this.urlInput.focus();
       return;
     }
-    const label = (this.labelInput.value.trim() || hostOf(url)).slice(0, DEFAULTS.BOOKMARK_LABEL_MAX_CHARS);
+    const label = (this.labelInput.value.trim() || defaultArtifactLabel(url)).slice(0, DEFAULTS.BOOKMARK_LABEL_MAX_CHARS);
     const bookmark: Bookmark = { id: newId(), kind: 'artifact', label, url, addedAt: Date.now() };
     const saved = await this.save([...this.bookmarks, bookmark]);
     if (!saved) {
