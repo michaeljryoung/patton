@@ -11,24 +11,37 @@ import { artifactIdOf } from '../../shared/artifact-id';
 import type { PageTitleMap } from '../../shared/types';
 import { rlog } from './renderer-logger';
 
-let titles: PageTitleMap = {};
+let titles = new Map<string, string>();
 const listeners = new Set<() => void>();
 let started = false;
 
-/** Replace the map (main's answer or push; the checks). */
-export function setPageTitles(map: PageTitleMap): void {
-  const next: PageTitleMap = {};
-  for (const [id, title] of Object.entries(map ?? {})) {
-    if (typeof title === 'string' && title) next[id] = title;
+/** If main's first answer is null (rate-limited), ask once more after this (ms). */
+export const RETRY_DELAY_MS = 2000;
+
+/** Replace the map (main's answer or push; the checks). Own string entries only. */
+export function setPageTitles(map: PageTitleMap | null | undefined): void {
+  const next = new Map<string, string>();
+  if (map && typeof map === 'object') {
+    for (const id of Object.keys(map)) {
+      const title: unknown = map[id];
+      if (typeof title === 'string' && title) next.set(id, title);
+    }
   }
   titles = next;
-  for (const cb of listeners) cb();
+  // One listener's failure must not stop the others.
+  for (const cb of listeners) {
+    try {
+      cb();
+    } catch (err) {
+      rlog('warn', '[TITLE] listener failed', { error: (err as Error)?.name ?? 'unknown' });
+    }
+  }
 }
 
 /** The learned title of a claude.ai artifact address, or ''. */
 export function pageTitleOf(url: string | null | undefined): string {
   const id = artifactIdOf(url);
-  return id ? titles[id] ?? '' : '';
+  return id ? titles.get(id) ?? '' : '';
 }
 
 /** Called after every change; returns the unsubscribe. */
@@ -37,15 +50,24 @@ export function onPageTitlesChanged(cb: () => void): () => void {
   return () => listeners.delete(cb);
 }
 
-/** Once per window: ask main for the map, then follow its pushes. */
+/** Once per window: ask main for the map, then follow its pushes. A null answer
+ *  (refused) is asked once more after RETRY_DELAY_MS, unless a push came first. */
 export function startPageTitles(): void {
   if (started) return;
   started = true;
-  window.patton.pageTitles.onChanged((map) => setPageTitles(map));
-  window.patton.pageTitles.get()
-    .then((map) => {
-      if (map) setPageTitles(map);
-      rlog('info', '[TITLE] titles loaded', { count: map ? Object.keys(map).length : null });
-    })
-    .catch((err) => rlog('warn', '[TITLE] titles load failed', err));
+  let pushed = false;
+  window.patton.pageTitles.onChanged((map) => { pushed = true; setPageTitles(map); });
+  const ask = (retry: boolean): void => {
+    window.patton.pageTitles.get()
+      .then((map) => {
+        if (map) {
+          if (!pushed) setPageTitles(map);
+        } else if (!retry) {
+          setTimeout(() => { if (!pushed) ask(true); }, RETRY_DELAY_MS);
+        }
+        rlog('info', '[TITLE] titles loaded', { count: map ? Object.keys(map).length : null, retry });
+      })
+      .catch((err) => rlog('warn', '[TITLE] titles load failed', err));
+  };
+  ask(false);
 }

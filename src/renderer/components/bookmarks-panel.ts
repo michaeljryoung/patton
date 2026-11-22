@@ -419,7 +419,8 @@ export class BookmarksPanel {
       const path = bookmark.kind === 'project' ? bookmark.path : undefined;
       states.set(bookmark.id, path ? projectLiveState(snapshot, path) : CLOSED_STATE);
     }
-    const signature = JSON.stringify([this.bookmarks, [...states.entries()]]);
+    // The shown names are in it: a page title learned later changes them, not the bookmarks.
+    const signature = JSON.stringify([this.bookmarks, this.bookmarks.map(displayLabel), [...states.entries()]]);
     if (signature === this.lastRendered) return;
     this.lastRendered = signature;
 

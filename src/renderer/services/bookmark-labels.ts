@@ -46,8 +46,9 @@ export function defaultArtifactLabel(url: string): string {
 /** The name a row shows. An artifact bookmark still carrying an automatic name (the bare
  *  host "claude.ai" it got before the id-start naming, or "Artifact <id start>") shows the
  *  page's own title when main has learned it (services/page-titles.ts), else
- *  "Artifact <id start>". A name the user typed stays. Display only: the saved name is
- *  never rewritten here. */
+ *  "Artifact <id start>". A name the user typed stays, except one typed as exactly the
+ *  automatic name "Artifact <id start>", which reads as automatic. Display only: the
+ *  saved name is never rewritten here. */
 export function displayLabel(bookmark: Bookmark): string {
   if (bookmark.kind !== 'artifact' || !bookmark.url) return bookmark.label;
   let host = '';
@@ -62,10 +63,11 @@ export function displayLabel(bookmark: Bookmark): string {
   return pageTitleOf(bookmark.url) || generated;
 }
 
-/** The name a new artifact bookmark is saved with: what the user typed, else the page's
- *  learned title, else the automatic name; capped as main caps it. */
+/** The name a new artifact bookmark is saved with: what the user typed, else the
+ *  automatic name (which displayLabel shows as the page's title, so it follows a
+ *  republish like every other automatically named bookmark); capped as main caps it. */
 export function newArtifactLabel(url: string, typed: string): string {
-  const name = typed.trim() || pageTitleOf(url) || defaultArtifactLabel(url);
+  const name = typed.trim() || defaultArtifactLabel(url);
   return name.slice(0, DEFAULTS.BOOKMARK_LABEL_MAX_CHARS);
 }
 
