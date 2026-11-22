@@ -1,0 +1,261 @@
+<title>Patton Document Tab</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: one reading column; the sketches are Patton windows drawn in Patton's own tokens (ink hairlines, square corners), the bar on the right of the terminal */
+:root {
+  --ink: #0b0d12;
+  --bg: #ffffff;
+  --page: #f6f7f9;
+  --muted: #596170;
+  --hairline: #0b0d12;
+  --soft: #d9dde4;
+  --term-bg: #ffffff;
+  --strip: #eef0f4;
+  --cc-rule: #8a8a8a;
+  --cc-dim: #8b8b8b;
+  --cc-accent: #c8603f;
+  --cc-mode: #b8264f;
+  --needs: #1f9d55;
+  --mark-bg: #2f6bff;
+  --mark-fg: #ffffff;
+  --font-ui: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Monaco, monospace;
+  --row: 18px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --ink: #dbe3ee; --bg: #111214; --page: #0b0c0e; --muted: #8b95a5; --hairline: #6b717a; --soft: #2a2d33;
+    --term-bg: #111214; --strip: #1a1c20; --cc-rule: #6f6f6f; --cc-dim: #8a8a8a; --cc-accent: #d77757;
+    --cc-mode: #ff6b80; --needs: #3ecf7a; --mark-bg: #7aa2ff; --mark-fg: #0b0d12;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ink: #dbe3ee; --bg: #111214; --page: #0b0c0e; --muted: #8b95a5; --hairline: #6b717a; --soft: #2a2d33;
+  --term-bg: #111214; --strip: #1a1c20; --cc-rule: #6f6f6f; --cc-dim: #8a8a8a; --cc-accent: #d77757;
+  --cc-mode: #ff6b80; --needs: #3ecf7a; --mark-bg: #7aa2ff; --mark-fg: #0b0d12;
+}
+
+body { background: var(--page); color: var(--ink); font: 15px/1.55 var(--font-ui); }
+.wrap {
+  max-width: 1120px; margin: 0 auto;
+  padding-block: 36px 72px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 44px;
+}
+h1 { font-size: 30px; line-height: 1.15; margin: 0 0 12px; letter-spacing: -0.01em; text-wrap: balance; }
+h2 { font-size: 19px; margin: 0 0 6px; text-wrap: balance; }
+p { margin: 0; max-width: 68ch; }
+.lede { font-size: 17px; display: grid; gap: 10px; }
+.intro { color: var(--muted); }
+section { display: grid; gap: 16px; }
+.label { font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+.label .rec { color: var(--mark-bg); }
+.scroll { overflow-x: auto; padding-bottom: 2px; }
+figure { margin: 0; display: grid; gap: 10px; align-content: start; }
+figcaption { font-size: 14px; color: var(--muted); max-width: 64ch; }
+figcaption b { color: var(--ink); font-weight: 600; }
+code { font-family: var(--font-mono); font-size: 13px; }
+
+/* A Patton window: tab strip, then the terminal and (when open) the bar */
+.win { border: 1px solid var(--hairline); background: var(--term-bg); width: 900px; box-sizing: border-box; }
+.win.small { width: 340px; }
+.strip { display: flex; gap: 0; border-bottom: 1px solid var(--hairline); background: var(--strip); font: 12px/1 var(--font-ui); }
+.tab { flex: 1 1 0; min-width: 0; padding: 8px 10px; display: flex; gap: 7px; align-items: center; justify-content: center; border-right: 1px solid var(--soft); white-space: nowrap; overflow: hidden; }
+.tab.on { background: var(--term-bg); font-weight: 700; box-shadow: inset 0 -3px 0 var(--ink); }
+.dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; background: var(--needs); }
+.dot.ring { background: transparent; box-shadow: inset 0 0 0 1.5px var(--ink); }
+.dot.none { background: transparent; }
+.badge { font: 700 10px/1 var(--font-ui); border: 1px solid var(--hairline); padding: 2px 4px; }
+.body { display: flex; height: 380px; }
+.small .body { height: 300px; }
+.term { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; justify-content: flex-end; padding: 0 10px; font: 12.5px/var(--row) var(--font-mono); overflow: hidden; }
+.small .term { font-size: 11px; line-height: 16px; }
+.l { white-space: pre; overflow: hidden; text-overflow: clip; }
+.rule { color: var(--cc-rule); }
+.dim { color: var(--cc-dim); }
+.acc { color: var(--cc-accent); }
+.mode { color: var(--cc-mode); }
+.box { border: 1px solid var(--hairline); margin: 0 -10px; padding: 5px 10px; font: 12.5px/1.35 var(--font-mono); color: var(--muted); background: var(--term-bg); display: flex; gap: 8px; align-items: center; }
+.small .box { font-size: 11px; }
+.box .ta { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.box .send { font: 12px/1.2 var(--font-ui); color: var(--ink); border: 1px solid var(--hairline); padding: 3px 10px; }
+
+/* The bar */
+.bar { flex: 0 0 248px; border-left: 1px solid var(--hairline); background: var(--bg); font: 12.5px/1.35 var(--font-ui); display: flex; flex-direction: column; overflow: hidden; }
+.small .bar { flex-basis: 132px; font-size: 11px; }
+.sec { padding: 10px 12px; display: grid; gap: 6px; border-bottom: 1px solid var(--soft); }
+.sec:last-child { border-bottom: 0; }
+.sec h3 { margin: 0; font: 700 10.5px/1.2 var(--font-ui); letter-spacing: 0.08em; text-transform: uppercase; display: flex; justify-content: space-between; color: var(--ink); }
+.sec h3 span { color: var(--muted); font-weight: 600; letter-spacing: 0.02em; text-transform: none; }
+.item { display: grid; grid-template-columns: 52px 1fr auto; gap: 6px; align-items: baseline; }
+.small .item { grid-template-columns: 1fr auto; }
+.kind { font: 600 10px/1.4 var(--font-ui); letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+.small .kind { display: none; }
+.what { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.what code { font-size: 11.5px; }
+.t { font-variant-numeric: tabular-nums; color: var(--muted); white-space: nowrap; }
+.item.long .t { color: var(--cc-accent); font-weight: 700; }
+.item.ask .what { font-weight: 700; }
+.item.ask .t { color: var(--needs); font-weight: 700; }
+.item.done { opacity: 0.5; }
+.item.done .what { text-decoration: line-through; }
+.meter { height: 5px; background: var(--soft); position: relative; }
+.meter i { position: absolute; inset: 0 auto 0 0; background: var(--ink); }
+.kv { display: flex; justify-content: space-between; gap: 8px; font-variant-numeric: tabular-nums; }
+.kv .warn { color: var(--cc-accent); font-weight: 700; }
+.note { font-size: 11px; color: var(--muted); }
+
+/* B's rail */
+.rail { flex: 0 0 30px; border-left: 1px solid var(--hairline); background: var(--bg); display: flex; flex-direction: column; align-items: center; gap: 10px; padding-top: 10px; font: 700 11px/1 var(--font-ui); }
+.rail span { display: grid; place-items: center; width: 20px; height: 20px; border: 1px solid var(--hairline); }
+
+.row2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: 28px 24px; }
+
+table { border-collapse: collapse; width: 100%; min-width: 760px; font-size: 14px; }
+th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--soft); }
+th { font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); border-bottom: 1px solid var(--hairline); }
+td.st { white-space: nowrap; font-weight: 600; }
+.ok { color: var(--needs); }
+.hook { color: var(--mark-bg); }
+.no { color: var(--muted); }
+.facts { display: grid; gap: 10px; max-width: 74ch; padding: 0; margin: 0; list-style: none; }
+.facts li { padding-left: 18px; position: relative; }
+.facts li::before { content: ""; position: absolute; left: 2px; top: 0.65em; width: 6px; height: 6px; background: var(--ink); }
+.qs { display: grid; gap: 12px; padding-left: 22px; margin: 0; max-width: 74ch; }
+a { color: var(--mark-bg); }
+a:focus-visible { outline: 2px solid var(--mark-bg); outline-offset: 2px; }
+/* v3: the bar's own header with its minimize button; the minimized strip; failures and links rows */
+.barhead { display: flex; align-items: center; justify-content: space-between; padding: 7px 8px 7px 12px; border-bottom: 1px solid var(--hairline); font: 700 11px/1.2 var(--font-ui); letter-spacing: 0.08em; text-transform: uppercase; }
+.btn { font: 12px/1 var(--font-ui); letter-spacing: 0; text-transform: none; border: 1px solid var(--hairline); background: var(--bg); color: var(--ink); padding: 4px 8px; white-space: nowrap; }
+.btn.icon { padding: 3px 7px; font-weight: 700; }
+.fail .what { color: var(--cc-mode); }
+.link .what { color: var(--mark-bg); text-decoration: underline; text-underline-offset: 2px; }
+.ckpt { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.ckpt .big { font: 700 15px/1 var(--font-ui); font-variant-numeric: tabular-nums; }
+.strip-min { flex: 0 0 26px; border-left: 1px solid var(--hairline); background: var(--bg); display: flex; flex-direction: column; align-items: center; gap: 8px; padding-top: 6px; font: 700 10.5px/1 var(--font-ui); }
+.strip-min .btn { padding: 3px 5px; }
+.strip-min .n { display: grid; place-items: center; width: 18px; height: 18px; border: 1px solid var(--hairline); font-variant-numeric: tabular-nums; }
+.strip-min .n.f { color: var(--cc-mode); border-color: var(--cc-mode); }
+.small .barhead { padding: 6px 6px 6px 9px; font-size: 10px; }
+.small .sec { padding: 8px 9px; }
+.decided { display: grid; gap: 10px; max-width: 74ch; padding: 0; margin: 0; list-style: none; }
+.decided li { padding-left: 18px; position: relative; }
+.decided li::before { content: "✓"; position: absolute; left: 0; top: 0; font-weight: 700; color: var(--needs); }
+/* Viewer sketch: a document tab with its toolbar and a page */
+.vbar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px 10px; border-bottom: 1px solid var(--hairline); background: var(--bg); font: 12px/1 var(--font-ui); }
+.vbar .name { font-weight: 700; margin-right: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vbody { height: 250px; background: var(--strip); display: flex; justify-content: center; padding: 14px; overflow: hidden; }
+.small .vbody { height: 210px; }
+.paper { width: 78%; background: #fff; color: #1b1d22; box-shadow: 0 1px 3px rgba(0,0,0,.18); padding: 18px 22px; font: 11px/1.45 Georgia, "Times New Roman", serif; }
+.paper h4 { font: 700 13px/1.2 Georgia, serif; margin: 0 0 8px; }
+.paper .tc-ins { color: #1f6f3a; text-decoration: underline; }
+.paper .tc-del { color: #a12b2b; text-decoration: line-through; }
+.paper .cm { font: 10px/1.3 var(--font-ui); border-left: 2px solid #d9a400; padding-left: 6px; margin: 6px 0; color: #5a4a00; background: #fff8dc; }
+.paper table { border-collapse: collapse; width: 100%; min-width: 0; font-size: 10px; margin-top: 6px; }
+.paper td, .paper th { border: 1px solid #999; padding: 2px 4px; text-transform: none; letter-spacing: 0; color: #1b1d22; font-size: 10px; }
+.web { width: 92%; background: var(--bg); color: var(--ink); border: 1px solid var(--soft); padding: 14px 16px; font: 12px/1.5 var(--font-ui); }
+.web .ttl { font: 700 15px/1.2 var(--font-ui); margin-bottom: 6px; }
+.signin { width: 70%; align-self: center; background: var(--bg); border: 1px solid var(--hairline); padding: 16px; font: 12px/1.5 var(--font-ui); display: grid; gap: 8px; text-align: center; }
+.opt { display: grid; gap: 10px; align-content: start; }
+.opt .pros { margin: 0; padding-left: 18px; font-size: 14px; }
+.opt .pros li { margin-bottom: 4px; }
+.tag { display: inline-block; font: 700 11px/1 var(--font-ui); letter-spacing: .06em; text-transform: uppercase; border: 1px solid var(--hairline); padding: 3px 6px; }
+</style>
+
+<div class="wrap">
+
+<header>
+  <h1>Patton Document Tab</h1>
+  <div class="lede">
+    <p>Open what Claude hands you, Word files, PDFs and Claude's own pages, in a Patton tab beside your session, without hunting in Downloads or switching to Word.</p>
+    <p class="intro">Four ways to do it, from what researching the options and testing on this Mac turned up. The first two work today at low risk. The last two are about Claude's pages, and one of them needs a short test first.</p>
+  </div>
+</header>
+
+<section aria-labelledby="h-a">
+  <h2 id="h-a">A · Document tab <span class="tag"><span class="rec">recommended start</span></span></h2>
+  <div class="row2">
+    <div class="opt">
+      <div class="scroll">
+        <div class="win small" role="img" aria-label="A Patton tab showing a Word file as a page, with a toolbar: Open in Word, Show in Finder, Copy, Find, Zoom">
+          <div class="strip"><div class="tab"><span class="dot ring"></span>patton</div><div class="tab on"><span class="dot none"></span>Install steps v2</div></div>
+          <div class="vbar"><span class="name">Install steps v2.docx</span><span class="btn">Open in Word</span><span class="btn">Finder</span><span class="btn">Copy</span><span class="btn">Find</span></div>
+          <div class="vbody"><div class="paper"><h4>Installing v1.35</h4>Quit Patton, then open Claude in iTerm on the project and say <span class="tc-del">"update"</span> <span class="tc-ins">"install the latest"</span>.<div class="cm">Michael · 22 Nov: does this include the sound?</div><table><tr><th>Step</th><th>Time</th></tr><tr><td>Build</td><td>2 min</td></tr></table></div></div>
+        </div>
+      </div>
+    </div>
+    <ul class="pros">
+      <li>A click on a Word file (in the session bar, a bookmark, or the terminal) opens it in a new Patton tab as a page-width view, like a clean web page. Page breaks appear only where the file has them, and 383 of your last 503 Word files have none, so most read as one long sheet. PDFs open in the PDF viewer built into Patton.</li>
+      <li>Buttons: Open in Word, Show in Finder, Copy (formatting kept), Find, Zoom. It reloads when Claude rewrites the file.</li>
+      <li>Headings, tables and images come through. Comments and tracked changes show too, though the library calls those experimental.</li>
+      <li>Fields aren't recalculated: a table of contents shows the text Word last saved in it, and page numbers are dropped.</li>
+      <li>One small library (docx-preview, Apache-2.0, with its zip reader; no install scripts; 0 audit issues today), shown in a locked-down frame so nothing in a document can run.</li>
+    </ul>
+  </div>
+</section>
+
+<section aria-labelledby="h-b">
+  <h2 id="h-b">B · Print view, a button on A</h2>
+  <p>A "Print view" button lays the Word file out as printed pages through LibreOffice, which is already on this Mac: close to Word's pages, not identical. Comments go in the margin with their author, and tracked changes are marked with a change bar. About 1–2 seconds for a one-page file, longer for long ones. Text copied from it likely loses headings and bold, so A stays the default view.</p>
+</section>
+
+<section aria-labelledby="h-c">
+  <h2 id="h-c">C · Claude's pages, live, in a tab</h2>
+  <div class="row2">
+    <div class="opt">
+      <div class="scroll">
+        <div class="win small" role="img" aria-label="A Patton tab showing claude.ai's sign-in for the first time, then Claude's pages after that">
+          <div class="strip"><div class="tab"><span class="dot ring"></span>patton</div><div class="tab on"><span class="dot none"></span>Session Bar</div></div>
+          <div class="vbar"><span class="name">claude.ai · Patton Session Bar</span><span class="btn">Reload</span><span class="btn">Open in Chrome</span></div>
+          <div class="vbody"><div class="signin"><b>Sign in to Claude, once</b><span>Continue with email</span><span class="note">Google sign-in may refuse apps like this</span></div></div>
+        </div>
+      </div>
+    </div>
+    <ul class="pros">
+      <li>The real page, exactly as in Chrome: comments and live data included.</li>
+      <li>You sign in to claude.ai once, inside Patton. Google's sign-in can refuse apps that embed a browser, so it would be by email link.</li>
+      <li>Patton's own menus and hover cards would sit behind the page while it's shown.</li>
+      <li>Untested: whether claude.ai accepts Patton's browser. A one-hour test comes before building it.</li>
+    </ul>
+  </div>
+</section>
+
+<section aria-labelledby="h-d">
+  <h2 id="h-d">D · Claude's pages from this Mac, no sign-in</h2>
+  <div class="row2">
+    <div class="opt">
+      <div class="scroll">
+        <div class="win small" role="img" aria-label="A Patton tab showing Claude's page from its local file">
+          <div class="strip"><div class="tab"><span class="dot ring"></span>patton</div><div class="tab on"><span class="dot none"></span>Session Bar</div></div>
+          <div class="vbar"><span class="name">Patton Session Bar · local copy</span><span class="btn">Open live in Chrome</span></div>
+          <div class="vbody"><div class="web"><div class="ttl">Patton Session Bar</div>Today, what Claude has running in the background is hidden at the bottom of its screen…</div></div>
+        </div>
+      </div>
+    </div>
+    <ul class="pros">
+      <li>Claude's page tool only takes a file from this Mac, so every page it publishes starts as one: in the last four days, 11 pages (38 publishes, counting updates), each with its file still here. Patton shows that file at once, and again whenever Claude rewrites it.</li>
+      <li>No sign-in. Pages from the last four days loaded only Google Fonts; a page that pulls a library from the web would load it too unless Patton blocks it.</li>
+      <li>It isn't the live page: no comments, and nothing made on another computer. "Open live in Chrome" covers that.</li>
+    </ul>
+  </div>
+</section>
+
+<section aria-labelledby="h-rec">
+  <h2 id="h-rec">Recommendation</h2>
+  <ul class="facts">
+    <li><b>Build A with B's button,</b> and send the session bar's and bookmarks' Word, PDF and page links there.</li>
+    <li><b>For Claude's pages, D now.</b> C only if a one-hour sign-in test passes, since it would hold your claude.ai login inside Patton.</li>
+    <li><b>Ruled out:</b>
+      <ul>
+        <li>Quick Look: a floating panel, not a tab, and it drops comments and deletions.</li>
+        <li>mammoth, another Word library: it silently drops deleted text.</li>
+        <li>Google Docs, which stay in Chrome for the same sign-in reason as C.</li>
+      </ul>
+    </li>
+  </ul>
+</section>
+
+</div>
