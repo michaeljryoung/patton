@@ -16,8 +16,10 @@
  * Authorization header shows as "Bearer <token>").
  */
 import { execFile } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { driveAccountValid } from '../shared/drive-settings';
+import { bodyText } from './docx-comments';
+import { entryText, readZip, type ZipEntry } from './docx-zip';
 
 export const DEFAULT_DRIVE_FOLDER = 'Patton';
 const API = 'https://www.googleapis.com/drive/v3/files';
@@ -171,12 +173,47 @@ export async function sendToDrive(
   }
 }
 
-/** A path he may hold Lindus work in (his rule on Lindus accounts): asked before sending. */
+/** A path he may hold Lindus work in (his rule on Lindus accounts): any
+ *  folder or file name on the way that says Lindus, which takes in the Lindus
+ *  Google Drive mount (`~/Library/CloudStorage/GoogleDrive-…@lindushealth.com`).
+ *  Case-insensitive: macOS keeps the case he typed. */
 export function isLindusPath(real: string, home: string): boolean {
-  const name = real.slice(real.lastIndexOf('/') + 1);
-  if (/lindus/i.test(name)) return true;
-  const projects = `${home}/Projects/`;
-  if (!real.startsWith(projects)) return false;
-  const top = real.slice(projects.length).split('/')[0];
-  return /lindus/i.test(top);
+  void home;
+  return /lindus/i.test(real);
+}
+
+/** The Lindus Google Drive mount on this Mac (any Lindus account's). */
+const LINDUS_DRIVE = /\/Library\/CloudStorage\/GoogleDrive-[^/]*@lindushealth\.com(\/|$)/i;
+
+export type LindusSignal = 'lindus-drive' | 'path' | 'properties' | 'text' | 'unreadable';
+
+export const LINDUS_SIGNAL_WORDS: Record<LindusSignal, string> = {
+  'lindus-drive': 'it sits in the Lindus Google Drive',
+  path: 'a folder or its name says Lindus',
+  properties: 'its author or company says Lindus',
+  text: 'its text mentions Lindus',
+  unreadable: 'Patton could not read it to check',
+};
+
+/** Why this file may be Lindus work, or null: the symlink-resolved path (the
+ *  Lindus Drive mount, a Lindus folder or name), the document's properties
+ *  (creator, last editor, company, an @lindushealth.com author) and its text
+ *  (body, headers, footers, notes, comments). A file that can't be read as a
+ *  .docx counts as unknown, so it is asked about too. */
+export function lindusSignal(path: string, bytes: Buffer): LindusSignal | null {
+  let real = path;
+  try { real = realpathSync(path); } catch { /* the path as given */ }
+  if (LINDUS_DRIVE.test(real) || LINDUS_DRIVE.test(path)) return 'lindus-drive';
+  if (isLindusPath(real, '') || isLindusPath(path, '')) return 'path';
+  let entries: ZipEntry[];
+  try { entries = readZip(bytes); } catch { return 'unreadable'; }
+  for (const part of ['docProps/core.xml', 'docProps/app.xml', 'docProps/custom.xml']) {
+    if (/lindus/i.test(entryText(entries, part) ?? '')) return 'properties';
+  }
+  for (const e of entries) {
+    if (!/^word\/[^/]+\.xml$/i.test(e.name)) continue;
+    const xml = entryText(entries, e.name) ?? '';
+    if (/lindus/i.test(bodyText(xml).key)) return 'text';
+  }
+  return null;
 }
