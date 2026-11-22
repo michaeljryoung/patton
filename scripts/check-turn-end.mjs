@@ -87,6 +87,29 @@ check('drain: 0 -> 1 keeps', drn(V(2, 0), 'done', 0, 1).verdict !== null);
 check('drain: root working keeps (hook speaks mid-turn)', drn(V(1, 0), 'working', 1, 0).verdict !== null);
 check('drain: no verdict -> nothing cleared', drn(null, 'done', 1, 0).cleared === false);
 
+// Ended turn over a working root (Claude Code 2.1.321 keeps the root working while a subagent runs)
+check('ended: stop over working root with a working child marks the turn ended', te.turnEndedOverWork?.('working', 1) === true);
+check('ended: stop over working root with no working child does not', te.turnEndedOverWork?.('working', 0) === false);
+check('ended: stop over a done root does not (the done path decides)', te.turnEndedOverWork?.('done', 1) === false);
+const aft = (...a) => te.turnEndedAfterChange?.(...a);
+check('ended: same working root, same children keeps the mark', aft(true, 'working', 'working', 1, 1) === true);
+check('ended: working child finished (1 -> 0) ends the mark', aft(true, 'working', 'working', 1, 0) === false);
+check('ended: working child added (1 -> 2) ends the mark', aft(true, 'working', 'working', 1, 2) === false);
+check('ended: root done ends the mark', aft(true, 'working', 'done', 1, 1) === false);
+check('ended: root blocked ends the mark', aft(true, 'working', 'blocked', 1, 1) === false);
+check('ended: no mark stays none', aft(false, 'working', 'working', 1, 1) === false);
+const es = (sig, ended, v, titles) => te.endedTurnSignal?.(sig, ended, v, titles);
+let e = es({ kind: 'working' }, true, V(1, 0), ['agent']);
+check('ended: working + mark -> parked, tasks 1, the child title', e?.signal.kind === 'parked' && e.signal.tasks === 1 && e.signal.titles[0] === 'agent' && e.viaStop, e);
+e = es({ kind: 'working' }, true, V(3, 1), ['agent']);
+check('ended: work is the larger of hook tasks (3) and children (1); crons kept', e?.signal.tasks === 3 && e.signal.crons === 1, e);
+e = es({ kind: 'working' }, true, V(0, 0), ['a', 'b']);
+check('ended: children (2) outnumber hook tasks (0)', e?.signal.tasks === 2, e);
+e = es({ kind: 'working' }, false, V(1, 0), ['agent']);
+check('ended: no mark -> working unchanged', e?.signal.kind === 'working' && !e.viaStop, e);
+e = es({ kind: 'needs-you', key: 'root:blocked:permission', reason: 'x' }, true, V(1, 0), ['agent']);
+check('ended: a needs-you passes through', e?.signal.kind === 'needs-you', e);
+
 // ── Part 2: the real Pane ──
 const jsdomDir = process.env.JSDOM_DIR || process.argv[2];
 if (!jsdomDir) {
@@ -340,6 +363,94 @@ async function paneChecks() {
     t.root('working'); advance(500); t.root('done'); advance(100); t.root('blocked', { kind: 'permission' }); advance(60_000);
     t.hook(2, 0); advance(100); t.root('done'); advance(2000);
     check('pane: verdict timed from the latest done', lastParked(t.ev)?.tasks === 2, lastParked(t.ev));
+  }
+  // N: HOUSE (main.log 22 Nov 2026, pane-25), timed as logged. Claude launches a background subagent;
+  // the turn ends (Stop hook, 1 task) and 7501 keeps the root working with the child; no done ever
+  // comes. At 19:39:06.255 the subagent's notification starts a new turn (child gone, root working).
+  const turnEndedLogs = () => logs.filter((l) => l[0] === '[DOT] Turn ended over a working root');
+  const newTurnLogs = () => logs.filter((l) => l[0] === '[DOT] Hook verdict cleared: new turn');
+  {
+    logs.length = 0;
+    const t = newPane();
+    t.root('working');                                  // 19:37:23.293
+    advance(23_621); t.child('a1', 'working', { title: 'Research agent' }); // 19:37:46.914
+    advance(4_271); t.hook(1, 0);                       // 19:37:51.185
+    advance(100);
+    check('house: ring right after the Stop hook', t.pane.claudeState.parked?.tasks === 1 && t.pane.claudeState.activity === 'parked', [t.pane.claudeState.parked, t.pane.claudeState.activity]);
+    check('house: the ring lists the subagent', t.pane.claudeState.parked?.titles?.[0] === 'Research agent', t.pane.claudeState.parked);
+    check('house: not working while ringed', t.pane.claudeState.working === false, t.pane.claudeState.working);
+    check('house: logged once, source hook-root-working', turnEndedLogs().length === 1 && parkedLogs().some((p) => p.source === 'hook-root-working' && p.tasks === 1), [turnEndedLogs(), parkedLogs()]);
+    advance(74_970);                                    // 19:39:06.255, the whole wait
+    check('house: still the ring just before 19:39:06, no alert', t.pane.claudeState.activity === 'parked' && t.ev.alerts === 0, [t.pane.claudeState.activity, t.ev.alerts]);
+    t.child('a1', 'working', { title: 'Research agent', msg: 'still' });  // a same-count child update keeps it
+    check('house: a child record update (same count) keeps the ring', t.pane.claudeState.activity === 'parked', t.pane.claudeState.activity);
+    t.pane.handleProgramStatus({ type: 'clear', id: 'a1' }); t.root('working'); // 19:39:06.255
+    check('house: working after 19:39:06 (the subagent\'s notification turn)', t.pane.claudeState.activity === 'working' && t.pane.claudeState.parked === null && t.pane.claudeState.working === true, [t.pane.claudeState.activity, t.pane.claudeState.parked]);
+    check('house: the old verdict is cleared as a new turn', newTurnLogs().length === 1, newTurnLogs());
+    advance(20_000); t.hook(0, 0); advance(500); t.root('done'); advance(1700);
+    check('house: that next turn ends as needs-you, one alert', t.ev.alerts === 1 && t.pane.claudeState.parked === null, [t.ev.alerts, t.pane.claudeState.parked]);
+  }
+  // N2: the next turn after the ring ends with shells only (hook 2 tasks, no child): parked by the hook as today
+  {
+    const t = newPane();
+    t.root('working'); advance(1000); t.child('a1', 'working', { title: 'agent' }); advance(1000); t.hook(1, 0); advance(60_000);
+    t.pane.handleProgramStatus({ type: 'clear', id: 'a1' }); t.root('working'); advance(10_000);
+    t.hook(2, 0); advance(4000);
+    check('house next turn: a stop over a working root with no child is only stored', t.pane.claudeState.activity === 'working', t.pane.claudeState.activity);
+    t.root('done'); advance(5000);
+    check('house next turn: done after the hook -> parked by the hook, no alert', t.ev.alerts === 0 && t.pane.claudeState.parked?.tasks === 2, [t.ev.alerts, t.pane.claudeState.parked]);
+  }
+  // N3: the subagent's turn ends with it relaunching another: ring again with the new child
+  {
+    const t = newPane();
+    t.root('working'); advance(1000); t.child('a1', 'working', { title: 'agent' }); advance(1000); t.hook(1, 0); advance(30_000);
+    t.pane.handleProgramStatus({ type: 'clear', id: 'a1' }); t.root('working'); advance(3000);
+    t.child('a2', 'working', { title: 'agent 2' }); advance(2000); t.hook(1, 0); advance(100);
+    check('house relaunch: ring again over the new child', t.pane.claudeState.activity === 'parked' && t.pane.claudeState.parked?.titles?.[0] === 'agent 2', t.pane.claudeState.parked);
+    t.root('done'); advance(10_000);
+    check('house relaunch: a later done with the child working stays parked, no alert', t.pane.claudeState.activity === 'parked' && t.ev.alerts === 0, [t.pane.claudeState.activity, t.ev.alerts]);
+  }
+  // N4: a blocked root (a permission prompt) during the ring alerts
+  {
+    const t = newPane();
+    t.root('working'); advance(1000); t.child('a1', 'working', { title: 'agent' }); advance(1000); t.hook(1, 0); advance(10_000);
+    t.root('blocked', { kind: 'permission' }); advance(4100); // from a ring, the 4 s drain settle, as for any parked pane
+    check('house: a permission prompt during the ring alerts', t.ev.alerts === 1 && t.pane.claudeState.parked === null, [t.ev.alerts, t.pane.claudeState.parked]);
+  }
+  // O: a prompt of his during the ring clears it to working (7501 sends nothing: the root already works)
+  for (const via of ['enter', 'compose', 'empty-bar-enter']) {
+    logs.length = 0;
+    const t = newPane();
+    t.pane.claudeBarHoldsText = () => via !== 'empty-bar-enter';
+    t.pane.ptyId = 1;
+    t.root('working'); advance(1000); t.child('a1', 'working', { title: 'agent' }); advance(1000); t.hook(1, 0); advance(20_000);
+    if (via === 'compose') {
+      t.pane.queueSubmit('what next?', false, { own: true });
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+    } else {
+      t.pane.noteEnterSent();
+    }
+    if (via === 'empty-bar-enter') {
+      check('prompt: an Enter on an empty bar keeps the ring', t.pane.claudeState.activity === 'parked', t.pane.claudeState.activity);
+      continue;
+    }
+    check(`prompt (${via}): his message clears the ring to working`, t.pane.claudeState.activity === 'working' && t.pane.claudeState.parked === null, [t.pane.claudeState.activity, t.pane.claudeState.parked]);
+    check(`prompt (${via}): logged as a new turn`, newTurnLogs().some((l) => l[1].via === (via === 'enter' ? 'enter' : 'compose')), newTurnLogs());
+    advance(30_000); t.hook(1, 0); advance(100);
+    check(`prompt (${via}): that turn's end (subagent still running) rings again`, t.pane.claudeState.activity === 'parked', t.pane.claudeState.activity);
+  }
+  // P: GENOME (main.log 22 Nov 2026, pane-9), timed as logged: background shells, no child records,
+  // the hook (2 tasks) then a done -> parked by the hook, unchanged.
+  {
+    logs.length = 0;
+    const t = newPane();
+    t.root('working');                                  // 19:02:31.691
+    advance(40_133); t.hook(2, 0);                      // 19:03:11.824
+    advance(100);
+    check('genome: no ring before the done (no working child)', t.pane.claudeState.activity === 'working' && turnEndedLogs().length === 0, [t.pane.claudeState.activity, turnEndedLogs()]);
+    advance(3_901); t.root('done');                     // 19:03:15.825
+    advance(10_000);
+    check('genome: parked with 2 tasks, source hook-tasks, no alert', t.ev.alerts === 0 && t.pane.claudeState.parked?.tasks === 2 && parkedLogs().some((p) => p.source === 'hook-tasks'), [t.ev.alerts, t.pane.claudeState.parked, parkedLogs()]);
   }
   Date.now = realDateNow;
 }

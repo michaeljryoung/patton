@@ -75,3 +75,62 @@ export function verdictAfterChildren(
   if (verdict && rootState === 'done' && previousWorking > 0 && nextWorking === 0) return { verdict: null, cleared: true };
   return { verdict, cleared: false };
 }
+
+/**
+ * Claude Code 2.1.321 keeps its root `working` after a turn has ended while a
+ * subagent it launched still runs: no `done` comes until the subagent's
+ * `<task-notification>` starts the next turn (22 Nov 2026, House tab: Stop
+ * hook at 19:37:51 with 1 task, root `working` with 1 child throughout, next
+ * report 19:39:06 `working`, 0 children). Background shells don't do this
+ * (the genome tab got its `done`). So a Stop verdict that lands while the root
+ * works with working children marks the turn as ended, and the pane is parked
+ * as if 7501 had said done with those children working.
+ *
+ * Whether a Stop over a working root marks the turn ended: the hook spoke and
+ * 7501 shows at least one working child under it. With no working child the
+ * verdict is only stored, as before (the done that normally follows decides).
+ */
+export function turnEndedOverWork(rootState: ProgramState | null, workingChildren: number): boolean {
+  return rootState === 'working' && workingChildren > 0;
+}
+
+/**
+ * Whether an ended-turn mark survives a 7501 change. Anything but the same
+ * working root over the same number of working children means a new turn (or
+ * a real turn end, which 7501 then reports itself): the root leaving `working`,
+ * or a working child added (only a turn launches one) or finished (Claude
+ * takes its notification into a new turn, as at 19:39:06).
+ */
+export function turnEndedAfterChange(
+  ended: boolean,
+  previousRoot: ProgramState | null,
+  nextRoot: ProgramState | null,
+  previousWorking: number,
+  nextWorking: number,
+): boolean {
+  if (!ended) return false;
+  return previousRoot === 'working' && nextRoot === 'working' && previousWorking === nextWorking && nextWorking > 0;
+}
+
+/**
+ * The signal while a turn is marked ended over a working root: the ring, with
+ * the larger of the hook's task count and the working children, the hook's
+ * timers, and the children's titles. Any other signal passes through.
+ */
+export function endedTurnSignal(
+  signal: ProgramSignal,
+  ended: boolean,
+  verdict: HookVerdict | null,
+  workingTitles: string[],
+): { signal: ProgramSignal; viaStop: boolean } {
+  if (!ended || signal.kind !== 'working' || workingTitles.length === 0) return { signal, viaStop: false };
+  return {
+    signal: {
+      kind: 'parked',
+      tasks: Math.max(verdict?.tasks ?? 0, workingTitles.length),
+      crons: verdict?.crons ?? 0,
+      titles: workingTitles,
+    },
+    viaStop: true,
+  };
+}

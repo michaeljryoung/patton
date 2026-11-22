@@ -18,11 +18,14 @@ import { PATTON_QUOTES } from '../../shared/constants';
 import { shortcutKeys } from '../../shared/shortcuts';
 import type { CheckpointSource } from '../services/checkpoint-clock';
 import {
-  ProgramStatusRecords, isClaudeProgram, programSignal, rankProgram,
+  ProgramStatusRecords, isClaudeProgram, programSignal, rankProgram, shownText,
   type BlockedKind, type ProgramSignal, type ProgramState,
 } from '../services/program-status';
 import { paneActivity, type PaneActivity } from '../services/pane-activity';
-import { turnEndSignal, verdictAfterRootChange, verdictAfterChildren, type HookVerdict } from '../services/turn-end';
+import {
+  turnEndSignal, verdictAfterRootChange, verdictAfterChildren, turnEndedOverWork, turnEndedAfterChange, endedTurnSignal,
+  type HookVerdict,
+} from '../services/turn-end';
 
 import type { ITheme } from '@xterm/xterm';
 import type { TabFlag, UnsentInputState } from '../../shared/types';
@@ -234,9 +237,20 @@ export class Pane {
   // (either order): turnEndSignal. A verdict belongs to one turn: it is
   // cleared when the root enters `working` from another state, and when the
   // last working child finishes under a done root (the drain must alert).
+  // A Stop over a root still working with working children (a subagent) is
+  // the turn end itself: see turnEnded.
   // Known and left: a verdict landing after the dot was raised only re-parks
   // within the TTL; the hook preceded the done in all 206 logged verdicts.
   private hookVerdict: HookVerdict | null = null;
+  // The turn ended (Stop hook) while 7501 still says the root works with
+  // working children: Claude Code 2.1.321 does that for as long as a subagent
+  // it launched runs, and sends no done at all (22 Nov 2026, House tab). The
+  // pane shows the ring until a new turn: any change of the root or of the
+  // working children (turnEndedAfterChange), or his own send
+  // (noteTurnSubmitted). See endedTurnSignal. Known and left: when another
+  // Stop hook blocks that stop, Claude carries on under the ring until its
+  // next Stop or a child changes (Patton's hook can't see the block).
+  private turnEnded = false;
   private lastWorkingChildren = 0;
   private rootDoneAtMs: number | null = null;
   private lastRootState: ProgramState | null = null;
@@ -641,7 +655,17 @@ export class Pane {
       rlog('info', '[DOT] Hook verdict cleared: new turn', { pane: this.id, tasks: this.hookVerdict?.tasks, crons: this.hookVerdict?.crons });
     }
     this.hookVerdict = kept.verdict;
-    const workingChildren = this.programStatus.children().filter((c) => c.record.state === 'working').length;
+    const working = this.programStatus.children().filter((c) => c.record.state === 'working');
+    const workingChildren = working.length;
+    if (this.turnEnded && !turnEndedAfterChange(true, this.lastRootState, rootState, this.lastWorkingChildren, workingChildren)) {
+      this.turnEnded = false;
+      // The verdict belonged to the turn that ended; a new one has begun (or
+      // the root left working, and 7501 decides that turn end itself).
+      if (rootState === 'working' && this.hookVerdict) {
+        rlog('info', '[DOT] Hook verdict cleared: new turn', { pane: this.id, tasks: this.hookVerdict.tasks, crons: this.hookVerdict.crons, via: 'children' });
+        this.hookVerdict = null;
+      }
+    }
     const drained = verdictAfterChildren(this.hookVerdict, rootState, this.lastWorkingChildren, workingChildren);
     if (drained.cleared) {
       rlog('info', '[DOT] Hook verdict cleared: working children finished', { pane: this.id, tasks: this.hookVerdict?.tasks, crons: this.hookVerdict?.crons });
@@ -654,8 +678,12 @@ export class Pane {
     const turnEnd = turnEndSignal(
       programSignal(this.programStatus), this.hookVerdict, this.rootDoneAtMs, Pane.HOOK_VERDICT_TTL_MS,
     );
-    const signal = turnEnd.signal;
-    const crons = this.hookVerdict && turnEnd.viaHook ? this.hookVerdict.crons : 0;
+    // Turn end over a still-working root (a subagent runs on): the ring too.
+    const ended = endedTurnSignal(
+      turnEnd.signal, this.turnEnded, this.hookVerdict, working.map((c) => shownText(c.record.title ?? c.id, 60)),
+    );
+    const signal = ended.signal;
+    const crons = this.hookVerdict && (turnEnd.viaHook || ended.viaStop) ? this.hookVerdict.crons : 0;
     const children = this.programStatus.children().length;
     const isClaude = isClaudeProgram(this.programStatus);
     const logKey = [rootState, root?.kind, children, signal.kind, crons, isClaude].join('|');
@@ -687,7 +715,8 @@ export class Pane {
         this.cancelClaudeStop();
         const info: ParkedInfo = { tasks: signal.tasks, crons: signal.crons ?? 0, titles: signal.titles };
         if (previous.kind !== 'parked' || previous.tasks !== signal.tasks || previous.crons !== signal.crons) {
-          const source = !turnEnd.viaHook ? '7501' : signal.tasks > 0 ? 'hook-tasks' : 'hook-crons';
+          const source = ended.viaStop ? 'hook-root-working'
+            : !turnEnd.viaHook ? '7501' : signal.tasks > 0 ? 'hook-tasks' : 'hook-crons';
           rlog('info', '[DOT] Parked', { pane: this.id, tasks: signal.tasks, crons: info.crons, source });
         }
         // A needs-you raised before a late verdict is withdrawn with it.
@@ -737,6 +766,7 @@ export class Pane {
     this.claudeBlocked = false;
     this.needsYouText = null;
     this.hookVerdict = null;
+    this.turnEnded = false;
     this.rootDoneAtMs = null;
     this.lastRootState = null;
     this.lastWorkingChildren = 0;
@@ -789,7 +819,9 @@ export class Pane {
     return paneActivity({
       active: this.claudeActive || this.statusReporting,
       working: this.claudeWorking,
-      standing: this.statusReporting ? rankProgram(this.programStatus).kind : null,
+      // A turn that ended over a still-working root stands on its ring.
+      standing: !this.statusReporting ? null
+        : this.turnEnded && this.parked ? 'parked' : rankProgram(this.programStatus).kind,
       parked: this.parked !== null,
     });
   }
@@ -855,6 +887,13 @@ export class Pane {
       // back into needs-you (alerting once; an unchanged needs-you is a no-op
       // in applyProgramStatus). While the root works it is simply stored.
       if (this.lastRootState === 'done') this.applyProgramStatus();
+      // Claude Code keeps the root working after the turn while a subagent
+      // runs (no done follows): the turn has ended all the same, so the ring.
+      else if (turnEndedOverWork(this.lastRootState, this.lastWorkingChildren)) {
+        rlog('info', '[DOT] Turn ended over a working root', { pane: this.id, tasks, crons, children: this.lastWorkingChildren });
+        this.turnEnded = true;
+        this.applyProgramStatus();
+      }
       return;
     }
     if (this.pendingVerdictTimer) clearTimeout(this.pendingVerdictTimer);
@@ -2026,6 +2065,8 @@ export class Pane {
       // The user's own send takes the pasted images with it; Patton's own typing
       // (Pause all, checkpoint) says nothing about the user's message.
       if (origin !== 'patton') this.clearPasteChipsOnSend('compose');
+      // Patton's own lines (a /checkpoint) start a turn as his do.
+      if (command.trim()) this.noteTurnSubmitted('compose');
       // xterm's scrollOnUserInput only sees its own keys, not the box's.
       if (opts.scroll !== false) this.terminalView.terminal.scrollToBottom();
       own();
@@ -2057,6 +2098,7 @@ export class Pane {
           resolve();
         }, 10);
       } else {
+        if (this.turnEnded && this.claudeBarHoldsText()) this.noteTurnSubmitted('compose');
         window.patton.pty.write(this.ptyId, '\r', origin);
         broadcast?.('\r');
         resolve();
@@ -2305,6 +2347,27 @@ export class Pane {
   noteEnterSent(): void {
     if (this.claudeBlocked) return;
     this.clearPasteChipsOnSend('enter');
+    // An Enter on his own text in Claude's bar sends it; an empty bar's or a
+    // menu's Enter starts no turn, so it leaves a turn-end ring alone.
+    if (this.turnEnded && this.claudeBarHoldsText()) this.noteTurnSubmitted('enter');
+  }
+
+  private claudeBarHoldsText(): boolean {
+    const reading = readClaudeBar(this.terminalView.terminal.buffer.active);
+    return reading.found && !reading.empty;
+  }
+
+  /** A message went to Claude while the turn-end ring showed over a working
+   *  root: 7501 sends nothing (the root already works), so this is the new
+   *  turn's only sign. The verdict was that turn's; the pane goes to working. */
+  private noteTurnSubmitted(via: 'enter' | 'compose'): void {
+    if (!this.turnEnded) return;
+    this.turnEnded = false;
+    rlog('info', '[DOT] Hook verdict cleared: new turn', {
+      pane: this.id, tasks: this.hookVerdict?.tasks, crons: this.hookVerdict?.crons, via,
+    });
+    this.hookVerdict = null;
+    this.applyProgramStatus();
   }
 
   /** The user sent a message from this pane. Claude Code may take it into a turn
