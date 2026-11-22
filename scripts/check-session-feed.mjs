@@ -262,6 +262,15 @@ try {
     ta.push(line({ type: 'attachment', timestamp: '2026-11-22T19:39:01.000Z', attachment: { type: 'hook_blocking_error', hookEvent: 'PreToolUse' } })
       + line({ type: 'assistant', isSidechain: true, timestamp: '2026-11-22T19:39:02.000Z', message: { content: [{ type: 'text', text: 'sub' }] } }));
     check('turn activity: another event\'s block and a sidechain line give none', ta.turnActivity().length === 0, ta.turnActivity());
+    // Review n2: a line with no timestamp would take the read time (now), so an old backlog line
+    // would read as written just now: it gives no turn activity.
+    const tn = new TranscriptParser({ home: HOME, now: () => Date.parse('2026-11-22T20:00:00.000Z') });
+    tn.push(line({ type: 'assistant', message: { content: [{ type: 'text', text: 'old' }] } })
+      + line({ type: 'attachment', attachment: { type: 'hook_blocking_error', hookEvent: 'Stop' } })
+      + line({ type: 'user', message: { role: 'user', content: 'Stop hook feedback:\nx' } }));
+    check('turn activity: lines with no timestamp give none (not timed by the read)', tn.turnActivity().length === 0, tn.turnActivity());
+    tn.push(line({ type: 'assistant', timestamp: 'not a time', message: { content: [{ type: 'text', text: 'bad' }] } }));
+    check('turn activity: an unreadable timestamp gives none', tn.turnActivity().length === 0, tn.turnActivity());
   }
 } finally {
   rmSync(work, { recursive: true, force: true });

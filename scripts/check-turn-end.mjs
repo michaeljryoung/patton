@@ -109,6 +109,17 @@ e = es({ kind: 'working' }, false, V(1, 0), ['agent']);
 check('ended: no mark -> working unchanged', e?.signal.kind === 'working' && !e.viaStop, e);
 e = es({ kind: 'needs-you', key: 'root:blocked:permission', reason: 'x' }, true, V(1, 0), ['agent']);
 check('ended: a needs-you passes through', e?.signal.kind === 'needs-you', e);
+// A line that may run without a turn (review m1): /usage, a bash-mode ! line
+check('local: /usage may run locally', te.mayRunLocally?.('/usage') === true);
+check('local: a leading-space ! line may run locally', te.mayRunLocally?.('  ! ls') === true);
+check('local: a prompt does not', te.mayRunLocally?.('what next? /usage') === false);
+// A blocked Stop seen before its verdict (review M1)
+const bbv = (...a) => te.blockedBeforeVerdict?.(...a);
+check('blocked first: 127 ms before the verdict counts', bbv(9_873, 10_000, 0, 2000) === true);
+check('blocked first: after the verdict counts', bbv(17_000, 10_000, 0, 2000) === true);
+check('blocked first: more than the slack before does not', bbv(7_999, 10_000, 0, 2000) === false);
+check('blocked first: older than the previous verdict does not (that Stop\'s)', bbv(9_000, 10_000, 9_500, 2000) === false);
+check('blocked first: none seen does not', bbv(null, 10_000, 0, 2000) === false);
 
 // ── Part 2: the real Pane ──
 const jsdomDir = process.env.JSDOM_DIR || process.argv[2];
@@ -178,7 +189,9 @@ async function paneChecks() {
   console.info = (...a) => { logs.push(a); };
   const { Pane } = await import(pathToFileURL(join(out, 'pane.cjs')).href);
 
-  const newPane = () => {
+  // feed: the pane follows its transcript feed (pty 1, main attached), as a
+  // Claude pane on v1.35+ does; the ring over a working root needs it.
+  const newPane = (opts = {}) => {
     const ev = { alerts: 0, parked: [], status: 0 };
     const pane = new Pane({
       onFocus() {}, onTitleChange() {},
@@ -186,8 +199,13 @@ async function paneChecks() {
       onParked: (_p, info) => { ev.parked.push(info); },
       onStatusChange: () => { ev.status++; },
     });
+    if (opts.feed) pane.ptyId = 1;
+    let attached = false;
     const drive = {
-      root: (state, extra = {}) => pane.handleProgramStatus({ type: 'report', id: '', record: rec(state, extra) }),
+      root: (state, extra = {}) => {
+        pane.handleProgramStatus({ type: 'report', id: '', record: rec(state, extra) });
+        if (opts.feed && !attached) { attached = true; pane.applyFeedEvent(1, { type: 'attached', sessionId: 's1', how: 'hook' }); }
+      },
       child: (id, state, extra = {}) => pane.handleProgramStatus({ type: 'report', id, record: rec(state, extra) }),
       hook: (tasks, crons) => pane.handleHookStop(tasks, crons),
     };
@@ -371,7 +389,7 @@ async function paneChecks() {
   const newTurnLogs = () => logs.filter((l) => l[0] === '[DOT] Hook verdict cleared: new turn');
   {
     logs.length = 0;
-    const t = newPane();
+    const t = newPane({ feed: true });
     t.root('working');                                  // 19:37:23.293
     advance(23_621); t.child('a1', 'working', { title: 'Research agent' }); // 19:37:46.914
     advance(4_271); t.hook(1, 0);                       // 19:37:51.185
@@ -392,7 +410,7 @@ async function paneChecks() {
   }
   // N2: the next turn after the ring ends with shells only (hook 2 tasks, no child): parked by the hook as today
   {
-    const t = newPane();
+    const t = newPane({ feed: true });
     t.root('working'); advance(1000); t.child('a1', 'working', { title: 'agent' }); advance(1000); t.hook(1, 0); advance(60_000);
     t.pane.handleProgramStatus({ type: 'clear', id: 'a1' }); t.root('working'); advance(10_000);
     t.hook(2, 0); advance(4000);
@@ -402,7 +420,7 @@ async function paneChecks() {
   }
   // N3: the subagent's turn ends with it relaunching another: ring again with the new child
   {
-    const t = newPane();
+    const t = newPane({ feed: true });
     t.root('working'); advance(1000); t.child('a1', 'working', { title: 'agent' }); advance(1000); t.hook(1, 0); advance(30_000);
     t.pane.handleProgramStatus({ type: 'clear', id: 'a1' }); t.root('working'); advance(3000);
     t.child('a2', 'working', { title: 'agent 2' }); advance(2000); t.hook(1, 0); advance(100);
@@ -412,7 +430,7 @@ async function paneChecks() {
   }
   // N4: a blocked root (a permission prompt) during the ring alerts
   {
-    const t = newPane();
+    const t = newPane({ feed: true });
     t.root('working'); advance(1000); t.child('a1', 'working', { title: 'agent' }); advance(1000); t.hook(1, 0); advance(10_000);
     t.root('blocked', { kind: 'permission' }); advance(4100); // from a ring, the 4 s drain settle, as for any parked pane
     check('house: a permission prompt during the ring alerts', t.ev.alerts === 1 && t.pane.claudeState.parked === null, [t.ev.alerts, t.pane.claudeState.parked]);
@@ -420,8 +438,8 @@ async function paneChecks() {
   // O: a prompt of his during the ring clears it to working (7501 sends nothing: the root already works)
   for (const via of ['enter', 'compose', 'empty-bar-enter']) {
     logs.length = 0;
-    const t = newPane();
-    t.pane.claudeBarHoldsText = () => via !== 'empty-bar-enter';
+    const t = newPane({ feed: true });
+    t.pane.claudeBarInput = () => (via === 'empty-bar-enter' ? null : 'what next?');
     t.pane.ptyId = 1;
     t.root('working'); advance(1000); t.child('a1', 'working', { title: 'agent' }); advance(1000); t.hook(1, 0); advance(20_000);
     if (via === 'compose') {
@@ -445,7 +463,7 @@ async function paneChecks() {
   const feed = (t, why, at) => t.pane.applyFeedEvent(1, { type: 'turn-activity', why, at });
   for (const first of ['stop-blocked', 'assistant']) {
     logs.length = 0;
-    const t = newPane();
+    const t = newPane({ feed: true });
     t.pane.ptyId = 1; // a Claude pane on pty 1 follows its feed (syncSessionFeed)
     t.root('working'); advance(1000); t.child('a1', 'working', { title: 'agent' }); advance(4000);
     const stopAt = now; t.hook(1, 0); advance(100);
@@ -467,11 +485,87 @@ async function paneChecks() {
   }
   // Q2: feed activity with no ring does nothing
   {
-    const t = newPane();
+    const t = newPane({ feed: true });
     t.pane.ptyId = 1; // a Claude pane on pty 1 follows its feed (syncSessionFeed)
     t.root('working'); advance(1000); t.hook(0, 0); advance(500); t.root('done'); advance(1700);
     feed(t, 'assistant', now);
     check('feed activity without a ring changes nothing', t.ev.alerts === 1 && t.pane.claudeState.activity === 'waiting', [t.ev.alerts, t.pane.claudeState.activity]);
+  }
+  // R1 (review M1, probe P1): a FAST blocking Stop hook (the closing-block gate) writes its block line
+  // ~120 ms BEFORE Patton's verdict reaches the pane (transcripts 21 Nov 08:28:05.289 block / .416 verdict;
+  // 22 Nov 06:59:30.656 / .775), and the feed (fs.watch) can deliver it first: no ring, Claude carries on.
+  {
+    logs.length = 0;
+    const t = newPane({ feed: true });
+    t.root('working'); advance(1000); t.child('a1', 'working', { title: 'agent' }); advance(4000);
+    const stopAt = now;
+    feed(t, 'stop-blocked', stopAt - 127);    // the feed event first ...
+    advance(100); t.hook(1, 0); advance(100);  // ... then the verdict
+    check('blocked first: the block seen before the verdict -> no ring', t.pane.claudeState.activity === 'working' && t.pane.claudeState.parked === null, [t.pane.claudeState.activity, t.pane.claudeState.parked]);
+    check('blocked first: logged with blocked', turnEndedLogs().some((l) => l[1].blocked === true), turnEndedLogs());
+    advance(8000); feed(t, 'assistant', now - 500); // the continuation's first assistant line
+    check('blocked first: still working as the continuation writes', t.pane.claudeState.activity === 'working', t.pane.claudeState.activity);
+    advance(7000); t.hook(1, 0); advance(100);  // the continuation's own Stop, not blocked
+    check('blocked first: the continuation\'s Stop rings (the old block was the last Stop\'s)', t.pane.claudeState.activity === 'parked', t.pane.claudeState.activity);
+  }
+  // R1b: a block from more than 2 s before the verdict is an older stop's: the ring shows
+  {
+    const t = newPane({ feed: true });
+    t.root('working'); advance(1000); t.child('a1', 'working', { title: 'agent' }); advance(4000);
+    feed(t, 'stop-blocked', now - 2500); advance(100); t.hook(1, 0); advance(100);
+    check('blocked first: a block 2.6 s older than the verdict keeps the ring', t.pane.claudeState.activity === 'parked', t.pane.claudeState.activity);
+  }
+  // R2 (review m1, probe P3): Enter on a local slash command (/usage) starts no turn and no Stop follows
+  for (const via of ['enter', 'compose']) {
+    logs.length = 0;
+    const t = newPane({ feed: true });
+    t.pane.claudeBarInput = () => '/usage';
+    t.pane.claudeBarHoldsText = () => true; // the reader before the fix (probe P3), so the Enter case fails there
+    t.root('working'); advance(1000); t.child('a1', 'working', { title: 'agent' }); advance(4000); t.hook(1, 0); advance(100);
+    check(`local command (${via}): ring up`, t.pane.claudeState.activity === 'parked', t.pane.claudeState.activity);
+    if (via === 'compose') {
+      t.pane.queueSubmit('/usage', false, { own: true });
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+    } else {
+      t.pane.noteEnterSent();
+    }
+    advance(60_000);
+    check(`local command (${via}): the ring stays (no turn ran)`, t.pane.claudeState.activity === 'parked', t.pane.claudeState.activity);
+    check(`local command (${via}): logged as kept`, logs.some((l) => l[0] === '[DOT] Ring kept: a local command' && l[1].via === via), logs.filter((l) => String(l[0]).startsWith('[DOT]')).map((l) => l[0]));
+    feed(t, 'assistant', now - 100); // a slash command that is a skill: Claude writes
+    check(`local command (${via}): a skill's reply clears the ring through the feed`, t.pane.claudeState.activity === 'working', t.pane.claudeState.activity);
+  }
+  // R3 (review m2, probe P4): a pane whose feed main never attached keeps today's behaviour (wait for 7501):
+  // a ring there could stick, since a turn he didn't start from Patton has no other sign
+  {
+    logs.length = 0;
+    const t = newPane();
+    t.root('working'); advance(1000); t.child('a1', 'working', { title: 'agent' }); advance(4000); t.hook(1, 0); advance(100);
+    check('no feed: a Stop over a working root shows no ring', t.pane.claudeState.activity === 'working' && t.pane.claudeState.parked === null, [t.pane.claudeState.activity, t.pane.claudeState.parked]);
+    check('no feed: logged with feed false', turnEndedLogs().some((l) => l[1].feed === false), turnEndedLogs());
+    advance(10 * 60_000);
+    check('no feed: still working 10 min on (no stuck ring)', t.pane.claudeState.activity === 'working', t.pane.claudeState.activity);
+    t.pane.handleProgramStatus({ type: 'clear', id: 'a1' }); t.root('working'); advance(20_000);
+    t.hook(0, 0); advance(500); t.root('done'); advance(1700);
+    check('no feed: the next turn ends as needs-you, one alert', t.ev.alerts === 1, t.ev.alerts);
+  }
+  {
+    logs.length = 0;
+    const t = newPane({ feed: true });
+    t.root('working'); advance(1000); t.child('a1', 'working', { title: 'agent' }); advance(4000); t.hook(1, 0); advance(100);
+    check('feed lost: ring up first', t.pane.claudeState.activity === 'parked', t.pane.claudeState.activity);
+    t.pane.applyFeedEvent(1, { type: 'detached', reason: 'transcript gone' });
+    check('feed lost: main detaching drops the ring to working', t.pane.claudeState.activity === 'working', t.pane.claudeState.activity);
+    check('feed lost: logged', logs.some((l) => l[0] === '[DOT] Turn-end ring dropped: no feed'), logs.map((l) => l[0]));
+  }
+  // R4 (review n1): during the ring the root still works: a bell is incidental, and the checkpoint
+  // clock reads "available when Claude stops"
+  {
+    const t = newPane({ feed: true });
+    t.root('working'); advance(1000); t.child('a1', 'working', { title: 'agent' }); advance(4000); t.hook(1, 0); advance(100);
+    t.pane.fireCommandDone('bell'); t.pane.fireCommandDone('osc9');
+    check('ring: a bell or OSC 9 under the still-working root raises no alert', t.ev.alerts === 0, t.ev.alerts);
+    check('ring: the checkpoint clock counts Claude as working', t.pane.checkpointSource.claudeWorking === true, t.pane.checkpointSource);
   }
   // P: GENOME (main.log 22 Nov 2026, pane-9), timed as logged: background shells, no child records,
   // the hook (2 tasks) then a done -> parked by the hook, unchanged.

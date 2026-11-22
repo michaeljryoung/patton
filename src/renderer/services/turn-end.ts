@@ -134,3 +134,33 @@ export function endedTurnSignal(
     viaStop: true,
   };
 }
+
+/**
+ * Whether a line sent to Claude may run without a turn: a slash command
+ * (`/usage`, `/context` run locally and no Stop follows) or a bash-mode `!`
+ * line. Such a send leaves the turn-end ring up; if it does start a turn (a
+ * skill, a prompt command), the transcript feed's first assistant line clears
+ * the ring instead.
+ */
+export function mayRunLocally(text: string): boolean {
+  const t = text.trimStart();
+  return t.startsWith('/') || t.startsWith('!');
+}
+
+/**
+ * Whether a blocked Stop the transcript feed reported belongs to the Stop
+ * verdict landing now: a fast blocking hook (the closing-block gate) writes its
+ * line ~120 ms before Patton's own verdict reaches the pane (21 Nov 08:28:05,
+ * 22 Nov 06:59:30), so the feed can report it first. It counts when its line
+ * is at most `slackMs` older than this verdict and newer than the previous
+ * verdict (an older block was that Stop's).
+ */
+export function blockedBeforeVerdict(
+  blockedAt: number | null,
+  verdictAtMs: number,
+  previousVerdictAtMs: number,
+  slackMs: number,
+): boolean {
+  if (blockedAt === null) return false;
+  return blockedAt >= verdictAtMs - slackMs && blockedAt > previousVerdictAtMs;
+}

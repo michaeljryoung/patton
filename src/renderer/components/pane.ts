@@ -24,7 +24,7 @@ import {
 import { paneActivity, type PaneActivity } from '../services/pane-activity';
 import {
   turnEndSignal, verdictAfterRootChange, verdictAfterChildren, turnEndedOverWork, turnEndedAfterChange, endedTurnSignal,
-  type HookVerdict,
+  mayRunLocally, blockedBeforeVerdict, type HookVerdict,
 } from '../services/turn-end';
 
 import type { ITheme } from '@xterm/xterm';
@@ -35,7 +35,7 @@ import {
   composeAsideReason, composeKeyboardWaitMs, composeBackTakesKeyboard, composeBlockedFact, isMenuLine,
   type ComposeAsideReason,
 } from '../services/compose-aside';
-import { readClaudeBar, type BarMissReason } from '../services/claude-bar';
+import { readClaudeBar, claudeBarInputText, type BarMissReason } from '../services/claude-bar';
 import {
   COMPOSE_BAR_LOST_MS, COMPOSE_BAR_NOT_FOUND_LOG_MS, COMPOSE_OVERLAY_MAX_FRACTION, COMPOSE_OWN_TYPING_MS,
   COMPOSE_ROOM_HOLD_MS, COMPOSE_SETTLE_MAX_MS, COMPOSE_SETTLED_LOG_MS, COMPOSE_SWITCH_MIN_MS,
@@ -250,10 +250,20 @@ export class Pane {
   // (noteTurnSubmitted), or the transcript moving on after the Stop: another
   // Stop hook blocked it, or Claude wrote again (noteTurnActivity; 7501 says
   // nothing, and Patton's hook, running beside the blocking one, can't see it).
-  // See endedTurnSignal.
+  // See endedTurnSignal. Only a pane whose feed main has attached shows it:
+  // without the feed a turn he didn't start from Patton (a queued prompt, a
+  // wake) has no sign at all, so such a pane waits for 7501 as before.
   private turnEnded = false;
   /** When the Stop that set turnEnded arrived. */
   private turnEndedAtMs = 0;
+  /** When the latest Stop verdict arrived, and the one before the ring's
+   *  (a blocked Stop older than that was that Stop's, not the ring's). */
+  private lastStopAtMs = 0;
+  private ringPreviousStopAtMs = 0;
+  /** The newest blocked Stop the feed reported (its line time), kept with or
+   *  without a ring: a fast blocking hook's line can reach the pane before
+   *  Patton's own verdict does (blockedBeforeVerdict). */
+  private stopBlockedAt: number | null = null;
   // A blocked Stop's transcript line is written as the hooks finish, around
   // the time Patton's own verdict lands, so it counts from a little before.
   private static readonly STOP_BLOCKED_SLACK_MS = 2000;
@@ -521,7 +531,9 @@ export class Pane {
     // While Claude works (or its stop is still settling), a bell or OSC 9 is
     // incidental — e.g. a BEL in tool output — not Claude asking for you. A
     // real stop arrives through the title anyway.
-    if ((source === 'bell' || source === 'osc9') && (this.claudeWorking || this.claudeStopTimer)) {
+    // A turn-end ring over a still-working root counts as working here: the
+    // root (a subagent's run) still works, as it did before the ring.
+    if ((source === 'bell' || source === 'osc9') && (this.claudeWorking || this.claudeStopTimer || this.turnEnded)) {
       return;
     }
     const now = Date.now();
@@ -773,6 +785,7 @@ export class Pane {
     this.needsYouText = null;
     this.hookVerdict = null;
     this.turnEnded = false;
+    this.stopBlockedAt = null;
     this.rootDoneAtMs = null;
     this.lastRootState = null;
     this.lastWorkingChildren = 0;
@@ -886,6 +899,9 @@ export class Pane {
     // does not see everything 7501 does, nor the reverse: 7501 child records
     // missed running tasks and timers in the field.
     if (this.statusReporting) {
+      const nowMs = Date.now();
+      const previousStopAtMs = this.lastStopAtMs;
+      this.lastStopAtMs = nowMs;
       rlog('info', '[DOT] Hook verdict kept: 7501 reports', { pane: this.id, tasks, crons });
       this.hookVerdict = { tasks, crons, atMs: Date.now() };
       // A verdict after the done re-evaluates the turn end whatever it says:
@@ -896,10 +912,19 @@ export class Pane {
       // Claude Code keeps the root working after the turn while a subagent
       // runs (no done follows): the turn has ended all the same, so the ring.
       else if (turnEndedOverWork(this.lastRootState, this.lastWorkingChildren)) {
-        rlog('info', '[DOT] Turn ended over a working root', { pane: this.id, tasks, crons, children: this.lastWorkingChildren });
-        this.turnEnded = true;
-        this.turnEndedAtMs = Date.now();
-        this.applyProgramStatus();
+        const feed = this.feedWatch.isAttached;
+        const blocked = blockedBeforeVerdict(this.stopBlockedAt, nowMs, previousStopAtMs, Pane.STOP_BLOCKED_SLACK_MS);
+        rlog('info', '[DOT] Turn ended over a working root', {
+          pane: this.id, tasks, crons, children: this.lastWorkingChildren, feed, ...(blocked ? { blocked } : {}),
+        });
+        // Another Stop hook already blocked this stop (its line came first):
+        // Claude carries on. With no feed nothing would end the ring.
+        if (feed && !blocked) {
+          this.turnEnded = true;
+          this.turnEndedAtMs = nowMs;
+          this.ringPreviousStopAtMs = previousStopAtMs;
+          this.applyProgramStatus();
+        }
       }
       return;
     }
@@ -995,7 +1020,7 @@ export class Pane {
       this.sinceTokens = null;
       this.checkpointAt = null;
     }
-    const key = [this.claudeActive, this.claudeWorking, this.claudeBlocked, this.checkpointReady, this.ctxTokens, this.sinceTokens, this.checkpointAt].join('|');
+    const key = [this.claudeActive, this.claudeWorking, this.claudeBlocked, this.turnEnded, this.checkpointReady, this.ctxTokens, this.sinceTokens, this.checkpointAt].join('|');
     if (key === this.lastCheckpointKey) return;
     this.lastCheckpointKey = key;
     this.callbacks.onCheckpointChange?.(this);
@@ -1007,7 +1032,9 @@ export class Pane {
       claudeActive: this.claudeActive,
       // A permission prompt or question (7501 `blocked`) can't take a typed
       // /checkpoint either.
-      claudeWorking: this.claudeWorking || this.claudeBlocked,
+      // A turn-end ring over a working root too: 7501 still says working, and
+      // the prompt opens for /checkpoint only when Claude stops (the done).
+      claudeWorking: this.claudeWorking || this.claudeBlocked || this.turnEnded,
       ready: this.checkpointReady,
       ctxTokens: this.ctxTokens,
       sinceTokens: this.sinceTokens,
@@ -1180,6 +1207,7 @@ export class Pane {
       this.noteTurnActivity(event.why, event.at);
       return;
     }
+    if (event.type === 'detached' && this.turnEnded) this.dropRingWithoutFeed('detached', true);
     if (event.type === 'error') {
       rlog('warn', '[BAR] feed error', { pane: this.id, why: event.why });
     }
@@ -1217,6 +1245,9 @@ export class Pane {
   private stopSessionFeed(): void {
     const ptyId = this.feedPtyId;
     this.feedPtyId = null;
+    // Called from notifyCheckpoint (inside applyProgramStatus): the flag only;
+    // the pane is leaving Claude or its pty, and redraws from that.
+    if (this.turnEnded) this.dropRingWithoutFeed('feed stopped', false);
     this.feedTranscriptHint = null;
     this.feedWatch.reset();
     this.sessionBarModel.reset();
@@ -2076,8 +2107,12 @@ export class Pane {
       // The user's own send takes the pasted images with it; Patton's own typing
       // (Pause all, checkpoint) says nothing about the user's message.
       if (origin !== 'patton') this.clearPasteChipsOnSend('compose');
-      // Patton's own lines (a /checkpoint) start a turn as his do.
-      if (command.trim()) this.noteTurnSubmitted('compose');
+      // Patton's own lines start a turn as his do; a line that may run
+      // locally (a /usage) leaves the ring to the feed's next assistant line.
+      if (command.trim()) {
+        if (!mayRunLocally(command)) this.noteTurnSubmitted('compose');
+        else if (this.turnEnded) rlog('info', '[DOT] Ring kept: a local command', { pane: this.id, via: 'compose' });
+      }
       // xterm's scrollOnUserInput only sees its own keys, not the box's.
       if (opts.scroll !== false) this.terminalView.terminal.scrollToBottom();
       own();
@@ -2109,7 +2144,7 @@ export class Pane {
           resolve();
         }, 10);
       } else {
-        if (this.turnEnded && this.claudeBarHoldsText()) this.noteTurnSubmitted('compose');
+        if (this.turnEnded) this.noteBarSend('compose');
         window.patton.pty.write(this.ptyId, '\r', origin);
         broadcast?.('\r');
         resolve();
@@ -2360,22 +2395,51 @@ export class Pane {
     this.clearPasteChipsOnSend('enter');
     // An Enter on his own text in Claude's bar sends it; an empty bar's or a
     // menu's Enter starts no turn, so it leaves a turn-end ring alone.
-    if (this.turnEnded && this.claudeBarHoldsText()) this.noteTurnSubmitted('enter');
+    if (this.turnEnded) this.noteBarSend('enter');
+  }
+
+  /** An Enter on Claude's bar while the ring shows: his own text there starts
+   *  a turn, unless it may run locally (a `/usage`), whose clear is left to
+   *  the feed's next assistant line. An empty bar's or a menu's Enter starts
+   *  nothing. */
+  private noteBarSend(via: 'enter' | 'compose'): void {
+    const text = this.claudeBarInput();
+    if (text === null) return;
+    if (mayRunLocally(text)) {
+      rlog('info', '[DOT] Ring kept: a local command', { pane: this.id, via });
+      return;
+    }
+    this.noteTurnSubmitted(via);
+  }
+
+  /** The feed stopped (main detached the session, or the pane left it): with
+   *  nothing left to end it, the ring goes, and 7501 decides as before. */
+  private dropRingWithoutFeed(why: string, redraw: boolean): void {
+    this.turnEnded = false;
+    rlog('info', '[DOT] Turn-end ring dropped: no feed', { pane: this.id, why });
+    if (redraw) this.applyProgramStatus();
   }
 
   /** The session's transcript (main's feed) moved on after the Stop that set
    *  the ring: another Stop hook blocked it (Claude carries on), or Claude
    *  wrote again. Either way Claude is working, though 7501 says nothing new. */
   private noteTurnActivity(why: 'assistant' | 'stop-blocked', at: number): void {
+    if (why === 'stop-blocked') this.stopBlockedAt = Math.max(this.stopBlockedAt ?? at, at);
     if (!this.turnEnded) return;
-    const from = why === 'stop-blocked' ? this.turnEndedAtMs - Pane.STOP_BLOCKED_SLACK_MS : this.turnEndedAtMs;
-    if (why === 'assistant' ? at <= from : at < from) return;
+    // A block counts from a little before the ring's Stop (its line is
+    // written as the hooks finish); an assistant line only after it.
+    const moved = why === 'stop-blocked'
+      ? blockedBeforeVerdict(at, this.turnEndedAtMs, this.ringPreviousStopAtMs, Pane.STOP_BLOCKED_SLACK_MS)
+      : at > this.turnEndedAtMs;
+    if (!moved) return;
     this.noteTurnSubmitted(why);
   }
 
-  private claudeBarHoldsText(): boolean {
-    const reading = readClaudeBar(this.terminalView.terminal.buffer.active);
-    return reading.found && !reading.empty;
+  /** The text on Claude's bar when it holds his text, else null. */
+  private claudeBarInput(): string | null {
+    const buffer = this.terminalView.terminal.buffer.active;
+    const reading = readClaudeBar(buffer);
+    return reading.found && !reading.empty ? claudeBarInputText(buffer, reading.row) : null;
   }
 
   /** A message went to Claude, or its transcript moved on, while the turn-end

@@ -90,6 +90,10 @@ function timeOf(line: Record<string, unknown>, fallback: number): number {
   return Number.isFinite(t) ? t : fallback;
 }
 
+function hasTimestamp(line: Record<string, unknown>): boolean {
+  return typeof line.timestamp === 'string' && Number.isFinite(Date.parse(line.timestamp));
+}
+
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
@@ -522,19 +526,22 @@ export class TranscriptParser {
     }
     if (!isRecord(obj) || obj.isSidechain === true) return [];
     const at = timeOf(obj, this.now());
+    // Turn activity is timed by the line's own stamp only: the read-time
+    // fallback would make an old backlog line read as written just now.
+    const stamped = hasTimestamp(obj);
     switch (obj.type) {
       case 'assistant':
-        this.lastAssistantAt = Math.max(this.lastAssistantAt ?? at, at);
+        if (stamped) this.lastAssistantAt = Math.max(this.lastAssistantAt ?? at, at);
         return this.assistant(obj, at);
       case 'user':
-        if (isRecord(obj.message) && typeof obj.message.content === 'string'
+        if (stamped && isRecord(obj.message) && typeof obj.message.content === 'string'
             && obj.message.content.startsWith('Stop hook feedback')) this.noteStopBlocked(at);
         return this.user(obj, at);
       case 'queue-operation':
         return obj.operation === 'enqueue' && typeof obj.content === 'string' ? this.ends(obj.content, at) : [];
       case 'attachment': {
         const a = obj.attachment;
-        if (isRecord(a) && a.type === 'hook_blocking_error' && a.hookEvent === 'Stop') this.noteStopBlocked(at);
+        if (stamped && isRecord(a) && a.type === 'hook_blocking_error' && a.hookEvent === 'Stop') this.noteStopBlocked(at);
         return isRecord(a) && a.type === 'queued_command' && typeof a.prompt === 'string' ? this.ends(a.prompt, at) : [];
       }
       default: return [];
