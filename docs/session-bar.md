@@ -4,7 +4,7 @@
 ## 🗺 THE MAP — S60: a permanent session bar on the right of every Claude tab
 
 **Goal:** (S60) A bar on the right of every Claude tab lists what the session has running (agents, shells, monitors, workflows), its loops, its failures, the links Claude gave him, and the checkpoint clock moved from the tab strip; a ⇥ button minimizes it to a strip (Michael 2026-11-22: "it has a bar on right that lists various things including background tasks ... atm theyre hidden at the bottom"; on sketch v3 https://claude.ai/code/artifact/08d6e409-4c7d-4f4e-8fe1-ceb84b75c586: "do it").
-**Done when:** an end-to-end check written by an agent that didn't build drives a fake Claude session (a process with `~/.claude/sessions/<pid>.json` and a growing transcript under a temporary HOME) through the real Pane in hidden Electron and shows: a background shell's row within 1 s of its start line and gone within 1 s of its notice; a failed task's row kept until its × is pressed; a link written twice listed once, and a `v2` file replacing its `v1`; the checkpoint clock in the bar and not on the tab strip; ⇥ folding the bar to the strip and ⇤ restoring it; at UI scale 1, 1.1 and 1.5. Plus lint, `tsc`, `npm run check`, a no-install package and a fresh review with no open major; released by CI; installed only on his word.
+**Done when:** an end-to-end check written by an agent that didn't build drives a fake Claude session (a process with `~/.claude/sessions/<pid>.json` and a growing transcript under a temporary HOME) through the real Pane in hidden Electron and shows: a background shell's row within 1 s of its start line and struck through within 1 s of its notice and gone after its 30 s linger; a failed task's row kept until its × is pressed; a link written twice listed once, and a `v2` file replacing its `v1`; the checkpoint clock in the bar and not on the tab strip; ⇥ folding the bar to the strip and ⇤ restoring it; at UI scale 1, 1.1 and 1.5. Plus lint, `tsc`, `npm run check`, a no-install package and a fresh review with no open major; released by CI; installed only on his word.
 **Last verified:** 2026-11-22 (Session 60: map written; nothing built yet)
 
 ```mermaid
@@ -58,7 +58,7 @@ flowchart TD
 | `bar_model` | D3–D6: per-pane state merging 7501 children, the feed and the Stop lists; ended rows linger 30 s; failures until dismissed; links keyed and versioned; pure, with checks | todo | `bar_design`, `transcript_feed`, `hook_lists` | — |
 | `bar_ui` | D1, D2, D11: the bar beside the terminal on Claude tabs, ⇥ and the strip, narrow fold, persisted per window, ARIA, `[BAR]` logs; layout check at UI scale 1, 1.1, 1.5 | todo | `bar_model` | — |
 | `ckpt_move` | D7: the checkpoint clock and its button leave the tab strip for the bar and the strip; tabs keep the red circle | todo | `bar_ui` | — |
-| `bar_e2e` | D13's end-to-end check, written by an agent that didn't build; every assertion fails on main | todo | `session_link`, `ckpt_move` | — |
+| `bar_e2e` | D13's end-to-end check, written by an agent that didn't build; every assertion fails on main | todo | `session_link`, `ckpt_move` | `scripts/check-session-bar-e2e.cjs` written (S60); passes once `ckpt_move` merges |
 | `bar_review` | Fresh reviews with probes until no open major | todo | `bar_e2e` | — |
 | `bar_release` | Merge by fast-forward, push, CI release, cask matches the DMG | todo | `bar_review` | — |
 | `bar_ship` | Install on his word with Patton quit; live: `[BAR] attach` lines, a shell row appears and goes, a link listed, the clock in the bar | todo | `bar_release` | — |
