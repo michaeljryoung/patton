@@ -56,6 +56,18 @@ const stubSource = `
         terminal: new Proxy({
           modes: { bracketedPasteMode: false }, options: {},
           getSelection: () => globalThis.__selection ?? '',
+          // The screen rows: __screen, else a reply's ⏺ row with the selection under it.
+          getSelectionPosition: () => {
+            const sel = globalThis.__selection ?? '';
+            if (!sel) return undefined;
+            if (globalThis.__selPos) return globalThis.__selPos;
+            const n = sel.split('\\n').length;
+            return { start: { x: 0, y: 1 }, end: { x: sel.split('\\n')[n - 1].length, y: n } };
+          },
+          buffer: { active: { getLine: (y) => {
+            const rows = globalThis.__screen ?? ['⏺ A reply', ...(globalThis.__selection ?? '').split('\\n')];
+            return rows[y] === undefined ? undefined : { translateToString: () => rows[y], isWrapped: false };
+          } } },
         }, { get: (t, k) => (k in t ? t[k] : mk()) }),
       };
       return new Proxy(own, {
@@ -648,6 +660,42 @@ const mouseDown = (el, init = {}) => {
   await flush();
   check('Claude tab, compose box ⌘C: the drawn selection at once, then an upgrade request to main',
     clipboard[0] === '  ▎ Hi Sarah, thanks for the call' && copyCalls.length === 1 && copyCalls[0][2] === 'upgrade', { clipboard, copyCalls });
+  // Tool output and his own prompt: copied as drawn by xterm, main never asked,
+  // even where Claude quoted the same words.
+  for (const [what, screen, y] of [
+    ['a tool output row (⎿)', ['⏺ Bash(npm test)', '  ⎿  all tests pass now', '     and the build is green'], 1],
+    ['a tool output continuation row', ['⏺ Bash(npm test)', '  ⎿  all tests pass now', '     and the build is green'], 2],
+    ['his prompt row (❯)', ['⏺ Done.', '', '❯ all tests pass now please'], 2],
+    ['his prompt row (>)', ['> all tests pass now please', '  and ship it'], 1],
+  ]) {
+    w.__screen = screen;
+    w.__selection = screen[y];
+    w.__selPos = { start: { x: 0, y }, end: { x: screen[y].length, y } };
+    copyCalls.length = 0;
+    const t = copyEvent();
+    await flush();
+    check(`Claude tab, ${what}: today's copy (xterm's), main never asked`, !t.ce.defaultPrevented && t.reachedXterm && copyCalls.length === 0, copyCalls);
+  }
+  // A reply row under a tool's output: main is asked.
+  {
+    const screen = ['⏺ Bash(npm test)', '  ⎿  all tests pass now', '', '⏺ All tests pass now, and', '  the build is green.'];
+    w.__screen = screen;
+    w.__selection = `${screen[3]}\n${screen[4]}`;
+    w.__selPos = { start: { x: 0, y: 3 }, end: { x: screen[4].length, y: 4 } };
+    copyCalls.length = 0;
+    const t = copyEvent();
+    await flush();
+    check('Claude tab, a reply below a tool\'s output: main is asked', t.ce.defaultPrevented && copyCalls.length === 1, copyCalls);
+    // From the tool's output into the reply: as drawn.
+    w.__selection = screen.slice(1).join('\n');
+    w.__selPos = { start: { x: 0, y: 1 }, end: { x: screen[4].length, y: 4 } };
+    copyCalls.length = 0;
+    const t2 = copyEvent();
+    await flush();
+    check('Claude tab, a selection from tool output into a reply: today\'s copy', !t2.ce.defaultPrevented && copyCalls.length === 0, copyCalls);
+  }
+  w.__screen = undefined;
+  w.__selPos = undefined;
   w.__selection = '';
   copyCalls.length = 0;
   const none = copyEvent();

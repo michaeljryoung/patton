@@ -44,6 +44,7 @@ import { onUiTextScaleApplied } from '../services/ui-text-scale';
 import { SessionBarModel, stopListsOf, type ModelNote, type StopState } from '../services/session-bar-model';
 import { SessionFeedWatch } from '../services/session-feed-watch';
 import { canCopyOriginal, copyClaudeSelection, upgradeClaudeSelection } from '../services/copy-selection';
+import { selectionInReply } from '../services/claude-reply-rows';
 import type { SessionFeedEvent } from '../../shared/session-feed';
 
 /** Background work a parked Claude Code session is waiting on: from the Stop
@@ -1426,7 +1427,7 @@ export class Pane {
       // The box copied the terminal's selection as drawn: in a Claude tab,
       // main may put Claude's original over it (main/copy-original.ts).
       onFallbackCopied: (text) => {
-        const ptyId = this.claudeCopyPty();
+        const ptyId = this.claudeCopyPtyForSelection();
         if (ptyId !== null) void upgradeClaudeSelection(ptyId, text);
       },
       onContentHeight: () => this.syncComposeRoom('content'),
@@ -1829,7 +1830,7 @@ export class Pane {
     // so capture runs first; anywhere else, xterm's copy runs unchanged.
     const onCopyCapture = (e: ClipboardEvent) => {
       if (!(e.target as Element | null)?.closest?.('.xterm')) return;
-      const ptyId = this.claudeCopyPty();
+      const ptyId = this.claudeCopyPtyForSelection();
       const sel = this.terminalView.terminal.getSelection();
       if (ptyId === null || !sel) return;
       e.preventDefault();
@@ -1848,7 +1849,7 @@ export class Pane {
       if (!this.terminalView.copyOnSelect || this.claudeCopyPty() === null) return;
       upgradeTimer = setTimeout(() => {
         upgradeTimer = null;
-        const ptyId = this.claudeCopyPty();
+        const ptyId = this.claudeCopyPtyForSelection();
         const sel = this.terminalView.terminal.getSelection();
         if (ptyId !== null && sel && this.terminalView.copyOnSelect) void upgradeClaudeSelection(ptyId, sel);
       }, Pane.COPY_UPGRADE_SETTLE_MS);
@@ -3253,9 +3254,34 @@ export class Pane {
     return this.claudeActive && !this.disposed && this.ptyId !== null && !this.ptyExited && canCopyOriginal() ? this.ptyId : null;
   }
 
+  /**
+   * As claudeCopyPty, and only while the terminal's selection lies inside
+   * Claude's reply lines (services/claude-reply-rows.ts): a tool's output or
+   * his own prompt is copied as drawn, even when Claude quoted the same words.
+   */
+  private claudeCopyPtyForSelection(): number | null {
+    const ptyId = this.claudeCopyPty();
+    if (ptyId === null) return null;
+    const term = this.terminalView.terminal;
+    const pos = term.getSelectionPosition();
+    if (!pos) return null;
+    // Buffer rows, 0-based; an end at column 0 of a row stops before that row.
+    const endY = pos.end.x === 0 && pos.end.y > pos.start.y ? pos.end.y - 1 : pos.end.y;
+    const buffer = term.buffer.active;
+    const inReply = selectionInReply((y) => {
+      const line = buffer.getLine(y);
+      return line ? { text: line.translateToString(true), wrapped: line.isWrapped } : null;
+    }, pos.start.y, endY);
+    if (!inReply) {
+      rlog('info', '[COPY] fallback', { pane: this.id, reason: 'not reply rows' });
+      return null;
+    }
+    return ptyId;
+  }
+
   /** Copies terminal text: Claude's original in a Claude tab, else as drawn. */
   private copyTerminalText(text: string): void {
-    const ptyId = this.claudeCopyPty();
+    const ptyId = this.claudeCopyPtyForSelection();
     if (ptyId !== null) void copyClaudeSelection(ptyId, text);
     else navigator.clipboard.writeText(text).catch(() => { /* as before: nothing to tell */ });
   }

@@ -4,6 +4,9 @@
 // two replies as Claude Code drew them at 64 columns (a pty capture replayed
 // through xterm.js), with the Markdown Claude wrote. Every expectation is about
 // what lands on the clipboard, so today's copy (the drawn text) fails them.
+// Also: code blocks (edge symbols, indentation), tool output and prompt rows,
+// overlapping copies, and the parser on pathological 100 KB replies. The real
+// clipboard write (text/plain and text/html) is check-copy-clipboard-electron.cjs.
 // Run: node scripts/check-copy-original.mjs   (no extra dependencies)
 //   CO_SRC_ROOT=<folder holding src/>  check another source tree; where the
 //   modules don't exist (the base), today's copy stands in for them.
@@ -45,6 +48,24 @@ try {
   } catch {
     console.log('note: the modules are missing in', srcRoot, '- today\'s copy (the drawn text) stands in');
   }
+  let parseMarkdown = null;
+  try {
+    const out2 = join(work, 'md.cjs');
+    await build({
+      stdin: { contents: "export { parseMarkdown } from './src/main/markdown-doc';", resolveDir: srcRoot, loader: 'ts' },
+      bundle: true, platform: 'node', format: 'cjs', outfile: out2, logLevel: 'silent',
+    });
+    ({ parseMarkdown } = createRequire(import.meta.url)(out2));
+  } catch { /* checked below */ }
+  let selectionInReply = null;
+  try {
+    const out3 = join(work, 'rows.cjs');
+    await build({
+      stdin: { contents: "export { selectionInReply } from './src/renderer/services/claude-reply-rows';", resolveDir: srcRoot, loader: 'ts' },
+      bundle: true, platform: 'node', format: 'cjs', outfile: out3, logLevel: 'silent',
+    });
+    ({ selectionInReply } = createRequire(import.meta.url)(out3));
+  } catch { /* checked below */ }
 
   // A fake clipboard; `copyVia` copies `selection` as a Claude tab would and
   // returns what the clipboard then holds.
@@ -224,6 +245,150 @@ try {
     await c2.clip.api.writeText('other');
     await c2.copy(7, sel, 'upgrade');
     check('copy-on-select upgrade: a clipboard holding something else is left alone', c2.clip.text === 'other', c2.clip.text);
+  }
+
+
+  // 9. Code: Claude Code draws a fenced block two spaces in, the code as written.
+  //    The copy carries every symbol he selected and the first line's own indent.
+  {
+    const drawCode = (lines) => lines.map((l) => `  ${l}`).join('\n');
+    const js = 'Use this:\n\n```js\nfunction f(x) {\n  const o = {\n    a: 1,\n  };\n  return o.a + x;\n}\n```\n\nThat works.';
+    const py = 'Like so:\n\n```python\nclass A:\n    def f(self):\n        if x:\n            return 1\n        return 2\n```';
+    const cases = [
+      ['a shell comment keeps its #', ['# install deps', 'npm install'], 'Steps:\n\n```bash\n# install deps\nnpm install\n```'],
+      ['one commented line keeps its # (never a live command)', ['# sudo reboot now'], 'Not yet:\n\n```bash\n# sudo reboot now\necho done\n```'],
+      ['an SQL comment keeps its --', ['-- vacuum db;', 'select 1;'], 'Then:\n\n```sql\n-- vacuum db;\nselect 1;\n```'],
+      ['a closing } is kept', ['function f(x) {', '  const o = {', '    a: 1,', '  };', '  return o.a + x;', '}'], js],
+      ['a closing }; is kept', ['  const o = {', '    a: 1,', '  };'], js],
+      ['a line ending " {" keeps it', ['function f(x) {'], js],
+      ['// comments keep their //', ['// first comment', '// second comment'], 'Code:\n\n```js\n// first comment\n// second comment\nlet a = 1;\n```'],
+      ['Python: the first line keeps its indent', ['        if x:', '            return 1', '        return 2'], py],
+      ['Python: a deeper first line keeps its indent', ['            return 1', '        return 2'], py],
+      ['a "- " list line in a fence keeps its -', ['- first: one', '- second: two'], 'YAML:\n\n```yaml\n- first: one\n- second: two\n```'],
+      ['a "$ " prompt in a fence keeps its $', ['$ npm run build', '$ npm test'], 'Run:\n\n```\n$ npm run build\n$ npm test\n```'],
+    ];
+    for (const [name, lines, msg] of cases) {
+      const r = await copyVia(drawCode(lines), [msg]);
+      check(`code: ${name}`, r.text === lines.join('\n'), { got: r.text, want: lines.join('\n') });
+    }
+    const r = await copyVia(drawCode(['  const o = {', '    a: 1,', '  };']), [js]);
+    check('code: HTML is a <pre> block with the symbols', typeof r.html === 'string' && r.html.includes('<pre><code>  const o = {') && r.html.includes('};</code></pre>'), r.html);
+  }
+  // Prose: a symbol at the edge (em dash, emoji) is kept.
+  {
+    const msg = 'He waited — and then we left, quietly. 🎉 Shipped it today.';
+    const r = await copyVia('  — and then we left', [msg]);
+    check('prose: a leading em dash is kept', r.text === '— and then we left', r.text);
+    const r2 = await copyVia('  He waited —', [msg]);
+    check('prose: a trailing em dash is kept', r2.text === 'He waited —', r2.text);
+    const r3 = await copyVia('  🎉 Shipped it today.', [msg]);
+    check('prose: a leading emoji is kept', r3.text === '🎉 Shipped it today.', r3.text);
+  }
+  // Never less than he selected: a symbol the reply lacks means today's copy.
+  {
+    logs.length = 0;
+    const sel = '  # npm install now';
+    const r = await copyVia(sel, ['Then run npm install now and wait.']);
+    check('inexact: a selected # the reply lacks falls back to the drawn text', r.text === sel && r.html === null, r);
+    check('inexact: logged fallback "inexact"', logs.some((l) => l.msg === '[COPY] fallback' && l.data.reason === 'inexact'), logs);
+  }
+
+  // 10. Tool output and his prompt: never replaced by Claude's wording.
+  {
+    const quoted = ['All tests pass now, and the build is green.'];
+    logs.length = 0;
+    const tool = '  ⎿  all tests pass now';
+    const r = await copyVia(tool, quoted);
+    check('tool output (⎿) quoted by Claude: the drawn text', r.text === tool && r.html === null, r);
+    check('tool output: logged fallback "not reply"', logs.some((l) => l.msg === '[COPY] fallback' && l.data.reason === 'not reply'), logs);
+    const prompt = '❯ all tests pass now please';
+    const r2 = await copyVia(prompt, ['Yes: all tests pass now please.']);
+    check('his prompt (❯) quoted by Claude: the drawn text', r2.text === prompt && r2.html === null, r2);
+    // On screen: the renderer asks main only for rows inside a reply.
+    if (!selectionInReply) {
+      check('screen rows: reply rows tell from tool output and prompts', false, 'no module');
+    } else {
+      const screen = [
+        '❯ run the tests please', '  and the build', '',
+        '⏺ Bash(npm test)', '  ⎿  all tests pass now', '     and the build is green', '',
+        ...email.drawn, '', '✻ Thinking…',
+      ];
+      const rowAt = (y) => (screen[y] === undefined ? null : { text: screen[y], wrapped: false });
+      const top = 7;
+      const bottom = top + email.drawn.length - 1;
+      check('screen rows: the whole reply is a reply', selectionInReply(rowAt, top, bottom) === true);
+      check('screen rows: a reply\'s inner rows are a reply', selectionInReply(rowAt, top + 5, top + 8) === true);
+      check('screen rows: tool output is not', selectionInReply(rowAt, 4, 4) === false);
+      check('screen rows: a tool output continuation row is not', selectionInReply(rowAt, 5, 5) === false);
+      check('screen rows: his prompt and its second row are not', selectionInReply(rowAt, 0, 0) === false && selectionInReply(rowAt, 1, 1) === false);
+      check('screen rows: tool output into a reply is not', selectionInReply(rowAt, 4, top + 2) === false);
+      check('screen rows: a reply into the status line is not', selectionInReply(rowAt, top, bottom + 2) === false);
+      // A reply row soft-wrapped by xterm: its tail is no item start, even one beginning with a symbol.
+      check('screen rows: a soft-wrapped row is never an item start', selectionInReply((y) => (y === 0 ? { text: '⏺ A reply', wrapped: false } : { text: '>tail of it', wrapped: true }), 1, 1) === true);
+    }
+  }
+
+  // 11. Sequence: an earlier copy's lookup landing late never overwrites a later copy.
+  {
+    const clip = makeClipboard();
+    let call = 0;
+    const msgs = ['First words to copy here.', 'Second words to copy here.'];
+    const copier = CopyOriginal ? new CopyOriginal({
+      transcriptFor: () => '/fake/transcript.jsonl',
+      // The first copy's lookup takes 60 ms, the second's none: both inside the quick 100 ms.
+      recentTexts: async () => { const mine = call++; if (mine === 0) await new Promise((r) => setTimeout(r, 60)); return msgs; },
+      clipboard: clip.api,
+      log: (msg, data) => logs.push({ msg, data }),
+    }) : null;
+    const copy = copier ? (sel) => copier.copy(7, sel, 'copy') : async (sel) => { await new Promise((r) => setTimeout(r, sel.startsWith('First') ? 60 : 0)); await clip.api.writeText(sel); return 'fallback'; };
+    const first = copy('First words to copy');
+    await new Promise((r) => setTimeout(r, 10));
+    const second = copy('Second words to copy');
+    await Promise.all([first, second]);
+    await new Promise((r) => setTimeout(r, 50));
+    check('sequence: the later copy stays on the clipboard', clip.text === 'Second words to copy', clip.text);
+    // The earlier copy's lookup is late (past the quick 100 ms) while the later
+    // one's original is already on: the earlier one's drawn text must not go on.
+    const clip2 = makeClipboard();
+    let call2 = 0;
+    const copier2 = CopyOriginal ? new CopyOriginal({
+      transcriptFor: () => '/fake/transcript.jsonl',
+      recentTexts: async () => { const mine = call2++; if (mine === 0) await new Promise((r) => setTimeout(r, 300)); return msgs; },
+      clipboard: clip2.api,
+      log: () => {},
+    }) : null;
+    if (copier2) {
+      const f = copier2.copy(7, 'First words to copy', 'copy');
+      await new Promise((r) => setTimeout(r, 40));
+      const s2 = copier2.copy(7, 'Second words to copy', 'copy');
+      await Promise.all([f, s2]);
+      await new Promise((r) => setTimeout(r, 400));
+    }
+    check('sequence: an earlier copy gone late leaves the later copy\'s original', clip2.text === 'Second words to copy' && typeof clip2.html === 'string' && clip2.html.includes('Second'), clip2);
+  }
+
+  // 12. The parser stays fast on pathological 100 KB replies and never throws.
+  {
+    if (!parseMarkdown) {
+      check('parser: pathological replies parse fast', false, 'no module');
+    } else {
+      const K = 100 * 1024;
+      const cases = {
+        'unmatched *': '*a '.repeat(K / 3), 'unmatched _': '_a '.repeat(K / 3), 'unmatched **': '**a '.repeat(K / 4),
+        'unmatched [': '[a '.repeat(K / 3), 'unclosed link href': '[a](b '.repeat(K / 6),
+        'a heading with 100k inner spaces': `# a${' '.repeat(K)}#x`, 'deep > nesting': `${'> '.repeat(K / 2)}a`,
+        'mixed openers': '*a _b [c `d '.repeat(K / 12),
+      };
+      for (const [name, text] of Object.entries(cases)) {
+        const t0 = Date.now();
+        let err = null;
+        try { parseMarkdown(text); } catch (e) { err = e.name; }
+        const ms = Date.now() - t0;
+        check(`parser: ${name} (${text.length} chars) parses under 250 ms`, err === null && ms < 250, { ms, err });
+      }
+      const r = await copyVia('  The plan is ready to go now.', [`${'> '.repeat(K / 2)}a`, 'The **plan** is ready to go now.']);
+      check('parser: an unparseable reply in the window does not stop another matching', typeof r.html === 'string' && r.html.includes('<strong>plan</strong>'), r);
+    }
   }
 
   // Logs never carry the copied text.

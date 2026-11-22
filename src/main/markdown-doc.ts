@@ -83,12 +83,32 @@ class Emitter {
 }
 
 const FENCE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
-const HEADING = /^ {0,3}(#{1,6})(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*$/;
+const HEADING_OPEN = /^ {0,3}(#{1,6})(?=[ \t]|$)/;
 const HR = /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/;
 const QUOTE = /^ {0,3}> ?(.*)$/;
 const ITEM = /^( {0,3})([-*+]|(\d{1,9})[.)])(?:([ \t]+)(.*))?$/;
 const TABLE_SEP = /^ {0,3}\|?[ \t]*:?-+:?[ \t]*(\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$/;
 const PUNCT = /[!-/:-@[-`{-~]/;
+
+/**
+ * An ATX heading: its level and text, or null. By hand, not one regex: a
+ * lazy text before optional closing `#`s backtracks quadratically on a long
+ * run of spaces.
+ */
+function parseHeading(line: string): { level: number; text: string } | null {
+  const m = HEADING_OPEN.exec(line);
+  if (!m) return null;
+  let text = line.slice(m[0].length).trim();
+  let k = text.length;
+  while (k > 0 && text[k - 1] === '#') k--;
+  if (k < text.length && (k === 0 || text[k - 1] === ' ' || text[k - 1] === '\t')) text = text.slice(0, k).trim();
+  return { level: m[1].length, text };
+}
+
+/** How deep quotes and lists nest, and inline marks inside marks, before the rest reads as plain text. */
+const MAX_DEPTH = 32;
+/** How far a link's `[label](href)` is looked for: past it, `[` is a character. */
+const MAX_LINK_SCAN = 2000;
 
 function blank(line: string): boolean {
   return line.trim() === '';
@@ -124,7 +144,7 @@ function isTableStart(lines: string[], i: number): boolean {
 
 function startsBlock(lines: string[], i: number): boolean {
   const l = lines[i];
-  if (FENCE.test(l) || HEADING.test(l) || HR.test(l) || QUOTE.test(l)) return true;
+  if (FENCE.test(l) || HEADING_OPEN.test(l) || HR.test(l) || QUOTE.test(l)) return true;
   const m = ITEM.exec(l);
   if (m && m[5] !== undefined && m[5].trim() !== '') return true;
   return isTableStart(lines, i);
@@ -169,11 +189,22 @@ function runLength(s: string, i: number, c: string): number {
 
 const ALNUM = /[\p{L}\p{N}]/u;
 
+/**
+ * Where a scan for a closing run found none: a key of the mark and its
+ * length, the earliest start from which the scan reached the string's end.
+ * A later opener of the same kind would find none either, so it is not
+ * scanned again: without this, a reply of unmatched `*a *a *a` is quadratic.
+ */
+type NoClose = Map<string, number>;
+
 /** A closing delimiter run of exactly `n` of `c` for an opener at `i`, or -1. */
-function findEmphasisClose(s: string, i: number, c: string, n: number): number {
+function findEmphasisClose(s: string, i: number, c: string, n: number, noClose: NoClose): number {
   const after = s[i + n];
   if (after === undefined || /\s/.test(after)) return -1;
   if (c === '_' && i > 0 && ALNUM.test(s[i - 1])) return -1;
+  const key = c + n;
+  const failedFrom = noClose.get(key);
+  if (failedFrom !== undefined && i + n >= failedFrom) return -1;
   let j = i + n;
   while (j < s.length) {
     const ch = s[j];
@@ -192,31 +223,36 @@ function findEmphasisClose(s: string, i: number, c: string, n: number): number {
     if (closes) return j;
     j += k;
   }
+  noClose.set(key, Math.min(failedFrom ?? Infinity, i + n));
   return -1;
 }
 
 /** `[label](href)` at `i`: the label, the href and the index past it. */
-function parseLink(s: string, i: number): { label: string; href: string; end: number } | null {
+function parseLink(s: string, i: number, last: { bracket: number; paren: number }): { label: string; href: string; end: number } | null {
+  // No `]` or `)` left: no link, and no scan (a reply of unmatched `[a` would be quadratic).
+  if (last.bracket < i || last.paren < i) return null;
   let depth = 0;
   let j = i;
-  for (; j < s.length; j++) {
+  const stop = Math.min(s.length, i + MAX_LINK_SCAN);
+  for (; j < stop; j++) {
     const c = s[j];
     if (c === '\\') { j++; continue; }
     if (c === '[') depth++;
     else if (c === ']') { depth--; if (depth === 0) break; }
   }
-  if (j >= s.length || s[j + 1] !== '(') return null;
+  if (j >= stop || s[j + 1] !== '(') return null;
   const label = s.slice(i + 1, j);
   let k = j + 2;
   let parens = 1;
-  for (; k < s.length; k++) {
+  const hrefStop = Math.min(s.length, k + MAX_LINK_SCAN);
+  for (; k < hrefStop; k++) {
     const c = s[k];
     if (c === '\\') { k++; continue; }
     if (c === '(') parens++;
     else if (c === ')') { parens--; if (parens === 0) break; }
     else if (c === '\n') return null;
   }
-  if (k >= s.length || label.trim() === '') return null;
+  if (k >= hrefStop || label.trim() === '') return null;
   let href = s.slice(j + 2, k).trim();
   const titled = /^(\S+)\s+(?:"[^"]*"|'[^']*')$/.exec(href);
   if (titled) href = titled[1];
@@ -226,7 +262,10 @@ function parseLink(s: string, i: number): { label: string; href: string; end: nu
 
 const AUTOLINK = /^<((?:https?:\/\/|mailto:)[^\s<>]+)>/i;
 
-function parseInline(s: string, marks: Marks, out: Emitter, runs: Run[]): void {
+function parseInline(s: string, marks: Marks, out: Emitter, runs: Run[], depth = 0): void {
+  if (depth > MAX_DEPTH) { if (s) runs.push(out.run(s.replace(/\n/g, ' '), marks)); return; }
+  const noClose: NoClose = new Map();
+  const last = { bracket: s.lastIndexOf(']'), paren: s.lastIndexOf(')') };
   let buf = '';
   const flush = (): void => {
     if (buf) { runs.push(out.run(buf, marks)); buf = ''; }
@@ -248,10 +287,10 @@ function parseInline(s: string, marks: Marks, out: Emitter, runs: Run[]): void {
       continue;
     }
     if (c === '[' && !marks.code) {
-      const link = parseLink(s, i);
+      const link = parseLink(s, i, last);
       if (link) {
         flush();
-        parseInline(link.label, { ...marks, href: link.href }, out, runs);
+        parseInline(link.label, { ...marks, href: link.href }, out, runs, depth + 1);
         i = link.end;
         continue;
       }
@@ -268,14 +307,14 @@ function parseInline(s: string, marks: Marks, out: Emitter, runs: Run[]): void {
     if (c === '*' || c === '_') {
       const len = runLength(s, i, c);
       const n = Math.min(len, 3);
-      const close = len <= 3 ? findEmphasisClose(s, i, c, n) : -1;
+      const close = len <= 3 ? findEmphasisClose(s, i, c, n, noClose) : -1;
       if (close < 0) { buf += s.slice(i, i + len); i += len; continue; }
       flush();
       parseInline(s.slice(i + n, close), {
         ...marks,
         strong: marks.strong || n >= 2,
         em: marks.em || n !== 2,
-      }, out, runs);
+      }, out, runs, depth + 1);
       i = close + n;
       continue;
     }
@@ -297,7 +336,8 @@ function inlineBlock(text: string, out: Emitter): { runs: Run[]; from: number; t
   return { runs, from, to: out.len };
 }
 
-function parseBlocks(lines: string[], out: Emitter): Block[] {
+/** `probe`: only the top-level blocks are wanted (parseProbe), so nothing nested is parsed. */
+function parseBlocks(lines: string[], out: Emitter, depth = 0, probe = false): Block[] {
   const blocks: Block[] = [];
   let i = 0;
   const n = lines.length;
@@ -323,10 +363,10 @@ function parseBlocks(lines: string[], out: Emitter): Block[] {
       continue;
     }
 
-    const heading = HEADING.exec(line);
+    const heading = parseHeading(line);
     if (heading) {
-      const b = inlineBlock((heading[2] ?? '').trim(), out);
-      blocks.push({ t: 'heading', level: heading[1].length, ...b });
+      const b = inlineBlock(heading.text, out);
+      blocks.push({ t: 'heading', level: heading.level, ...b });
       i++;
       continue;
     }
@@ -337,7 +377,7 @@ function parseBlocks(lines: string[], out: Emitter): Block[] {
       continue;
     }
 
-    if (QUOTE.test(line)) {
+    if (depth < MAX_DEPTH && QUOTE.test(line)) {
       const inner: string[] = [];
       while (i < n) {
         const m = QUOTE.exec(lines[i]);
@@ -348,14 +388,14 @@ function parseBlocks(lines: string[], out: Emitter): Block[] {
         i++;
       }
       const from = out.len;
-      const children = parseBlocks(inner, out);
+      const children = probe ? [] : parseBlocks(inner, out, depth + 1);
       blocks.push(spanOf(firstFrom(children, from), out.len, { t: 'quote' as const, children }));
       continue;
     }
 
     const first = ITEM.exec(line);
-    if (first && first[5] !== undefined && first[5].trim() !== '' || first && first[5] === undefined && i + 1 < n && leadingSpaces(lines[i + 1]) >= 2) {
-      const [list, next] = parseList(lines, i, out);
+    if (depth < MAX_DEPTH && (first && first[5] !== undefined && first[5].trim() !== '' || first && first[5] === undefined && i + 1 < n && leadingSpaces(lines[i + 1]) >= 2)) {
+      const [list, next] = parseList(lines, i, out, depth, probe);
       blocks.push(list);
       i = next;
       continue;
@@ -402,7 +442,7 @@ function firstFrom(children: Block[], fallback: number): number {
   return children.length ? children[0].from : fallback;
 }
 
-function parseList(lines: string[], start: number, out: Emitter): [Block, number] {
+function parseList(lines: string[], start: number, out: Emitter, depth: number, probe: boolean): [Block, number] {
   const head = ITEM.exec(lines[start]);
   if (!head) throw new Error('parseList: no item');
   const ordered = head[3] !== undefined;
@@ -448,22 +488,23 @@ function parseList(lines: string[], start: number, out: Emitter): [Block, number
   }
   const from = out.len;
   const items: ListItem[] = raw.map((content) => {
+    if (probe) return { children: [], from: out.len, to: out.len };
     if (content.some((l, k) => k > 0 && blank(l) && k < content.length - 1)) {
       // A blank line between two paragraphs of one item makes the list loose.
-      const paras = parseProbe(content);
+      const paras = parseProbe(content, depth + 1);
       if (paras > 1) loose = true;
     }
     out.newLine();
     const itemFrom = out.len;
-    const children = parseBlocks(content, out);
+    const children = parseBlocks(content, out, depth + 1);
     return { children, from: itemFrom, to: out.len };
   });
   return [{ t: 'list', ordered, start: startNum, loose, items, from: items.length ? items[0].from : from, to: out.len }, i];
 }
 
 /** How many top-level blocks `lines` holds, without emitting (for looseness). */
-function parseProbe(lines: string[]): number {
-  return parseBlocks(lines, new Emitter()).length;
+function parseProbe(lines: string[], depth: number): number {
+  return parseBlocks(lines, new Emitter(), depth, true).length;
 }
 
 export function parseMarkdown(source: string): MarkdownDoc {

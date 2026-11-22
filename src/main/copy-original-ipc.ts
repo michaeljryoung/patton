@@ -30,9 +30,15 @@ export function registerCopyOriginalHandlers(ptyManager: PtyManager, feed: Sessi
 
   ipcMain.handle(IPC.CLIPBOARD_COPY_SELECTION, async (event, ptyId: unknown, text: unknown, mode: unknown): Promise<CopySelectionResult> => {
     if (typeof ptyId !== 'number' || !Number.isInteger(ptyId) || ptyId <= 0
-      || typeof text !== 'string' || text.length === 0 || text.length > MAX_SELECTION_CHARS
+      || typeof text !== 'string' || text.length === 0
       || (mode !== 'copy' && mode !== 'upgrade')) {
       console.warn('[SECURITY] CLIPBOARD_COPY_SELECTION type validation failed', { ptyId: typeof ptyId, text: typeof text, mode: typeof mode });
+      return 'refused';
+    }
+    // Select-all in a long session: a legitimate copy, too big to look up.
+    // 'refused' has the renderer copy the drawn text itself.
+    if (text.length > MAX_SELECTION_CHARS) {
+      console.info('[COPY] fallback', { pty: ptyId, reason: 'too long', chars: text.length });
       return 'refused';
     }
     if (!limiter.allow()) {

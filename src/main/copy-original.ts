@@ -9,7 +9,8 @@
  *   clipboard (plain text and HTML), or the drawn text when there is none.
  *   Late, the drawn text goes on at once, and the original replaces it only if
  *   it lands within `lateMs` (1 s) of the copy and the clipboard still holds
- *   the drawn text, and no newer copy began.
+ *   the drawn text, and no newer copy began. A copy that a newer one overtook
+ *   while it looked up writes nothing: a later copy is never overwritten.
  * - `upgrade` (copy-on-select, which already wrote the drawn text): only that
  *   replacement, on the same terms.
  *
@@ -96,6 +97,13 @@ export class CopyOriginal {
       new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), this.quickMs); }),
     ]);
     clearTimeout(timer);
+
+    // A newer copy began while this one looked up: the clipboard is the
+    // newer one's, so this one writes nothing (and the renderer neither).
+    if (seq !== this.seq) {
+      this.log('[COPY] fallback', { pty: ptyId, reason: 'newer copy', msgsSearched: quick?.msgsSearched ?? 0, ms: this.now() - t0 });
+      return 'fallback';
+    }
 
     if (quick) {
       if ('copy' in quick) {
