@@ -41,7 +41,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
-const HARD_TIMEOUT_MS = 240000;
+const HARD_TIMEOUT_MS = 480000;
 const SOFFICE = '/opt/homebrew/bin/soffice';
 const PDFINFO = ['/opt/homebrew/bin/pdfinfo', '/usr/local/bin/pdfinfo'].find((p) => fs.existsSync(p));
 
@@ -52,6 +52,18 @@ if (process.versions.electron) {
     console.error(err);
     process.exit(2);
   });
+}
+
+// Pages of a printed PDF that carry a page image at print resolution (wider
+// than 1000 px): a broken image prints as a 28 px icon, a blank page none.
+function pagesWithPageImage(file) {
+  const out = require('node:child_process').execFileSync(PDFINFO.replace(/pdfinfo$/, 'pdfimages'), ['-list', file], { encoding: 'utf8' });
+  const pages = new Set();
+  for (const line of out.split('\n').slice(2)) {
+    const f = line.trim().split(/\s+/);
+    if (f.length > 4 && f[2] === 'image' && Number(f[3]) > 1000) pages.add(Number(f[0]));
+  }
+  return pages.size;
 }
 
 function pdfPages(file) {
@@ -213,7 +225,7 @@ function electronMain() {
   // A two-page .docx: a heading, a paragraph, a table, a picture, a page
   // break, then page two. `pages` > 2 adds that many more pages of text (the
   // long file the memory check scrolls through).
-  function makeDocx(file, pages = 2) {
+  function makeDocx(file, pages = 2, extra = '') {
     const W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"';
     const types = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>';
     const rootRels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>';
@@ -240,6 +252,7 @@ function electronMain() {
       + table
       + picture
       + p('Each team reports monthly against the plan.')
+      + (extra ? p(extra) : '')
       + pageBreak
       + p('Page two', true)
       + p('Risks: the budget is fixed, so new work waits for the next quarter.')
@@ -265,11 +278,13 @@ function electronMain() {
       fs.mkdirSync(docsDir, { recursive: true });
       const docx = path.join(docsDir, 'Quarterly plan.docx');
       const lindusDocx = path.join(docsDir, 'Lindus trial notes.docx');
-      makeDocx(docx);
+      // Three pages: a table and a picture on page 1, the comment on page 2.
+      makeDocx(docx, 3);
       makeDocx(lindusDocx);
       const want = sofficePages(docx);
       measures.push(`soffice --convert-to pdf: ${want} pages`);
-      check('the test document lays out on two pages in LibreOffice', want === 2, { pages: want });
+      check('the test document lays out on three pages in LibreOffice', want === 3, { pages: want });
+      const pagesRe = new RegExp(`^${want} pages`);
 
       M.registerReviewHandlers();
       // The window runs under the app's own CSP, set as window-manager.ts sets
@@ -281,7 +296,7 @@ function electronMain() {
         ? fs.readFileSync(path.join(asar, '.vite/build/main.cjs'), 'utf8')
         : fs.readFileSync(path.join(__dirname, '../src/main/window-manager.ts'), 'utf8');
       const csp = ((/`(default-src 'self';[^`]*)`/.exec(cspSource) || [])[1] || '').replace(/\$\{[^}]*\}/g, '');
-      check(`the window has the ${asar ? 'packaged' : 'source'} app's CSP (script-src 'self', no blob:)`, /script-src 'self'/.test(csp) && !/blob:/.test(csp), csp);
+      check(`the window has the ${asar ? 'packaged' : 'source'} app's CSP (script-src 'self', no blob: for scripts or workers; img-src takes blob: for Print's page images)`, /script-src 'self'/.test(csp) && !/(default-src|script-src|worker-src|child-src)[^;]*blob:/.test(csp) && /img-src[^;]*blob:/.test(csp), csp);
       const win = new BrowserWindow({
         show: false, width: 1400, height: 1000,
         webPreferences: { backgroundThrottling: false, contextIsolation: false, nodeIntegration: false, sandbox: false, preload: path.join(outDir, 'preload.cjs') },
@@ -309,7 +324,7 @@ function electronMain() {
       const shown = await js(pageShown);
       check('main\'s review:open makes a review tab titled with the file\'s name', shown.title === 'Quarterly plan.docx', shown);
       check(`the tab shows the same page count as soffice (${want})`, shown.pages === want, shown);
-      check('every page is drawn on a canvas with a text layer', shown.canvases === want && shown.layersWithText === want, shown);
+      check('every page near the view is drawn on a canvas with a text layer (the rest as they are scrolled to, step 6)', shown.canvases >= 2 && shown.layersWithText === shown.canvases, shown);
       check('pdf.js runs in its Web Worker (not the main-thread fallback)', shown.workerMode === 'worker', shown.logs);
       check('every control in the tab has an accessible name', shown.unnamed.length === 0, shown.unnamed);
       check('the toolbar has the four buttons, each visible', JSON.stringify(shown.buttons) === JSON.stringify(['Print', 'Send to Drive', 'Open in Word', 'Send comments to Claude']), shown.buttons);
@@ -318,7 +333,9 @@ function electronMain() {
       check('the picture is drawn on page 1 (its blue stripes on the canvas)', shown.pictureInk > 500, { pictureInk: shown.pictureInk });
       measures.push(`tab: ${shown.pages} pages, ${shown.spans} text spans`);
 
+      const versionBefore = `${fs.statSync(docx).mtimeMs}:${fs.statSync(docx).size}`;
       const added = await js(pageAddComment);
+      check('Add comment sends the version of the layout the text was selected on', added.addCalls.length === 1 && added.addCalls[0].version === versionBefore, { sent: added.addCalls, versionBefore });
       check('a selection holding no text shows a short note', /Select words/.test(added.noTextNote), added);
       check('a selection that ends outside the pages (mouse let go over the panel) still becomes the quote, cut to the page\'s text', added.outsideSelected.includes('budget is fixed, so new work') && !/Comments/.test(added.outsideSelected), added);
       check('text selected on page 2 becomes the pending quote', added.selected.includes('budget is fixed, so'), added);
@@ -330,12 +347,12 @@ function electronMain() {
       const para = docXml.split('</w:p>').find((p) => p.includes('commentRangeStart')) || '';
       check('the comment is anchored in page 2\'s paragraph', para.includes('Risks:') && docXml.indexOf('commentRangeStart') > docXml.indexOf('Page two'), para.slice(0, 300));
       const after = sofficePages(docx);
-      check('LibreOffice still lays the commented file out on two pages', after === 2, { pages: after });
+      check(`LibreOffice still lays the commented file out on ${want} pages`, after === want, { pages: after });
       measures.push(`comments.xml: ${commentsXml.length} bytes, quote occurrence ${added.occurrence}`);
 
       // 2b. the comment's highlight, after the re-layout its write set off
       const marks = await js(pageMarks);
-      check('the status "The file changed: laying it out again…" goes when the new layout shows', marks.relaidOut && !/changed/.test(marks.status) && /^2 pages/.test(marks.status), marks);
+      check('the status "The file changed: laying it out again…" goes when the new layout shows', marks.relaidOut && !/changed/.test(marks.status) && pagesRe.test(marks.status), marks);
       check('the pages carry no margin notes: the comment\'s text is not on them (it is in the panel)', !marks.layerHasComment, marks);
       check('a comment leaves the page at 100%: the heading sits where it did before the comment', !!marks.headingBox && !!shown.headingBox && Math.abs(marks.headingBox.left - shown.headingBox.left) <= 1 && Math.abs(marks.headingBox.height - shown.headingBox.height) <= 1, { before: shown.headingBox, after: marks.headingBox });
       check('the comment\'s text is highlighted on page 2 (and only there)', marks.marksOnPage2 > 0 && marks.marksElsewhere === 0 && marks.markInside, marks);
@@ -347,6 +364,15 @@ function electronMain() {
       check('clicking elsewhere on a page clears it; clicking the highlight selects its comment', marks.clearedByOther && marks.selectedByMark, marks);
       measures.push(`highlight: ${marks.marksOnPage2} box(es) on page 2, scrolled ${marks.scrolledFrom} → ${marks.scrolledTo}`);
 
+      // 2c. a comment on an outdated layout: main refuses it, the panel says so
+      const bytesBeforeStale = fs.readFileSync(docx);
+      const stale = await js(pageStaleComment);
+      check('a comment selected on an outdated layout is refused by main (why: changed)', stale.reply && stale.reply.why === 'changed', stale);
+      check('… the file is left as it was', Buffer.compare(bytesBeforeStale, fs.readFileSync(docx)) === 0);
+      check('… the panel says the file changed and to select again', /changed since this page was laid out/.test(stale.note) && stale.noteVisible, stale);
+      check('… his comment text stays in the box, the selection is cleared', stale.inputAfter === 'Not this one.' && !stale.selectedSet, stale);
+      check('… and the file is laid out again (the version on screen is the file\'s)', stale.relaid && stale.versionAfter === `${fs.statSync(docx).mtimeMs}:${fs.statSync(docx).size}`, stale);
+
       // 3. Print
       const printed = await js(pagePrint);
       check('Print calls window.print() once', printed.printCalls === 1, printed);
@@ -357,8 +383,10 @@ function electronMain() {
       const printedPages = pdfPages(printFile);
       measures.push(`printToPDF: ${printedPages} pages`);
       check(`printToPDF of the window has exactly the laid-out pages (${want})`, printedPages === want, { printedPages });
+      const imaged = pagesWithPageImage(printFile);
+      check('every printed page carries its page image at print resolution (not blank, not a broken image)', imaged === want, { imaged, want });
       const cleaned = await js(pageAfterPrint);
-      check('the status line still reads the page count after Print', /^2 pages/.test(printed.status), printed);
+      check('the status line still reads the page count after Print', pagesRe.test(printed.status), printed);
       check('afterprint removes the print-only pages', cleaned.left === 0 && !cleaned.printing, cleaned);
 
       // 7. screenshots of the real tab (light, dark)
@@ -401,6 +429,14 @@ function electronMain() {
       check('the Google Doc\'s link shows in the tab', drive.linkShown, drive);
       check('the link lands in the origin pane\'s session bar Links', drive.barLinks.some((l) => l.url === 'https://docs.google.com/document/d/fake-doc-id/edit' && /Google Doc/.test(l.label)), drive.barLinks);
       check('main refuses a Lindus file without confirmLindus', drive.mainGate === 'confirm-lindus', drive.mainGate);
+      // The panel asks main's full check, not the file's name alone.
+      const byTextDocx = path.join(docsDir, 'Call notes.docx');
+      makeDocx(byTextDocx, 2, 'Agenda for the Lindus board.');
+      M.openReview(win.webContents, byTextDocx);
+      const byText = await js(pageDriveAsk, { name: 'Call notes.docx' });
+      check('a file named plainly whose text says Lindus asks first, saying why', byText.asked && /text mentions Lindus/.test(byText.dialogText) && byText.callsAdded === 0, byText);
+      const plain = await js(pageDriveAsk, { name: 'Quarterly plan.docx' });
+      check('a plain file sends without asking', !plain.asked && plain.callsAdded === 1 && plain.lastConfirm === false, plain);
 
       // 6. a long file: canvases only near the view; tab switch keeps the view
       const longDocx = path.join(docsDir, 'Long report.docx');
@@ -429,6 +465,43 @@ function electronMain() {
       check('closing a review tab ends it in main and the view', closed.afterClose === closed.before - 1 && closed.disposed && !closed.inDom && closed.mainWhy === 'unknown', closed);
       check('Reopen Closed Tab does not bring it back as an empty terminal', closed.afterReopen === closed.afterClose, closed);
 
+      // 6c. Print a long file: memory stays bounded (every process of the app sampled)
+      const bigPages = Number(process.env.REVIEW_PRINT_PAGES || 100);
+      const bigDocx = path.join(docsDir, 'Hundred pages.docx');
+      makeDocx(bigDocx, bigPages);
+      const bigWant = sofficePages(bigDocx);
+      M.openReview(win.webContents, bigDocx);
+      await js(pageWaitShown, { pages: bigWant });
+      const totalMB = () => Math.round(app.getAppMetrics().reduce((n, m) => n + (m.memory.workingSetSize || 0), 0) / 1024);
+      const rendererMB = () => { const pid = win.webContents.getOSProcessId(); const m = app.getAppMetrics().find((x) => x.pid === pid); return m ? Math.round(m.memory.workingSetSize / 1024) : 0; };
+      const byType = () => { const o = {}; for (const m of app.getAppMetrics()) { const k = m.serviceName || m.type; o[k] = (o[k] || 0) + Math.round((m.memory.workingSetSize || 0) / 1024); } return o; };
+      const baseTypes = byType();
+      const peakTypes = { ...baseTypes };
+      const base = { total: totalMB(), renderer: rendererMB() };
+      let peak = { ...base };
+      const sampler = setInterval(() => {
+        peak = { total: Math.max(peak.total, totalMB()), renderer: Math.max(peak.renderer, rendererMB()) };
+        for (const [k, v] of Object.entries(byType())) peakTypes[k] = Math.max(peakTypes[k] || 0, v);
+      }, 100);
+      const t0 = Date.now();
+      const bigPrint = await js(pagePrintActive, { pages: bigWant });
+      const prepMs = Date.now() - t0;
+      const bigPdf = await win.webContents.printToPDF({ preferCSSPageSize: true, printBackground: true });
+      clearInterval(sampler);
+      peak = { total: Math.max(peak.total, totalMB()), renderer: Math.max(peak.renderer, rendererMB()) };
+      const bigFile = path.join(outDir, 'printed-long.pdf');
+      fs.writeFileSync(bigFile, bigPdf);
+      const bigPrinted = pdfPages(bigFile);
+      await js(pageAfterPrint);
+      const grew = { total: peak.total - base.total, renderer: peak.renderer - base.renderer };
+      measures.push(`print growth by process: ${Object.entries(peakTypes).map(([k, v]) => `${k} +${v - (baseTypes[k] || 0)}`).join(', ')}`);
+      measures.push(`print of ${bigWant} pages: prepared in ${(prepMs / 1000).toFixed(1)} s, ${bigPrint.held} MB of page images held, peak growth ${grew.total} MB across the app (${grew.renderer} MB in the renderer), printToPDF ${bigPrinted} pages, ${Math.round(bigPdf.length / 1048576)} MB`);
+      const bigImaged = pagesWithPageImage(bigFile);
+      check(`Print of a ${bigWant}-page file prints every page, each with its page image`, bigPrint.printPages === bigWant && bigPrinted === bigWant && bigImaged === bigWant, { bigPrint, bigPrinted, bigImaged });
+      check('… with no page held as a canvas or a data URL while waiting for the dialog (blob images)', bigPrint.canvases === 0 && bigPrint.dataUrls === 0 && bigPrint.blobUrls === bigWant, bigPrint);
+      check('… and the app grows by less than 250 MB at its peak, print compositor included (PNG pages decoded ahead grew it by 1.1 GB)', grew.total < 250, { base, peak, grew, peakTypes, baseTypes });
+      await js(pageCloseActive);
+
       // 8. the packaged build's worker asset
       if (asar) {
         const assets = path.join(asar, '.vite/renderer/main_window/assets');
@@ -456,7 +529,7 @@ function electronMain() {
 async function pageSetup() {
   const ipc = window.__ipc;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  const S = { writes: [], logs: [], driveCalls: [], printCalls: 0 };
+  const S = { writes: [], logs: [], driveCalls: [], addCalls: [], printCalls: 0 };
   window.__S = S;
   let nextPty = 1;
   const answers = {
@@ -482,8 +555,9 @@ async function pageSetup() {
     onChanged: (cb) => { const l = (_e, id) => cb(id); ipc.on('review:changed', l); return () => ipc.removeListener('review:changed', l); },
     layout: (id) => ipc.invoke('review:layout', id),
     comments: (id) => ipc.invoke('review:comments', id),
-    addComment: (id, c) => ipc.invoke('review:add-comment', id, c),
+    addComment: (id, c) => { S.addCalls.push(c); return ipc.invoke('review:add-comment', id, c); },
     openInWord: async () => true,
+    lindus: (id) => ipc.invoke('review:lindus', id),
     // Fake: nothing is ever sent. A link like the Drive API's webViewLink.
     sendToDrive: async (id, opts) => {
       S.driveCalls.push({ id, confirmLindus: opts.confirmLindus });
@@ -610,6 +684,7 @@ async function pageAddComment() {
   return {
     selected, addDisabled, noTextNote, outsideSelected,
     occurrence: view && view.selected ? view.selected.occurrence : '(cleared)',
+    addCalls: window.__S.addCalls,
     listed: root.querySelector('.review-comments').textContent,
     count: root.querySelector('.review-count').textContent,
     status: root.querySelector('.review-status').textContent,
@@ -733,6 +808,107 @@ async function pagePrint() {
     printing: document.documentElement.classList.contains('review-printing'),
     status: document.querySelector('.review-status').textContent,
   };
+}
+
+async function pageStaleComment() {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const S = window.__S;
+  const view = S.view;
+  const root = view.element;
+  const layer = root.querySelector('.review-text-layer[data-page="1"]');
+  const span = [...layer.querySelectorAll('span')].find((s) => s.textContent.includes('new work waits'));
+  if (!span) return { error: 'no span' };
+  // As if the file had changed on disk after this layout was drawn.
+  view.layoutVersion = '1:1';
+  const node = span.firstChild;
+  const at = node.textContent.indexOf('new work waits');
+  const range = document.createRange();
+  range.setStart(node, at); range.setEnd(node, at + 'new work waits'.length);
+  const sel = document.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+  root.querySelector('.review-pages').dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+  const input = root.querySelector('.review-input');
+  input.value = 'Not this one.';
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  const calls = S.addCalls.length;
+  const real = window.patton.review.addComment;
+  let reply = null;
+  window.patton.review.addComment = async (id, c) => { reply = await real(id, c); return reply; };
+  root.querySelector('.review-add-btn').click();
+  for (let i = 0; i < 100 && !reply; i++) await sleep(100);
+  window.patton.review.addComment = real;
+  let relaid = false;
+  for (let i = 0; i < 100; i++) { if (view.layoutVersion !== '1:1' && !/changed/.test(root.querySelector('.review-status').textContent)) { relaid = true; break; } await sleep(100); }
+  const note = root.querySelector('.review-note');
+  return {
+    reply, sent: S.addCalls.slice(calls), relaid, versionAfter: view.layoutVersion,
+    note: note.textContent, noteVisible: !note.hidden,
+    inputAfter: input.value, selectedSet: root.querySelector('.review-selected').classList.contains('review-selected-set'),
+  };
+}
+
+async function pageDriveAsk(arg) {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const S = window.__S;
+  let root = null;
+  for (let i = 0; i < 300; i++) {
+    root = [...document.querySelectorAll('.review')].find((r) => r.getAttribute('aria-label') === `Review of ${arg.name}`);
+    if (root && root.querySelectorAll('.review-page canvas').length > 0) break;
+    await sleep(100);
+  }
+  if (!root) return { error: 'no review' };
+  const before = S.driveCalls.length;
+  // This file's own dialog (an older one may linger hidden in the page).
+  const shownDialog = () => [...document.querySelectorAll('.confirm-dialog-overlay, .confirm-dialog')]
+    .find((d) => !d.hidden && getComputedStyle(d).display !== 'none' && d.textContent.includes(arg.name)) || null;
+  root.querySelector('.review-drive-btn').click();
+  await sleep(400);
+  const d = shownDialog();
+  const dialogText = d ? d.textContent.replace(/\s+/g, ' ').trim() : '';
+  if (d) d.querySelector('.confirm-dialog-cancel')?.click();
+  await sleep(200);
+  return { asked: !!d, dialogText, callsAdded: S.driveCalls.length - before, lastConfirm: S.driveCalls.length > before ? S.driveCalls.at(-1).confirmLindus : null };
+}
+
+async function pageWaitShown(arg) {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const tm = window.__tm;
+  for (let i = 0; i < 1200; i++) {
+    const tab = tm.getActiveTab();
+    const view = tab && tm.reviewTabs.viewOf(tab);
+    if (view && view.pageCount === arg.pages && view.element.querySelectorAll('.review-page canvas').length > 0) return true;
+    await sleep(100);
+  }
+  return false;
+}
+
+async function pagePrintActive(arg) {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const S = window.__S;
+  const tm = window.__tm;
+  const root = tm.reviewTabs.viewOf(tm.getActiveTab()).element;
+  const before = S.printCalls;
+  root.querySelector('.review-print-btn').click();
+  for (let i = 0; i < 3000 && S.printCalls === before; i++) await sleep(100);
+  const imgs = [...document.querySelectorAll('.review-print .review-print-page')];
+  const view = tm.reviewTabs.viewOf(tm.getActiveTab());
+  const dataBytes = imgs.filter((i) => i.src.startsWith('data:')).reduce((n, i) => n + i.src.length, 0);
+  return {
+    printCalls: S.printCalls - before,
+    printPages: imgs.length,
+    want: arg.pages,
+    canvases: document.querySelectorAll('.review-print canvas').length,
+    dataUrls: imgs.filter((i) => i.src.startsWith('data:')).length,
+    blobUrls: imgs.filter((i) => i.src.startsWith('blob:')).length,
+    held: Math.round((view.printHeldBytes + dataBytes) / 1048576),
+    status: root.querySelector('.review-status').textContent,
+  };
+}
+
+async function pageCloseActive() {
+  const tm = window.__tm;
+  const tab = tm.getActiveTab();
+  if (tab && tm.reviewTabs.viewOf(tab)) await tm.closeById(tab.id);
+  await new Promise((r) => setTimeout(r, 300));
 }
 
 async function pageAfterPrint() {

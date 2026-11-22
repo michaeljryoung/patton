@@ -10,6 +10,8 @@ export const REVIEW_IPC = {
   ADD_COMMENT: 'review:add-comment',
   OPEN_IN_WORD: 'review:open-in-word',
   DRIVE: 'review:drive',
+  /** Main's full Lindus check (path, properties, text), asked before Send to Drive. */
+  LINDUS: 'review:lindus',
   CLOSE: 'review:close',
 } as const;
 
@@ -20,8 +22,12 @@ export interface ReviewDocInfo {
   name: string;
   /** Where it is, `~/…` inside home, for the tooltip and the Claude message. */
   shownPath: string;
-  /** Under a Lindus folder or named Lindus: Send to Drive asks first. */
-  lindus: boolean;
+}
+
+/** Main's Lindus check of the file as it is now (`lindusSignal`): `why` in
+ *  his words when Send to Drive should ask first, else null. */
+export interface ReviewLindusReply {
+  why: string | null;
 }
 
 export type ReviewLayoutReply =
@@ -42,6 +48,9 @@ export interface ReviewNewComment {
   quote: string;
   occurrence: number;
   text: string;
+  /** The layout's `version` the selection was made on; main refuses the
+   *  comment when the file has other text now (`why: 'changed'`). */
+  version?: string;
 }
 
 export type ReviewAddReply =
@@ -60,6 +69,7 @@ export interface ReviewApi {
   comments(docId: string): Promise<ReviewComment[]>;
   addComment(docId: string, comment: ReviewNewComment): Promise<ReviewAddReply>;
   openInWord(docId: string): Promise<boolean>;
+  lindus(docId: string): Promise<ReviewLindusReply>;
   sendToDrive(docId: string, opts: { confirmLindus: boolean }): Promise<ReviewDriveReply>;
   close(docId: string): Promise<void>;
 }

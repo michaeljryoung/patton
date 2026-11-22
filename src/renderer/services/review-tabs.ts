@@ -77,7 +77,7 @@ export class ReviewTabs {
     });
     this.views.set(tab, view);
     tab.setCover({ element: view.element, focus: () => view.focus(), title: info.name });
-    rlog('info', '[REVIEW] tab opened', { tabId: tab.id, origin: origin?.id ?? null, lindus: info.lindus });
+    rlog('info', '[REVIEW] tab opened', { tabId: tab.id, origin: origin?.id ?? null });
     return tab;
   }
 

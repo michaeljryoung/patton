@@ -97,6 +97,7 @@ const api: PattonAPI = {
     comments: (docId) => ipcRenderer.invoke(REVIEW_IPC.COMMENTS, docId),
     addComment: (docId, comment) => ipcRenderer.invoke(REVIEW_IPC.ADD_COMMENT, docId, comment),
     openInWord: (docId) => ipcRenderer.invoke(REVIEW_IPC.OPEN_IN_WORD, docId),
+    lindus: (docId) => ipcRenderer.invoke(REVIEW_IPC.LINDUS, docId),
     sendToDrive: (docId, opts) => ipcRenderer.invoke(REVIEW_IPC.DRIVE, docId, opts),
     close: (docId) => ipcRenderer.invoke(REVIEW_IPC.CLOSE, docId),
   },

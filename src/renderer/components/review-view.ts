@@ -21,10 +21,14 @@
  * layer (freeSlot); the rest are drawn again when they come near. A hidden
  * tab keeps what it drew.
  *
- * Print (R6): each page is drawn again at PRINT_DPI into a print-only
- * container of images, one per sheet at the page's own size (@page), and
- * everything else is hidden under @media print; then window.print(). The
- * check proves the page count with webContents.printToPDF.
+ * Print (R6): each page is drawn again at PRINT_DPI, one at a time on one
+ * reused canvas, and kept only as a JPEG blob behind an <img> (blob: URL,
+ * never decoded ahead), one per sheet at the page's own size (@page), in a
+ * print-only container; everything else is hidden under @media print; then
+ * window.print(). A 100-page file grows the app by about 60 MB to print, not
+ * 1.1 GB as when every page was decoded ahead as a PNG (check-review-tab.cjs
+ * samples every process through printToPDF). The check proves the page count
+ * and that every printed page carries its image.
  */
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist';
 import { REVIEW_COMMENT_MAX, REVIEW_QUOTE_MAX, type ReviewApi, type ReviewComment, type ReviewDocInfo } from '../../shared/review';
@@ -36,8 +40,18 @@ import { reviewMessage } from '../services/review-message';
 import { snapToInk } from '../services/review-ink';
 import type { ConfirmOptions } from './confirm-dialog';
 
+/** A `data:<type>;base64,…` URL's bytes as a Blob of that type. */
+function dataUrlBlob(dataUrl: string): Blob {
+  const bin = atob(dataUrl.slice(dataUrl.indexOf(',') + 1));
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new Blob([bytes], { type: dataUrl.slice(5, dataUrl.indexOf(';')) });
+}
+
 /** Resolution pages are drawn at for printing. */
 export const PRINT_DPI = 200;
+/** JPEG quality of a printed page's image. */
+const PRINT_JPEG_QUALITY = 0.95;
 /** CSS px per PDF point at 100% (96 / 72). */
 const PX_PER_PT = 96 / 72;
 /** The largest zoom pages are drawn at on screen (their real size). */
@@ -73,6 +87,8 @@ interface PageSlot {
 interface Selected {
   quote: string;
   occurrence: number;
+  /** The layout's version the text was selected on (main refuses a stale one). */
+  version: string;
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, text?: string): HTMLElementTagNameMap[K] {
@@ -140,6 +156,8 @@ export class ReviewView {
   private allKey = '';
   private comments: ReviewComment[] = [];
   private selected: Selected | null = null;
+  /** The `version` of the layout on screen (main's mtime:size of the file it laid out). */
+  private layoutVersion = '';
   private loadSeq = 0;
   private scale = 1;
   private disposed = false;
@@ -149,6 +167,8 @@ export class ReviewView {
   private resizeObserver: ResizeObserver | null = null;
   private resizeTimer: ReturnType<typeof setTimeout> | null = null;
   private printCleanup: (() => void) | null = null;
+  /** Bytes of page images the last Print holds until its cleanup (logged with `[REVIEW] print`). */
+  printHeldBytes = 0;
   private offChanged: (() => void) | null = null;
   /** The note came from a layout failure, so a good re-layout clears it;
    *  other notes (a refused send) stay until replaced. */
@@ -299,6 +319,7 @@ export class ReviewView {
     if (seq !== this.loadSeq || this.disposed) { void opened.destroy(); return false; }
     const old = this.pdf;
     this.pdf = opened;
+    this.layoutVersion = reply.version;
     const scrollTop = this.pagesEl.scrollTop;
     await this.buildPages(opened.doc);
     if (seq !== this.loadSeq || this.disposed) return false;
@@ -691,7 +712,7 @@ export class ReviewView {
     pre.setEnd(range.startContainer, range.startOffset);
     const before = this.pageKeys.slice(0, page).join('').length + textKey(pre.toString()).length;
     const occurrence = matchesOf(this.allKey, key).filter((i) => i < before).length;
-    this.selected = { quote, occurrence };
+    this.selected = { quote, occurrence, version: this.layoutVersion };
     this.selectedEl.textContent = `On “${cut(quote, 120)}”`;
     this.selectedEl.classList.add('review-selected-set');
     this.hideNote();
@@ -705,9 +726,20 @@ export class ReviewView {
     this.busy.add('add');
     this.refreshButtons();
     this.setStatus('Saving the comment into the file…');
-    const reply = await this.deps.api.addComment(this.deps.info.docId, { quote: this.selected.quote, occurrence: this.selected.occurrence, text });
+    const { quote, occurrence, version } = this.selected;
+    const reply = await this.deps.api.addComment(this.deps.info.docId, { quote, occurrence, text, version });
     this.busy.delete('add');
     if (this.disposed) return;
+    if (reply.ok === false && reply.why === 'changed') {
+      // Selected on a layout of an older file: the selection may point at
+      // other text now. Keep what he wrote, drop the selection, lay out again.
+      rlog('info', '[REVIEW] comment refused: layout outdated');
+      this.clearSelection();
+      this.showNote(reply.message);
+      this.refreshButtons();
+      void this.load('changed');
+      return;
+    }
     if (reply.ok === false) {
       this.setStatus(this.layoutStatus);
       // A file that went away: the next good layout (it came back) clears it.
@@ -716,14 +748,18 @@ export class ReviewView {
       return;
     }
     this.commentInput.value = '';
-    this.selected = null;
-    this.selectedEl.textContent = 'Select text on a page to comment on it.';
-    this.selectedEl.classList.remove('review-selected-set');
-    document.getSelection()?.removeAllRanges();
+    this.clearSelection();
     this.hideNote();
     this.setStatus('Comment saved in the file.');
     announce('Comment saved in the file');
     await this.loadComments();
+  }
+
+  private clearSelection(): void {
+    this.selected = null;
+    this.selectedEl.textContent = 'Select text on a page to comment on it.';
+    this.selectedEl.classList.remove('review-selected-set');
+    document.getSelection()?.removeAllRanges();
   }
 
   // ------------------------------------------------------------ actions
@@ -778,18 +814,21 @@ export class ReviewView {
 
   private async sendToDrive(): Promise<void> {
     const { info } = this.deps;
-    let confirmLindus = false;
-    if (info.lindus) {
-      confirmLindus = await this.confirmLindus();
-      if (!confirmLindus) { this.setStatus('Not sent to Drive.'); return; }
-    }
     this.busy.add('drive');
     this.refreshButtons();
+    // Main's full check (path, document properties, text), not the name alone.
+    const lindus = await this.deps.api.lindus(info.docId);
+    if (this.disposed) return;
+    let confirmLindus = false;
+    if (lindus.why !== null) {
+      confirmLindus = await this.confirmLindus(lindus.why);
+      if (!confirmLindus) { this.busy.delete('drive'); this.refreshButtons(); this.setStatus('Not sent to Drive.'); return; }
+    }
     this.setStatus('Sending to Drive…');
     let reply = await this.deps.api.sendToDrive(info.docId, { confirmLindus });
     if (reply.ok === false && reply.why === 'confirm-lindus' && !confirmLindus) {
-      // Main judged it Lindus after all: ask, then send once more.
-      if (await this.confirmLindus()) reply = await this.deps.api.sendToDrive(info.docId, { confirmLindus: true });
+      // The file changed in between and main judges it Lindus now: ask, then send once more.
+      if (await this.confirmLindus(null)) reply = await this.deps.api.sendToDrive(info.docId, { confirmLindus: true });
       else { this.busy.delete('drive'); this.refreshButtons(); this.setStatus('Not sent to Drive.'); return; }
     }
     this.busy.delete('drive');
@@ -814,10 +853,12 @@ export class ReviewView {
     this.deps.onDriveLink(reply.link, reply.name);
   }
 
-  private confirmLindus(): Promise<boolean> {
+  /** `why` is main's reason in his words (`LINDUS_SIGNAL_WORDS`). */
+  private confirmLindus(why: string | null): Promise<boolean> {
+    const reason = why ? ` (${why})` : '';
     return this.deps.confirm({
       title: 'Send a Lindus document to your personal Drive?',
-      message: `${this.deps.info.name} looks like Lindus work. Send to Drive puts it in your personal Google Drive, not the Lindus one.`,
+      message: `${this.deps.info.name} looks like Lindus work${reason}. Send to Drive puts it in your personal Google Drive, not the Lindus one.`,
       confirmLabel: 'Send to my Drive',
       cancelLabel: 'Don’t send',
       defaultFocus: 'cancel',
@@ -837,37 +878,68 @@ export class ReviewView {
     const style = el('style');
     const sizes = new Map<string, string>();
     const rules: string[] = [];
-    for (let i = 1; i <= pdf.doc.numPages; i++) {
-      const page = await pdf.doc.getPage(i);
-      const pt = page.getViewport({ scale: 1 });
-      const sizeKey = `${pt.width.toFixed(2)}x${pt.height.toFixed(2)}`;
-      let name = sizes.get(sizeKey);
-      if (!name) {
-        name = `review-sheet-${sizes.size}`;
-        sizes.set(sizeKey, name);
-        rules.push(`@page ${name} { size: ${pt.width.toFixed(2)}pt ${pt.height.toFixed(2)}pt; margin: 0; }`);
+    const urls: string[] = [];
+    let held = 0;
+    // One canvas for every page: drawn, encoded, then drawn over.
+    const canvas = el('canvas');
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('no canvas');
+    const total = pdf.doc.numPages;
+    try {
+      for (let i = 1; i <= total; i++) {
+        if (this.disposed || this.pdf !== pdf) throw new Error('the layout changed while preparing to print');
+        if (total > 10) this.setStatus(`Preparing the pages to print… ${i} of ${total}`);
+        const page = await pdf.doc.getPage(i);
+        const pt = page.getViewport({ scale: 1 });
+        const sizeKey = `${pt.width.toFixed(2)}x${pt.height.toFixed(2)}`;
+        let name = sizes.get(sizeKey);
+        if (!name) {
+          name = `review-sheet-${sizes.size}`;
+          sizes.set(sizeKey, name);
+          rules.push(`@page ${name} { size: ${pt.width.toFixed(2)}pt ${pt.height.toFixed(2)}pt; margin: 0; }`);
+        }
+        const vp = page.getViewport({ scale: PRINT_DPI / 72 });
+        canvas.width = Math.floor(vp.width);
+        canvas.height = Math.floor(vp.height);
+        await page.render({ canvasContext: ctx, canvas, viewport: vp, background: '#ffffff' }).promise;
+        page.cleanup();
+        // toDataURL, not toBlob: Chromium encodes a toBlob in idle time, which
+        // a window in the background may not get (the hidden check waited
+        // minutes). The string is dropped as soon as its bytes are a blob.
+        // JPEG, not PNG: Chromium's print compositor put the JPEGs in the PDF
+        // as they were and grew by 0 MB for 100 pages; for the same pages as
+        // PNGs it grew by 600 MB (check-review-tab.cjs). At 200 dpi and 0.95
+        // the text prints as the PNG did (compared by eye at 300 dpi).
+        const blob = dataUrlBlob(canvas.toDataURL('image/jpeg', PRINT_JPEG_QUALITY));
+        held += blob.size;
+        const url = URL.createObjectURL(blob);
+        urls.push(url);
+        const img = el('img', 'review-print-page');
+        img.alt = '';
+        img.decoding = 'async';
+        img.style.width = `${pt.width.toFixed(2)}pt`;
+        img.style.height = `${pt.height.toFixed(2)}pt`;
+        img.style.setProperty('page', name);
+        // Loaded (its size known), not decoded: decoding waits for its sheet.
+        const loaded = new Promise<void>((resolve, reject) => {
+          img.onload = () => resolve();
+          img.onerror = () => reject(new Error(`page ${i} image did not load`));
+        });
+        img.src = url;
+        await loaded;
+        host.append(img);
       }
-      const vp = page.getViewport({ scale: PRINT_DPI / 72 });
-      const canvas = el('canvas');
-      canvas.width = Math.floor(vp.width);
-      canvas.height = Math.floor(vp.height);
-      const ctx = canvas.getContext('2d');
-      if (!ctx) throw new Error('no canvas');
-      await page.render({ canvasContext: ctx, canvas, viewport: vp, background: '#ffffff' }).promise;
-      const img = el('img', 'review-print-page');
-      img.alt = '';
-      img.src = canvas.toDataURL('image/png');
+    } catch (err) {
+      for (const url of urls) URL.revokeObjectURL(url);
+      throw err;
+    } finally {
       canvas.width = 0;
       canvas.height = 0;
-      img.style.width = `${pt.width.toFixed(2)}pt`;
-      img.style.height = `${pt.height.toFixed(2)}pt`;
-      img.style.setProperty('page', name);
-      await img.decode().catch(() => {});
-      host.append(img);
     }
     // The first sheet's size for anything unnamed (Chromium's fallback page).
     const firstSize = [...sizes.keys()][0]?.split('x');
     if (firstSize) rules.unshift(`@page { size: ${firstSize[0]}pt ${firstSize[1]}pt; margin: 0; }`);
+    this.printHeldBytes = held;
     style.textContent = rules.join('\n');
     style.dataset.review = 'print';
     document.head.append(style);
@@ -876,6 +948,7 @@ export class ReviewView {
     const cleanup = (): void => {
       host.remove();
       style.remove();
+      for (const url of urls) URL.revokeObjectURL(url);
       document.documentElement.classList.remove('review-printing');
       if (this.printCleanup === cleanup) this.printCleanup = null;
     };
@@ -902,7 +975,7 @@ export class ReviewView {
     // The print snapshot is taken from the print-only pages; they go once the
     // dialog is done (afterprint), or at the next Print or when the tab closes.
     window.addEventListener('afterprint', () => cleanup(), { once: true });
-    rlog('info', '[REVIEW] print', { pages: this.slots.length });
+    rlog('info', '[REVIEW] print', { pages: this.slots.length, heldMB: Math.round(this.printHeldBytes / 1048576) });
     this.setStatus(this.layoutStatus);
     this.busy.delete('print');
     this.refreshButtons();

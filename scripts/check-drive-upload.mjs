@@ -230,8 +230,16 @@ try {
   const ids = sender.sent.filter((m) => m[0] === 'review:open').map((m) => m[1]);
   const lindusId = ids.find((i) => i.name === 'Lindus trial notes.docx');
   const plainId = ids.find((i) => i.name === 'Quarterly plan.docx');
-  ok(lindusId?.lindus === true && plainId?.lindus === false, 'review:open tells the renderer which file is Lindus', ids);
   const ev = { sender };
+  const lindusAsk = E.handlers.get('review:lindus');
+  const textId0 = ids.find((i) => i.name === 'Call notes.docx');
+  const [askName, askText, askPlain, askOther] = await Promise.all([
+    lindusAsk(ev, lindusId.docId), lindusAsk(ev, textId0.docId), lindusAsk(ev, plainId.docId), lindusAsk({ sender: makeSender() }, lindusId.docId),
+  ]);
+  ok(!('lindus' in lindusId), 'review:open no longer carries a name-only Lindus flag', lindusId);
+  ok(/name says Lindus/.test(askName.why ?? '') && /text mentions Lindus/.test(askText.why ?? '') && askPlain.why === null && F.sent.length === 0,
+    'review:lindus answers with main\'s full check (a Lindus name, Lindus only in the text, a plain file), sending nothing', { askName, askText, askPlain });
+  ok(askOther.why === null, 'review:lindus answers nothing for another window\'s id', askOther);
   const refused = await drive(ev, lindusId.docId, { confirmLindus: false });
   ok(refused.ok === false && refused.why === 'confirm-lindus' && F.sent.length === 0, 'a Lindus file without confirmLindus is refused, nothing sent', refused);
   const refused2 = await drive(ev, lindusId.docId, null);

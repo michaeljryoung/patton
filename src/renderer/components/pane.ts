@@ -1024,8 +1024,30 @@ export class Pane {
       return 'Checkpoint: something was typed since Claude stopped';
     }
     rlog('info', '[CKPT] run', { pane: this.id, stash: facts.draft });
-    this.queueSubmit('/checkpoint', false, { stashFirst: facts.draft, origin: 'patton' });
+    // Gated at the write and at the Enter on the live 7501 `blocked` fact
+    // (Gotcha S56): Claude may start asking during the stash's wait or between
+    // the word and its Enter, and an Enter then would answer its question.
+    const outcome = await new Promise<{ held: string | null; typed: boolean }>((resolve) => {
+      this.queueSubmit('/checkpoint', false, {
+        stashFirst: facts.draft, origin: 'patton',
+        gate: () => this.asksNowRefusal(),
+        onSettled: (held, typed) => resolve({ held, typed: typed === true }),
+      });
+    });
+    if (outcome.held) {
+      rlog('info', '[CKPT] run held', { pane: this.id, at: outcome.typed ? 'enter' : 'write' });
+      return outcome.typed
+        ? 'Checkpoint: Claude started asking you something: /checkpoint is in its input, not sent'
+        : 'Checkpoint: Claude started asking you something, so /checkpoint was not sent';
+    }
     return null;
+  }
+
+  /** Why nothing Patton types may be sent into this pane now: Claude Code is
+   *  asking him something (the live 7501 `blocked` fact, the root or a
+   *  background task, from the first report; Gotcha S56). Null when it may. */
+  private asksNowRefusal(): string | null {
+    return this.claudeBlocked || this.claudeAsksNow() ? 'Claude is asking you something' : null;
   }
 
   /** Why the review tab's comments can't be pasted into this pane now, on
@@ -1166,7 +1188,15 @@ export class Pane {
    *  out of the way; Claude Code restores it after the submit by itself, so
    *  no second Ctrl+S is sent (it would stash the restored draft again). */
   typePauseWord(opts: { stash: boolean }): void {
-    this.queueSubmit('pause', false, { stashFirst: opts.stash, scroll: false, origin: 'patton' });
+    // Gated at the write and at the Enter on the live 7501 `blocked` fact, as
+    // the checkpoint is: the press decided on facts read before the stash wait.
+    this.queueSubmit('pause', false, {
+      stashFirst: opts.stash, scroll: false, origin: 'patton',
+      gate: () => this.asksNowRefusal(),
+      onSettled: (held, typed) => {
+        if (held) rlog('info', '[PAUSE-ALL] pause held', { pane: this.id, at: typed === true ? 'enter' : 'write' });
+      },
+    });
   }
 
   // ---- Session bar (docs/session-bar.md) ----

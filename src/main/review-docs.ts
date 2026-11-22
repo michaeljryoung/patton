@@ -16,10 +16,10 @@ import { chmod, mkdir, open, readdir, readFile, rename, stat, unlink, writeFile 
 import { homedir, tmpdir, userInfo } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { app, ipcMain, shell, type WebContents } from 'electron';
-import { REVIEW_COMMENT_MAX, REVIEW_IPC, REVIEW_QUOTE_MAX, type ReviewAddReply, type ReviewComment, type ReviewDocInfo, type ReviewDriveReply, type ReviewLayoutReply } from '../shared/review';
+import { REVIEW_COMMENT_MAX, REVIEW_IPC, REVIEW_QUOTE_MAX, type ReviewAddReply, type ReviewComment, type ReviewDocInfo, type ReviewDriveReply, type ReviewLayoutReply, type ReviewLindusReply } from '../shared/review';
 import { addComment, initialsOf, listComments } from './docx-comments';
 import { entryText, readZip, writeZip, ZipError, type ZipEntry } from './docx-zip';
-import { isLindusPath, LINDUS_SIGNAL_WORDS, lindusSignal, sendToDrive } from './drive-upload';
+import { LINDUS_SIGNAL_WORDS, lindusSignal, sendToDrive } from './drive-upload';
 import { extensionOf } from './link-open-policy';
 import { layout, verifyOpens, type LayoutFailure } from './review-layout';
 import { checkWellFormed } from './xml-wellformed';
@@ -120,8 +120,8 @@ export function openReview(sender: WebContents, real: string): void {
   const doc: OpenDoc = { real, owner: sender, watching: false };
   docs.set(docId, doc);
   sender.once('destroyed', () => forget(docId));
-  const info: ReviewDocInfo = { docId, name: basename(real), shownPath: shownPath(real), lindus: isLindusPath(real, homedir()) };
-  console.info('[REVIEW] open', { path: logPath(real), lindus: info.lindus });
+  const info: ReviewDocInfo = { docId, name: basename(real), shownPath: shownPath(real) };
+  console.info('[REVIEW] open', { path: logPath(real) });
   sender.send(REVIEW_IPC.OPEN, info);
 }
 
@@ -331,6 +331,18 @@ export function registerReviewHandlers(): void {
     if (error) console.warn('[REVIEW] open in Word failed', { error });
     else console.info('[REVIEW] opened in Word', { path: logPath(doc.real) });
     return !error;
+  });
+
+  // Main's full Lindus check, for the panel to ask before Send to Drive; the
+  // send itself checks again (the file may change between the two).
+  ipcMain.handle(REVIEW_IPC.LINDUS, async (event, docId: unknown): Promise<ReviewLindusReply> => {
+    const doc = docFor(event.sender, docId);
+    if (!doc || !stillReviewable(doc.real)) return { why: null };
+    let bytes: Buffer;
+    try { bytes = await readFile(doc.real); } catch { return { why: LINDUS_SIGNAL_WORDS.unreadable }; }
+    const signal = lindusSignal(doc.real, bytes);
+    console.info('[REVIEW] lindus check', { signal });
+    return { why: signal ? LINDUS_SIGNAL_WORDS[signal] : null };
   });
 
   ipcMain.handle(REVIEW_IPC.DRIVE, async (event, docId: unknown, raw: unknown): Promise<ReviewDriveReply> => {
