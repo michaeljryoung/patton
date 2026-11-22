@@ -102,6 +102,29 @@ try {
   check('each link has exactly one of url / path, and its line time',
     of('link').length > 0 && of('link').every((e) => (e.url === undefined) !== (e.path === undefined) && e.at > 0), of('link').length);
 
+  // --- one event per URL or path within one message; the markdown label wins (D6)
+  {
+    const U = 'https://claude.ai/code/artifact/bbbbbbbb-2222-4222-8222-222222222222';
+    const line = (blocks) => JSON.stringify({ isSidechain: false, type: 'assistant', timestamp: '2026-11-22T11:00:00.000Z', message: { role: 'assistant', content: blocks.map((text) => ({ type: 'text', text })) } }) + '\n';
+    const linksOf = (raw) => new TranscriptParser({ home: HOME, now: () => 0 }).push(raw).filter((e) => e.type === 'link');
+    same('markdown link then the bare URL in one message: one event, the markdown label',
+      linksOf(line([`Here: [Second sketch](${U}) and again ${U}`])).map((e) => [e.url, e.label, e.fallback]), [[U, 'Second sketch', undefined]]);
+    same('the bare URL first, the markdown link after: one event, at the first place, the markdown label',
+      linksOf(line([`Open ${U} or [Second sketch](${U})`])).map((e) => [e.url, e.label, e.fallback]), [[U, 'Second sketch', undefined]]);
+    same('the same across two text blocks of one message',
+      linksOf(line([`[Second sketch](${U})`, `${U}`])).map((e) => [e.url, e.label]), [[U, 'Second sketch']]);
+    same('a bare URL alone is one event marked as a fallback label',
+      linksOf(line([`Open ${U}`])).map((e) => [e.url, e.label, e.fallback]), [[U, 'Page bbbbbbbb', true]]);
+    same('a bare path alone is marked as a fallback; one with markdown text is not; the path twice is one event',
+      linksOf(line(['~/Downloads/Plan.docx', '[The plan](~/Downloads/Plan.docx) ~/Downloads/Plan.docx'])).map((e) => [e.path, e.label, e.fallback]),
+      [['/Users/tester/Downloads/Plan.docx', 'The plan', undefined]]);
+    same('two messages each give the link: sent twice (the model merges them)',
+      linksOf(line([`[Second sketch](${U})`]) + line([`${U}`])).map((e) => [e.url, e.label, e.fallback]),
+      [[U, 'Second sketch', undefined], [U, 'Page bbbbbbbb', true]]);
+    same('two different URLs in one message stay two events',
+      linksOf(line([`${U} https://github.com/demo/repo/pull/42`])).length, 2);
+  }
+
   // --- untrusted text
   // eslint-disable-next-line no-control-regex
   const CONTROL = /[\u0000-\u001f\u007f-\u009f‎‏‪-‮⁦-⁩]/;
@@ -113,7 +136,7 @@ try {
     const allowed = {
       'task-start': ['type', 'id', 'kind', 'description', 'command', 'at'],
       'task-end': ['type', 'id', 'status', 'exitCode', 'summary', 'at'],
-      link: ['type', 'url', 'path', 'label', 'at'],
+      link: ['type', 'url', 'path', 'label', 'at', 'fallback'],
       wake: ['type', 'fireAt', 'prompt', 'at'],
     }[e.type];
     return allowed && Object.keys(e).every((k) => allowed.includes(k));

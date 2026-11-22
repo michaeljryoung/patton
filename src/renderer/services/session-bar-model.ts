@@ -234,7 +234,7 @@ interface RunEntry {
 }
 
 interface FailureEntry { key: string; kind: string; text: string; tooltip: string; at: number }
-interface LinkEntry { key: string; kind: LinkKind; label: string; url: string | null; path: string | null; at: number }
+interface LinkEntry { key: string; kind: LinkKind; label: string; url: string | null; path: string | null; at: number; fallback: boolean }
 interface WakeEntry { fireAt: number; prompt: string }
 
 export class SessionBarModel {
@@ -471,7 +471,7 @@ export class SessionBarModel {
     const failures: FailureRow[] = [...this.failures].reverse().map((f) => ({
       key: f.key, kind: f.kind, text: f.text, at: f.at, when: clock(f.at, now), tooltip: f.tooltip,
     }));
-    const links: LinkRow[] = this.links.map((l) => ({ ...l, when: clock(l.at, now) }));
+    const links: LinkRow[] = this.links.map((l) => ({ key: l.key, kind: l.kind, label: l.label, url: l.url, path: l.path, at: l.at, when: clock(l.at, now) }));
     return { running, liveCount: running.filter((r) => !r.ended).length, scheduled, failures, links };
   }
 
@@ -525,8 +525,14 @@ export class SessionBarModel {
     // Shared again (a URL) or a newer version (a file): one row, at the top.
     if (existing && existing.at > at) return null;
     this.links = this.links.filter((l) => l.key !== key);
-    const label = shownText(isStr(event.label) ? event.label : '', 120) || shownText(defaultLinkLabel(kind, url, path), 120);
-    this.links.unshift({ key, kind, label, url, path, at });
+    let label = shownText(isStr(event.label) ? event.label : '', 120) || shownText(defaultLinkLabel(kind, url, path), 120);
+    // Shared again with only a made-up label: keep the real one the row had (it still moves to the top).
+    let fallback = event.fallback === true;
+    if (fallback && existing && !existing.fallback) {
+      label = existing.label;
+      fallback = false;
+    }
+    this.links.unshift({ key, kind, label, url, path, at, fallback });
     this.links.sort((a, b) => b.at - a.at);
     if (this.links.length > MAX_LINKS) this.links.length = MAX_LINKS;
     return { note: 'link', kind };

@@ -186,6 +186,33 @@ const MIN = 60 * S;
   check('Plan.docx then Plan v2.docx: one row, the newer', files.length === 1 && files[0].label === 'Plan v2.docx' && files[0].path === '~/Downloads/Plan v2.docx', files);
   m.applyFeed({ type: 'link', path: '~/Downloads/Plan.docx', label: 'Plan.docx', at: T0 + MIN }, T0 + 5 * MIN);
   check('an older version arriving late doesn\'t replace the newer', m.view(T0 + 5 * MIN).links.find((l) => l.kind === 'File').label === 'Plan v2.docx');
+  check('a URL shared again with only a fallback label keeps the real label and moves to the top', (() => {
+    const k = new M.SessionBarModel();
+    const u = 'https://claude.ai/code/artifact/bbbbbbbb-2222-4222-8222';
+    k.applyFeed({ type: 'link', url: u, label: 'Second sketch', at: T0 }, T0);
+    k.applyFeed({ type: 'link', url: 'https://github.com/a/b/pull/9', label: 'PR 9', at: T0 + MIN }, T0 + MIN);
+    k.applyFeed({ type: 'link', url: u, label: 'Page bbbbbbbb', at: T0 + 2 * MIN, fallback: true }, T0 + 2 * MIN);
+    const v2 = k.view(T0 + 2 * MIN).links;
+    return v2.length === 2 && v2[0].url === u && v2[0].label === 'Second sketch' && v2[0].at === T0 + 2 * MIN && !('fallback' in v2[0]);
+  })());
+  check('a real label replaces a fallback one; a fallback after a fallback takes the newest', (() => {
+    const k = new M.SessionBarModel();
+    const u = 'https://claude.ai/code/artifact/cccccccc-2222';
+    k.applyFeed({ type: 'link', url: u, label: 'Page cccccccc', at: T0, fallback: true }, T0);
+    k.applyFeed({ type: 'link', url: u, label: 'Real name', at: T0 + MIN }, T0 + MIN);
+    const a = k.view(T0 + MIN).links[0].label;
+    const k2 = new M.SessionBarModel();
+    k2.applyFeed({ type: 'link', path: '~/Downloads/Plan.docx', label: 'Plan.docx', at: T0, fallback: true }, T0);
+    k2.applyFeed({ type: 'link', path: '~/Downloads/Plan v2.docx', label: 'Plan v2.docx', at: T0 + MIN, fallback: true }, T0 + MIN);
+    return a === 'Real name' && k2.view(T0 + MIN).links[0].label === 'Plan v2.docx';
+  })());
+  check('a file named in markdown keeps that name when a later version arrives with only its file name', (() => {
+    const k = new M.SessionBarModel();
+    k.applyFeed({ type: 'link', path: '~/Downloads/Plan.docx', label: 'The plan', at: T0 }, T0);
+    k.applyFeed({ type: 'link', path: '~/Downloads/Plan v2.docx', label: 'Plan v2.docx', at: T0 + MIN, fallback: true }, T0 + MIN);
+    const l = k.view(T0 + MIN).links;
+    return l.length === 1 && l[0].label === 'The plan' && l[0].path === '~/Downloads/Plan v2.docx';
+  })());
   check('a Page link without a label: "Page" and the id\'s first 8', (() => {
     const k = new M.SessionBarModel();
     k.applyFeed({ type: 'link', url: 'https://claude.ai/code/artifact/08d6e409-4c7d-4f4e', label: '', at: T0 }, T0);

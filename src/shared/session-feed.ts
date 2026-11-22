@@ -31,8 +31,9 @@ export type SessionFeedEvent =
   | { type: 'task-start'; id: string; kind: FeedTaskKind; description: string; command?: string; at: number }
   /** A task's notice: how it ended. */
   | { type: 'task-end'; id: string; status: FeedTaskEndStatus; exitCode?: number; summary?: string; at: number }
-  /** A link Claude gave (D6). Exactly one of url / path. */
-  | { type: 'link'; url?: string; path?: string; label: string; at: number }
+  /** A link Claude gave (D6). Exactly one of url / path. `fallback: true` marks a label made up
+   *  from the URL or file name (no markdown text was given), so a real label already held wins. */
+  | { type: 'link'; url?: string; path?: string; label: string; at: number; fallback?: true }
   /** A one-off ScheduleWakeup (D4). */
   | { type: 'wake'; fireAt: number; prompt?: string; at: number }
   /** main couldn't read or parse something; the bar keeps what it has. */

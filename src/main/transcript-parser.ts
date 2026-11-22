@@ -145,13 +145,13 @@ export function extractLinks(text: string, home: string, at: number): SessionFee
     const label = cleanText(m[1].replace(/[`*_]/g, ''), LABEL_MAX);
     const u = urlLink(target);
     if (u) {
-      found.push({ pos: start, ev: { type: 'link', url: u.url, label: label || pageLabel(u.id), at } });
+      found.push({ pos: start, ev: { type: 'link', url: u.url, label: label || pageLabel(u.id), at, ...(label ? {} : { fallback: true as const }) } });
       taken.push([start, start + m[0].length]);
       continue;
     }
     const f = fileLink(target, home);
     if (f) {
-      found.push({ pos: start, ev: { type: 'link', path: f, label: label || cleanText(baseName(f), LABEL_MAX), at } });
+      found.push({ pos: start, ev: { type: 'link', path: f, label: label || cleanText(baseName(f), LABEL_MAX), at, ...(label ? {} : { fallback: true as const }) } });
       taken.push([start, start + m[0].length]);
     }
   }
@@ -161,7 +161,7 @@ export function extractLinks(text: string, home: string, at: number): SessionFee
     const start = m.index ?? 0;
     if (overlaps(start, start + m[0].length)) continue;
     const u = urlLink(m[0]);
-    if (u) found.push({ pos: start, ev: { type: 'link', url: u.url, label: pageLabel(u.id), at } });
+    if (u) found.push({ pos: start, ev: { type: 'link', url: u.url, label: pageLabel(u.id), at, fallback: true } });
   }
 
   // Bare paths under ~/Downloads (names may hold spaces, not after a slash).
@@ -174,11 +174,41 @@ export function extractLinks(text: string, home: string, at: number): SessionFee
     const start = m.index ?? 0;
     if (overlaps(start, start + m[0].length)) continue;
     const f = fileLink(m[0], home);
-    if (f) found.push({ pos: start, ev: { type: 'link', path: f, label: cleanText(baseName(f), LABEL_MAX), at } });
+    if (f) found.push({ pos: start, ev: { type: 'link', path: f, label: cleanText(baseName(f), LABEL_MAX), at, fallback: true } });
   }
 
   found.sort((a, b) => a.pos - b.pos);
   return found.map((x) => x.ev);
+}
+
+/**
+ * One link event per URL or path within one assistant message (D6): the first
+ * place it appears keeps its position, and a real label (the markdown text)
+ * wins over a fallback one, wherever it appears.
+ */
+export function dedupeLinks(events: SessionFeedEvent[]): SessionFeedEvent[] {
+  const out: SessionFeedEvent[] = [];
+  const seen = new Map<string, number>();
+  for (const ev of events) {
+    if (ev.type !== 'link') {
+      out.push(ev);
+      continue;
+    }
+    const key = ev.url !== undefined ? `url:${ev.url}` : `path:${ev.path}`;
+    const at = seen.get(key);
+    if (at === undefined) {
+      seen.set(key, out.length);
+      out.push(ev);
+      continue;
+    }
+    const first = out[at];
+    if (first.type === 'link' && first.fallback && !ev.fallback) {
+      out[at] = first.url !== undefined
+        ? { type: 'link', url: first.url, label: ev.label, at: first.at }
+        : { type: 'link', path: first.path, label: ev.label, at: first.at };
+    }
+  }
+  return out;
 }
 
 // ------------------------------------------------------------ notices (D9)
@@ -346,7 +376,7 @@ export class TranscriptParser {
         }
       }
     }
-    return out;
+    return dedupeLinks(out);
   }
 
   private rememberToolUse(id: string, use: ToolUse): void {
