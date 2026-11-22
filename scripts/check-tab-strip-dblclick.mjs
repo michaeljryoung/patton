@@ -46,7 +46,7 @@ w.eval(bundle.outputFiles[0].text);
 const noop = () => {};
 const bar = new w.TB.TabBar(w.document.getElementById('bar'), {
   onSelect: (id) => { calls.selects.push(id); }, onClose: noop, onNew: noop, onReorder: noop, onSettings: noop, onRename: noop,
-  onRenameProject: noop, onSetFlag: noop, onCheckpoint: noop,
+  onRenameProject: noop, onSetFlag: noop,
 });
 bar.update([{ id: 't1', title: 'one', active: true }, { id: 't2', title: 'two', active: false }]);
 
@@ -55,12 +55,14 @@ const space = doc.querySelector('.tab-bar-drag-space');
 const strip = doc.querySelector('.tab-bar-tabs');
 const tab = doc.querySelector('.tab-bar-tab');
 const newBtn = doc.querySelector('.tab-bar-new');
-const clock = doc.querySelector('.tab-bar-checkpoint');
+const pause = doc.querySelector('.tab-bar-pause-all');
 const fire = (el, type, init = {}) => el.dispatchEvent(new w.MouseEvent(type, { bubbles: true, cancelable: true, button: 0, ...init }));
 
 check('the spacer exists, is aria-hidden and has no text', !!space && space.getAttribute('aria-hidden') === 'true' && space.textContent === '', space && space.outerHTML);
 const kids = [...doc.getElementById('bar').children];
-check('the spacer sits right after + and before the checkpoint clock', kids.indexOf(space) === kids.indexOf(newBtn) + 1 && kids.indexOf(clock) === kids.indexOf(space) + 1, kids.map((k) => k.className));
+check('the spacer sits right after + and only Pause all (and its result popover) follow it', kids.indexOf(space) === kids.indexOf(newBtn) + 1 && kids.slice(kids.indexOf(space) + 1).map((k) => k.className).sort().join() === 'tab-bar-pause-all,tab-bar-pause-result' && !!pause, kids.map((k) => k.className));
+// The checkpoint clock lives in the session bar only (docs/session-bar.md D7).
+check('no checkpoint clock in the tab strip', !doc.getElementById('bar').querySelector('.tab-bar-checkpoint, [class*="checkpoint"]:not(.checkpoint-done)') && !/\bcontext\b/.test(doc.getElementById('bar').textContent), kids.map((k) => k.className));
 
 fire(space, 'dblclick');
 check('a double-click on the spacer calls titleBarDoubleClick once', calls.dbl === 1, calls.dbl);

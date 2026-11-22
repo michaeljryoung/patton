@@ -12,14 +12,15 @@
 // Pane's own listeners: OSC 7501 bodies through the real parseProgramStatus,
 // Stop-hook messages through the real parsePattonOsc, window titles, and
 // keystrokes as terminal data, so the bytes checked are the bytes the app writes.
-// Covers: the button sits right of the checkpoint clock and its label never
+// Covers: the button is the strip's last child, with no checkpoint clock in the
+// strip (it lives in the session bar, docs/session-bar.md D7), and its label never
 // changes; a second press pauses the same panes again; pause sends `pause\r` to done-after-a-turn, working and title-path
 // stopped panes and skips blocked (permission, question, a blocked child),
 // error, fresh idle, a `/model` menu, a title path typed into since the stop,
 // plain shells and exited shells; a draft gets `\x13pause\r` (one Ctrl+S); a
 // draft erased by Backspace gets a plain send; a user Ctrl+S skips the pane;
 // a rebound stash key skips draft panes; a draft Patton stashed is skipped
-// until the user submits; the checkpoint button stashes a
+// until the user submits; the session bar's checkpoint button stashes a
 // draft the same way; the summary names skipped tabs and splits at-the-prompt
 // from queued. Main side: a window closed mid-press, a send that throws, a
 // late report, a second press, and an untrusted report.
@@ -238,16 +239,15 @@ await wait(5);
 {
   const bar = A.w.document.getElementById('bar');
   const kids = Array.from(bar.children);
-  const ck = bar.querySelector('.tab-bar-checkpoint');
   const btn = btnOf(A);
   check('pause button exists', !!btn);
   check('pause button is the strip\'s last child (far right)', kids[kids.length - 1] === btn, kids.map((k) => k.className));
-  check('pause button is right of the checkpoint clock', kids.indexOf(ck) >= 0 && kids.indexOf(ck) < kids.indexOf(btn), kids.map((k) => k.className));
+  check('no checkpoint clock in the tab strip (D7: the session bar has it)', bar.querySelector('.tab-bar-checkpoint') === null && !kids.some((k) => /checkpoint/.test(k.className)), kids.map((k) => k.className));
   check('idle label is the pause icon (full words in aria-label)', btn.textContent === '⏸', btn.textContent);
   check('is a real button', btn.tagName === 'BUTTON' && btn.type === 'button');
   check('aria-label says what it does', /type pause into every Claude session/.test(btn.getAttribute('aria-label') ?? ''), btn.getAttribute('aria-label'));
   check('tooltip matches the aria-label', btn.title === btn.getAttribute('aria-label'));
-  check('shown even with no Claude pane (clock hidden)', btn.hidden === false && ck.hidden === true);
+  check('shown even with no Claude pane', btn.hidden === false);
   check('no "Pause remaining" button in the tab bar', bar.querySelector('.tab-bar-pause-remaining') === null && !/remaining/i.test(bar.textContent));
   check('no Resume class on the pause button', !btn.classList.contains('resume'));
   const constantsSrc = readFileSync(join(repo, 'src/shared/constants.ts'), 'utf8');
@@ -408,7 +408,7 @@ await wait(300);
   check('nothing ready: says so', resultText(A) === 'Nothing paused; skipped 1: new (new session)', resultText(A));
 }
 
-// ── 9. The checkpoint button: same stash path ──
+// ── 9. The session bar's checkpoint button: same stash path ──
 {
   const p = await makePane(A);
   doneAfterTurn(A, p);
@@ -417,7 +417,9 @@ await wait(300);
   setTabs(A, [tab('ck', [p])]);
   A.tm.updateCheckpoint();
   clearWrites();
-  A.w.document.querySelector('.tab-bar-checkpoint').click();
+  const sbBtn = A.w.document.querySelector('.session-bar .sb-ckpt-btn');
+  check('checkpoint: the session bar\'s Checkpoint button is there', !!sbBtn && !A.w.document.querySelector('.session-bar').hidden, sbBtn && sbBtn.outerHTML);
+  sbBtn?.click();
   await wait(300);
   const writes = A.writes.filter(([id]) => id === p.ptyId).map(([, d]) => d);
   check('checkpoint: draft stashed, then /checkpoint, then Enter', JSON.stringify(writes) === JSON.stringify(['\x13', '/checkpoint', '\r']), writes);

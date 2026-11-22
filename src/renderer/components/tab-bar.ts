@@ -2,7 +2,6 @@ import { ContextMenu } from './context-menu';
 import { onUiTextScaleApplied } from '../services/ui-text-scale';
 import { DEFAULTS } from '../../shared/constants';
 import type { TabFlag } from '../../shared/types';
-import type { CheckpointView } from '../services/checkpoint-clock';
 import type { HoverBlock } from '../services/tab-hover';
 import { TabHoverCard } from './tab-hover-card';
 import { GROUP_NAME_MAX, stateOf, stepMove, strongestState, type StrongestState } from '../services/tab-groups';
@@ -20,8 +19,6 @@ export interface TabBarCallbacks {
   onRenameProject: (id: string, name: string) => void;
   onSetFlag: (id: string, flag: TabFlag | null) => void;
   onBookmarkProject?: (id: string) => void; // bookmarks sidebar
-  /** The checkpoint clock was clicked: run /checkpoint in the focused pane. */
-  onCheckpoint?: () => void;
   /** Pause all was clicked: pause every window's Claude panes that can take it. */
   onPauseAll?: () => void;
   /** What the tab hover card shows for a tab, one block per pane (focused
@@ -185,11 +182,6 @@ const FLAG_CHOICES: { flag: TabFlag; label: string }[] = [
 export class TabBar {
   private container: HTMLElement;
   private tabsContainer: HTMLElement;
-  private checkpointBtn: HTMLButtonElement;
-  /** The clock's last view, restored when a "why not" message ends. */
-  private checkpointView: CheckpointView | null = null;
-  private checkpointReasonTimer: ReturnType<typeof setTimeout> | null = null;
-  private static readonly CHECKPOINT_REASON_MS = 4000;
   private pauseBtn: HTMLButtonElement;
   /** The popover under the Pause all icon that carries a press's result. */
   private pauseResultEl: HTMLDivElement;
@@ -349,23 +341,8 @@ export class TabBar {
     });
     this.container.appendChild(dragSpace);
 
-    // Checkpoint clock, pinned at the strip's right end outside the scrolling
-    // tabs: total context used by the focused Claude session (amber when it has
-    // grown past the reminder share since its last /checkpoint).
-    // Hidden until setCheckpoint() has a Claude pane to show.
-    this.checkpointBtn = document.createElement('button');
-    this.checkpointBtn.type = 'button';
-    this.checkpointBtn.className = 'tab-bar-checkpoint';
-    this.checkpointBtn.hidden = true;
-    // Always handled, ready or not: while Claude can't take /checkpoint the
-    // click shows why (TabManager.runCheckpoint → showCheckpointReason).
-    this.checkpointBtn.addEventListener('click', () => {
-      this.callbacks.onCheckpoint?.();
-    });
-    this.container.appendChild(this.checkpointBtn);
-
-    // Pause all, at the strip's far right (the checkpoint clock sits just left
-    // of it): types `pause` into every window's Claude panes. Idle it is
+    // Pause all, at the strip's far right (the checkpoint clock moved to the
+    // session bar, docs/session-bar.md D7): types `pause` into every window's Claude panes. Idle it is
     // only the "⏸" icon, and every press pauses again; resume is typed by hand, tab
     // by tab. Always shown.
     this.pauseBtn = document.createElement('button');
@@ -1140,47 +1117,9 @@ export class TabBar {
     if (this.heldUpdate) this.update(this.heldUpdate, this.heldGroups ?? this.latestGroups);
   }
 
-  /** Show the checkpoint clock for the focused pane, or hide it (null). */
-  setCheckpoint(view: CheckpointView | null): void {
-    const btn = this.checkpointBtn;
-    this.checkpointView = view;
-    btn.hidden = view === null;
-    if (!view) {
-      this.endCheckpointReason();
-      return;
-    }
-    // A "why not" message holds the text until it ends; the rest updates.
-    if (this.checkpointReasonTimer === null && btn.textContent !== view.text) btn.textContent = view.text;
-    btn.classList.toggle('due', view.due);
-    btn.classList.toggle('blocked', view.blocked);
-    btn.setAttribute('aria-disabled', String(view.blocked));
-    btn.setAttribute('aria-label', view.label);
-    btn.title = view.label;
-  }
-
-  /** Why /checkpoint wasn't sent, in the clock's place for a few seconds
-   *  (the caller announces it too). Nothing to show while the clock is hidden. */
-  showCheckpointReason(text: string): void {
-    const btn = this.checkpointBtn;
-    if (btn.hidden) return;
-    if (this.checkpointReasonTimer) clearTimeout(this.checkpointReasonTimer);
-    btn.textContent = text;
-    btn.classList.add('reason');
-    this.checkpointReasonTimer = setTimeout(() => this.endCheckpointReason(), TabBar.CHECKPOINT_REASON_MS);
-  }
-
-  private endCheckpointReason(): void {
-    if (this.checkpointReasonTimer === null) return;
-    clearTimeout(this.checkpointReasonTimer);
-    this.checkpointReasonTimer = null;
-    this.checkpointBtn.classList.remove('reason');
-    if (this.checkpointView) this.checkpointBtn.textContent = this.checkpointView.text;
-  }
-
   dispose(): void {
     this.stopScaleWatch?.();
     this.stopScaleWatch = null;
-    if (this.checkpointReasonTimer) clearTimeout(this.checkpointReasonTimer);
     if (this.pauseResultTimer) clearTimeout(this.pauseResultTimer);
     this.hoverCard?.dispose();
     this.hideGroupList();

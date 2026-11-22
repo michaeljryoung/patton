@@ -44,7 +44,7 @@ const noop = () => {};
 const renames = [];
 const projectRenames = [];
 const bar = new w.TB.TabBar(doc.getElementById('bar'), {
-  onSelect: noop, onClose: noop, onNew: noop, onReorder: noop, onSettings: noop, onCheckpoint: noop, onSetFlag: noop,
+  onSelect: noop, onClose: noop, onNew: noop, onReorder: noop, onSettings: noop, onSetFlag: noop,
   onRename: (id, name) => renames.push([id, name]),
   onRenameProject: (id, name) => projectRenames.push([id, name]),
 });

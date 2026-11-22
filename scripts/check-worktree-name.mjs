@@ -244,7 +244,7 @@ check('the parent\'s box holds its name, placeholder its automatic name', fields
 // the rename box itself, in the real TabBar, fed by those fields
 const projectRenames = [];
 const bar = new TabBar(doc.getElementById('bar'), {
-  onSelect() {}, onClose() {}, onNew() {}, onReorder() {}, onSettings() {}, onCheckpoint() {}, onSetFlag() {},
+  onSelect() {}, onClose() {}, onNew() {}, onReorder() {}, onSettings() {}, onSetFlag() {},
   onRename() {}, onRenameProject: (id, name) => projectRenames.push([id, name]),
 });
 const tabsFor = () => [

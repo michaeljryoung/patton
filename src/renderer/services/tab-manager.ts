@@ -123,7 +123,6 @@ export class TabManager {
       onRename: (id, name) => this.renameTab(id, name),
       onRenameProject: (id, name) => this.renameProject(id, name),
       onSetFlag: (id, flag) => this.setTabFlag(id, flag),
-      onCheckpoint: () => { void this.runCheckpoint(); },
       onPauseAll: () => { void this.pressPauseAll(); },
       describeTab: (id) => this.describeTab(id),
       // --- Tab groups ---
@@ -1569,11 +1568,11 @@ export class TabManager {
     this.updateCheckpoint();
   }
 
-  /** Show the active tab's focused pane on the strip's checkpoint clock. */
+  /** Show the active tab's focused pane's checkpoint clock, which lives in the
+   *  session bar only (docs/session-bar.md D7). */
   private updateCheckpoint(): void {
     const pane = this.activeTab?.focusedPane;
     const view = checkpointView(pane ? pane.checkpointSource : null, this.checkpointNudgePct);
-    this.tabBar.setCheckpoint(view);
     this.updateSessionBar(view);
   }
 
@@ -1699,10 +1698,9 @@ export class TabManager {
     if (why) {
       // Seen and heard, from the clock's click and the palette alike.
       announce(why, 'assertive');
-      this.tabBar.showCheckpointReason(why);
       this.sessionBar.showCheckpointReason(why);
     }
-    // The click left focus on the strip's button; the keyboard belongs to Claude.
+    // The click left focus on the bar's button; the keyboard belongs to Claude.
     pane.focus();
   }
 

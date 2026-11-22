@@ -53,7 +53,7 @@ const clear = () => { calls.length = 0; };
 const noop = () => {};
 const bar = new w.TB.TabBar(doc.getElementById('bar'), {
   onSelect: rec('select'), onClose: noop, onNew: noop, onReorder: rec('reorder'), onSettings: noop,
-  onCheckpoint: noop, onSetFlag: noop, onRename: noop, onRenameProject: noop,
+  onSetFlag: noop, onRename: noop, onRenameProject: noop,
   onNewGroup: (tabId) => {
     calls.push(['newGroup', tabId]);
     // As TabManager does: make the group, redraw the strip, return its id.

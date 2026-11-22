@@ -49,7 +49,6 @@
 
 .tab-bar-settings:focus-visible,
 .tab-bar-new:focus-visible,
-.tab-bar-checkpoint:focus-visible,
 .tab-bar-pause-all:focus-visible,
 .tab-bar-group-chip:focus-visible,
 .tab-bar-tab:focus-visible {
@@ -589,12 +588,7 @@
   visibility: hidden;
 }
 
-/* Checkpoint clock: context used since the focused Claude session's last
- * /checkpoint ("✓ +12%"), pinned right of the scrolling tabs. Grey (--muted,
- * 5.71:1 light / 5.82:1 dark on --surface); once due, amber text that passes
- * 4.5:1 (--amber-text, ratios in main.css) and bold, so the state isn't
- * carried by colour alone. */
-.tab-bar-checkpoint,
+/* Pause all, at the strip's far right. */
 .tab-bar-pause-all {
   background: none;
   border: none;
@@ -613,41 +607,12 @@
   -webkit-app-region: no-drag;
 }
 
-.tab-bar-checkpoint[hidden] {
-  display: none;
-}
-
-.tab-bar-checkpoint:hover,
 .tab-bar-pause-all:hover {
   color: var(--ink);
   background: var(--surface-hover);
 }
 
-.tab-bar-checkpoint.due {
-  color: var(--amber-text);
-  font-weight: 700;
-}
-
-/* Claude is working or blocked: a click shows why /checkpoint waits. */
-.tab-bar-checkpoint.blocked {
-  cursor: help;
-}
-
-/* The "why not" message shown in the clock's place after such a click. */
-.tab-bar-checkpoint.reason {
-  color: var(--ink);
-}
-
-.tab-bar-checkpoint.blocked:hover {
-  background: none;
-  color: var(--muted);
-}
-
-.tab-bar-checkpoint.due.blocked:hover {
-  color: var(--amber-text);
-}
-
-/* Pause all: the strip's far right, the checkpoint clock's look (rules
+/* Pause all: the strip's far right (base rules
  * shared above). It is only the "⏸" icon, sized and padded like the + button, and
  * never changes size: a press's result shows in a small popover just under it
  * (.tab-bar-pause-result), so the tabs and their dots never move. */

@@ -16,7 +16,7 @@
 //    the close button takes no room and shows only on a real hover (sendInputEvent) or Tab-key
 //    focus, clears the last dot of every indicator combination at x1, x1.25 and x1.5, keeps the
 //    selected tab's ink bar, yields to an open rename box, and owns its last pixel; the drag grip
-//    takes the pointer only over its own tab; 13 tabs fit from 860 px (x1) / 930 px (x1.5);
+//    takes the pointer only over its own tab; 13 tabs fit from 810 px (x1) / 880 px (x1.5);
 //    the active tab is still in view after a size change;
 //  - a few tabs share the whole strip: each grows by the same amount from its own width, names
 //    whole, dot and label centred; one tab alone fills it; a double-click left of a wide tab's
@@ -324,11 +324,9 @@ async function pageRun(BIG) {
   ];
   const tabBar = new U.TabBar(byId('tab-bar'), {
     onSelect: noop, onClose: noop, onNew: noop, onReorder: noop, onSettings: noop, onRename: noop, onRenameProject: noop, onSetFlag: noop,
-    onCheckpoint: noop,
     describeTab: (id) => (id === 't2' ? [{ label: 'Pane 1 · focused', title: 'Claude Code', place: '~/projects/alpha', state: 'Blocked: question · 4 min', activity: 'blocked', detail: 'Which file should I edit?', tasks: [], checkpoint: 'Checkpoint 10:10 · 12% since' }] : null),
   });
   tabBar.update(tabs);
-  tabBar.setCheckpoint({ text: '12%', due: true, blocked: false, label: 'Checkpoint' });
   surfaces.tabbar = byId('tab-bar');
 
   const bookmarksPanel = new U.BookmarksPanel(main, host);
@@ -599,14 +597,17 @@ async function pageRun(BIG) {
     check(`squeezed strip x${s}: nothing in a tab's flow spills out of its padding`, spills.length === 0, spills.slice(0, 4));
 
     // The blank spacer beside + (12 Nov: "nowhere I can click in the top bar"): present
-    // however full the strip is, as wide as +, between + and the checkpoint clock,
+    // however full the strip is, as wide as +, between + and Pause all (the checkpoint
+    // clock left the strip for the session bar, docs/session-bar.md D7),
     // and no-drag so the JS drag and double-click in tab-bar.ts get the mouse.
     // Built by the real TabBar, so this is the shipped element.
     const space = document.querySelector('.tab-bar-drag-space');
     const plus = document.querySelector('.tab-bar-new');
-    const clock = document.querySelector('.tab-bar-checkpoint');
-    const order = space && plus && clock && (plus.nextElementSibling === space) && (space.nextElementSibling === clock);
-    check(`blank spacer x${s}: sits between + and the checkpoint clock`, !!order);
+    const pauseBtn = document.querySelector('.tab-bar-pause-all');
+    const after = space ? [...space.parentElement.children].slice([...space.parentElement.children].indexOf(space) + 1) : [];
+    const order = space && plus && pauseBtn && (plus.nextElementSibling === space)
+      && after.map((k) => k.className).sort().join() === 'tab-bar-pause-all,tab-bar-pause-result';
+    check(`blank spacer x${s}: sits between + and Pause all, no checkpoint clock in the strip`, !!order && !document.querySelector('.tab-bar-checkpoint'), after.map((k) => k.className));
     const sw = space ? space.getBoundingClientRect() : { width: 0, height: 0 };
     const pw = plus.getBoundingClientRect().width;
     check(`blank spacer x${s}: as wide as + (${pw.toFixed(1)}px) with 40 tabs squeezing the strip`, Math.abs(sw.width - pw) < 0.5, { spacer: sw.width, plus: pw });
@@ -726,10 +727,17 @@ async function pageRun(BIG) {
         const first = firstEl.getBoundingClientRect().left - (tr.left + parseFloat(ts.paddingLeft));
         const row = { tab: t.dataset.tabId, first: +first.toFixed(1), tabW: +tr.width.toFixed(1), left: +(sr.left - wantLeft).toFixed(1), right: +(sr.right - wantRight).toFixed(1), titleW: +sr.width.toFixed(1), chars, dot: !!dot, align: getComputedStyle(span).textAlign };
         widest = Math.max(widest, tr.width);
-        if (Math.abs(row.first) > 2 || Math.abs(row.left) > 2 || Math.abs(row.right) > 2 || (tr.width >= 120 && chars < need)) bad.push(row);
+        // A title shown whole may sit inside the padding with room to spare (the strip has more
+        // since the checkpoint clock left it, D7: a 1200 px window at x1 has a few px over); a
+        // cut one runs from its dot or the left padding to the right padding.
+        const whole = chars >= span.textContent.length;
+        const placeBad = whole
+          ? row.first < -2 || row.left < -2 || row.right > 2
+          : Math.abs(row.first) > 2 || Math.abs(row.left) > 2 || Math.abs(row.right) > 2;
+        if (placeBad || (tr.width >= 120 && chars < need)) bad.push(row);
         if (s === 1 && winW === 820) measured.push(row);
       }
-      check(`label layout (${winW}px window, x${s}): the dot or title starts at the left padding, every title starts after its dot, ends at the right padding, shows 6 characters from a 120px tab`, bad.length === 0 && strip.querySelectorAll('.tab-bar-tab').length === 6, { bad: bad.slice(0, 3), widest });
+      check(`label layout (${winW}px window, x${s}): the dot or title starts at the left padding, every title starts after its dot, ends at the right padding (a title shown whole: inside the padding), shows 6 characters from a 120px tab`, bad.length === 0 && strip.querySelectorAll('.tab-bar-tab').length === 6, { bad: bad.slice(0, 3), widest });
     }
   }
   check('label layout: measurements of the 820px window at x1 (for the record)', measured.length === 6, measured);
@@ -813,10 +821,11 @@ async function pageRun(BIG) {
   // x1.5: no horizontal scrolling, every tab and every dot inside the strip.
   // MEASURED LIMIT (13 Nov, after Pause all became an icon, the close button left the flow and the
   // floors scaled again so the hovered button clears the dots): all 13 fit from 860 px (x1) /
-  // 930 px (x1.5), with the checkpoint clock shown; before the floors scaled, 830 / 860; before
+  // 930 px (x1.5) with the checkpoint clock in the strip; 810 / 880 since it moved to the session
+  // bar (S60, D7: the clock's width went to the tabs); before the floors scaled, 830 / 860; before
   // that, 1100 / 1220 with the icon alone, ~1200 / ~1300 with the words and a close button a tab.
   // The 13 floors are 44 px at x1 and 48 at x1.5 (60 and 64 with a flag and the red circle)
-  // against what the traffic-light padding, settings button, +, spacer, clock and icon leave of
+  // against what the traffic-light padding, settings button, +, spacer and icon leave of
   // the window. A tab at its floor shows (nearly) no label.
   const thirteen = Array.from({ length: 13 }, (_, i) => ({
     id: `k${i + 1}`,
@@ -857,9 +866,8 @@ async function pageRun(BIG) {
     for (let w = 500; w <= 1500 && !found; w += 10) if ((await fits(w, s)).ok) found = w;
     minFit[s] = found;
   }
-  const clockShown = !document.querySelector('.tab-bar-checkpoint').hidden;
-  check('13 tabs: the checkpoint clock is shown for the fit test', clockShown);
-  check('13 tabs: the smallest window width (10px steps) at which all fit is 860 at x1 and 930 at x' + BIG + ' (within one step; was ~1200 and ~1300 before 13 Nov, 830 and 860 before the floors scaled)', minFit[1] !== null && minFit[BIG] !== null && Math.abs(minFit[1] - 860) <= 10 && Math.abs(minFit[BIG] - 930) <= 10, minFit);
+  check('13 tabs: no checkpoint clock in the strip for the fit test (D7)', !document.querySelector('.tab-bar-checkpoint'));
+  check('13 tabs: the smallest window width (10px steps) at which all fit is 810 at x1 and 880 at x' + BIG + ' (within one step; 860 and 930 with the clock in the strip, before S60; ~1200 and ~1300 before 13 Nov)', minFit[1] !== null && minFit[BIG] !== null && Math.abs(minFit[1] - 810) <= 10 && Math.abs(minFit[BIG] - 880) <= 10, minFit);
   for (const [winW, s] of [[1000, 1], [1000, BIG]]) {
     const r = await fits(winW, s);
     const { ok, ...detail } = r;
