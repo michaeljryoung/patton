@@ -5,7 +5,7 @@
 
 **Goal:** (S60) A bar on the right of every Claude tab lists what the session has running (agents, shells, monitors, workflows), its loops, its failures, the links Claude gave him, and the checkpoint clock moved from the tab strip; a ⇥ button minimizes it to a strip (Michael 2026-11-22: "it has a bar on right that lists various things including background tasks ... atm theyre hidden at the bottom"; on sketch v3 https://claude.ai/code/artifact/08d6e409-4c7d-4f4e-8fe1-ceb84b75c586: "do it").
 **Done when:** an end-to-end check written by an agent that didn't build drives a fake Claude session (a process with `~/.claude/sessions/<pid>.json` and a growing transcript under a temporary HOME) through the real Pane in hidden Electron and shows: a background shell's row within 1 s of its start line and struck through within 1 s of its notice and gone after its 30 s linger; a failed task's row kept until its × is pressed; a link written twice listed once, and a `v2` file replacing its `v1`; the checkpoint clock in the bar and not on the tab strip; ⇥ folding the bar to the strip and ⇤ restoring it; at UI scale 1, 1.1 and 1.5. Plus lint, `tsc`, `npm run check`, a no-install package and a fresh review with no open major; released by CI; installed only on his word.
-**Last verified:** 2026-11-22 (Session 60: map written; nothing built yet)
+**Last verified:** 2026-11-22 (Session 60: built, checked, reviewed and released as v1.35.0 and v1.36.0; statuses checked against the tags and casks)
 
 ```mermaid
 flowchart TD
@@ -25,8 +25,8 @@ flowchart TD
   subgraph V["Verify and ship"]
     bar_e2e[end-to-end check by a fresh agent]:::done
     bar_review[fresh reviews, no open major]:::done
-    bar_release[merge, push, CI release, cask]:::todo
-    bar_ship[install on his word, live check]:::todo
+    bar_release[merge, push, CI release, cask]:::done
+    bar_ship[install on his word, live check]:::live
   end
   bar_design --> session_link
   bar_design --> transcript_feed
@@ -60,8 +60,8 @@ flowchart TD
 | `ckpt_move` | D7: the checkpoint clock and its button leave the tab strip for the bar and the strip; tabs keep the red circle | done | `bar_ui` | no `.tab-bar-checkpoint` (`scripts/check-session-bar-layout.cjs`, `scripts/check-tab-strip-dblclick.mjs`, `scripts/check-pause-all.mjs`, `scripts/check-ui-text-scale.cjs`: 13 tabs fit from 810 / 880 px), S60 |
 | `bar_e2e` | D13's end-to-end check, written by an agent that didn't build; every assertion fails on main | done | `session_link`, `ckpt_move` | `scripts/check-session-bar-e2e.cjs` 57 ok, 0 not ok in `npm run check` on `feat/sb-barui` (real pty, session feed, TabManager and bar in hidden Electron, UI scale 1, 1.1, 1.5), S60 |
 | `bar_review` | Fresh reviews with probes until no open major | done | `bar_e2e` | three fresh reviews with probes: 0 major / 6 minor, fixed in `41ff187`, `7e3b2f6`, `4520173`; then 0 major; then the final one, 0 major / 3 minor (a stale `tp` hint re-attaching an exited session, a transcript swapped for a symlink, a refused Checkpoint click invisible on the strip) plus 2 nits, fixed in `5f8ab6d` with assertions failing before (`scripts/check-session-feed-robust.mjs` 29 ok, `check-session-bar-layout.cjs` 102 ok); `scripts/probe-stop-hook.sh` 111 ok |
-| `bar_release` | Merge by fast-forward, push, CI release, cask matches the DMG | todo | `bar_review` | — |
-| `bar_ship` | Install on his word with Patton quit; live: `[BAR] attach` lines, a shell row appears and goes, a link listed, the clock in the bar | todo | `bar_release` | — |
+| `bar_release` | Merge by fast-forward, push, CI release, cask matches the DMG | done | `bar_review` | v1.35.0 tag at `ce48413`, cask `1300f5ac…` matches the DMG; the final fixes, bookmarks and sound as v1.36.0 at `613f9a8`, cask `31e8b956…` matches |
+| `bar_ship` | Install on his word with Patton quit; live: `[BAR] attach` lines, a shell row appears and goes, a link listed, the clock in the bar | live | `bar_release` | S60: released, not installed (/Applications v1.33.0); waits on his word with Patton quit |
 <!-- MAP:END -->
 
 ## Design (settled with Michael, 22 Nov 2026, sketch v3)
