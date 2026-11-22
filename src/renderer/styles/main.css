@@ -16,6 +16,13 @@
   --muted: #596170;
   --grey: #e3e6ec;
   --grey-hover: #d5d9e1; /* a tab group's chip under the pointer */
+  /* Tab groups' shades (22 Nov 2026, look B of the shades sketch): a very light
+     blue, green and sand in turn, by the group's order on the strip. tab = its
+     inactive tabs' fill, chip = its name chip's fill, line = the 2 px line along
+     the top of both. Ink on every fill is 4.5:1 or better (tabs.css). */
+  --group1-tab: #edf3fc; --group1-chip: #d9e6f8; --group1-line: #8fb0e3;
+  --group2-tab: #ecf6f0; --group2-chip: #d4ecdf; --group2-line: #86c3a2;
+  --group3-tab: #fcf5e6; --group3-chip: #f4e3bf; --group3-line: #e0bd6e;
   --thumb: #848b97;
   --hairline: var(--ink);
   --focus: #2f6bff;
@@ -109,6 +116,9 @@
     --muted: #8b95a5;
     --grey: #2a2f37;
     --grey-hover: #353b45;
+    --group1-tab: #18202b; --group1-chip: #22304a; --group1-line: #3f5c8f;
+    --group2-tab: #17231d; --group2-chip: #213a2d; --group2-line: #3f7558;
+    --group3-tab: #261f12; --group3-chip: #3b2f17; --group3-line: #7a6127;
     --thumb: #636c7a;
     --focus: #7aa2ff;
     --error-text: #ff7a87;

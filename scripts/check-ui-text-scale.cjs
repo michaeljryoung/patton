@@ -24,8 +24,8 @@
 //  - the selected tab sits on the terminal's ground with a 3 px ink bar under it, and
 //    a flagged or plain tab has neither (light scheme only: the hidden window's);
 //  - tab groups: at x1, x1.1 and x1.5 an open group's chip sits left of its first tab at the strip's height, its
-//    label whole (60 characters stop at 140px x scale), a 2 px top line on chip and member tabs (the selected one keeps its
-//    3 px bar), the chip never grows; a folded chip fits name, count and indicator and the other tabs widen (light only);
+//    label whole (60 characters stop at 140px x scale), a 2 px top line in the group's shade on chip and member tabs (the selected one keeps its
+//    3 px bar); shades (22 Nov): three groups three fills, a fourth repeats the first, an ungrouped tab between stays plain, the selected member keeps --bg; the chip never grows; a folded chip fits name, count and indicator and the other tabs widen (light only);
 //  - the collapsed bookmarks rail's mark is centred on the header row it stood in;
 //  - every text box taller than its text grew with the text (a fixed height shows up as no growth);
 //  - the real preload hands the renderer the launch scale synchronously (additionalArguments);
@@ -1260,11 +1260,13 @@ async function pageRun(BIG) {
   // A folded chip carries its name, the count and one indicator without clipping, its tabs leave
   // the strip and the others widen into the room. The chip never grows with spare room.
   {
-    const TOP = `${inkColour} 0px 2px 0px 0px inset`;
-    const TOP_AND_BAR = `${TOP}, ${inkColour} 0px -3px 0px 0px inset`;
     const colourOf = (v) => { const d = document.createElement('div'); d.style.background = `var(${v})`; document.body.appendChild(d); const c = getComputedStyle(d).backgroundColor; d.remove(); return c; };
-    const GREY = colourOf('--grey');
-    const MUTED = colourOf('--muted');
+    // 22 Nov 2026: the line is the group's shade line, not ink; this group is the first on the strip, so shade 1.
+    const GREY = colourOf('--group1-chip');
+    const TOP = `${colourOf('--group1-line')} 0px 2px 0px 0px inset`;
+    const TOP_AND_BAR = `${TOP}, ${inkColour} 0px -3px 0px 0px inset`;
+    // Secondary lettering on a chip (count, chevron): half way from --muted to ink (--muted alone fell under 4.5:1 on the dark chips).
+    const MUTED = (() => { const d = document.createElement('div'); d.style.color = 'color-mix(in srgb, var(--ink) 50%, var(--muted))'; document.body.appendChild(d); const c = getComputedStyle(d).color; d.remove(); return c; })();
     const LONG = 'Quarterly planning and research notes for the long project ahead of us';
     const gTabs = (done) => [
       { id: 'p1', title: 'before', active: false },
@@ -1302,11 +1304,11 @@ async function pageRun(BIG) {
       const nameR = nameEl ? nameEl.getBoundingClientRect() : { right: 0 };
       const look = chipCs && { size: nameCs.fontSize, transform: nameCs.textTransform, weight: nameCs.fontWeight, grow: chipCs.flexGrow, shrink: chipCs.flexShrink, bg: chipCs.backgroundColor, grey: GREY, ink: nameCs.color,
         padLeft: +(chevR.left - cr.left).toFixed(1), padRight: +(cr.right - nameR.right).toFixed(1), gap: +(nameR.left - chev.getBoundingClientRect().right).toFixed(1) };
-      check(`${tag}: the label is bold uppercase ${(10.5 * s).toFixed(2)}px ink on the grey ground, with room round it, and the chip does not grow or shrink`,
+      check(`${tag}: the label is bold uppercase ${(10.5 * s).toFixed(2)}px ink on its group's shade, with room round it, and the chip does not grow or shrink`,
         chipCs && Math.abs(parseFloat(nameCs.fontSize) - 10.5 * s) <= 0.05 && nameCs.textTransform === 'uppercase' && Number(nameCs.fontWeight) >= 700 && chipCs.flexGrow === '0' && chipCs.flexShrink === '0'
           && chipCs.backgroundColor === GREY && nameCs.color === inkColour && look.padLeft >= 8 && look.padRight >= 10 && look.gap >= 5 * s - 0.5, look);
       const sh = Object.fromEntries(['p1', 'g1', 'g2', 'p2'].map((id) => [id, getComputedStyle(strip.querySelector(`.tab-bar-tab[data-tab-id="${id}"]`)).boxShadow]));
-      check(`${tag}: a 2px ink line along the top of the chip and of each member tab; the selected member keeps its 3px bottom bar too; a plain tab has neither`,
+      check(`${tag}: a 2px line in the group's shade along the top of the chip and of each member tab; the selected member keeps its 3px bottom bar too; a plain tab has neither`,
         chipCs && chipCs.boxShadow === TOP && sh.g2 === TOP && sh.g1 === TOP_AND_BAR && sh.p1 === 'none' && sh.p2 === 'none', { chip: chipCs && chipCs.boxShadow, ...sh });
       const closeShadow = getComputedStyle(members[1].querySelector('.tab-bar-tab-close')).boxShadow;
       check(`${tag}: a member tab's close button carries the top line too (its own paint would cut the line)`, closeShadow === TOP, { closeShadow });
@@ -1361,6 +1363,65 @@ async function pageRun(BIG) {
         gone && foldP1 > openP1 + 10 && foldP2 > openP2 + 10 && Math.abs(lastR.right - stripR.right) <= 1 && !(strip.scrollWidth > strip.clientWidth + 0.5),
         { gone, openP1, foldP1, openP2, foldP2, lastRight: lastR.right, stripRight: stripR.right });
     }
+    // --- group shades (22 Nov 2026, look B): the real CSS and tokens, light scheme, x1. Four groups (the
+    // third folded) and an ungrouped tab between the first and second.
+    await setScale(1);
+    barEl.style.width = '1200px';
+    barEl.style.flex = 'none';
+    const shadeTabs = [
+      { id: 's1', title: 'a1', active: false, groupId: 'gS1' },
+      { id: 's2', title: 'a2', active: false, groupId: 'gS1' },
+      { id: 'u1', title: 'plain', active: false },
+      { id: 's3', title: 'b1', active: true, groupId: 'gS2' },
+      { id: 's4', title: 'b2', active: false, groupId: 'gS2' },
+      { id: 's5', title: 'c1', active: false, groupId: 'gS3' },
+      { id: 's6', title: 'd1', active: false, groupId: 'gS4' },
+    ];
+    const shadeGroups = [
+      { id: 'gS1', name: 'One', folded: false }, { id: 'gS2', name: 'Two', folded: false },
+      { id: 'gS3', name: 'Three', folded: true }, { id: 'gS4', name: 'Four', folded: false },
+    ];
+    tabBar.update(shadeTabs, shadeGroups);
+    await frame();
+    const tabOf = (id) => strip.querySelector(`.tab-bar-tab[data-tab-id="${id}"]`);
+    const chipFor = (id) => strip.querySelector(`.tab-bar-group-chip[data-group-id="${id}"]`);
+    const bgOf = (el) => getComputedStyle(el).backgroundColor;
+    const lineOf = (el) => getComputedStyle(el).boxShadow;
+    const SHADE = [1, 2, 3].map((n) => ({ tab: colourOf(`--group${n}-tab`), chip: colourOf(`--group${n}-chip`), line: colourOf(`--group${n}-line`) }));
+    const PLAIN = bgOf(tabOf('u1'));
+    const chipBg = ['gS1', 'gS2', 'gS3', 'gS4'].map((id) => bgOf(chipFor(id)));
+    const tabBg = Object.fromEntries(['s1', 's2', 's3', 's4', 's6'].map((id) => [id, bgOf(tabOf(id))]));
+    check('group shades: three groups get three different chip fills (the folded third too), the fourth repeats the first',
+      new Set(chipBg.slice(0, 3)).size === 3 && chipBg[3] === chipBg[0] && chipBg.every((c, i) => c === SHADE[i % 3].chip), { chipBg, want: SHADE.map((x) => x.chip) });
+    check('group shades: inactive tabs take their group\'s fill (the fourth group\'s tab = the first group\'s), unlike the plain tab',
+      tabBg.s1 === SHADE[0].tab && tabBg.s2 === SHADE[0].tab && tabBg.s4 === SHADE[1].tab && tabBg.s6 === SHADE[0].tab && new Set([tabBg.s1, tabBg.s4, PLAIN]).size === 3, { tabBg, PLAIN, want: SHADE.map((x) => x.tab) });
+    check('group shades: an ungrouped tab between two groups keeps the plain fill (not any group\'s) and has no shadow',
+      !SHADE.some((x) => x.tab === PLAIN || x.chip === PLAIN) && lineOf(tabOf('u1')) === 'none', { PLAIN, shadow: lineOf(tabOf('u1')) });
+    check('group shades: the selected grouped tab keeps the terminal ground (--bg), its group\'s line on top and the 3px ink bar',
+      tabBg.s3 === bgColour && lineOf(tabOf('s3')) === `${SHADE[1].line} 0px 2px 0px 0px inset, ${inkColour} 0px -3px 0px 0px inset`, { bg: tabBg.s3, bgColour, shadow: lineOf(tabOf('s3')) });
+    check('group shades: each chip and tab carries its own group\'s 2px line (chip of group 1, tab of group 2, chip of group 4 = line 1)',
+      lineOf(chipFor('gS1')) === `${SHADE[0].line} 0px 2px 0px 0px inset` && lineOf(tabOf('s4')) === `${SHADE[1].line} 0px 2px 0px 0px inset` && lineOf(chipFor('gS4')) === `${SHADE[0].line} 0px 2px 0px 0px inset`,
+      { chip1: lineOf(chipFor('gS1')), tab4: lineOf(tabOf('s4')), chip4: lineOf(chipFor('gS4')) });
+    // Hover is real: a grouped tab and a chip move toward their line colour and stay readable; the selected member keeps --bg.
+    const centre = (el) => { const r = el.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; };
+    // Earlier parts of this run leave overlays (command palette, a menu) over the strip: set whatever
+    // covers a hover point aside while the pointer is real, and put it back after.
+    const covers = [];
+    const uncover = (x, y) => { for (let i = 0; i < 8; i++) { const top = document.elementFromPoint(x, y); if (!top || strip.contains(top)) return; top.style.display = 'none'; covers.push(top); } };
+    const hoverState = {};
+    for (const [name, el] of [['tab', tabOf('s4')], ['chip', chipFor('gS2')], ['selected', tabOf('s3')]]) {
+      const [x, y] = centre(el);
+      uncover(x, y);
+      await hoverAt(x, y);
+      await new Promise((r) => setTimeout(r, 320)); // the fill and text colour ease over 0.15 s
+      hoverState[name] = { bg: bgOf(el), color: getComputedStyle(el).color, isHover: el.matches(':hover'), at: [Math.round(x), Math.round(y)], top: document.elementFromPoint(x, y)?.className };
+    }
+    await hoverAt(600, 700);
+    await new Promise((r) => setTimeout(r, 320));
+    for (const c of covers) c.style.display = '';
+    check('group shades: a hovered grouped tab and a hovered chip change fill (away from the shade, still tinted, not the old grey), text ink; the selected member keeps --bg',
+      hoverState.tab.bg !== SHADE[1].tab && hoverState.tab.bg !== colourOf('--surface-hover') && hoverState.tab.color === inkColour
+        && hoverState.chip.bg !== SHADE[1].chip && hoverState.chip.bg !== colourOf('--grey-hover') && hoverState.selected.bg === bgColour, { hoverState, SHADE: SHADE[1] });
     barEl.style.width = '1000px';
     await setScale(1);
     tabBar.update(tabs);
