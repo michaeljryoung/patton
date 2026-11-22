@@ -23,6 +23,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync } from 'node:fs';
 import { copyFile, mkdtemp, readFile, readdir, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { readZip, ZipError } from './docx-zip';
 
 export const SOFFICE_CANDIDATES = [
@@ -126,13 +127,57 @@ async function pruneCache(cacheDir: string): Promise<void> {
   for (const { n } of withTimes.slice(CACHE_KEEP)) await unlink(join(cacheDir, n)).catch(() => {});
 }
 
+/** The profile as LibreOffice wants it: a file URL, percent-encoded. A bare
+ *  `file://` + path fails on userData's "Application Support" (soffice
+ *  aborts with a RuntimeException), which is every installed layout. */
+export function profileArg(profileDir: string): string {
+  return `-env:UserInstallation=${pathToFileURL(profileDir).href}`;
+}
+
 let queue: Promise<unknown> = Promise.resolve();
+
+/** One LibreOffice job at a time: the profile allows one. */
+function queued<T>(fn: () => Promise<T>): Promise<T> {
+  const job = queue.then(fn, fn);
+  queue = job.catch(() => {});
+  return job;
+}
 
 /** Lay the file out (or answer the cached PDF for this path, mtime and size). */
 export function layout(real: string, deps: LayoutDeps): Promise<LayoutResult> {
-  const job = queue.then(() => layoutNow(real, deps), () => layoutNow(real, deps));
-  queue = job.catch(() => {});
-  return job;
+  return queued(() => layoutNow(real, deps));
+}
+
+export type OpensResult = { ok: true } | { ok: false; why: 'no-soffice' | 'timeout' | 'failed'; detail?: string };
+
+/** Whether LibreOffice opens these bytes as a Word file and lays them out (a
+ *  plain PDF in a fresh private folder, Patton's profile): the last check
+ *  before Patton replaces his file with a commented copy (R7, R10). */
+export function verifyOpens(bytes: Buffer, deps: LayoutDeps): Promise<OpensResult> {
+  return queued(async (): Promise<OpensResult> => {
+    const soffice = deps.soffice === undefined || deps.soffice === null ? findSoffice() : deps.soffice;
+    if (!soffice) return { ok: false, why: 'no-soffice' };
+    await ensureProfile(deps.profileDir);
+    const work = await mkdtemp(join(deps.tmpDir, 'patton-verify-'));
+    try {
+      const copy = join(work, 'document.docx');
+      await writeFile(copy, bytes, { mode: 0o600 });
+      const outDir = join(work, 'out');
+      const args = [profileArg(deps.profileDir), '--headless', '--norestore', '--nologo', '--nodefault', '--nolockcheck',
+        '--convert-to', 'pdf', '--outdir', outDir, copy];
+      try {
+        await (deps.run ?? runFile)(soffice, args, LAYOUT_TIMEOUT_MS);
+      } catch (err) {
+        const timedOut = (err as { timedOut?: boolean }).timedOut === true;
+        return { ok: false, why: timedOut ? 'timeout' : 'failed', detail: String((err as Error).message).slice(0, 200) };
+      }
+      const made = join(outDir, 'document.pdf');
+      if (!existsSync(made) || (await stat(made)).size === 0) return { ok: false, why: 'failed', detail: 'no PDF written' };
+      return { ok: true };
+    } finally {
+      await rm(work, { recursive: true, force: true }).catch(() => {});
+    }
+  });
 }
 
 async function layoutNow(real: string, deps: LayoutDeps): Promise<LayoutResult> {
@@ -158,7 +203,7 @@ async function layoutNow(real: string, deps: LayoutDeps): Promise<LayoutResult> 
     await writeFile(copy, bytes, { mode: 0o600 });
     const outDir = join(work, 'out');
     const args = [
-      `-env:UserInstallation=file://${deps.profileDir}`,
+      profileArg(deps.profileDir),
       '--headless', '--norestore', '--nologo', '--nodefault', '--nolockcheck',
       '--convert-to', PDF_FILTER, '--outdir', outDir, copy,
     ];

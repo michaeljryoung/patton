@@ -11,15 +11,18 @@
 //     Doc's (a link that isn't docs.google.com falls back to the id's; none:
 //     refused); every request goes to www.googleapis.com with the token, and
 //     the token is in no result; the dry run sends nothing;
-//  2. isLindusPath: a Lindus file name or a top-level Lindus project folder;
-//  3. main's review:drive handler: a Lindus file is refused without
-//     confirmLindus (nothing sent), sent with it; a plain file sends without
+//  2. isLindusPath: Lindus anywhere in the path, any case; lindusSignal also
+//     reads the Lindus Drive mount, a symlink's target, the document's
+//     properties (creator, company, an @lindushealth.com author) and its
+//     text (body, header), and asks about a file it can't read;
+//  3. main's review:drive handler: a Lindus file (by name, or by its text
+//     alone) is refused without confirmLindus (nothing sent), sent with it; a plain file sends without
 //     asking; failures come back as his words; another window's id is refused;
 //  4. the shared setting rules (src/shared/drive-settings.ts).
 // Run: node scripts/check-drive-upload.mjs
 // Prints `ok <what>` or `not ok <what>: <detail>`; exit 1 on any failure.
 import { build } from 'esbuild';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -77,7 +80,7 @@ try {
   writeFileSync(fakeStore, `export let current = { driveFolder: 'Reviews', driveAccount: '' };\nexport const getSettings = () => current;\n`);
   const fakeDrive = join(work, 'drive-fake.mjs');
   writeFileSync(fakeDrive, `
-    export { isLindusPath } from ${JSON.stringify(join(root, 'src/main/drive-upload.ts'))};
+    export { isLindusPath, lindusSignal, LINDUS_SIGNAL_WORDS } from ${JSON.stringify(join(root, 'src/main/drive-upload.ts'))};
     export const sent = [];
     export let reply = { ok: true, dryRun: false, link: 'https://docs.google.com/document/d/x/edit', name: 'x', account: 'michael@gmail.com' };
     export function setReply(r) { reply = r; }
@@ -99,9 +102,20 @@ try {
     `export * as E from ${JSON.stringify(fakeElectron)};`,
     `export * as F from ${JSON.stringify(fakeDrive)};`,
     `export * as ST from ${JSON.stringify(fakeStore)};`,
+    `export * as Z from ${JSON.stringify(join(root, 'src/main/docx-zip.ts'))};`,
   ].join('\n'));
   await build({ entryPoints: [entry], bundle: true, platform: 'node', format: 'esm', outfile: join(work, 'bundle.mjs'), logLevel: 'error', plugins: [fakes] });
-  const { D, R, S, E, F } = await import(join(work, 'bundle.mjs'));
+  const { D, R, S, E, F, Z } = await import(join(work, 'bundle.mjs'));
+  const W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"';
+  const docxOf = ({ text = 'Quarterly plan for the shop.', core = '', app = '', header = '' } = {}) => {
+    const entries = [];
+    Z.setEntryText(entries, '[Content_Types].xml', '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>');
+    Z.setEntryText(entries, 'word/document.xml', `<w:document ${W}><w:body><w:p><w:r><w:t>${text}</w:t></w:r></w:p></w:body></w:document>`);
+    if (header) Z.setEntryText(entries, 'word/header1.xml', `<w:hdr ${W}><w:p><w:r><w:t>${header}</w:t></w:r></w:p></w:hdr>`);
+    if (core) Z.setEntryText(entries, 'docProps/core.xml', `<cp:coreProperties xmlns:cp="c" xmlns:dc="d"><dc:creator>${core}</dc:creator></cp:coreProperties>`);
+    if (app) Z.setEntryText(entries, 'docProps/app.xml', `<Properties xmlns="a"><Company>${app}</Company></Properties>`);
+    return Z.writeZip(entries);
+  };
   const file = { name: 'Quarterly plan.docx', bytes: Buffer.from('PK\x03\x04 fake docx bytes') };
   const settings = { driveFolder: "Mike's \\ docs", driveAccount: '' };
 
@@ -176,8 +190,26 @@ try {
   const home = '/Users/me';
   ok(D.isLindusPath('/Users/me/Downloads/Lindus trial notes.docx', home), 'a file named Lindus is a Lindus path');
   ok(D.isLindusPath('/Users/me/Projects/lindus-citrus/docs/plan.docx', home), 'a file under a top-level Lindus project is a Lindus path');
-  ok(!D.isLindusPath('/Users/me/Projects/betterterm/docs/lindus/plan.docx', home), 'a lindus folder deeper in another project is not');
+  ok(D.isLindusPath('/Users/me/Projects/betterterm/docs/lindus/plan.docx', home), 'a lindus folder deeper in another project is one too');
+  ok(D.isLindusPath('/Users/me/Documents/LINDUS/plan.docx', home) && D.isLindusPath('/Users/me/projects/Lindus-x/plan.docx', home), 'any folder, any case');
   ok(!D.isLindusPath('/Users/me/Downloads/Quarterly plan.docx', home), 'a plain file is not');
+  {
+    const plainBytes = docxOf();
+    const sig = (p, b = plainBytes) => D.lindusSignal(p, b);
+    ok(sig('/Users/me/Library/CloudStorage/GoogleDrive-michael@lindushealth.com/My Drive/plan.docx') === 'lindus-drive', 'the Lindus Google Drive mount asks first');
+    ok(sig('/Users/me/Documents/Lindus/plan.docx') === 'path', 'a Lindus folder asks first');
+    ok(sig('/Users/me/Downloads/plan.docx') === null, 'a plain file in Downloads with plain contents does not ask');
+    ok(sig('/Users/me/Downloads/plan.docx', docxOf({ core: 'Jo Bloggs jo@lindushealth.com' })) === 'properties', 'an @lindushealth.com author asks first');
+    ok(sig('/Users/me/Downloads/plan.docx', docxOf({ app: 'Lindus Health Ltd' })) === 'properties', 'a Lindus company asks first');
+    ok(sig('/Users/me/Downloads/plan.docx', docxOf({ text: 'Notes from the Lin</w:t></w:r><w:r><w:t>dus call.' })) === 'text', 'Lindus in the text, split across runs, asks first');
+    ok(sig('/Users/me/Downloads/plan.docx', docxOf({ header: 'LINDUS HEALTH CONFIDENTIAL' })) === 'text', 'Lindus in a header asks first');
+    ok(sig('/Users/me/Downloads/plan.docx', Buffer.from('not a zip, long enough to be scanned for one')) === 'unreadable', 'a file that cannot be read asks first');
+    const linkDir = join(work, 'links');
+    mkdirSync(join(linkDir, 'Lindus share'), { recursive: true });
+    writeFileSync(join(linkDir, 'Lindus share', 'target.docx'), plainBytes);
+    symlinkSync(join(linkDir, 'Lindus share', 'target.docx'), join(linkDir, 'innocent.docx'));
+    ok(sig(join(linkDir, 'innocent.docx')) === 'path', 'a symlink is resolved first (it points into a Lindus folder)');
+  }
 
   // ---- 3. main's review:drive handler
   R.registerReviewHandlers();
@@ -190,7 +222,9 @@ try {
   mkdirSync(docsDir);
   const lindus = join(docsDir, 'Lindus trial notes.docx');
   const plain = join(docsDir, 'Quarterly plan.docx');
-  writeFileSync(lindus, 'PK fake'); writeFileSync(plain, 'PK fake');
+  const byText = join(docsDir, 'Call notes.docx');
+  writeFileSync(lindus, docxOf()); writeFileSync(plain, docxOf()); writeFileSync(byText, docxOf({ text: 'Agenda for the Lindus board.' }));
+  R.openReview(sender, byText);
   R.openReview(sender, lindus);
   R.openReview(sender, plain);
   const ids = sender.sent.filter((m) => m[0] === 'review:open').map((m) => m[1]);
@@ -202,6 +236,9 @@ try {
   ok(refused.ok === false && refused.why === 'confirm-lindus' && F.sent.length === 0, 'a Lindus file without confirmLindus is refused, nothing sent', refused);
   const refused2 = await drive(ev, lindusId.docId, null);
   ok(refused2.ok === false && refused2.why === 'confirm-lindus' && F.sent.length === 0, 'no options at all is the same refusal', refused2);
+  const textId = ids.find((i) => i.name === 'Call notes.docx');
+  const refused3 = await drive(ev, textId.docId, {});
+  ok(refused3.ok === false && refused3.why === 'confirm-lindus' && /text mentions Lindus/.test(refused3.message) && F.sent.length === 0, 'a file whose text alone says Lindus is asked about, and says why', refused3);
   const confirmed = await drive(ev, lindusId.docId, { confirmLindus: true });
   ok(confirmed.ok === true && confirmed.link.startsWith('https://docs.google.com/') && F.sent.length === 1 && F.sent[0].name === 'Lindus trial notes.docx', 'with confirmLindus it is sent and the link returned', { confirmed, sent: F.sent });
   ok(F.sent[0].settings.driveFolder === 'Reviews' && F.sent[0].opts.dryRun === false, 'the folder setting reaches sendToDrive', F.sent[0]);

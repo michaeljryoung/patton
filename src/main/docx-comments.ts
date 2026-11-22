@@ -28,20 +28,34 @@ export { keyOf, matchesOf, textKey };
 
 const W_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 const COMMENTS_REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments';
+/** Strict OOXML (ISO 29500 strict) names the same relationships under purl.oclc.org. */
+const STRICT_REL_BASE = 'http://purl.oclc.org/ooxml/officeDocument/relationships/';
+const STRICT_COMMENTS_REL = `${STRICT_REL_BASE}comments`;
 const COMMENTS_TYPE = 'application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml';
 const OFFICE_DOC_REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument';
+const STRICT_OFFICE_DOC_REL = `${STRICT_REL_BASE}officeDocument`;
 
-/** One `<w:t>` element of the body, with where its text sits in the XML. */
+/** One `<w:t>` or `<w:delText>` element of the body, with where its text sits in the XML. */
 interface TextSpan {
   /** Index of `<w:t…>` in the XML, and the open tag's length. */
   tagStart: number;
   tagLen: number;
+  /** `t`, or `delText` for text inside a tracked deletion. */
+  tag: 't' | 'delText';
   /** The text content's start and end in the XML. */
   contentStart: number;
   contentEnd: number;
-  /** The run's open tag (`<w:r …>`) and properties (`<w:rPr>…</w:rPr>` or ''). */
+  /** The run's open tag (`<w:r …>`) and properties (`<w:rPr>…</w:rPr>`, with
+   *  any nested `w:rPrChange`, or ''). */
   runOpen: string;
   runProps: string;
+  /** Where the outermost tracked deletion or move holding the run ends (just
+   *  past its end tag), -1 when the run is in none. A comment's reference run
+   *  goes there, never inside it: accepting the deletion would delete the
+   *  comment with it. */
+  deletionEnd: number;
+  /** Index of the text box (`w:txbxContent`) holding it, -1 in the body. */
+  story: number;
 }
 
 /** One matchable character of the body: which span, and the XML offset (in
@@ -69,17 +83,39 @@ function decodeEntity(ent: string): string {
 }
 
 const TAG = /<(\/?)([A-Za-z_][\w.-]*:)?([A-Za-z_][\w.-]*)((?:[^>"']|"[^"]*"|'[^']*')*?)(\/?)>/g;
+const TAG_INNER = new RegExp(TAG.source, 'g');
 
-/** Every body `<w:t>` in document order, and the key built from them. Text
- *  in `mc:Fallback` (a second copy of a text box) is skipped. */
+/** End (just past `</w:rPr>`) of the rPr opening at `at`, counting the rPr
+ *  nested in `w:rPrChange` (a tracked formatting change); -1 if never closed. */
+function rPrEnd(xml: string, at: number): number {
+  let depth = 0;
+  TAG_INNER.lastIndex = at;
+  for (let m = TAG_INNER.exec(xml); m; m = TAG_INNER.exec(xml)) {
+    if (m[2] !== 'w:' || m[3] !== 'rPr' || m[5] === '/') continue;
+    if (m[1] === '/') {
+      depth--;
+      if (depth === 0) return m.index + m[0].length;
+    } else depth++;
+  }
+  return -1;
+}
+
+interface OpenRun { open: string; props: string; start: number; sawProps: boolean }
+
+/** Every body `<w:t>` and `<w:delText>` in document order, and the key built
+ *  from them. Deleted text is in the key because LibreOffice's PDF shows a
+ *  tracked deletion (struck through), so he can select across one. Text in
+ *  `mc:Fallback` (a second copy of a text box) is skipped. Runs nest (a text
+ *  box sits in a drawing inside a run), so they are kept on a stack. */
 export function bodyText(xml: string): BodyText {
   const spans: TextSpan[] = [];
   const keyChars: KeyChar[] = [];
   let key = '';
   let fallbackDepth = 0;
-  let runOpen: string | null = null;
-  let runProps = '';
-  let runStart = -1;
+  const runs: OpenRun[] = [];
+  /** Spans waiting for the end of the outermost deletion or move they sit in. */
+  const deletion: { depth: number; spans: number[] } = { depth: 0, spans: [] };
+  const stories: number[] = [];
   TAG.lastIndex = 0;
   for (let m = TAG.exec(xml); m; m = TAG.exec(xml)) {
     const closing = m[1] === '/';
@@ -93,24 +129,48 @@ export function bodyText(xml: string): BodyText {
     }
     if (prefix !== 'w:') continue;
     if (local === 'r') {
-      if (closing) { runOpen = null; runProps = ''; }
-      else if (!selfClosing) { runOpen = m[0]; runProps = ''; runStart = m.index; }
+      if (closing) runs.pop();
+      else if (!selfClosing) runs.push({ open: m[0], props: '', start: m.index, sawProps: false });
       continue;
     }
-    if (local === 'rPr' && !closing && !selfClosing && runOpen !== null && runProps === '') {
-      // Only the run's own properties: the first rPr right inside the run.
-      if (xml.slice(runStart + runOpen.length, m.index).trim() === '') {
-        const end = xml.indexOf('</w:rPr>', m.index);
-        if (end !== -1) runProps = xml.slice(m.index, end + '</w:rPr>'.length);
+    if (local === 'del' || local === 'moveFrom') {
+      if (selfClosing) continue;
+      if (!closing) { deletion.depth++; continue; }
+      deletion.depth = Math.max(0, deletion.depth - 1);
+      if (deletion.depth === 0) {
+        for (const i of deletion.spans) spans[i].deletionEnd = m.index + m[0].length;
+        deletion.spans = [];
       }
       continue;
     }
-    if (local === 't' && !closing && !selfClosing && runOpen !== null && fallbackDepth === 0) {
+    if (local === 'txbxContent') {
+      if (selfClosing) continue;
+      if (closing) stories.pop(); else stories.push(m.index);
+      continue;
+    }
+    const run = runs[runs.length - 1];
+    if (local === 'rPr' && !closing && run && !run.sawProps) {
+      run.sawProps = true;
+      // Only the run's own properties: the rPr right inside the run, whole.
+      if (xml.slice(run.start + run.open.length, m.index).trim() === '') {
+        if (selfClosing) run.props = m[0];
+        else {
+          const end = rPrEnd(xml, m.index);
+          if (end !== -1) { run.props = xml.slice(m.index, end); TAG.lastIndex = end; }
+        }
+      }
+      continue;
+    }
+    if ((local === 't' || local === 'delText') && !closing && !selfClosing && run && fallbackDepth === 0) {
       const contentStart = m.index + m[0].length;
-      const contentEnd = xml.indexOf('</w:t>', contentStart);
+      const contentEnd = xml.indexOf(`</w:${local}>`, contentStart);
       if (contentEnd === -1) break;
       const spanIndex = spans.length;
-      spans.push({ tagStart: m.index, tagLen: m[0].length, contentStart, contentEnd, runOpen, runProps });
+      spans.push({
+        tagStart: m.index, tagLen: m[0].length, tag: local, contentStart, contentEnd,
+        runOpen: run.open, runProps: run.props, deletionEnd: -1, story: stories.length ? stories[stories.length - 1] : -1,
+      });
+      if (deletion.depth > 0) deletion.spans.push(spanIndex);
       let i = contentStart;
       while (i < contentEnd) {
         let ch: string;
@@ -147,13 +207,41 @@ function unescapeXml(text: string): string {
   return text.replace(/&(#x[0-9a-fA-F]+|#\d+|amp|lt|gt|quot|apos);/g, (_m, ent: string) => decodeEntity(ent));
 }
 
+function relTarget(rel: string): string | null {
+  const t = /\bTarget="([^"]+)"/.exec(rel)?.[1];
+  return t === undefined ? null : unescapeXml(t);
+}
+
+function relIsOf(rel: string, types: string[]): boolean {
+  const type = /\bType="([^"]+)"/.exec(rel)?.[1];
+  return type !== undefined && types.includes(type);
+}
+
+/** A relationship target as a part name in the zip: relative to `baseDir`
+ *  unless it starts with `/`, `.` and `..` resolved, %-escapes decoded. Null
+ *  for an external target or one that climbs out of the package. */
+export function resolvePart(baseDir: string, target: string): string | null {
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(target)) return null;
+  let decoded: string;
+  try { decoded = decodeURIComponent(target.split('#')[0]); } catch { return null; }
+  const joined = decoded.startsWith('/') ? decoded.slice(1) : baseDir + decoded;
+  const out: string[] = [];
+  for (const seg of joined.split('/')) {
+    if (seg === '' || seg === '.') continue;
+    if (seg === '..') { if (!out.length) return null; out.pop(); continue; }
+    out.push(seg);
+  }
+  return out.length ? out.join('/') : null;
+}
+
 /** The main document part's name (from `_rels/.rels`, else word/document.xml). */
 export function documentPartName(entries: ZipEntry[]): string {
   const rels = entryText(entries, '_rels/.rels') ?? '';
   for (const m of rels.matchAll(/<Relationship\b[^>]*>/g)) {
-    if (!m[0].includes(`"${OFFICE_DOC_REL}"`)) continue;
-    const target = /Target="([^"]+)"/.exec(m[0])?.[1];
-    if (target) return target.replace(/^\//, '');
+    if (!relIsOf(m[0], [OFFICE_DOC_REL, STRICT_OFFICE_DOC_REL])) continue;
+    const target = relTarget(m[0]);
+    const part = target === null ? null : resolvePart('', target);
+    if (part) return part;
   }
   return 'word/document.xml';
 }
@@ -167,16 +255,21 @@ function dirOf(part: string): string {
   return part.slice(0, part.lastIndexOf('/') + 1);
 }
 
-/** The comments part named by the document's relationships, if any. */
-function commentsPartName(entries: ZipEntry[], docPart: string): string | null {
+/** The comments part named by the document's relationships (transitional or
+ *  strict): its name, 'none' when there is no such relationship, or 'odd' when
+ *  there is one Patton can't follow (external, or climbing out of the zip). */
+function commentsPartName(entries: ZipEntry[], docPart: string): string | 'none' | 'odd' {
   const rels = entryText(entries, relsNameFor(docPart)) ?? '';
+  let found: string | 'none' | 'odd' = 'none';
   for (const m of rels.matchAll(/<Relationship\b[^>]*>/g)) {
-    if (!m[0].includes(`"${COMMENTS_REL}"`)) continue;
-    const target = /Target="([^"]+)"/.exec(m[0])?.[1];
-    if (!target) continue;
-    return target.startsWith('/') ? target.slice(1) : dirOf(docPart) + target;
+    if (!relIsOf(m[0], [COMMENTS_REL, STRICT_COMMENTS_REL])) continue;
+    if (/\bTargetMode="External"/.test(m[0])) { found = 'odd'; continue; }
+    const target = relTarget(m[0]);
+    const part = target === null ? null : resolvePart(dirOf(docPart), target);
+    if (part) return part;
+    found = 'odd';
   }
-  return null;
+  return found;
 }
 
 export interface DocComment {
@@ -194,7 +287,7 @@ export interface DocComment {
 /** The text of a run of XML: its `<w:t>` contents, paragraphs on new lines. */
 function plainText(xml: string): string {
   let out = '';
-  const re = /<w:t(?:\s[^>]*)?>([^<]*)<\/w:t>|<\/w:p>|<w:tab\/>|<w:br\/>/g;
+  const re = /<w:(?:t|delText)(?:\s[^>]*)?>([^<]*)<\/w:(?:t|delText)>|<\/w:p>|<w:tab\/>|<w:br\/>/g;
   for (const m of xml.matchAll(re)) {
     if (m[1] !== undefined) out += unescapeXml(m[1]);
     else if (m[0] === '</w:p>') out += '\n';
@@ -207,7 +300,7 @@ function plainText(xml: string): string {
 export function listComments(entries: ZipEntry[]): DocComment[] {
   const docPart = documentPartName(entries);
   const part = commentsPartName(entries, docPart);
-  if (!part) return [];
+  if (part === 'none' || part === 'odd') return [];
   const xml = entryText(entries, part);
   if (!xml) return [];
   const doc = entryText(entries, docPart) ?? '';
@@ -250,7 +343,7 @@ export interface NewComment {
 
 export type AddCommentResult =
   | { ok: true; id: string; matched: 'exact' | 'last' }
-  | { ok: false; reason: 'empty-quote' | 'empty-text' | 'not-found' | 'no-document' };
+  | { ok: false; reason: 'empty-quote' | 'empty-text' | 'not-found' | 'no-document' | 'crosses-box' | 'odd-comments' };
 
 interface Edit { pos: number; del: number; insert: string }
 
@@ -294,8 +387,13 @@ export function addComment(entries: ZipEntry[], c: NewComment): AddCommentResult
   const at = matches[Math.min(want, matches.length - 1)];
   const first = body.keyChars[at];
   const last = body.keyChars[at + quoteKey.length - 1];
+  // A range must start and end in the same story: one end in a text box and
+  // the other in the body is a range Word can't hold.
+  if (body.spans[first.span].story !== body.spans[last.span].story) return { ok: false, reason: 'crosses-box' };
 
-  let commentsPart = commentsPartName(entries, docPart);
+  const found = commentsPartName(entries, docPart);
+  if (found === 'odd') return { ok: false, reason: 'odd-comments' };
+  let commentsPart = found === 'none' ? null : found;
   const commentsXmlBefore = commentsPart ? entryText(entries, commentsPart) ?? '' : '';
   const id = nextCommentId(docXml, commentsXmlBefore);
 
@@ -306,20 +404,31 @@ export function addComment(entries: ZipEntry[], c: NewComment): AddCommentResult
     const span = body.spans[spanIndex];
     if (!preserved.has(spanIndex)) {
       // Both halves may end or start with a space: keep it.
-      edits.push({ pos: span.tagStart, del: span.tagLen, insert: '<w:t xml:space="preserve">' });
+      edits.push({ pos: span.tagStart, del: span.tagLen, insert: `<w:${span.tag} xml:space="preserve">` });
       preserved.add(spanIndex);
     }
     edits.push({
       pos: span.contentStart + offset,
       del: 0,
-      insert: `</w:t></w:r>${between}${span.runOpen}${span.runProps}<w:t xml:space="preserve">`,
+      insert: `</w:${span.tag}></w:r>${between}${span.runOpen}${span.runProps}<w:${span.tag} xml:space="preserve">`,
     });
   };
+  const reference = `<w:r><w:commentReference w:id="${id}"/></w:r>`;
   split(first.span, first.from, `<w:commentRangeStart w:id="${id}"/>`);
-  split(last.span, last.to,
-    `<w:commentRangeEnd w:id="${id}"/><w:r><w:commentReference w:id="${id}"/></w:r>`);
+  const lastSpan = body.spans[last.span];
+  if (lastSpan.deletionEnd === -1) {
+    split(last.span, last.to, `<w:commentRangeEnd w:id="${id}"/>${reference}`);
+  } else {
+    // The range may end inside a tracked deletion; its reference run goes
+    // just after the deletion, so accepting the deletion keeps the comment.
+    split(last.span, last.to, `<w:commentRangeEnd w:id="${id}"/>`);
+    edits.push({ pos: lastSpan.deletionEnd, del: 0, insert: reference });
+  }
   setEntryText(entries, docPart, applyEdits(docXml, edits));
 
+  // The document's own WordprocessingML namespace (strict files use purl.oclc.org's).
+  const wNs = /<w:document\b[^>]*\bxmlns:w="([^"]+)"/.exec(docXml)?.[1] ?? W_NS;
+  const strict = wNs.startsWith('http://purl.oclc.org/');
   if (commentsPart && commentsXmlBefore) {
     const close = commentsXmlBefore.lastIndexOf('</w:comments>');
     const xml = close === -1
@@ -327,23 +436,29 @@ export function addComment(entries: ZipEntry[], c: NewComment): AddCommentResult
       : commentsXmlBefore.slice(0, close) + commentXml(id, c) + commentsXmlBefore.slice(close);
     setEntryText(entries, commentsPart, xml);
   } else {
+    // No comments part, or a relationship naming one that isn't there: make
+    // it, at the name the relationship gives when there is one.
+    const hadRel = commentsPart !== null;
     commentsPart = commentsPart ?? `${dirOf(docPart)}comments.xml`;
     setEntryText(entries, commentsPart,
-      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<w:comments xmlns:w="${W_NS}">${commentXml(id, c)}</w:comments>`);
-    const relsName = relsNameFor(docPart);
-    const rels = entryText(entries, relsName)
-      ?? '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>';
-    if (!rels.includes(`"${COMMENTS_REL}"`)) {
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<w:comments xmlns:w="${escapeXml(wNs)}">${commentXml(id, c)}</w:comments>`);
+    if (!hadRel) {
+      const relsName = relsNameFor(docPart);
+      const rels = entryText(entries, relsName)
+        ?? '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>';
       const ids = new Set([...rels.matchAll(/\bId="([^"]+)"/g)].map((m) => m[1]));
       let n = 1;
       while (ids.has(`rId${n}`)) n++;
       const target = commentsPart.slice(dirOf(docPart).length);
-      const rel = `<Relationship Id="rId${n}" Type="${COMMENTS_REL}" Target="${escapeXml(target)}"/>`;
-      setEntryText(entries, relsName, rels.replace('</Relationships>', `${rel}</Relationships>`));
+      const rel = `<Relationship Id="rId${n}" Type="${strict ? STRICT_COMMENTS_REL : COMMENTS_REL}" Target="${escapeXml(target)}"/>`;
+      const closed = rels.includes('</Relationships>')
+        ? rels.replace('</Relationships>', `${rel}</Relationships>`)
+        : rels.replace(/<Relationships\b([^>]*)\/>/, `<Relationships$1>${rel}</Relationships>`);
+      setEntryText(entries, relsName, closed);
     }
   }
   const types = entryText(entries, '[Content_Types].xml');
-  if (types !== null && !types.includes(`PartName="/${commentsPart}"`)) {
+  if (types !== null && !types.toLowerCase().includes(`partname="/${commentsPart.toLowerCase()}"`)) {
     setEntryText(entries, '[Content_Types].xml',
       types.replace('</Types>', `<Override PartName="/${escapeXml(commentsPart)}" ContentType="${COMMENTS_TYPE}"/></Types>`));
   }
