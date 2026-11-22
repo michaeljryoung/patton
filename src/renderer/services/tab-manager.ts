@@ -1783,9 +1783,10 @@ export class TabManager {
         send: (stash: boolean) => pane.typePauseWord({ stash }),
       };
     });
-    const run = runPause(targets, key);
+    const run = await runPause(targets, key);
     rlog('info', '[PAUSE-ALL] run', {
       sent: run.sent, queued: run.report.queued, skipped: run.skipped,
+      ...(run.unsettled.length > 0 ? { unsettled: run.unsettled } : {}),
       ...('why' in key ? { stashKey: key.why } : {}),
     });
     return run.report;

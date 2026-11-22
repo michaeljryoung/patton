@@ -1299,15 +1299,20 @@ export class Pane {
    *  decided this pane may take it. With `stash`, Ctrl+S first moves a draft
    *  out of the way; Claude Code restores it after the submit by itself, so
    *  no second Ctrl+S is sent (it would stash the restored draft again). */
-  typePauseWord(opts: { stash: boolean }): void {
+  typePauseWord(opts: { stash: boolean }): Promise<string | null> {
     // Gated at the write and at the Enter on the live 7501 `blocked` fact, as
     // the checkpoint is: the press decided on facts read before the stash wait.
-    this.queueSubmit('pause', false, {
-      stashFirst: opts.stash, scroll: false, origin: 'patton',
-      gate: () => this.asksNowRefusal(),
-      onSettled: (held, typed) => {
-        if (held) rlog('info', '[PAUSE-ALL] pause held', { pane: this.id, at: typed === true ? 'enter' : 'write' });
-      },
+    // Resolves null once the Enter went, else why it was held, so the run
+    // counts a held word as held, not sent.
+    return new Promise((resolve) => {
+      this.queueSubmit('pause', false, {
+        stashFirst: opts.stash, scroll: false, origin: 'patton',
+        gate: () => this.asksNowRefusal(),
+        onSettled: (held, typed) => {
+          if (held) rlog('info', '[PAUSE-ALL] pause held', { pane: this.id, at: typed === true ? 'enter' : 'write' });
+          resolve(held);
+        },
+      });
     });
   }
 

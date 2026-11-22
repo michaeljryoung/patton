@@ -68,8 +68,9 @@ export interface PauseTarget {
   /** Its tab's title, for the summary. */
   readonly title: string;
   readonly input: PauseInput;
-  /** Type `pause` and Enter; with `stash`, Ctrl+S first. */
-  send(stash: boolean): void;
+  /** Type `pause` and Enter; with `stash`, Ctrl+S first. Resolves null once
+   *  the Enter went, else why it was held (Claude started asking). */
+  send(stash: boolean): Promise<string | null>;
 }
 
 /** Why the pane gets nothing, or null when it gets the word. */
@@ -105,26 +106,45 @@ export interface PauseRun {
   report: PauseAllReport;
   sent: string[];
   skipped: { pane: string; reason: PauseSkipReason }[];
+  /** Sent, but not settled within PAUSE_SETTLE_MS: counted as sent. */
+  unsettled: string[];
 }
+
+/** How long a run waits for its words to go (a stash's 150 ms wait, then the
+ *  word and its Enter) before reporting: under main's 1,500 ms. */
+export const PAUSE_SETTLE_MS = 1000;
 
 /** Pause: every pane by the rules; the ones that can take the word get it,
  *  with a draft stashed first. The rest are skipped and counted, and the
- *  Claude ones named in the summary. */
-export function runPause(panes: PauseTarget[], key: StashKeyVerdict): PauseRun {
-  const out: PauseRun = { report: emptyReport(), sent: [], skipped: [] };
+ *  Claude ones named in the summary. A word the gate held (Claude started
+ *  asking before it went) counts as held, not sent. */
+export async function runPause(panes: PauseTarget[], key: StashKeyVerdict, settleMs = PAUSE_SETTLE_MS): Promise<PauseRun> {
+  const out: PauseRun = { report: emptyReport(), sent: [], skipped: [], unsettled: [] };
+  const skip = (pane: PauseTarget, reason: PauseSkipReason): void => {
+    out.skipped.push({ pane: pane.id, reason });
+    out.report.skipped[reason] += 1;
+    if (nameable(reason) && out.report.named.length < PAUSE_NAMED_MAX) out.report.named.push({ title: pane.title, reason });
+  };
+  const going: { pane: PauseTarget; settled: Promise<string | null> }[] = [];
   for (const pane of panes) {
     const reason = pauseSkipReason(pane.input, key);
-    if (reason !== null) {
-      out.skipped.push({ pane: pane.id, reason });
-      out.report.skipped[reason] += 1;
-      if (nameable(reason) && out.report.named.length < PAUSE_NAMED_MAX) out.report.named.push({ title: pane.title, reason });
-      continue;
-    }
-    pane.send(pane.input.draft);
+    if (reason !== null) { skip(pane, reason); continue; }
+    // Every word starts at once; the run then waits for them together.
+    going.push({ pane, settled: pane.send(pane.input.draft) });
+  }
+  const UNSETTLED = Symbol('unsettled');
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const deadline = new Promise<typeof UNSETTLED>((resolve) => { timer = setTimeout(() => resolve(UNSETTLED), settleMs); });
+  const results = await Promise.all(going.map((g) => Promise.race([g.settled.catch((err: unknown) => String(err)), deadline])));
+  if (timer) clearTimeout(timer);
+  going.forEach(({ pane }, i) => {
+    const result = results[i];
+    if (typeof result === 'string') { skip(pane, 'held'); return; }
+    if (result === UNSETTLED) out.unsettled.push(pane.id);
     out.sent.push(pane.id);
     out.report.sent += 1;
     if (isQueued(pane.input)) out.report.queued += 1;
-  }
+  });
   return out;
 }
 
@@ -141,6 +161,7 @@ export const PAUSE_SKIP_WORDS: Record<PauseSkipReason, string> = {
   draft: 'draft: stash key rebound',
   stashed: 'a draft is set aside here',
   unclear: 'state unclear',
+  held: 'Claude asked something as it went: not sent',
   'not-claude': 'not Claude',
   'no-shell': 'shell exited',
 };

@@ -542,12 +542,14 @@ export type StashKeyVerdict = { ok: true } | { ok: false; why: string };
  *    held (the user pressed Ctrl+S this session, or Patton did and no line
  *    was submitted since): Ctrl+S would overwrite or pop it.
  *  - 'unclear': Claude's state can't rule out a dialog (title path, or 7501 error).
+ *  - 'held': chosen for the word, but Claude started asking before it went
+ *    (held at the write or at the Enter), so it was not sent.
  *  - 'not-claude', 'no-shell'. */
 export type PauseSkipReason =
-  | 'waiting' | 'menu' | 'fresh' | 'draft' | 'stashed' | 'unclear' | 'not-claude' | 'no-shell';
+  | 'waiting' | 'menu' | 'fresh' | 'draft' | 'stashed' | 'unclear' | 'held' | 'not-claude' | 'no-shell';
 
 export const PAUSE_SKIP_REASONS: readonly PauseSkipReason[] = [
-  'waiting', 'menu', 'fresh', 'draft', 'stashed', 'unclear', 'not-claude', 'no-shell',
+  'waiting', 'menu', 'fresh', 'draft', 'stashed', 'unclear', 'held', 'not-claude', 'no-shell',
 ];
 
 /** A skipped pane named for the summary: its tab's title and why. */

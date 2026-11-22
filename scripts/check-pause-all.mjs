@@ -22,7 +22,7 @@
 // a rebound stash key skips draft panes; a draft Patton stashed is skipped
 // until the user submits; the session bar's checkpoint button stashes a
 // draft the same way; the summary names skipped tabs and splits at-the-prompt
-// from queued. Main side: a window closed mid-press, a send that throws, a
+// from queued, and counts a word the gate held (Claude started asking) as held. Main side: a window closed mid-press, a send that throws, a
 // late report, a second press, and an untrusted report.
 // Run: JSDOM_DIR=<a folder whose node_modules has jsdom> node scripts/check-pause-all.mjs
 //   jsdom is not a project dependency: install it in a scratch folder.
@@ -499,6 +499,7 @@ await wait(300);
   await press(A);
   check('pause gate: Claude asks during the stash wait, so only the Ctrl+S went (no pause, no Enter)', JSON.stringify(mine(A, p1)) === JSON.stringify(['\x13']), mine(A, p1));
   check('pause gate: … logged as held at the write', A.logs.some((l) => l.includes('[PAUSE-ALL] pause held') && l.includes('"at":"write"')));
+  check('pause gate: … the summary counts it as held, not paused', /^Nothing paused/.test(resultText(A) ?? '') && (resultText(A) ?? '').includes('gate3 (Claude asked something as it went: not sent)'), resultText(A));
 
   // Pause all, no draft: asked between `pause` and its Enter.
   const p2 = await makePane(A);
@@ -509,6 +510,7 @@ await wait(300);
   await press(A);
   check('pause gate: Claude asks between pause and its Enter, so no Enter', JSON.stringify(mine(A, p2)) === JSON.stringify(['pause']), mine(A, p2));
   check('pause gate: … logged as held at the Enter', A.logs.some((l) => l.includes('[PAUSE-ALL] pause held') && l.includes('"at":"enter"')));
+  check('pause gate: … held at the Enter counts as held too', /^Nothing paused/.test(resultText(A) ?? '') && (resultText(A) ?? '').includes('gate4 (Claude asked something'), resultText(A));
   A.onWrite = null;
 }
 
