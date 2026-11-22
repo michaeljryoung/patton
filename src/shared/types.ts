@@ -299,6 +299,14 @@ export interface PattonAPI {
     add: (command: string) => Promise<void>;
     clear: () => Promise<void>;
   };
+  /** The session bar's feed (docs/session-bar.md D8–D9; contract in shared/session-feed.ts). */
+  sessionFeed: {
+    /** Follow the Claude session in this pty; resolves true once main is looking for it. */
+    watch: (ptyId: number, hint?: { transcriptPath?: string }) => Promise<boolean>;
+    unwatch: (ptyId: number) => Promise<void>;
+    /** Returns an unsubscribe function. */
+    onEvent: (callback: (ptyId: number, event: import('./session-feed').SessionFeedEvent) => void) => () => void;
+  };
   settings: {
     /** Interface Text Size at the moment this window was created, known
      *  synchronously (main passes it to the preload as a command-line switch)

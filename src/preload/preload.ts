@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { IPC, uiTextScaleFromArgv } from '../shared/constants';
 import type { BoardLayout, BoardPayload, Bookmark, ConfirmRequest, PattonAPI, PauseAllRunRequest, RenderSnapshot } from '../shared/types';
+import { SESSION_FEED_IPC, type SessionFeedEvent } from '../shared/session-feed';
 
 const api: PattonAPI = {
   getPathForFile: (file) => webUtils.getPathForFile(file),
@@ -34,6 +35,15 @@ const api: PattonAPI = {
     get: () => ipcRenderer.invoke(IPC.HISTORY_GET),
     add: (command) => ipcRenderer.invoke(IPC.HISTORY_ADD, command),
     clear: () => ipcRenderer.invoke(IPC.HISTORY_CLEAR),
+  },
+  sessionFeed: {
+    watch: (ptyId, hint) => ipcRenderer.invoke(SESSION_FEED_IPC.WATCH, ptyId, hint),
+    unwatch: (ptyId) => ipcRenderer.invoke(SESSION_FEED_IPC.UNWATCH, ptyId),
+    onEvent: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, ptyId: number, event: SessionFeedEvent) => callback(ptyId, event);
+      ipcRenderer.on(SESSION_FEED_IPC.EVENT, listener);
+      return () => ipcRenderer.removeListener(SESSION_FEED_IPC.EVENT, listener);
+    },
   },
   settings: {
     uiTextScaleAtLaunch: uiTextScaleFromArgv(process.argv),
