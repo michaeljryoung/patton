@@ -69,3 +69,16 @@ export function scrollCaretIntoView(ta: HTMLTextAreaElement): void {
   );
   if (next !== ta.scrollTop) ta.scrollTop = next;
 }
+
+/** The caret's line is inside the textarea's visible part now. true when
+ *  there is nothing to measure (no layout, or nothing to scroll). */
+export function caretInView(ta: HTMLTextAreaElement): boolean {
+  if (ta.scrollHeight <= ta.clientHeight) return true;
+  const line = caretLineTop(ta);
+  if (!line) return true;
+  const cs = getComputedStyle(ta);
+  return scrollForCaret(
+    line.top, line.height, ta.scrollTop, ta.clientHeight,
+    parseFloat(cs.paddingTop) || 0, parseFloat(cs.paddingBottom) || 0,
+  ) === ta.scrollTop;
+}

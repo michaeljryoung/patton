@@ -614,6 +614,88 @@ async function pageRun(SCALES) {
     check(`${label}: Send inside the box's rectangle`, sb.top >= b.top - 0.5 && sb.bottom <= b.bottom + 0.5 && sb.right <= b.right + 0.5, d);
   }
 
+  /** S61 review: the box's first line. A one-line box and the `under` box are not taller than their contents (the
+   *  textarea or Send, whichever is taller), the one-line text is centred in the box, a resize leaves a draft he scrolled
+   *  up in alone, a caret in view stays in view, and a composition (IME) keeps its text and caret. */
+  async function firstLineChecks(at) {
+    const D = `${at} first line`;
+    await newPane();
+    const f = feeder('steps');
+    await f.to('idle');
+    await engage();
+    const bar = findBar();
+    if (!bar || !bar.empty) { check(`${D}: Claude's bar found`, false, bar); return; }
+    const ta = textarea();
+    const taCs = getComputedStyle(ta);
+    const lineCentre = (rect) => rect.top + parseFloat(taCs.borderTopWidth) + parseFloat(taCs.paddingTop) + parseFloat(taCs.lineHeight) / 2;
+    const fieldNotTaller = (label) => {
+      const fr = q('.editor-field').getBoundingClientRect();
+      const tr = ta.getBoundingClientRect();
+      const sr = q('.editor-send').getBoundingClientRect();
+      const d = { field: r1(fr.height), textarea: r1(tr.height), send: r1(sr.height), box: r1(box().getBoundingClientRect().height), place: place() };
+      check(`${label}: the row is no taller than the textarea or Send, whichever is taller (the first line's height counts no border)`, fr.height <= Math.max(tr.height, sr.height) + 0.5, d);
+      return d;
+    };
+    await typeDraft('hi');
+    fieldNotTaller(`${D} one-line draft, over`);
+    {
+      const b = box().getBoundingClientRect();
+      const t = ta.getBoundingClientRect();
+      const d = { textLineCentre: r1(lineCentre(t)), boxCentre: r1((b.top + b.bottom) / 2), boxH: r1(b.height) };
+      check(`${D} one-line draft, over: the text's line is centred in the three-row box (within 1.5 px)`, Math.abs(d.textLineCentre - d.boxCentre) <= 1.5, d);
+      const sb = q('.editor-send').getBoundingClientRect();
+      check(`${D} one-line draft, over: the text's line and Send are centred on each other (within 1.5 px)`, Math.abs(lineCentre(t) - (sb.top + sb.bottom) / 2) <= 1.5, { ...d, sendCentre: r1((sb.top + sb.bottom) / 2) });
+    }
+    pane.setComposeOverBar(false);
+    await settle(500);
+    {
+      const d = fieldNotTaller(`${D} one-line draft, under`);
+      const cs = getComputedStyle(box());
+      const chrome = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom) + parseFloat(cs.borderTopWidth) + parseFloat(cs.borderBottomWidth);
+      const bh = box().getBoundingClientRect().height;
+      check(`${D} one-line draft, under: the box is its row's height plus its own padding and rule, no more (within 0.5 px)`, Math.abs(bh - (d.field + chrome)) <= 0.5, { ...d, chrome: r1(chrome), boxH: r1(bh) });
+    }
+    pane.setComposeOverBar(true);
+    await settle(500);
+
+    // a long draft: his scroll through a resize, a caret in view through one
+    await typeDraft(room(40));
+    await settle(1800);
+    ta.focus();
+    ta.setSelectionRange(ta.value.length, ta.value.length);
+    ta.scrollTop = 0; // scrolled up to reread, the caret still at the end
+    const h0 = host.getBoundingClientRect().height;
+    host.style.height = `${h0 + 40}px`;
+    await settle(1500);
+    check(`${D} scrolled up in a long draft, focused: a resize leaves his scroll alone`, ta.scrollTop <= 2, { scrollTop: r1(ta.scrollTop), max: ta.scrollHeight - ta.clientHeight });
+    pane.editorInput.setValue(room(40)); // an edit: follows the caret to the end
+    await settle(400);
+    const atEnd = ta.scrollTop;
+    host.style.height = `${h0}px`;
+    await settle(1500);
+    check(`${D} caret at the end in view: a resize that shrinks the cap keeps it in view`, ta.scrollTop >= ta.scrollHeight - ta.clientHeight - 2, { before: r1(atEnd), scrollTop: r1(ta.scrollTop), max: ta.scrollHeight - ta.clientHeight });
+
+    // a composition (IME): synthetic events, the text and the caret are as typed, the caret's line in view
+    await typeDraft('');
+    await settle(600);
+    ta.focus();
+    ta.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true, data: '' }));
+    for (let i = 0; i < 30; i++) {
+      const next = ta.value + (i % 3 === 2 ? '\n' : '') + 'あ';
+      ta.value = next;
+      ta.setSelectionRange(next.length, next.length);
+      ta.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertCompositionText', data: 'あ', isComposing: true }));
+    }
+    ta.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: 'あ' }));
+    await settle(500);
+    check(`${D} composing: the text and the caret are as typed and the caret's line is in view`,
+      ta.value.length === 40 && ta.selectionStart === 40 && ta.selectionEnd === 40
+      && (ta.scrollHeight <= ta.clientHeight || ta.scrollTop >= ta.scrollHeight - ta.clientHeight - 2),
+      { len: ta.value.length, sel: [ta.selectionStart, ta.selectionEnd], scrollTop: r1(ta.scrollTop), max: ta.scrollHeight - ta.clientHeight });
+    await typeDraft('');
+    await settle(400);
+  }
+
   async function draftRoomChecks(at) {
     const D = `${at} D15`;
     // -------- over
@@ -725,6 +807,13 @@ async function pageRun(SCALES) {
     check(`${D} 40-line draft: the box stops growing at a third of the pane (S61: no fill to the pane's bottom, so no rounding allowance)`, b.height <= third + 1, dCap);
     noBlankBelowText(`${D} 40-line draft`);
     sendOnFirstLine(`${D} 40-line draft`);
+    {
+      // S61 review: k is worked out from a box of the cap's height (a third of the pane, or less to the pane's bottom),
+      // so the capped box must be that tall, not the textarea's cap less the box's own padding.
+      const wantCap = Math.min(third, Math.floor(pane.element.getBoundingClientRect().bottom - b.top));
+      check(`${D} 40-line draft: the capped box is exactly the cap tall (a third of the pane, or to the pane's bottom), within 1 px`,
+        Math.abs(b.height - wantCap) <= 1, { ...dCap, wantCap });
+    }
     check(`${D} 40-line draft: the textarea scrolls (scrollHeight > clientHeight)`, ta.scrollHeight > ta.clientHeight, dCap);
     check(`${D} 40-line draft: the box's bottom at or below the terminal's last row, its top on row R-1's top`,
       Boolean(bar && bar.empty) && b.bottom >= g.screen.bottom - 1 && Math.abs(b.top - g.top(bar.R - 1)) <= 1, dCap);
@@ -821,7 +910,6 @@ async function pageRun(SCALES) {
     await typeDraft(room(8));
     await settle(1200);
     for (const l of tl2.stop()) measures.push(`${D} timeline, dock 8-line draft: ${l}`);
-    stopStandIn2();
     g = grid();
     b = box().getBoundingClientRect();
     const n = term().rows;
@@ -832,6 +920,18 @@ async function pageRun(SCALES) {
     check(`${D} dock tall draft: no terminal row above the last three intersects the box (1 px)`, b.top >= lowest - 1, dDock);
     check(`${D} dock tall draft: the terminal gave up rows at its bottom (fewer than the pane's ${baseRows2})`, n < baseRows2, dDock);
     measures.push(`${D} dock 8-line draft: terminal ${term().cols}x${n} of ${baseRows2}, box ${r1(b.height)} px from ${r1(b.top)}, row ${n - 3} top ${r1(g.screen.top + (n - 3) * g.cellH)}`);
+    // S61 review: a draft past the cap in dock: the box is exactly the cap tall and reaches the terminal's last row.
+    await typeDraft(room(40));
+    await settle(1800);
+    stopStandIn2();
+    g = grid();
+    b = box().getBoundingClientRect();
+    const paneH2 = pane.element.getBoundingClientRect().height;
+    const wantCap2 = Math.min(Math.floor(paneH2 / 3), Math.floor(pane.element.getBoundingClientRect().bottom - b.top));
+    const dDock40 = { placement: place(), rows: term().rows, box: { top: r1(b.top), bottom: r1(b.bottom), h: r1(b.height) }, wantCap: wantCap2, screenBottom: r1(g.screen.bottom) };
+    check(`${D} dock 40-line draft: the capped box is exactly the cap tall (the dock's rule counted), within 1 px, and reaches the terminal's last row`,
+      place() === 'dock' && Math.abs(b.height - wantCap2) <= 1 && b.bottom >= g.screen.bottom - 1, dDock40);
+    noBlankBelowText(`${D} dock 40-line draft`);
   }
 
   async function runScale(S) {
@@ -1124,6 +1224,7 @@ async function pageRun(SCALES) {
 
     // ---------------- D15/D17: long drafts make room below
     await draftRoomChecks(at);
+    await firstLineChecks(at);
   }
 
   try {

@@ -1,7 +1,7 @@
 import { stripPasteControls } from '../services/paste-sanitize';
 import { rlog } from '../services/renderer-logger';
 import { killLineRange } from '../services/kill-line';
-import { scrollCaretIntoView } from '../services/textarea-caret';
+import { caretInView, scrollCaretIntoView } from '../services/textarea-caret';
 
 export interface EditorInputCallbacks {
   /** Send the box's text. Return false to refuse: the draft stays in the box. */
@@ -308,7 +308,7 @@ export class EditorInput {
   /** The box's contents at their natural height (px): the textarea uncapped,
    *  or whatever beside it in the row is taller (Send, the image chips). */
   naturalHeight(): number {
-    let h = this.naturalTextHeight;
+    let h = this.naturalTextHeight + (parseFloat(getComputedStyle(this.textarea).marginTop) || 0); // the text's inset counts
     for (const child of Array.from(this.field.children)) {
       if (child === this.textarea || child === this.liveRegion || !(child instanceof HTMLElement)) continue;
       h = Math.max(h, child.offsetHeight);
@@ -334,7 +334,10 @@ export class EditorInput {
     // In a hidden tab (display:none) scrollHeight is 0, and writing it would
     // leave a zero-height box; Pane.show() redoes this once it's visible.
     if (this.textarea.getClientRects().length === 0) return;
-    const cap = this.callbacks.getMaxHeight?.() ?? 200;
+    // The first line's size and the text's inset first: the cap leaves room for the inset (the box is
+    // exactly as tall as asked, nothing clipped at its bottom).
+    this.setFirstLineHeight();
+    const cap = Math.max(1, (this.callbacks.getMaxHeight?.() ?? 200) - (parseFloat(getComputedStyle(this.textarea).marginTop) || 0));
     const keptScroll = this.textarea.scrollTop; // 'auto' height below clamps it to 0
     this.textarea.style.height = 'auto';
     const full = this.textarea.scrollHeight;
@@ -343,29 +346,35 @@ export class EditorInput {
     this.textarea.style.overflowY = full > cap ? 'auto' : 'hidden';
     this.textarea.scrollTop = keptScroll;
     if (followCaret) scrollCaretIntoView(this.textarea);
-    this.setFirstLineHeight();
     if (full !== this.naturalTextHeight) {
       this.naturalTextHeight = full;
       this.callbacks.onContentHeight?.();
     }
   }
 
-  /** The height of one line of the textarea (text, padding, borders): what
-   *  Send and the image chips are as tall as, so they stay on the box's first
-   *  line while the box grows down (editor.css, --compose-first-line-h). */
+  /** The height of the box's first line (px): the textarea's own one-line
+   *  height (its line and padding; borders sit inside a border-box height) or
+   *  Send's, whichever is taller. Send and the image chips are this tall, so
+   *  they stay on the box's first line while the box grows down, and the text
+   *  is centred on it (editor.css, --compose-first-line-h and
+   *  --compose-first-line-inset). */
   private setFirstLineHeight(): void {
     const cs = getComputedStyle(this.textarea);
     const line = parseFloat(cs.lineHeight);
     if (!(line > 0)) return;
-    const chrome = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0)
-      + (parseFloat(cs.borderTopWidth) || 0) + (parseFloat(cs.borderBottomWidth) || 0);
-    this.field.style.setProperty('--compose-first-line-h', `${line + chrome}px`);
+    const textLine = Math.round(line + (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0));
+    const sendH = this.sendButton.getBoundingClientRect().height;
+    const first = Math.max(textLine, sendH > 0 ? sendH : 0);
+    this.field.style.setProperty('--compose-first-line-h', `${first}px`);
+    this.field.style.setProperty('--compose-first-line-inset', `${(first - textLine) / 2}px`);
   }
 
-  /** Re-apply the height cap (after the cap or the pane's size changed); a
-   *  caret the box holds stays in view when the cap shrinks. */
+  /** Re-apply the height cap (after the cap or the pane's size changed). His
+   *  scroll stays where it is (scrolled up to reread a long draft, a resize
+   *  must not snap it back to the caret); only a caret the box holds that was
+   *  in view stays in view when the cap shrinks. */
   refreshSize(): void {
-    this.autoResize(document.activeElement === this.textarea);
+    this.autoResize(document.activeElement === this.textarea && caretInView(this.textarea));
   }
 
   setPlaceholder(text: string): void {

@@ -161,6 +161,12 @@
   min-height: var(--compose-first-line-h, 0px);
 }
 
+/* Where Send is taller than the text's line (a larger UI scale), the text
+   sits centred on that first line, as it did while the row centred it. */
+.editor-container.compose-first .editor-textarea {
+  margin-top: var(--compose-first-line-inset, 0px);
+}
+
 /* One typing bar (docs/compose-box.md D9): the box laid over Claude Code's own
    input bar ('over') or on the terminal's bottom edge when scrolled up ('dock').
    Out of the flow, so the terminal takes the pane's whole height (less the
@@ -170,7 +176,7 @@
    grows DOWN from that top edge (D15). Opaque in the terminal's background
    (--term-bg, copied from the terminal's container), above xterm's own layers
    (z-index up to 11) and below the search overlay (100). The padding and the
-   dock's rule are the chrome Pane.COMPOSE_OVERLAY_CHROME_PX leaves room for. */
+   dock's rule are the chrome Pane.composeMaxHeight() reads from the box itself. */
 .editor-container.compose-first.placement-over,
 .editor-container.compose-first.placement-dock {
   position: absolute;

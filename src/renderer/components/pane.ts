@@ -330,7 +330,6 @@ export class Pane {
   private static readonly COMPOSE_FIRST_MAX_FRACTION = 0.4; // of the pane's height
   private static readonly COMPOSE_FIRST_MIN_PX = 60;
   private static readonly COMPOSE_DEFAULT_MAX_PX = 200;
-  private static readonly COMPOSE_OVERLAY_CHROME_PX = 8; // editor.css: the overlay's padding and rules
 
   // --- One typing bar (docs/compose-box.md D8–D10, D12) ---
   // The box over Claude Code's own input bar ('over'), on the terminal's
@@ -3341,7 +3340,13 @@ export class Pane {
       // overlay's own padding and rules.
       const cap = this.overlayMaxPx > 0 ? this.overlayMaxPx
         : Math.floor(this.element.clientHeight * COMPOSE_OVERLAY_MAX_FRACTION);
-      return Math.max(1, cap - Pane.COMPOSE_OVERLAY_CHROME_PX);
+      // The chrome is read from the overlay itself (editor.css: its padding,
+      // and the dock's rule), so a capped box is exactly `cap` tall, which is
+      // what k (composeRoomRows) assumes.
+      const cs = getComputedStyle(this.editorContainer);
+      const px = (v: string) => parseFloat(v) || 0;
+      const chrome = px(cs.paddingTop) + px(cs.paddingBottom) + px(cs.borderTopWidth) + px(cs.borderBottomWidth);
+      return Math.max(1, cap - chrome);
     }
     const share = Math.floor(this.element.clientHeight * Pane.COMPOSE_FIRST_MAX_FRACTION);
     return Math.max(Pane.COMPOSE_FIRST_MIN_PX, share);
