@@ -133,13 +133,11 @@ Last updated: 2026-11-22 (Session 60, v1.34.0 to v1.36.0 released, not installed
 
 CLAUDE.md's `## Next Steps` section points here; this is the canonical list. Items leave only via `[x] DONE — Session N`, `[~] SUPERSEDED — <pointer>`, or `[-] DROPPED: <reason>`. Marked items linger 10 checkpoints, then sweep to `docs/session-archive.md`.
 
-### 2026-11-22 — before the install (S61): his two picks, then the fill ships
+### 2026-11-22 — before the install (S61): his picks are in, v1.36.1 released
 
-He asked to try things before they ship ("you didn't even test the notification charm with me"). The try-out page https://claude.ai/code/artifact/f74647ea-0491-4524-b765-4046100061bf plays the sounds from `notification-sound.ts` and shows the typing box's fill shades (A, B, C). Waiting on his reply, e.g. "marimba, B":
-- **Sound:** set `DEFAULTS.NOTIFICATION_SOUND_NAME` (`src/shared/constants.ts`) to his pick if it isn't `soft`; `check-notification-sound.mjs` asserts the default.
-- **Fill:** branch `feat/compose-fill` (`6742da1`, pushed, not merged) has shade B; for A or C change `--compose-fill` in `main.css` (light and dark values in the commit message). Verified: lint, tsc, `check-compose-over` 486 ok (asserts the fill), `check-ui-text-scale` 214, `check-compose-box` 267, `check-compose-placement` 126, no-install package.
-- Then merge to main by fast-forward, push (patch release), check the cask, and run the install below from the new tag instead of v1.36.0. With no pick by the install, ship B and soft.
-- After the install, go through each S60 change with him in the app (session bar, room below, Ctrl-U, sound in Settings, bookmarks bar); nothing of S60 has been seen live.
+He asked to try things before they ship ("you didn't even test the notification charm with me"). On the try-out page https://claude.ai/code/artifact/f74647ea-0491-4524-b765-4046100061bf (the sounds from `notification-sound.ts`, the fill shades) he picked "low marimba" and "typing: B". Released as v1.36.1 (`173d0df`, run 45048755479 green, cask `4ab997c4…` equals the DMG's digest): the marimba is the default (`DEFAULTS.NOTIFICATION_SOUND_NAME`), Settings names it Low marimba, the typing box has `--compose-fill` (#fefbea light, #1f1d14 dark). Full suite 45/45 before release.
+- Install v1.36.1, not v1.36.0, by the hand-off below.
+- After the install, go through each change since v1.33.0 with him in the app (session bar, room below, Ctrl-U, the sound in Settings, the bookmarks bar, the yellow box); none has been seen live. His saved settings are encrypted, so whether he hears the marimba depends on whether he ever chose Bugle, Bullet or Off.
 - Artifact bookmarks: Chrome's history (profile "Personal") shows each of his four clicks on 20–21 Nov opened the page within a second; on 21 Nov he then signed out of claude.ai and in again through Google's account picker before opening it. Patton's hand-off works; why the page needed a sign-in again although `~/.claude/page-follow/registry.json` records it shared to both logins is open, and outside Patton.
 
 ### 2026-11-22 — hand-off (S60): install v1.36.0 with Patton quit
