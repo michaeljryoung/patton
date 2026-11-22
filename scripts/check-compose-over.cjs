@@ -664,11 +664,7 @@ async function pageRun(SCALES) {
     for (let r = g.vy; r <= R1 - 2; r++) worst = Math.max(worst, g.top(r) + g.cellH);
     check(`${D} tall draft: no terminal row above R-1 intersects the box`, b.top >= worst - 1, { ...dTall, lowestRowAboveBottom: r1(worst) });
     check(`${D} tall draft: the terminal gives up k >= 1 whole rows at its bottom (fewer rows than the pane's ${baseRows})`, k >= 1, dTall);
-    // The 8-line draft's need is at the cap, so the cap (a third of the pane) can stop the box short of the pane's
-    // bottom: it then must still cover the freed rows but the last, which whole-row k and the cap can leave
-    // part bare (its bottom at or below the grid's bottom plus k-1 rows).
-    check(`${D} tall draft: the box's bottom within 1 px of the pane's content bottom, or, stopped by the cap of a third of the pane, at least k-1 rows below the grid's bottom`,
-      Math.abs(b.bottom - paneContentBottom()) <= 1 || (b.height >= third - 1 && b.bottom >= g.screen.bottom + (k - 1) * g.cellH - 1 && b.bottom <= paneContentBottom() + 1), dTall);
+    check(`${D} tall draft: the box's bottom within 1 px of the pane's content bottom`, Math.abs(b.bottom - paneContentBottom()) <= 1, dTall);
     measures.push(`${D} 8-line draft: terminal ${term().cols}x${term().rows} (k=${k}), box ${r1(b.height)} px from ${r1(b.top)} to ${r1(b.bottom)}, pane content bottom ${r1(paneContentBottom())}, row R-1 top ${r1(g.top(R1 - 1))}`);
     // the room line (only if the stub captures renderer logs)
     if (logs.some((l) => l.tag === '[COMPOSE] place')) {
@@ -685,12 +681,10 @@ async function pageRun(SCALES) {
     g = grid();
     const ta = textarea();
     const dCap = { placement: place(), rows: term().rows, h: r1(b.height), third, scrollH: ta.scrollHeight, clientH: ta.clientHeight, top: r1(b.top), bottom: r1(b.bottom), paneContentBottom: r1(paneContentBottom()) };
-    check(`${D} 40-line draft: the box stops growing (height <= a third of the pane + 1 px)`, b.height <= third + 1, dCap);
+    check(`${D} 40-line draft: the box stops growing (height <= a third of the pane + 2 rows: rounding up to whole rows, plus the 20 px the pane has below its last row)`, b.height <= third + 2 * g.cellH + 1, dCap);
     check(`${D} 40-line draft: the textarea scrolls (scrollHeight > clientHeight)`, ta.scrollHeight > ta.clientHeight, dCap);
-    const kCap = baseRows - term().rows;
-    check(`${D} 40-line draft: the box's top on row R-1's top, its bottom within 1 px of the pane's content bottom or (stopped by the cap) at least k-1 rows below the grid's bottom`,
-      Boolean(bar && bar.empty) && Math.abs(b.top - g.top(bar.R - 1)) <= 1 && kCap >= 1
-      && (Math.abs(b.bottom - paneContentBottom()) <= 1 || (b.height >= third - 1 && b.bottom >= g.screen.bottom + (kCap - 1) * g.cellH - 1 && b.bottom <= paneContentBottom() + 1)), { ...dCap, kCap, gridBottom: r1(g.screen.bottom) });
+    check(`${D} 40-line draft: the box's bottom within 1 px of the pane's content bottom, its top on row R-1's top`,
+      Boolean(bar && bar.empty) && Math.abs(b.bottom - paneContentBottom()) <= 1 && Math.abs(b.top - g.top(bar.R - 1)) <= 1, dCap);
     measures.push(`${D} 40-line draft: terminal ${term().rows} rows, box ${r1(b.height)} px, a third ${third} px`);
 
     // 6. stability (D15: "Claude's redraw after the resize can't feed back"): back to the 8-line draft, let it settle,

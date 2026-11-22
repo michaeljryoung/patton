@@ -654,10 +654,18 @@ export class TerminalView {
     if (this.disposed) return;
     const parent = this.terminal.element?.parentElement;
     if (!parent) return;
+    const before = parent.style.getPropertyValue('--rows-given-up');
     parent.style.removeProperty('--rows-given-up');
     if (rows > 0) {
       const input = this.fitInput();
-      const pad = input ? roomPadding(input, rows) : 0;
+      // A hidden pane (display:none) can't be measured: keep the padding it
+      // has, so the rows given up are still given up when it is shown (Pane's
+      // show() calls this again, measured, before its fit).
+      if (!input || !fitGrid(input)) {
+        if (before) parent.style.setProperty('--rows-given-up', before);
+        return;
+      }
+      const pad = roomPadding(input, rows);
       if (pad > 0) parent.style.setProperty('--rows-given-up', `${pad}px`);
     }
     this.fit();

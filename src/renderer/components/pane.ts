@@ -356,6 +356,17 @@ export class Pane {
   private composeRoomRows = 0;
   private composeRoomMs = -Infinity;
   private composeRoomTimer: ReturnType<typeof setTimeout> | null = null;
+  // D15: the pane's height k was last worked out for (a height change of the
+  // pane re-works it out; Patton's own padding change is not one).
+  private composeRoomPaneH = 0;
+  // D15: for COMPOSE_REFIT_SETTLE_MS after Patton's own resize of the terminal
+  // for room (or a window resize that changed its rows; composeRoomResizeMs)
+  // `barRow` is not to be trusted: it is from before
+  // the resize, or from a reading between the resize and Claude's redraw, which
+  // reads a screen xterm has trimmed. A content change in that window waits
+  // (composeRoomPendingReason) for the window's end.
+  private composeRoomPendingReason: string | null = null;
+  private composeRoomResizeMs = -Infinity;
   private barNotFoundLoggedMs = 0;
   private barLostTimer: ReturnType<typeof setTimeout> | null = null;
   private barReadFrame: number | null = null;
@@ -1608,8 +1619,10 @@ export class Pane {
       this.resizeTimer = setTimeout(() => {
         // D15: rows given up stay given up at the new size (the padding that
         // gives them up is measured from the container's size).
+        const rowsBefore = this.terminalView.terminal.rows;
         if (this.composeRoomRows > 0) this.terminalView.setRowsGivenUp(this.composeRoomRows);
         else this.terminalView.fit();
+        if (this.terminalView.terminal.rows !== rowsBefore) this.noteOwnRowsChange();
         if (this.ptyId !== null) {
           const dims = this.terminalView.getDimensions();
           window.patton.pty.resize(this.ptyId, dims.cols, dims.rows);
@@ -1617,6 +1630,11 @@ export class Pane {
         // The box's cap is a share of the pane's height, so follow resizes.
         if (this.composeFirstEngaged) this.editorInput.refreshSize();
         this.layoutComposeOverlay();
+        // D15: the cap on k is a third of the pane, so a pane that changed
+        // height works k out again. The observer also fires for Patton's own
+        // padding change (it narrows .terminal-container's content box), which
+        // leaves the pane's height as it was and so does nothing here.
+        if (this.element.clientHeight !== this.composeRoomPaneH) this.syncComposeRoom('resize');
         this.scheduleBarReading();
       }, 100);
     });
@@ -2669,6 +2687,7 @@ export class Pane {
     const cellH = this.terminalCellHeight();
     const paneH = this.element.clientHeight;
     if (cellH <= 0 || paneH <= 0) return null;
+    this.composeRoomPaneH = paneH;
     const term = this.terminalView.terminal;
     const barViewRow = this.barRow - term.buffer.active.viewportY;
     const cs = getComputedStyle(this.editorContainer);
@@ -2690,6 +2709,17 @@ export class Pane {
    *  of Patton's last resize waits for that second (D9) and is decided again. */
   private syncComposeRoom(reason: string): void {
     if (this.disposed || this.composePlacementFrozen) return;
+    if (this.composeRoomWindowOpen()) {
+      // barRow is not to be trusted yet (see composeRoomPendingReason): wait
+      // for the window's end, then decide again from the bar as Claude redrew it.
+      this.composeRoomPendingReason = reason;
+      this.clearComposeRoomTimer();
+      this.composeRoomTimer = setTimeout(() => {
+        this.composeRoomTimer = null;
+        this.flushComposeRoomPending();
+      }, Math.max(0, this.composeRoomResizeMs + COMPOSE_REFIT_SETTLE_MS - Date.now()) + 1);
+      return;
+    }
     const want = this.composeRoomWanted();
     if (want === null || want === this.composeRoomRows) {
       if (want === this.composeRoomRows) this.clearComposeRoomTimer();
@@ -2707,6 +2737,25 @@ export class Pane {
     this.setComposeRoom(want, reason);
   }
 
+  /** True for COMPOSE_REFIT_SETTLE_MS after Patton's own resize of the terminal. */
+  private composeRoomWindowOpen(): boolean {
+    return Date.now() < this.composeRoomResizeMs + COMPOSE_REFIT_SETTLE_MS;
+  }
+
+  /** Patton changed the terminal's rows itself (room, or a window resize). */
+  private noteOwnRowsChange(): void {
+    this.composeRoomResizeMs = Date.now();
+  }
+
+  /** Run a content change's k that waited for the window's end. */
+  private flushComposeRoomPending(): void {
+    const reason = this.composeRoomPendingReason;
+    if (reason === null || this.composeRoomWindowOpen()) return;
+    this.composeRoomPendingReason = null;
+    this.clearComposeRoomTimer();
+    this.syncComposeRoom(reason);
+  }
+
   /** Give up k rows at the terminal's bottom (0: take them back), tell the
    *  PTY, lay the box out again. Readings in the 500 ms after this refit don't
    *  count toward the lost wait, as after any refit of Patton's own (D9). */
@@ -2718,7 +2767,9 @@ export class Pane {
     const now = Date.now();
     this.composeRoomMs = now;
     this.composeRefitMs = now;
+    this.composeRoomPendingReason = null;
     this.terminalView.setRowsGivenUp(rows);
+    this.noteOwnRowsChange();
     this.refitTerminal();
     rlog('info', '[COMPOSE] room', { pane: this.id, rows, from, placement: this.composePlacement, reason });
     this.layoutComposeOverlay();
@@ -2794,10 +2845,14 @@ export class Pane {
     const third = Math.floor(pr.height * COMPOSE_OVERLAY_MAX_FRACTION);
     const toPaneBottom = Math.floor(pr.height - topEdge);
     const maxPx = Math.max(3 * cellH, Math.min(third, toPaneBottom));
-    // With rows given up (D15) the box reaches the pane's bottom, so it fills
-    // the room the terminal made, within the cap.
-    st.minHeight = `${this.composeRoomRows > 0 ? maxPx : 3 * cellH}px`;
-    st.maxHeight = `${maxPx}px`;
+    // With rows given up (D15) the box reaches the pane's bottom, cap or not:
+    // k is whole rows from the capped need, so the cap alone would stop the
+    // box up to a row and a half short and show Claude's footer in the gap.
+    // The box then passes a third of the pane by under a row; the textarea's
+    // own cap (overlayMaxPx) stays a third, so the text still scrolls inside.
+    const fillPx = this.composeRoomRows > 0 ? Math.max(maxPx, toPaneBottom) : 0;
+    st.minHeight = `${fillPx > 0 ? fillPx : 3 * cellH}px`;
+    st.maxHeight = `${Math.max(maxPx, fillPx)}px`;
     this.applyOverlayColor();
     this.placePasteStrip();
     // The textarea's own cap follows the room below the box's top (its text
@@ -3085,10 +3140,14 @@ export class Pane {
 
   show(): void {
     this.element.style.display = 'flex';
-    this.terminalView.fit();
+    // D15: the rows given up are given up again, measured, before the fit
+    // (a font change or resize while hidden couldn't measure them).
+    if (this.composeRoomRows > 0) this.terminalView.setRowsGivenUp(this.composeRoomRows);
+    else this.terminalView.fit();
     // Always: a resize skipped while the tab was hidden (display:none) is redone here.
     this.editorInput.refreshSize();
     this.layoutComposeOverlay();
+    this.syncComposeRoom('show'); // k for the font and pane size as they are now
     this.scheduleBarReading();
   }
 
