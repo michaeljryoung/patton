@@ -28,6 +28,13 @@
 //     the textarea, the box three rows tall where its contents fit (D12: it may grow upward where they
 //     don't; the height is printed in px and rows at each scale);
 //  7. composeOverBar off: `under` throughout, still no Okay? anywhere.
+//  8. D15/D17 (docs/compose-box.md, "Design, part 3", `draftRoomChecks`): a draft taller than the rows below
+//     the bar leaves the box's top on row R-1's top, covers no row above it, makes the terminal k >= 1 rows
+//     shorter with the box's bottom on the pane's content bottom, logs `[COMPOSE] room` with rows = k; past a
+//     third of the pane the text scrolls; cleared, the terminal has its rows back and the box is over R-1..R+1;
+//     in `dock` no row above the last three is covered; three more redraws 600 ms apart leave k alone. Claude's
+//     redraw after a resize is stood in for by `redrawFor` (the stub pty sends no SIGWINCH): it clears the
+//     viewport and repaints the recorded bar and footer lines bottom-aligned in the new row count.
 // Not covered: the WebGL renderer (the grid is the same .xterm-screen box),
 // Claude Code's own redraw after a resize (the recordings were made at 100x30;
 // when the box goes under, xterm reflows the recorded screen instead).
@@ -461,6 +468,212 @@ async function pageRun(SCALES) {
     await settle(300);
   }
 
+  // ---------------------------------------------------------------- D15 / D17: long drafts make room below
+  // Written against the DESIGN (docs/compose-box.md, "Design, part 3", D15, D17), from what can be seen: the
+  // box's rectangle, xterm's rows, the terminal's row count and the pane's rectangle.
+
+  /** The pane's content bottom: its rectangle's bottom less its own bottom border and padding. */
+  function paneContentBottom() {
+    const r = pane.element.getBoundingClientRect();
+    const cs = getComputedStyle(pane.element);
+    return r.bottom - parseFloat(cs.paddingBottom || '0') - parseFloat(cs.borderBottomWidth || '0');
+  }
+
+  /** The absolute buffer row of the terminal's last row. */
+  const lastRow = () => term().buffer.active.baseY + term().rows - 1;
+
+  /** The text lines of rows [from, to] of the active buffer, for the stand-in redraw below. */
+  function snapshotLines(from, to) {
+    const b = term().buffer.active;
+    const out = [];
+    for (let i = from; i <= to; i++) { const l = b.getLine(i); out.push(l ? l.translateToString(true) : ''); }
+    return out;
+  }
+
+  /**
+   * STAND-IN for Claude Code's redraw after a resize. The real Claude Code redraws when the pty's size changes
+   * (SIGWINCH); the stub pty can't send one, and the recorded bytes are positioned for 100x30. So, after Patton
+   * resizes the terminal, this repaints the screen as Claude would for the new row count: it clears the
+   * viewport and writes the bar (rule, `❯` line, rule) and the footer lines taken from the idle screen as
+   * they stood in the recording, bottom-aligned in the new row count, the cursor parked on the `❯` line
+   * (D8), the `❯` line empty. At 30 rows it reproduces the idle screen's bar and footer where they were.
+   */
+  async function redrawFor(lines) {
+    const rows = term().rows;
+    const cols = term().cols;
+    const first = rows - lines.length + 1; // 1-based row of the first line
+    let out = '\x1b[0m\x1b[2J\x1b[H';
+    let cursorRow = first;
+    lines.forEach((l, i) => {
+      const isBar = l.startsWith('❯');
+      if (isBar) cursorRow = first + i;
+      const txt = isBar ? '❯ ' : /^─+$/.test(l) ? '─'.repeat(cols) : l;
+      out += `\x1b[${first + i};1H${txt}`;
+    });
+    out += `\x1b[${cursorRow};3H`;
+    await write(out);
+    await frame();
+  }
+
+  const room = (n) => Array.from({ length: n }, (_, i) => `draft line ${i + 1}`).join('\n');
+  /** The newest `[COMPOSE] room` line's rows since logs index `since` (null if none). */
+  function lastRoomRows(since) {
+    for (let i = logs.length - 1; i >= since; i--) {
+      if (logs[i].tag !== '[COMPOSE] room') continue;
+      const d = logs[i].data;
+      if (d && typeof d === 'object' && 'rows' in d) return Number(d.rows);
+      const m = String(typeof d === 'string' ? d : JSON.stringify(d)).match(/rows\D{0,4}(\d+)/);
+      return m ? Number(m[1]) : null;
+    }
+    return null;
+  }
+
+  async function draftRoomChecks(at) {
+    const D = `${at} D15`;
+    // -------- over
+    await newPane();
+    const baseRows = term().rows;
+    // The steps recording's idle screen has the bar at row ~11 with 17 blank rows under it, so a draft (capped at
+    // a third of the pane) can never need more than they give: k stays 0 there, which tests nothing. Use the
+    // screen a real session lives on: the end of the `turn` recording, the bar low on the screen with the footer
+    // under it. If that still leaves more rows under the bar than a capped draft can use, fall back to a stand-in
+    // layout (the bar and a footer line bottom-aligned, see redrawFor).
+    const f = feeder('turn');
+    await f.untilEmptyBar();
+    await engage();
+    await report('working');
+    while (await f.next()) { /* every chunk of the recorded turn */ }
+    await report('idle');
+    await settle(450);
+    let bar = findBar();
+    let source = 'turn recording, end';
+    if (!bar || !bar.empty || lastRow() - (bar.R + 1) > 4) {
+      const was = bar ? `R=${bar.R}` : 'no bar';
+      await redrawFor(['─'.repeat(term().cols), '❯ ', '─'.repeat(term().cols), '  ? for shortcuts', '  Opus']);
+      await settle(450);
+      bar = findBar();
+      source = `stand-in layout (the turn recording's end had ${was})`;
+    }
+    if (!bar || !bar.empty) { check(`${D} start: Claude's bar found on screen`, false, bar); return; }
+    const R0 = bar.R;
+    const barLines = snapshotLines(R0 - 1, lastRow()); // rule, bar, rule, footer rows, as recorded
+    const rowsBelow = lastRow() - (R0 + 1); // terminal rows under the bar's bottom rule
+    const cellH = grid().cellH;
+    const paneH = pane.element.getBoundingClientRect().height;
+    const third = Math.floor(paneH / 3);
+    measures.push(`${D} screen: ${source}; bar at viewport row ${R0 - (term().buffer.active.baseY)} of ${baseRows}; ${rowsBelow} rows below the bar's rule; cell ${r1(cellH)} px; pane ${r1(paneH)} px, a third ${third} px`);
+
+    // 1. a one-line draft: box over R-1..R+1, the terminal keeps the pane's rows (a regression guard: true on main too)
+    await typeDraft('one line');
+    overGeometry(`${D} one-line draft`, R0);
+    check(`${D} one-line draft: the terminal's rows equal the pane's full rows`, term().rows === baseRows, { rows: term().rows, baseRows });
+
+    // 2. a draft taller than the rows below the bar
+    const logsBefore = logs.length;
+    await typeDraft(room(8));
+    await settle(1100); // past D9's once-a-second limit and the 500 ms refit window
+    const rowsAfterType = term().rows;
+    await redrawFor(barLines);
+    await settle(700);
+    bar = findBar();
+    if (!bar || !bar.empty) { check(`${D} tall draft: Claude's bar found after the stand-in redraw`, false, { bar, rows: term().rows }); return; }
+    const R1 = bar.R;
+    let g = grid();
+    let b = box().getBoundingClientRect();
+    const k = baseRows - term().rows;
+    const dTall = { placement: place(), R: R1, rows: term().rows, baseRows, k, rowsAfterType, box: { top: r1(b.top), bottom: r1(b.bottom), h: r1(b.height) }, row_R1m1_top: r1(g.top(R1 - 1)), paneContentBottom: r1(paneContentBottom()), rowsBelow };
+    check(`${D} precondition: the 8-line draft is taller than the three bar rows plus the ${rowsBelow} rows below the bar`, b.height > (3 + rowsBelow) * g.cellH + 0.5, dTall);
+    check(`${D} tall draft: placement over`, place() === 'over', dTall);
+    check(`${D} tall draft: the box's top within 1 px of row R-1's top (R from the bar after Claude's redraw)`, Math.abs(b.top - g.top(R1 - 1)) <= 1, dTall);
+    let worst = -Infinity;
+    for (let r = g.vy; r <= R1 - 2; r++) worst = Math.max(worst, g.top(r) + g.cellH);
+    check(`${D} tall draft: no terminal row above R-1 intersects the box`, b.top >= worst - 1, { ...dTall, lowestRowAboveBottom: r1(worst) });
+    check(`${D} tall draft: the terminal gives up k >= 1 whole rows at its bottom (fewer rows than the pane's ${baseRows})`, k >= 1, dTall);
+    check(`${D} tall draft: the box's bottom within 1 px of the pane's content bottom`, Math.abs(b.bottom - paneContentBottom()) <= 1, dTall);
+    measures.push(`${D} 8-line draft: terminal ${term().cols}x${term().rows} (k=${k}), box ${r1(b.height)} px from ${r1(b.top)} to ${r1(b.bottom)}, pane content bottom ${r1(paneContentBottom())}, row R-1 top ${r1(g.top(R1 - 1))}`);
+    // the room line (only if the stub captures renderer logs)
+    if (logs.some((l) => l.tag === '[COMPOSE] place')) {
+      const got = lastRoomRows(logsBefore);
+      check(`${D} tall draft: a \`[COMPOSE] room\` line with rows equal to k (${k})`, got === k, { got, k, lines: logs.slice(logsBefore).map((l) => l.tag) });
+    } else console.log(`note: ${D}: the stub captured no renderer logs, the [COMPOSE] room assertion is skipped`);
+    const tallRows = term().rows;
+
+    // 3. a draft longer than a third of the pane: the box stops growing and the text scrolls inside
+    await typeDraft(room(40));
+    await settle(1100);
+    await redrawFor(barLines);
+    await settle(700);
+    bar = findBar();
+    b = box().getBoundingClientRect();
+    g = grid();
+    const ta = textarea();
+    const dCap = { placement: place(), rows: term().rows, h: r1(b.height), third, scrollH: ta.scrollHeight, clientH: ta.clientHeight, top: r1(b.top), bottom: r1(b.bottom), paneContentBottom: r1(paneContentBottom()) };
+    check(`${D} 40-line draft: the box stops growing (height <= a third of the pane + 1 px)`, b.height <= third + 1, dCap);
+    check(`${D} 40-line draft: the textarea scrolls (scrollHeight > clientHeight)`, ta.scrollHeight > ta.clientHeight, dCap);
+    check(`${D} 40-line draft: the box's bottom within 1 px of the pane's content bottom, its top on row R-1's top`,
+      Boolean(bar && bar.empty) && Math.abs(b.bottom - paneContentBottom()) <= 1 && Math.abs(b.top - g.top(bar.R - 1)) <= 1, dCap);
+    measures.push(`${D} 40-line draft: terminal ${term().rows} rows, box ${r1(b.height)} px, a third ${third} px`);
+
+    // 6. stability (D15: "Claude's redraw after the resize can't feed back"): back to the 8-line draft, let it settle,
+    //    then feed the same screen three more times, 600 ms apart; the row count must not change.
+    await typeDraft(room(8));
+    await settle(1100);
+    await redrawFor(barLines);
+    await settle(700);
+    const stableRows = term().rows;
+    const seen = [stableRows];
+    for (let i = 0; i < 3; i++) {
+      await sleep(600);
+      await redrawFor(barLines);
+      seen.push(term().rows);
+    }
+    await settle(700);
+    seen.push(term().rows);
+    check(`${D} stability: three more redraws of the same screen, 600 ms apart, leave the terminal's rows alone (${stableRows} rows)`,
+      seen.every((n) => n === stableRows) && stableRows < baseRows, { seen, baseRows });
+
+    // 4. cleared: the terminal back to the pane's rows (after it had given some up), the box over R-1..R+1 again
+    await typeDraft('');
+    await settle(1100);
+    const rowsAfterClear = term().rows;
+    await redrawFor(barLines);
+    await settle(700);
+    bar = findBar();
+    check(`${D} cleared: the terminal back to the pane's full rows after having given rows up (${tallRows} -> ${rowsAfterClear} of ${baseRows})`,
+      tallRows < baseRows && rowsAfterClear === baseRows && term().rows === baseRows, { tallRows, rowsAfterClear, baseRows });
+    if (bar && bar.empty) overGeometry(`${D} cleared`, bar.R);
+    else check(`${D} cleared: Claude's bar found on screen`, false, bar);
+
+    // -------- dock: scrolled up with a tall draft
+    await newPane();
+    const f2 = feeder('queue');
+    await f2.to('idle');
+    await engage();
+    for (const mark of ['working', 'queued', 'queued+1s', 'after']) {
+      if (mark === 'working') await report('working');
+      if (mark === 'after') await report('idle');
+      await f2.to(mark);
+      await settle(250);
+    }
+    const baseRows2 = term().rows;
+    term().scrollToTop();
+    await settle(500);
+    if (place() !== 'dock') { check(`${D} dock: scrolled up, placement dock`, false, { placement: place() }); return; }
+    await typeDraft(room(8));
+    await settle(1200);
+    // No stand-in redraw here: he is reading scrollback, and the viewport stays where it is.
+    g = grid();
+    b = box().getBoundingClientRect();
+    const n = term().rows;
+    let lowest = -Infinity;
+    for (let i = 0; i < n - 3; i++) lowest = Math.max(lowest, g.screen.top + (i + 1) * g.cellH);
+    const dDock = { placement: place(), rows: n, baseRows2, box: { top: r1(b.top), bottom: r1(b.bottom), h: r1(b.height) }, lowestRowAboveLastThreeBottom: r1(lowest), vy: g.vy };
+    check(`${D} dock tall draft: placement dock`, place() === 'dock', dDock);
+    check(`${D} dock tall draft: no terminal row above the last three intersects the box (1 px)`, b.top >= lowest - 1, dDock);
+    check(`${D} dock tall draft: the terminal gave up rows at its bottom (fewer than the pane's ${baseRows2})`, n < baseRows2, dDock);
+    measures.push(`${D} dock 8-line draft: terminal ${term().cols}x${n} of ${baseRows2}, box ${r1(b.height)} px from ${r1(b.top)}, row ${n - 3} top ${r1(g.screen.top + (n - 3) * g.cellH)}`);
+  }
+
   async function runScale(S) {
     const at = `x${S}`;
     U.applyUiTextScale(S, 'change');
@@ -731,6 +944,9 @@ async function pageRun(SCALES) {
       if (place() !== 'under') allUnder = false;
     }
     check(`${at} over-bar off: under at every screen of the steps recording`, allUnder, seen);
+
+    // ---------------- D15/D17: long drafts make room below
+    await draftRoomChecks(at);
   }
 
   try {
