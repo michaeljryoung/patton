@@ -3,6 +3,11 @@
  * last 2 MB at start, then every byte appended, through fs.watch plus a 1 s
  * size poll (fs.watch alone misses writes on some volumes and after a rename).
  * Hands raw text to the caller; whole-line parsing is transcript-parser.ts's.
+ *
+ * A poll reads at most BACKLOG_BYTES. When the file is replaced (another
+ * inode), shrinks below what was read, or grows by more than BACKLOG_BYTES at
+ * once, the tail re-attaches: it reads the last BACKLOG_BYTES, skips the cut
+ * first line, and calls `onReset` first so the caller drops its partial line.
  */
 import { watch, type FSWatcher, promises as fsp } from 'node:fs';
 import { StringDecoder } from 'node:string_decoder';
@@ -15,10 +20,13 @@ export interface TailHandlers {
   /** Text read from the file, in order. The first call is the backlog. */
   onText: (text: string) => void;
   onError: (why: string) => void;
+  /** The next text no longer continues the last (a re-attach): drop any partial line. */
+  onReset?: (why: string) => void;
 }
 
 export class TranscriptTail {
   private offset = 0;
+  private ino = -1;
   private decoder = new StringDecoder('utf8');
   private watcher: FSWatcher | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -28,25 +36,18 @@ export class TranscriptTail {
 
   constructor(private readonly path: string, private readonly handlers: TailHandlers) {}
 
-  async start(): Promise<void> {
-    let size: number;
+  /** False when the file can't be read: nothing is followed, and the caller
+   *  should drop this tail (D). */
+  async start(): Promise<boolean> {
+    let st: { size: number; ino: number };
     try {
-      size = (await fsp.stat(this.path)).size;
+      st = await fsp.stat(this.path);
     } catch {
       this.handlers.onError('transcript unreadable');
-      return;
+      return false;
     }
-    this.offset = Math.max(0, size - BACKLOG_BYTES);
-    const midFile = this.offset > 0;
-    const backlog = await this.readTo(size);
-    if (this.stopped) return;
-    // Starting mid-file, everything up to the first newline is a cut line.
-    let text = backlog;
-    if (midFile) {
-      const nl = text.indexOf('\n');
-      text = nl >= 0 ? text.slice(nl + 1) : '';
-    }
-    if (text) this.handlers.onText(text);
+    await this.readBacklog(st);
+    if (this.stopped) return true;
     try {
       this.watcher = watch(this.path, { persistent: false }, () => { void this.poll(); });
       this.watcher.on('error', () => { this.watcher?.close(); this.watcher = null; });
@@ -54,6 +55,23 @@ export class TranscriptTail {
       this.watcher = null; // the poll still runs
     }
     this.timer = setInterval(() => { void this.poll(); }, POLL_MS);
+    return true;
+  }
+
+  /** The last BACKLOG_BYTES of the file, without the cut first line. */
+  private async readBacklog(st: { size: number; ino: number }): Promise<void> {
+    this.ino = st.ino;
+    this.decoder = new StringDecoder('utf8');
+    this.offset = Math.max(0, st.size - BACKLOG_BYTES);
+    const midFile = this.offset > 0;
+    let text = await this.readTo(st.size);
+    if (this.stopped) return;
+    // Starting mid-file, everything up to the first newline is a cut line.
+    if (midFile) {
+      const nl = text.indexOf('\n');
+      text = nl >= 0 ? text.slice(nl + 1) : '';
+    }
+    if (text) this.handlers.onText(text);
   }
 
   stop(): void {
@@ -72,22 +90,25 @@ export class TranscriptTail {
     try {
       do {
         this.again = false;
-        let size: number;
+        let st: { size: number; ino: number };
         try {
-          size = (await fsp.stat(this.path)).size;
+          st = await fsp.stat(this.path);
         } catch {
           this.handlers.onError('transcript gone');
           return;
         }
-        if (size < this.offset) {
-          // Rewritten shorter: follow from its new end rather than replay it.
-          this.handlers.onError('transcript shrank');
-          this.offset = size;
-          this.decoder = new StringDecoder('utf8');
+        const why = st.ino !== this.ino ? 'transcript replaced'
+          : st.size < this.offset ? 'transcript shrank'
+            : st.size - this.offset > BACKLOG_BYTES ? 'transcript jumped' : '';
+        if (why) {
+          // Re-attach (E): the last 2 MB, never the whole file in one poll.
+          this.handlers.onError(why);
+          this.handlers.onReset?.(why);
+          await this.readBacklog(st);
           continue;
         }
-        if (size === this.offset) continue;
-        const text = await this.readTo(size);
+        if (st.size === this.offset) continue;
+        const text = await this.readTo(st.size);
         if (!this.stopped && text) this.handlers.onText(text);
       } while (this.again && !this.stopped);
     } finally {

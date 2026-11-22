@@ -4,6 +4,7 @@
 // esbuild; Electron is stubbed (ipcMain records handlers), the PtyManager is a
 // fake with the four methods the module uses.
 // Run: node scripts/check-session-feed-ipc.mjs   (no extra dependencies)
+//   SB_SRC_ROOT=<folder holding src/>  check another source tree (to prove the check bites)
 import { build } from 'esbuild';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
@@ -12,6 +13,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), '..');
+const srcRoot = process.env.SB_SRC_ROOT || repo;
 let failed = 0;
 let passed = 0;
 const check = (name, ok, detail) => {
@@ -28,7 +30,7 @@ let feed = null;
 try {
   const out = join(work, 'ipc.cjs');
   await build({
-    entryPoints: [join(repo, 'src/main/session-feed-ipc.ts')],
+    entryPoints: [join(srcRoot, 'src/main/session-feed-ipc.ts')],
     bundle: true, platform: 'node', format: 'cjs', outfile: out, logLevel: 'error',
     plugins: [{
       name: 'stubs',
@@ -80,6 +82,17 @@ try {
   check('the pty manager is told to report exits', exitListeners.length === 1);
   exitListeners[0](7);
   check('a pty exit stops its watch', !feed.isWatching(7));
+  {
+    // The pane's unwatch after the exit (review L): the pty is gone from the
+    // manager, and main logs no ownership failure for it.
+    delete owner[7];
+    const warns = [];
+    const realWarn = console.warn;
+    console.warn = (...a) => warns.push(a);
+    try { unwatch(from(winA), 7); } finally { console.warn = realWarn; }
+    check('an unwatch for a pty that already exited logs no [SECURITY] line', warns.length === 0, warns);
+    owner[7] = winA;
+  }
   watch(from(winA), 7);
   unwatch(from(winA), 7);
   check('the owner can unwatch', !feed.isWatching(7));

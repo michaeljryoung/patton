@@ -52,6 +52,11 @@ const RISKY_TYPES = new Set([
   'prefpane', 'saver', 'kext', 'plugin', 'osax', 'bundle', 'shortcut', 'definition', 'qlgenerator',
 ]);
 
+/** Office documents without macros: Word, Excel and PowerPoint open them
+ *  (session-bar D6, 22 Nov 2026). The macro-enabled ones (`.docm`, `.xlsm`,
+ *  `.pptm`, templates and add-ins) are not here, so they are revealed. */
+const OFFICE_TYPES = new Set(['docx', 'xlsx', 'pptx']);
+
 export interface FileFacts {
   /** Extension of the RESOLVED path (after symlinks), lower-cased, no dot; '' for none. */
   ext: string;
@@ -83,7 +88,7 @@ export function decideFileOpen(facts: FileFacts): OpenDecision {
   // Images, PDF and web pages stay with their default viewer.
   if (editorAvailable && (TEXT_TYPES.has(ext) || CODE_TYPES.has(ext))) return { action: 'editor' };
   if ((mode & 0o111) !== 0) return { action: 'reveal', reason: 'executable' };
-  if (TEXT_TYPES.has(ext) || VIEWER_TYPES.has(ext)) return { action: 'open' };
+  if (TEXT_TYPES.has(ext) || VIEWER_TYPES.has(ext) || OFFICE_TYPES.has(ext)) return { action: 'open' };
   if (CODE_TYPES.has(ext)) return { action: 'reveal', reason: 'code file and no editor' };
   return { action: 'reveal', reason: ext ? 'type not on the open list' : 'no extension' };
 }

@@ -6,7 +6,9 @@
  * IPC and hands in `send`, so the checks drive this file under plain Node.
  *
  * Life of one watch:
- * - unresolved: a resolve now, then every 10 s. A sessions-file match with a
+ * - unresolved: a resolve now, then every 10 s for a minute and every 60 s
+ *   after (F: one `ps` each); a fresh watch() (the renderer's next 7501
+ *   Claude report or Stop hint) or a detach starts the minute again. A sessions-file match with a
  *   transcript attaches (`how: 'sessions-file'`); failing that, the renderer's
  *   hint (the Stop hook's `tp`) attaches if it passes the same path checks
  *   (`how: 'hook'`), and the 10 s resolve keeps trying to replace it.
@@ -35,8 +37,12 @@ export interface SessionFeedDeps {
   home?: () => string;
   ps?: () => Promise<ProcRow[]>;
   log?: (msg: string, data: Record<string, unknown>) => void;
-  /** How often to retry while unresolved (ms). */
+  /** How often to retry while unresolved (ms), for the first `resolveFastForMs`. */
   resolveEveryMs?: number;
+  /** How long the fast retries last after a watch or a detach (ms). */
+  resolveFastForMs?: number;
+  /** How often to retry after that (ms). */
+  resolveSlowEveryMs?: number;
   /** How often to check the attached session (ms). */
   checkEveryMs?: number;
 }
@@ -61,6 +67,8 @@ interface Watch {
   resolving: boolean;
   stopped: boolean;
   lastResolve: number;
+  /** When the fast retries began (a watch() or a detach). */
+  fastSince: number;
   checking: boolean;
   timer: ReturnType<typeof setInterval>;
   lastError: string;
@@ -69,11 +77,15 @@ interface Watch {
 export class SessionFeed {
   private watches = new Map<number, Watch>();
   private readonly resolveEveryMs: number;
+  private readonly resolveFastForMs: number;
+  private readonly resolveSlowEveryMs: number;
   private readonly checkEveryMs: number;
   private readonly log: (msg: string, data: Record<string, unknown>) => void;
 
   constructor(private readonly deps: SessionFeedDeps) {
     this.resolveEveryMs = deps.resolveEveryMs ?? 10_000;
+    this.resolveFastForMs = deps.resolveFastForMs ?? 60_000;
+    this.resolveSlowEveryMs = deps.resolveSlowEveryMs ?? 60_000;
     this.checkEveryMs = deps.checkEveryMs ?? 1000;
     this.log = deps.log ?? ((msg, data) => console.info(msg, data));
   }
@@ -98,12 +110,13 @@ export class SessionFeed {
     if (!w) {
       w = {
         ptyId, shellPid, hint: null, attached: null, pending: null, resolving: false, stopped: false,
-        lastResolve: 0, checking: false, lastError: '',
+        lastResolve: 0, fastSince: Date.now(), checking: false, lastError: '',
         timer: setInterval(() => this.tick(ptyId), this.checkEveryMs),
       };
       this.watches.set(ptyId, w);
     }
     if (typeof hint === 'string') w.hint = hint;
+    w.fastSince = Date.now();
     if (!w.attached || w.attached.how === 'hook') void this.resolve(w);
     return true;
   }
@@ -130,7 +143,8 @@ export class SessionFeed {
     const w = this.watches.get(ptyId);
     if (!w || w.stopped) return;
     const now = Date.now();
-    if ((!w.attached || w.attached.how === 'hook') && now - w.lastResolve >= this.resolveEveryMs) {
+    const every = now - w.fastSince < this.resolveFastForMs ? this.resolveEveryMs : this.resolveSlowEveryMs;
+    if ((!w.attached || w.attached.how === 'hook') && now - w.lastResolve >= every) {
       void this.resolve(w);
     }
     else if (!w.attached && w.pending) void this.probePending(w);
@@ -203,6 +217,9 @@ export class SessionFeed {
         if (w.stopped || w.attached?.tail !== tail) return;
         for (const ev of parser.push(text)) this.emit(w, ev);
       },
+      onReset: () => {
+        if (!w.stopped && w.attached?.tail === tail) parser.resetLine();
+      },
       onError: (why) => {
         if (w.stopped || w.attached?.tail !== tail) return;
         if (why === 'transcript gone') {
@@ -217,7 +234,11 @@ export class SessionFeed {
     if (w.stopped) { tail.stop(); w.attached = null; return; }
     this.log('[BAR] attach', { pty: w.ptyId, how: a.how });
     this.emit(w, { type: 'attached', sessionId: a.sessionId, how: a.how });
-    await tail.start();
+    // A tail that couldn't start follows nothing: drop it, and the next
+    // resolve tries again (D).
+    if (!(await tail.start()) && w.attached?.tail === tail) {
+      this.detach(w, 'transcript unreadable', true);
+    }
   }
 
   private detach(w: Watch, reason: string, tell: boolean): void {
@@ -225,6 +246,7 @@ export class SessionFeed {
     if (!a) return;
     a.tail.stop();
     w.attached = null;
+    w.fastSince = Date.now();
     this.log('[BAR] detach', { pty: w.ptyId, reason });
     if (tell) this.deps.send(w.ptyId, { type: 'detached', reason });
   }

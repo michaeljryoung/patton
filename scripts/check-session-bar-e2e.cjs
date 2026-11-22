@@ -9,7 +9,7 @@
 //   renderer side: the REAL TabManager, Tab, Pane, terminal and session bar, real CSS, with a
 //                  bridge whose pty and sessionFeed calls go straight to those main objects
 //                  (everything else is a stub). Every event the bar gets crossed the real IPC.
-// A fake Claude session runs under a temporary HOME: `sh fake-claude.sh <sessionId>` typed into the
+// A fake Claude session runs under a temporary HOME: `sh <dir>/claude <sessionId>` typed into the
 // pane's real pty. It is a real child of the pty's shell, writes
 // <HOME>/.claude/sessions/<pid>.json, and prints the OSC 7501 report `app=claude-code` and an OSC 777
 // Stop message with a context reading into the real pty (so the report reaches the pane's terminal as
@@ -123,14 +123,18 @@ async function nodeRunner() {
     '<div id="app"><div id="tab-bar"></div><div id="main"><div id="content"></div></div></div>' +
     '<script src="page.js"></script></body></html>');
   // The fake Claude: a child of the pty's shell that registers itself the way Claude Code does.
-  fs.writeFileSync(path.join(outDir, 'fake-claude.sh'), [
+  // Named `claude`, and it execs sleep under the name `claude-sleep`: a sessions file counts
+  // only while its pid runs Claude Code (session-link.ts).
+  try { fs.unlinkSync(path.join(outDir, 'claude-sleep')); } catch { /* none */ }
+  fs.symlinkSync('/bin/sleep', path.join(outDir, 'claude-sleep'));
+  fs.writeFileSync(path.join(outDir, 'claude'), [
     '#!/bin/sh',
     'mkdir -p "$HOME/.claude/sessions"',
     'NOW=$(date +%s)',
     `printf '{"pid":%s,"sessionId":"%s","cwd":"%s","startedAt":%s000,"version":"2.1.321","kind":"interactive","status":"idle","updatedAt":%s000}\\n' "$$" "$1" "$PWD" "$NOW" "$NOW" > "$HOME/.claude/sessions/$$.json"`,
     `printf '\\033]7501;state=idle:app=claude-code\\007'`,
     `printf '\\033]777;patton;stop;tasks=0;crons=0;ctx=120000;since=4000;cpt=%s\\007' "$((NOW - 300))"`,
-    'exec sleep 3600',
+    'exec "$(dirname "$0")/claude-sleep" 3600',
     '',
   ].join('\n'));
 
@@ -215,7 +219,7 @@ function electronMain() {
 
       await win.loadFile(path.join(outDir, 'page.html'));
       win.webContents.focus();
-      const cfg = { scales: SCALES_FROM_ENV(), home, fakeClaude: path.join(outDir, 'fake-claude.sh'), hasFeed: !!main.registerSessionFeedHandlers };
+      const cfg = { scales: SCALES_FROM_ENV(), home, fakeClaude: path.join(outDir, 'claude'), hasFeed: !!main.registerSessionFeedHandlers };
       const result = await win.webContents.executeJavaScript(`(${pageRun.toString()})(${JSON.stringify(cfg)})`);
       write(result);
       try { ptyManager.destroyAll(); } catch { /* gone */ }

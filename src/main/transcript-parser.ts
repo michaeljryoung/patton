@@ -426,6 +426,13 @@ export class TranscriptParser {
     this.now = opts.now ?? Date.now;
   }
 
+  /** The next text starts a fresh line (the tail re-attached): drop the
+   *  partial line held, keep the ids already started and ended. */
+  resetLine(): void {
+    this.carry = '';
+    this.skipping = false;
+  }
+
   /** Feed raw file text; events come only from whole lines. */
   push(chunk: string): SessionFeedEvent[] {
     const out: SessionFeedEvent[] = [];

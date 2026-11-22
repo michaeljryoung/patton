@@ -4,7 +4,11 @@
  *
  * - The Claude process is the shell's descendant (or the shell itself, after
  *   `exec claude`) whose pid has `~/.claude/sessions/<pid>.json`; the nearest
- *   one to the shell wins. One `ps -A -o pid=,ppid=` per resolve.
+ *   one to the shell wins. One `/bin/ps -A -o pid=,ppid=,args=` per resolve.
+ * - A sessions file counts only while its pid runs Claude Code (G): the
+ *   program, or the script it runs, is named `claude` (`claude …` for the
+ *   native install, `node …/claude …` for npm). A stale file whose pid was
+ *   reused by another program is ignored.
  * - That file (read on this Mac, 22 Nov 2026: `pid`, `sessionId`, `cwd`,
  *   `status`, `updatedAt`, …) names `sessionId`; a file whose `pid` field
  *   disagrees with its name is ignored.
@@ -24,7 +28,12 @@ import { basename, join, sep } from 'node:path';
 const SESSION_ID = /^[A-Za-z0-9_-]{8,100}$/;
 const SESSIONS_FILE_MAX = 256 * 1024;
 
-export interface ProcRow { pid: number; ppid: number }
+export interface ProcRow {
+  pid: number;
+  ppid: number;
+  /** The command line names Claude Code (absent: unknown, as from an older caller). */
+  claude?: boolean;
+}
 
 export interface ResolvedSession {
   claudePid: number;
@@ -41,10 +50,11 @@ export function claudeHome(env: NodeJS.ProcessEnv = process.env): string {
   return join(env.HOME || homedir(), '.claude');
 }
 
-/** One `ps` for the whole process table. */
+/** One `ps` for the whole process table (the absolute path, so a `ps` on
+ *  PATH can't answer for it). ~270 KB of output on this Mac, 22 Nov 2026. */
 export function listProcesses(): Promise<ProcRow[]> {
   return new Promise((resolve) => {
-    execFile('ps', ['-A', '-o', 'pid=,ppid='], { timeout: 3000, maxBuffer: 4 * 1024 * 1024 }, (err, stdout) => {
+    execFile('/bin/ps', ['-A', '-o', 'pid=,ppid=,args='], { timeout: 3000, maxBuffer: 16 * 1024 * 1024 }, (err, stdout) => {
       if (err || !stdout) { resolve([]); return; }
       resolve(parsePs(stdout));
     });
@@ -54,10 +64,28 @@ export function listProcesses(): Promise<ProcRow[]> {
 export function parsePs(stdout: string): ProcRow[] {
   const rows: ProcRow[] = [];
   for (const line of stdout.split('\n')) {
-    const m = line.trim().match(/^(\d+)\s+(\d+)$/);
-    if (m) rows.push({ pid: Number(m[1]), ppid: Number(m[2]) });
+    const m = line.trim().match(/^(\d+)\s+(\d+)(?:\s+(.*))?$/);
+    if (m) rows.push({ pid: Number(m[1]), ppid: Number(m[2]), claude: isClaudeCommand(m[3] ?? '') });
   }
   return rows;
+}
+
+/** The last path segment of one command-line word. */
+function wordName(word: string): string {
+  return word.slice(word.lastIndexOf('/') + 1).toLowerCase();
+}
+
+/** A command line that runs Claude Code: its program is named `claude…`; or
+ *  an interpreter runs a script named `claude…`; or node, bun or deno runs a
+ *  script under a `claude…` folder (npm's `@anthropic-ai/claude-code/cli.js`). */
+export function isClaudeCommand(args: string): boolean {
+  const words = args.trim().split(/\s+/, 2);
+  if (!words[0]) return false;
+  if (wordName(words[0]).startsWith('claude')) return true;
+  if (words.length < 2) return false;
+  const runner = wordName(words[0]);
+  if (/^(?:node|bun|deno|sh|bash|zsh)$/.test(runner) && wordName(words[1]).startsWith('claude')) return true;
+  return /^(?:node|bun|deno)$/.test(runner) && /(?:^|\/)claude[^/]*\//i.test(words[1]);
 }
 
 /** The root and its descendants, nearest first. */
@@ -171,7 +199,9 @@ export async function resolveSession(
   ps: () => Promise<ProcRow[]> = listProcesses,
 ): Promise<ResolvedSession | null> {
   const table = await ps();
+  const notClaude = new Set(table.filter((r) => r.claude === false).map((r) => r.pid));
   for (const pid of descendantsOf(shellPid, table)) {
+    if (notClaude.has(pid)) continue; // a stale sessions file, its pid reused (G)
     const found = await readSessionsFile(home, pid);
     if (!found) continue;
     return {

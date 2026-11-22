@@ -42,6 +42,7 @@ import {
 import { composeRoomRows } from '../services/compose-room';
 import { onUiTextScaleApplied } from '../services/ui-text-scale';
 import { SessionBarModel, stopListsOf, type ModelNote, type StopState } from '../services/session-bar-model';
+import { SessionFeedWatch } from '../services/session-feed-watch';
 import type { SessionFeedEvent } from '../../shared/session-feed';
 
 /** Background work a parked Claude Code session is waiting on: from the Stop
@@ -199,6 +200,13 @@ export class Pane {
   private feedPtyId: number | null = null;
   /** The transcript path last passed to main as a hint (from a Stop's `tp`). */
   private feedTranscriptHint: string | null = null;
+  /** The watch() calls to main: one retry on a refusal (I), a re-watch on a
+   *  7501 Claude report while unattached (F). */
+  private readonly feedWatch = new SessionFeedWatch({
+    api: () => window.patton.sessionFeed,
+    current: () => (this.disposed ? null : this.feedPtyId),
+    log: (level, msg, data) => rlog(level, msg, { pane: this.id, ...data }),
+  });
   private barRowsLoggedAtMs = 0;
   private barRowsTimer: ReturnType<typeof setTimeout> | null = null;
   private static readonly BAR_ROWS_LOG_MS = 60_000;
@@ -666,6 +674,7 @@ export class Pane {
     if (this.claudeActive && !isClaude) this.newClaudeSession();
     if (!this.claudeActive && isClaude) this.claudeSessionAtMs = Date.now();
     this.claudeActive = isClaude;
+    if (isClaude) this.feedWatch.claudeReport();
     this.claudeBlocked = rootState === 'blocked';
     if (rootState !== null && rootState !== 'idle') this.hadTurn = true;
     try {
@@ -1120,6 +1129,7 @@ export class Pane {
   applyFeedEvent(ptyId: number, event: SessionFeedEvent): void {
     // Late events for a session the pane no longer follows are dropped.
     if (this.feedPtyId === null || ptyId !== this.feedPtyId) return;
+    this.feedWatch.noteEvent(event);
     if (event.type === 'error') {
       rlog('warn', '[BAR] feed error', { pane: this.id, why: event.why });
     }
@@ -1151,19 +1161,18 @@ export class Pane {
   }
 
   private watchSessionFeed(ptyId: number, transcriptPath?: string): void {
-    const feed = window.patton.sessionFeed;
-    if (!feed) return;
-    feed.watch(ptyId, transcriptPath ? { transcriptPath } : undefined).catch((err: unknown) => {
-      rlog('warn', '[BAR] feed error', { pane: this.id, why: `watch failed: ${String(err)}` });
-    });
+    this.feedWatch.watch(ptyId, transcriptPath);
   }
 
   private stopSessionFeed(): void {
     const ptyId = this.feedPtyId;
     this.feedPtyId = null;
     this.feedTranscriptHint = null;
+    this.feedWatch.reset();
     this.sessionBarModel.reset();
     if (ptyId === null) return;
+    // An exited pty was already unwatched by main's exit listener (L).
+    if (this.ptyExited && ptyId === this.ptyId) return;
     window.patton.sessionFeed?.unwatch(ptyId).catch(() => { /* main forgets it with the pty */ });
   }
 

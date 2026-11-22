@@ -1,6 +1,7 @@
 // Live check of the session bar's session link and feed (src/main/session-feed.ts,
 // session-link.ts, transcript-tail.ts; docs/session-bar.md D8, D9) against a
-// temporary HOME: a real shell (sh) whose child (sleep) plays Claude, a fake
+// temporary HOME: a real shell (sh) whose child (sleep, run through a link
+// named `claude`, since a sessions file counts only for a Claude process) plays Claude, a fake
 // ~/.claude/sessions/<pid>.json naming that child, and a transcript that grows.
 // Bundles the real modules with esbuild (they import no Electron).
 // Run: node scripts/check-session-link.mjs   (no extra dependencies; ~10 s)
@@ -40,14 +41,18 @@ try {
   globalThis.clearInterval = (h) => { live.delete(h); realClear(h); };
   const { SessionFeed } = createRequire(import.meta.url)(out);
 
-  // A shell with a child: `sh` prints its child's pid, then waits on it.
-  const shell = () => new Promise((resolve) => {
-    const sh = spawn('/bin/sh', ['-c', 'sleep 60 & echo $!; wait'], { stdio: ['ignore', 'pipe', 'ignore'] });
+  // A shell with a child: `sh` prints its child's pid, then waits on it. The
+  // child is sleep under the name `claude`, or plain sleep (not Claude).
+  const claudeBin = join(work, 'claude');
+  symlinkSync('/bin/sleep', claudeBin);
+  const shell = (prog = claudeBin) => new Promise((resolve) => {
+    const sh = spawn('/bin/sh', ['-c', '"$1" 60 & echo $!; wait', 'sh', prog], { stdio: ['ignore', 'pipe', 'ignore'] });
     children.push(sh);
     sh.stdout.once('data', (d) => resolve({ shellPid: sh.pid, childPid: Number(String(d).trim()) }));
   });
   const a = await shell();
   const b = await shell();
+  const c = await shell('/bin/sleep');
 
   const claude = join(home, '.claude');
   mkdirSync(join(claude, 'sessions'), { recursive: true });
@@ -72,7 +77,7 @@ try {
   process.env.HOME = home; // the feed must read HOME, not the real one
   const events = [];
   const logs = [];
-  const shellOf = { 1: a.shellPid, 2: b.shellPid, 3: b.shellPid };
+  const shellOf = { 1: a.shellPid, 2: b.shellPid, 3: b.shellPid, 4: c.shellPid };
   feed = new SessionFeed({
     shellPid: (pty) => shellOf[pty] ?? null,
     send: (pty, ev) => { events.push({ pty, ev, t: Date.now() }); return true; },
@@ -158,6 +163,12 @@ try {
   appendFileSync(t1, toolUse('toolu_3', 'after') + bgResult('toolu_3', 'after0001'));
   await sleep(1300);
   check('nothing is sent after unwatch', !events.slice(after).some((e) => e.pty === 2), events.slice(after));
+  // A sessions file whose pid now runs something else (a stale file, its pid
+  // reused) attaches nothing (review G).
+  writeFileSync(join(claude, 'sessions', `${c.childPid}.json`), JSON.stringify({ pid: c.childPid, sessionId: S1, cwd: '/tmp/demo' }));
+  feed.watch(4);
+  await sleep(800);
+  check('a sessions file for a pid that isn\'t Claude attaches nothing', !events.some((e) => e.pty === 4 && e.ev.type === 'attached'));
   feed.stopAll('test end');
   check('stopAll leaves no watch', !feed.isWatching(1) && !feed.isWatching(2) && !feed.isWatching(3));
   check('and no interval running', live.size === 0, live.size);

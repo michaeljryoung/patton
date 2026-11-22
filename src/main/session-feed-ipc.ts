@@ -58,6 +58,9 @@ export function registerSessionFeedHandlers(ptyManager: PtyManager): SessionFeed
 
   ipcMain.handle(SESSION_FEED_IPC.UNWATCH, (event, ptyId: unknown) => {
     if (!validId(ptyId)) return;
+    // Nothing to stop: a pty that exited was unwatched by the exit listener
+    // above, and the pane's late unwatch is no ownership breach (L).
+    if (!feed.isWatching(ptyId)) return;
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win || !ptyManager.validateOwnership(ptyId, win)) {
       console.warn('[SECURITY] PTY ownership check failed', { channel: SESSION_FEED_IPC.UNWATCH, id: ptyId });

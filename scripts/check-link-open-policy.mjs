@@ -180,6 +180,21 @@ async function main() {
     check(`.${ext} opens, not the editor (editor present)`, await decide(file(`w.${ext}`), true) === 'open');
   }
   check('executable .png revealed (editor present)', await decide(file('run.png', 0o755), true) === 'reveal');
+  // Office files open in Word, Excel or PowerPoint; the macro-enabled ones are revealed.
+  for (const editor of [false, true]) {
+    for (const ext of ['docx', 'xlsx', 'pptx', 'DOCX']) {
+      check(`.${ext} opens in its default app (editor ${editor ? 'present' : 'absent'})`, await decide(file(`o${editor ? 1 : 0}.${ext}`), editor) === 'open');
+    }
+    for (const ext of ['docm', 'xlsm', 'pptm', 'dotm', 'xltm', 'potm', 'ppsm', 'xlam', 'ppam']) {
+      check(`macro-enabled .${ext} revealed (editor ${editor ? 'present' : 'absent'})`, await decide(file(`m${editor ? 1 : 0}.${ext}`), editor) === 'reveal');
+    }
+  }
+  check('executable .docx revealed', await decide(file('run.docx', 0o755), false) === 'reveal');
+  check('symlink brief.docx → .docm revealed', await (async () => {
+    const target = file('real-macro.docm');
+    symlinkSync(target, join(dirname(target), 'brief.docx'));
+    return decide(join(dirname(target), 'brief.docx'), false);
+  })() === 'reveal');
   for (const ext of ['txt', 'md', 'json', 'log', 'py']) {
     check(`.${ext} → editor (editor present)`, await decide(file(`t.${ext}`), true) === 'editor');
   }
