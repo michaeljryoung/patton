@@ -32,6 +32,12 @@ try {
     entryPoints: [join(repo, 'src/main/session-feed.ts')],
     bundle: true, platform: 'node', format: 'cjs', outfile: out, logLevel: 'error',
   });
+  // Count the intervals the feed and its tails hold, to prove stop clears them.
+  const live = new Set();
+  const realSet = globalThis.setInterval;
+  const realClear = globalThis.clearInterval;
+  globalThis.setInterval = (...args) => { const h = realSet(...args); live.add(h); return h; };
+  globalThis.clearInterval = (h) => { live.delete(h); realClear(h); };
   const { SessionFeed } = createRequire(import.meta.url)(out);
 
   // A shell with a child: `sh` prints its child's pid, then waits on it.
@@ -154,6 +160,7 @@ try {
   check('nothing is sent after unwatch', !events.slice(after).some((e) => e.pty === 2), events.slice(after));
   feed.stopAll('test end');
   check('stopAll leaves no watch', !feed.isWatching(1) && !feed.isWatching(2) && !feed.isWatching(3));
+  check('and no interval running', live.size === 0, live.size);
   check('no log line carries transcript text', !JSON.stringify(logs).includes('npm test'));
 } finally {
   feed?.stopAll('test end');

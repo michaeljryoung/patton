@@ -89,7 +89,7 @@ async function main() {
       },
     }],
   });
-  createRequire(import.meta.url)(ipcOut).registerIpcHandlers({});
+  createRequire(import.meta.url)(ipcOut).registerIpcHandlers({ addExitListener: () => {} });
   const openHandler = globalThis.__calls.handlers.get('app:open-in-editor');
   if (!openHandler) throw new Error('app:open-in-editor handler not registered');
 
