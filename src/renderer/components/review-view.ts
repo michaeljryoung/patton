@@ -29,6 +29,7 @@ import { announce } from '../services/announcer';
 import { rlog } from '../services/renderer-logger';
 import { loadPdfjs, openPdf, type OpenedPdf } from '../services/review-pdf';
 import { reviewMessage } from '../services/review-message';
+import { snapToInk } from '../services/review-ink';
 import type { ConfirmOptions } from './confirm-dialog';
 
 /** Resolution pages are drawn at for printing. */
@@ -99,6 +100,8 @@ export class ReviewView {
   readonly element: HTMLElement;
   private readonly deps: ReviewViewDeps;
   private readonly statusEl: HTMLElement;
+  /** What the status line says once nothing is in progress: the page count of the last layout. */
+  private layoutStatus = '';
   private readonly noteEl: HTMLElement;
   private readonly linkEl: HTMLButtonElement;
   private readonly pagesEl: HTMLElement;
@@ -283,7 +286,8 @@ export class ReviewView {
     if (old) void old.destroy();
     if (this.noteFromLayout) this.hideNote();
     const n = this.slots.length;
-    this.setStatus(`${n} page${n === 1 ? '' : 's'}${reply.cached ? '' : `, laid out in ${(reply.ms / 1000).toFixed(1)} s`}`);
+    this.layoutStatus = `${n} page${n === 1 ? '' : 's'}${reply.cached ? '' : `, laid out in ${(reply.ms / 1000).toFixed(1)} s`}`;
+    this.setStatus(this.layoutStatus);
     rlog('info', '[REVIEW] shown', { pages: n, cached: reply.cached, mode: opened.mode, why });
     this.refreshButtons();
   }
@@ -461,6 +465,7 @@ export class ReviewView {
   private paintMarks(slot: PageSlot): void {
     const marks = slot.el.querySelector<HTMLElement>(':scope > .review-marks');
     const layer = slot.el.querySelector<HTMLElement>(':scope > .review-text-layer');
+    const canvas = slot.el.querySelector<HTMLCanvasElement>(':scope > canvas.review-canvas');
     if (!marks || !layer || this.disposed) return;
     const pageStart = this.pageKeys.slice(0, slot.index).join('').length;
     const pageEnd = pageStart + (this.pageKeys[slot.index]?.length ?? 0);
@@ -492,17 +497,35 @@ export class ReviewView {
       const range = document.createRange();
       range.setStart(first.node, first.from);
       range.setEnd(last.node, last.to);
-      for (const r of range.getClientRects()) {
-        if (r.width < 0.5 || r.height < 0.5) continue;
+      const rects = [...range.getClientRects()].filter((r) => r.width >= 0.5 && r.height >= 0.5);
+      // The quote's own first and last edges sit on the canvas's ink; a line's
+      // inner edges are the text layer's and stay. An edge inside a word stays too.
+      // (The raw characters beside the quote: the key drops spaces, so the
+      // neighbouring key is a letter.)
+      const wordEdge = (node: Text, at: number): boolean => at < 0 || at >= node.data.length || /\s/.test(node.data.charAt(at));
+      const leftOk = wordEdge(first.node, first.from - 1);
+      const rightOk = wordEdge(last.node, last.to);
+      rects.forEach((r, i) => {
+        let left = r.left - base.left;
+        let right = r.right - base.left;
+        const top = r.top - base.top;
+        if (canvas && (i === 0 || i === rects.length - 1)) {
+          const snapped = snapToInk(canvas, { left, right, top, height: r.height }, {
+            left: i === 0 && leftOk,
+            right: i === rects.length - 1 && rightOk,
+          });
+          left = snapped.left;
+          right = snapped.right;
+        }
         const box = el('div', 'review-mark');
         box.dataset.comment = c.id;
         if (c.id === this.activeComment) box.classList.add('review-mark-active');
-        box.style.left = `${r.left - base.left}px`;
-        box.style.top = `${r.top - base.top}px`;
-        box.style.width = `${r.width}px`;
+        box.style.left = `${left}px`;
+        box.style.top = `${top}px`;
+        box.style.width = `${right - left}px`;
         box.style.height = `${r.height}px`;
         boxes.push(box);
-      }
+      });
     }
     marks.replaceChildren(...boxes);
   }
@@ -794,7 +817,7 @@ export class ReviewView {
     // dialog is done (afterprint), or at the next Print or when the tab closes.
     window.addEventListener('afterprint', () => cleanup(), { once: true });
     rlog('info', '[REVIEW] print', { pages: this.slots.length });
-    this.setStatus('');
+    this.setStatus(this.layoutStatus);
     this.busy.delete('print');
     this.refreshButtons();
     window.print();

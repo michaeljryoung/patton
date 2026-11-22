@@ -2,7 +2,8 @@
  * Lays a Word file out as LibreOffice prints it (docs/review-tab.md R1, R6):
  * `soffice --headless --convert-to pdf` of a private copy, in Patton's own
  * LibreOffice profile, comments in the margin. No Electron here (the caller
- * passes the folders), so scripts/check-review-layout.mjs drives it.
+ * passes the folders), so scripts/check-review-tab.cjs drives it for real
+ * (a hidden Electron and LibreOffice).
  *
  * Threat (R10): the file is one Claude named, so it may be hostile.
  *  - soffice runs through execFile (argv, no shell), on a copy named

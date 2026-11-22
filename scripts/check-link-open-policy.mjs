@@ -57,7 +57,7 @@ const stubs = [
   [/^\.\/projects$/, mk(['isSafeAbsolutePath', 'resolveProject', 'setRegisteredProjects'])],
   [/^\.\/claude-hook$/, mk(['getHookStatus', 'installHook', 'removeHook'])],
   [/^\.\/resources-path$/, mk(['getResourcesPath'])],
-  [/^\.\/store$/, 'module.exports = { getSettings: () => ({}) };'],
+  [/^\.\/store$/, 'module.exports = { getSettings: () => globalThis.__settings || {} };'],
   [/^\.\/clipboard-image$/, mk(['registerClipboardImageHandlers'])],
   [/^\.\/bookmarks$/, mk(['annotateBookmarks', 'validateBookmarks'])],
   [/^\.\/pty-manager$/, 'module.exports = { PtyManager: class {} };'],
@@ -115,7 +115,8 @@ async function main() {
     globalThis.__editorFails = editorFails;
     globalThis.__onExec = onExec;
     globalThis.__calls.events.length = 0;
-    await openHandler({}, path);
+    // The sender stands in for the window: a review tab opens by sending it review:open.
+    await openHandler({ sender: { once: () => {}, send: () => { globalThis.__calls.events.push('review'); } } }, path);
     await tick();
     return globalThis.__calls.events.join('>') || 'none';
   };
@@ -180,9 +181,16 @@ async function main() {
     check(`.${ext} opens, not the editor (editor present)`, await decide(file(`w.${ext}`), true) === 'open');
   }
   check('executable .png revealed (editor present)', await decide(file('run.png', 0o755), true) === 'reveal');
-  // Office files open in Word, Excel or PowerPoint; the macro-enabled ones are revealed.
+  // Office files open in Word, Excel or PowerPoint, a .docx in Patton's review tab while that
+  // is on (the default; the setting off sends it to Word); the macro-enabled ones are revealed.
   for (const editor of [false, true]) {
-    for (const ext of ['docx', 'xlsx', 'pptx', 'DOCX']) {
+    for (const ext of ['docx', 'DOCX']) {
+      check(`.${ext} opens a review tab (editor ${editor ? 'present' : 'absent'})`, await decide(file(`o${editor ? 1 : 0}.${ext}`), editor) === 'review');
+    }
+    globalThis.__settings = { reviewTab: false };
+    check(`.docx opens in Word with the review tab off (editor ${editor ? 'present' : 'absent'})`, await decide(file(`w${editor ? 1 : 0}.docx`), editor) === 'open');
+    globalThis.__settings = undefined;
+    for (const ext of ['xlsx', 'pptx']) {
       check(`.${ext} opens in its default app (editor ${editor ? 'present' : 'absent'})`, await decide(file(`o${editor ? 1 : 0}.${ext}`), editor) === 'open');
     }
     for (const ext of ['docm', 'xlsm', 'pptm', 'dotm', 'xltm', 'potm', 'ppsm', 'xlam', 'ppam']) {

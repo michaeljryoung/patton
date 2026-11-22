@@ -2,8 +2,10 @@
  * pdf.js for the review tab (docs/review-tab.md R5). Loaded on first use, so
  * a window that never opens a Word file never parses it.
  *
- * The worker is bundled as a `?url` asset beside the renderer and started by
- * Patton itself (`new Worker(url, { type: 'module' })`), then handed to
+ * The worker is bundled as a `?url` asset beside the renderer (imported by
+ * the renderer's entry, index.ts, and handed in through setPdfWorkerUrl, so
+ * the jsdom checks that bundle the components with esbuild never meet a Vite
+ * `?url` import) and started by Patton itself (`new Worker(url, { type: 'module' })`), then handed to
  * pdf.js as its port. Left to itself, pdf.js wraps a worker whose page has an
  * opaque origin (the packaged app's file:// page) in a blob: URL, which the
  * window's CSP (worker-src falls back to script-src 'self') refuses, so the
@@ -12,16 +14,20 @@
  * main-thread fallback) still opens the file. Which one ran is logged once
  * per window as `[REVIEW] pdf worker {mode}`.
  */
-// eslint-disable-next-line import/no-unresolved -- a Vite `?url` asset import, resolved by Vite, not Node
-import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import type { PDFDocumentProxy, PDFWorker } from 'pdfjs-dist';
 import { rlog } from './renderer-logger';
 
 type Pdfjs = typeof import('pdfjs-dist');
 
+let workerUrl = '';
 let lib: Promise<Pdfjs> | null = null;
 let modeLogged = false;
 let shared: Promise<PDFWorker | null> | null = null;
+
+/** The worker asset's URL, given once at startup by the renderer's entry. */
+export function setPdfWorkerUrl(url: string): void {
+  workerUrl = url;
+}
 
 /** Start pdf.js's worker from a URL and wait for its first message ("ready").
  *  Null (logged) if it can't start, errors, or says nothing in 10 s. */
@@ -57,7 +63,7 @@ export function startPdfWorker(url: string): Promise<Worker | null> {
 /** One pdf.js worker per window, started by Patton, shared by its documents. */
 function sharedWorker(pdfjs: Pdfjs): Promise<PDFWorker | null> {
   if (!shared) {
-    shared = startPdfWorker(workerUrl).then((port) => (port ? pdfjs.PDFWorker.create({ port }) : null));
+    shared = (workerUrl ? startPdfWorker(workerUrl) : Promise.resolve(null)).then((port) => (port ? pdfjs.PDFWorker.create({ port }) : null));
   }
   return shared;
 }
@@ -66,7 +72,7 @@ function sharedWorker(pdfjs: Pdfjs): Promise<PDFWorker | null> {
 export function loadPdfjs(): Promise<Pdfjs> {
   if (!lib) {
     lib = import('pdfjs-dist').then((m) => {
-      m.GlobalWorkerOptions.workerSrc = workerUrl;
+      if (workerUrl) m.GlobalWorkerOptions.workerSrc = workerUrl;
       return m;
     });
     lib.catch(() => { lib = null; });

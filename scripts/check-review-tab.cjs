@@ -93,7 +93,9 @@ async function nodeRunner() {
       resolveDir: repo, loader: 'ts',
       contents: `
         import { TabManager } from './src/renderer/services/tab-manager';
-        import { loadPdfjs, startPdfWorker } from './src/renderer/services/review-pdf';
+        import { loadPdfjs, startPdfWorker, setPdfWorkerUrl } from './src/renderer/services/review-pdf';
+        import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+        setPdfWorkerUrl(pdfWorkerUrl);
         (window as any).__rt = { TabManager, loadPdfjs, startPdfWorker };
       `,
     },
@@ -284,7 +286,8 @@ function electronMain() {
       const marks = await js(pageMarks);
       check('the status "The file changed: laying it out again…" goes when the new layout shows', marks.relaidOut && !/changed/.test(marks.status) && /^2 pages/.test(marks.status), marks);
       check('the comment\'s text is highlighted on page 2 (and only there)', marks.marksOnPage2 > 0 && marks.marksElsewhere === 0 && marks.markInside, marks);
-      check('the highlight covers the quoted words', marks.coveredText.includes('budget is fixed, so') && marks.coveredText.length < 40, marks);
+      check('the highlight covers the quoted words (by the text layer\'s characters, whose centres in a stretched fallback font can sit a few px off the ink: the next check pins the edges)', marks.coveredText.includes('budget is fixed,') && !/the|new/.test(marks.coveredText) && marks.coveredText.length < 40, marks);
+      check('the highlight starts on its first letter and ends on its last (the canvas ink at each edge, a gap just outside)', !!marks.inkEdges && marks.inkEdges.inkAtLeft && marks.inkEdges.gapBeforeLeft && marks.inkEdges.inkAtRight && marks.inkEdges.gapAfterRight, marks.inkEdges);
       check('the highlight has a colour from its token, under the text layer', marks.markBg !== 'rgba(0, 0, 0, 0)' && marks.marksBelowText, marks);
       check('clicking the comment in the panel scrolls its page into view', marks.scrolledFrom !== marks.scrolledTo && marks.markInView, marks);
       check('the clicked comment is marked current in the panel and on the page', marks.listCurrent && marks.markActive, marks);
@@ -302,6 +305,7 @@ function electronMain() {
       measures.push(`printToPDF: ${printedPages} pages`);
       check(`printToPDF of the window has exactly the laid-out pages (${want})`, printedPages === want, { printedPages });
       const cleaned = await js(pageAfterPrint);
+      check('the status line still reads the page count after Print', /^2 pages/.test(printed.status), printed);
       check('afterprint removes the print-only pages', cleaned.left === 0 && !cleaned.printing, cleaned);
 
       // 7. screenshots of the real tab (light, dark)
@@ -523,6 +527,27 @@ async function pageMarks() {
     }
   }
   const markBg = marks2[0] ? getComputedStyle(marks2[0]).backgroundColor : '';
+  // The highlight's edges against the ink on the page's canvas (read here, not
+  // with the app's own snapping code): ink right inside each edge, none just outside.
+  let inkEdges = null;
+  const cv = page2 && page2.querySelector('canvas.review-canvas');
+  if (cv && marks2[0]) {
+    const pw = parseFloat(cv.style.width);
+    const k = cv.width / pw;
+    const ctx = cv.getContext('2d');
+    const m = marks2[0];
+    const L = parseFloat(m.style.left); const R = L + parseFloat(m.style.width);
+    const mt = parseFloat(m.style.top); const mh = parseFloat(m.style.height);
+    const y0 = Math.floor((mt + mh * 0.2) * k); const y1 = Math.ceil((mt + mh * 0.8) * k);
+    const inkIn = (a, b) => {
+      const x0 = Math.max(0, Math.round(a * k)); const x1 = Math.round(b * k);
+      if (x1 <= x0) return false;
+      const d = ctx.getImageData(x0, y0, x1 - x0, y1 - y0).data;
+      for (let i = 0; i < d.length; i += 4) if (0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2] < 185) return true;
+      return false;
+    };
+    inkEdges = { L, R, k, inkAtLeft: inkIn(L, L + 1.5), gapBeforeLeft: !inkIn(L - 1.2, L - 0.1), inkAtRight: inkIn(R - 1.5, R), gapAfterRight: !inkIn(R + 0.1, R + 1.5) };
+  }
   const layerEl = page2 && page2.querySelector('.review-text-layer');
   const marksEl = page2 && page2.querySelector('.review-marks');
   const marksBelowText = !!layerEl && !!marksEl && (marksEl.compareDocumentPosition(layerEl) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0 && getComputedStyle(marksEl).pointerEvents === 'none';
@@ -557,7 +582,7 @@ async function pageMarks() {
   const selectedByMark = root.querySelector('.review-comment-btn').getAttribute('aria-current') === 'true'
     && root.querySelector('.review-page[data-page="1"] .review-mark').classList.contains('review-mark-active');
   return {
-    sawChanged, relaidOut, status: status(), marksOnPage2: marks2.length, marksElsewhere, markInside, coveredText, markBg, marksBelowText,
+    sawChanged, relaidOut, status: status(), marksOnPage2: marks2.length, marksElsewhere, markInside, coveredText, markBg, inkEdges, marksBelowText,
     scrolledFrom, scrolledTo, markInView, listCurrent, markActive, clearedByOther, selectedByMark,
   };
 }
@@ -572,6 +597,7 @@ async function pagePrint() {
     printCalls: S.printCalls - before,
     printPages: document.querySelectorAll('.review-print .review-print-page').length,
     printing: document.documentElement.classList.contains('review-printing'),
+    status: document.querySelector('.review-status').textContent,
   };
 }
 
