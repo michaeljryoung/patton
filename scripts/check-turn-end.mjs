@@ -445,6 +445,7 @@ async function paneChecks() {
     if (via === 'compose') {
       t.pane.queueSubmit('what next?', false, { own: true });
       for (let i = 0; i < 5; i++) await Promise.resolve();
+      advance(10); // the ring clears at the Enter that went (S61: a held Enter starts no turn)
     } else {
       t.pane.noteEnterSent();
     }
