@@ -532,9 +532,13 @@ export class TabManager {
     const tab = this.tabs[idx];
     const closedTitle = tab.title;
 
-    // Save pane state for undo before disposing
-    for (const pane of tab.panes) {
-      this.saveClosedPane(pane);
+    // Save pane state for undo before disposing. Not a review tab's: its
+    // shell is only what the document lies over, and Reopen Closed Tab
+    // would bring back an empty terminal instead of the document.
+    if (!this.reviewTabs.viewOf(tab)) {
+      for (const pane of tab.panes) {
+        this.saveClosedPane(pane);
+      }
     }
 
     this.removeTab(tab);
@@ -1365,7 +1369,11 @@ export class TabManager {
 
   async saveSession(): Promise<void> {
     try {
-      const tabs = [...this.tabs];
+      // A review tab is not saved (docs/review-tab.md R9): after a relaunch it
+      // would come back as the bare shell it lies over. Kept only when it is
+      // all there is, so the session is never saved empty.
+      const kept = this.tabs.filter((t) => !this.reviewTabs.viewOf(t));
+      const tabs = kept.length > 0 ? kept : [...this.tabs];
       const results = await Promise.allSettled(tabs.map(t => t.serializeTree()));
       const tabStates: SessionTabState[] = [];
       const usedGroups = new Set<string>();
@@ -1384,7 +1392,12 @@ export class TabManager {
         return;
       }
       // Adjust active index if some tabs failed serialization
-      const activeIdx = this.activeTab ? this.tabs.indexOf(this.activeTab) : 0;
+      // (By the saved tabs: a review tab in front counts as the tab before it.)
+      let activeIdx = 0;
+      if (this.activeTab) {
+        const all = this.tabs.indexOf(this.activeTab);
+        activeIdx = Math.max(0, tabs.filter((t) => this.tabs.indexOf(t) <= all).length - 1);
+      }
       const session: SessionState = {
         tabs: tabStates,
         activeTabIndex: Math.min(Math.max(0, activeIdx), tabStates.length - 1),

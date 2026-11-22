@@ -17,6 +17,10 @@
  * its page to it; clicking a highlight selects its comment (hit-tested by
  * point, since the text layer above takes the clicks for selection).
  *
+ * Memory: only pages within a screen of the view keep a canvas and text
+ * layer (freeSlot); the rest are drawn again when they come near. A hidden
+ * tab keeps what it drew.
+ *
  * Print (R6): each page is drawn again at PRINT_DPI into a print-only
  * container of images, one per sheet at the page's own size (@page), and
  * everything else is hidden under @media print; then window.print(). The
@@ -78,11 +82,25 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, t
   return e;
 }
 
-function button(className: string, label: string, ariaLabel?: string): HTMLButtonElement {
+/** A button named by its visible text (what voice control hears him say);
+ *  the longer `hint` is its tooltip and accessible description. */
+function button(className: string, label: string, hint?: string): HTMLButtonElement {
   const b = el('button', `review-btn ${className}`, label);
   b.type = 'button';
-  if (ariaLabel) b.setAttribute('aria-label', ariaLabel);
+  if (hint) {
+    b.title = hint;
+    b.setAttribute('aria-description', hint);
+  }
   return b;
+}
+
+/** The comments already sent to Claude, by file (its shown path), for this
+ *  run of Patton: a file opened again in another tab sends only what is new.
+ *  A comment is known by its content, since Word may renumber the ids. */
+const sentToClaude = new Map<string, Set<string>>();
+
+function commentKey(c: ReviewComment): string {
+  return [c.author, c.date, c.text, c.quote].join('\u0000');
 }
 
 function shortDate(iso: string): string {
@@ -164,7 +182,7 @@ export class ReviewView {
     this.printBtn = button('review-print-btn', 'Print', 'Print the document as laid out');
     this.driveBtn = button('review-drive-btn', 'Send to Drive', 'Send to Google Drive as a Google Doc');
     this.wordBtn = button('review-word-btn', 'Open in Word', 'Open the file in Word');
-    this.claudeBtn = button('review-claude-btn', 'Send comments to Claude', 'Send the comments to Claude as one message');
+    this.claudeBtn = button('review-claude-btn', 'Send comments to Claude');
     bar.append(this.printBtn, this.driveBtn, this.wordBtn, this.claudeBtn);
     head.append(titles, bar);
 
@@ -216,16 +234,17 @@ export class ReviewView {
     this.addBtn.addEventListener('click', () => { void this.addComment(); });
     this.linkEl.addEventListener('click', () => { if (this.driveLink) this.deps.openLink(this.driveLink); });
     this.commentInput.addEventListener('input', () => this.refreshButtons());
-    this.pagesEl.addEventListener('mouseup', this.onSelectionEnd);
+    // On the document: a drag that starts on a page may end anywhere.
+    document.addEventListener('mouseup', this.onSelectionEnd);
     this.pagesEl.addEventListener('keyup', this.onSelectionEnd);
     this.pagesEl.addEventListener('click', this.onPagesClick);
     this.pagesEl.addEventListener('mousemove', this.onPagesMove);
 
     this.offChanged = deps.api.onChanged((docId) => {
       if (docId !== info.docId || this.disposed) return;
-      void this.load('changed');
-      // Word (or Claude) may have added or removed comments too.
-      void this.loadComments();
+      // Word (or Claude) may have added or removed comments too: read once the
+      // new layout is in (a file that went away keeps the list it had).
+      void this.load('changed').then((ok) => { if (ok) void this.loadComments(); });
     });
     if (typeof ResizeObserver !== 'undefined') {
       this.resizeObserver = new ResizeObserver(() => {
@@ -250,38 +269,39 @@ export class ReviewView {
 
   // ------------------------------------------------------------ layout
 
-  private async load(why: 'open' | 'changed'): Promise<void> {
+  /** Lay the file out and show it; true once its pages show. */
+  private async load(why: 'open' | 'changed'): Promise<boolean> {
     const seq = ++this.loadSeq;
     this.busy.add('layout');
     this.refreshButtons();
     this.setStatus(why === 'open' ? 'Laying out…' : 'The file changed: laying it out again…');
     const reply = await this.deps.api.layout(this.deps.info.docId);
-    if (seq !== this.loadSeq || this.disposed) return;
+    if (seq !== this.loadSeq || this.disposed) return false;
     this.busy.delete('layout');
     if (reply.ok === false) {
       this.refreshButtons();
-      this.setStatus('');
+      this.setStatus(this.slots.length > 0 ? this.layoutStatus : '');
       this.showNote(reply.message, true);
       rlog('warn', '[REVIEW] layout refused', { why: reply.why });
-      return;
+      return false;
     }
     let opened: OpenedPdf;
     try {
       opened = await openPdf(reply.pdf);
     } catch (err) {
-      if (seq !== this.loadSeq || this.disposed) return;
+      if (seq !== this.loadSeq || this.disposed) return false;
       this.refreshButtons();
       this.setStatus('');
       this.showNote('The laid-out pages could not be read.', true);
       rlog('error', '[REVIEW] pdf open failed', { error: String(err) });
-      return;
+      return false;
     }
-    if (seq !== this.loadSeq || this.disposed) { void opened.destroy(); return; }
+    if (seq !== this.loadSeq || this.disposed) { void opened.destroy(); return false; }
     const old = this.pdf;
     this.pdf = opened;
     const scrollTop = this.pagesEl.scrollTop;
     await this.buildPages(opened.doc);
-    if (seq !== this.loadSeq || this.disposed) return;
+    if (seq !== this.loadSeq || this.disposed) return false;
     this.pagesEl.scrollTop = scrollTop;
     if (old) void old.destroy();
     if (this.noteFromLayout) this.hideNote();
@@ -290,6 +310,7 @@ export class ReviewView {
     this.setStatus(this.layoutStatus);
     rlog('info', '[REVIEW] shown', { pages: n, cached: reply.cached, mode: opened.mode, why });
     this.refreshButtons();
+    return true;
   }
 
   private fitScale(wPt: number): number {
@@ -300,6 +321,7 @@ export class ReviewView {
 
   private async buildPages(doc: PDFDocumentProxy): Promise<void> {
     this.observer?.disconnect();
+    for (const c of this.pagesEl.querySelectorAll('canvas')) { c.width = 0; c.height = 0; }
     this.pagesEl.replaceChildren();
     this.slots = [];
     const keys: string[] = [];
@@ -329,11 +351,18 @@ export class ReviewView {
     if (typeof IntersectionObserver !== 'undefined') {
       this.observer = new IntersectionObserver((entries) => {
         for (const e of entries) {
-          if (!e.isIntersecting) continue;
           const slot = this.slots.find((s) => s.el === e.target);
-          // Marks are measured from the laid-out text, so a page drawn while
-          // the tab was hidden is measured again once it is seen.
-          if (slot) void this.drawSlot(slot).then(() => this.paintMarks(slot));
+          if (!slot) continue;
+          if (e.isIntersecting) {
+            // Marks are measured from the laid-out text, so a page drawn while
+            // the tab was hidden is measured again once it is seen.
+            void this.drawSlot(slot).then(() => this.paintMarks(slot));
+          } else if (this.pagesEl.clientHeight > 0) {
+            // Out of reach of the view: its canvas goes (a page at DPR 2 is
+            // ~14 MB; a 100-page file kept every one, ~1.4 GB). A hidden tab
+            // (no height) keeps what it has, so switching back shows at once.
+            this.freeSlot(slot);
+          }
         }
       }, { root: this.pagesEl, rootMargin: '100% 0px' });
       for (const s of this.slots) this.observer.observe(s.el);
@@ -345,6 +374,25 @@ export class ReviewView {
   private sizeSlot(slot: PageSlot): void {
     slot.el.style.width = `${Math.floor(slot.wPt * this.scale)}px`;
     slot.el.style.height = `${Math.floor(slot.hPt * this.scale)}px`;
+  }
+
+  /** Let a page's canvas and text layer go (drawn again when it comes near). */
+  private freeSlot(slot: PageSlot): void {
+    if (slot.drawnScale === 0 && !slot.el.firstChild) return;
+    // Never pull the text out from under a selection he is making or made.
+    const sel = document.getSelection();
+    if (sel && sel.rangeCount > 0 && !sel.isCollapsed && sel.getRangeAt(0).intersectsNode(slot.el)) return;
+    slot.drawnScale = 0;
+    slot.drawing = null;
+    for (const c of slot.el.querySelectorAll('canvas')) { c.width = 0; c.height = 0; }
+    slot.el.replaceChildren();
+    const pdf = this.pdf;
+    if (pdf) void pdf.doc.getPage(slot.index + 1).then((p) => p.cleanup()).catch(() => {});
+  }
+
+  /** Pages with a canvas now (a check reads it). */
+  get drawnPages(): number {
+    return this.slots.filter((s) => s.el.querySelector('canvas')).length;
   }
 
   /** Draw a page's canvas and text layer at the current scale (once per scale). */
@@ -395,8 +443,7 @@ export class ReviewView {
     this.scale = next;
     for (const s of this.slots) {
       this.sizeSlot(s);
-      s.drawnScale = 0;
-      s.el.replaceChildren();
+      this.freeSlot(s);
     }
     this.observer?.disconnect();
     for (const s of this.slots) this.observer?.observe(s.el);
@@ -425,7 +472,7 @@ export class ReviewView {
       go.title = 'Show where this comment is on the pages';
       if (c.quote) go.append(el('span', 'review-comment-quote', cut(c.quote, 160)));
       go.append(el('span', 'review-comment-text', c.text));
-      const meta = [c.author, shortDate(c.date)].filter(Boolean).join(' · ');
+      const meta = [c.author, shortDate(c.date), this.isSent(c) ? 'sent to Claude' : ''].filter(Boolean).join(' · ');
       if (meta) go.append(el('span', 'review-comment-meta', meta));
       go.addEventListener('click', () => { void this.selectComment(c.id, 'list'); });
       li.append(go);
@@ -606,14 +653,34 @@ export class ReviewView {
    *  its key in the pages' text before it (R7: main picks the same match in
    *  the body, else the last). */
   captureSelection(): void {
+    if (this.disposed) return;
     const sel = document.getSelection();
     if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return;
-    const range = sel.getRangeAt(0);
+    const picked = sel.getRangeAt(0);
+    // Only a selection that touches these pages is his comment's (the mouse
+    // is followed on the whole document: a drag may end past the pages).
+    if (!picked.intersectsNode(this.pagesEl)) return;
+    const layers = [...this.pagesEl.querySelectorAll<HTMLElement>('.review-text-layer')].filter((l) => picked.intersectsNode(l));
+    if (layers.length === 0) {
+      this.showNote('Select words on a page to comment on them.');
+      return;
+    }
+    // A selection that starts or ends outside the text (a page's margin, the
+    // gap between pages, the panel beside them) is cut to the text it holds.
+    const range = picked.cloneRange();
+    if (!this.layerOf(range.startContainer)) range.setStart(layers[0], 0);
+    if (!this.layerOf(range.endContainer)) {
+      const last = layers[layers.length - 1];
+      range.setEnd(last, last.childNodes.length);
+    }
     const startLayer = this.layerOf(range.startContainer);
-    if (!startLayer || !this.layerOf(range.endContainer)) return;
+    if (!startLayer) return;
     const quote = range.toString();
     const key = textKey(quote);
-    if (!key) return;
+    if (!key) {
+      this.showNote('Select words on a page to comment on them.');
+      return;
+    }
     if (quote.length > REVIEW_QUOTE_MAX) {
       this.showNote(`Select less text: up to ${REVIEW_QUOTE_MAX.toLocaleString()} characters.`);
       return;
@@ -642,8 +709,9 @@ export class ReviewView {
     this.busy.delete('add');
     if (this.disposed) return;
     if (reply.ok === false) {
-      this.setStatus('');
-      this.showNote(reply.message);
+      this.setStatus(this.layoutStatus);
+      // A file that went away: the next good layout (it came back) clears it.
+      this.showNote(reply.message, reply.why === 'missing');
       this.refreshButtons();
       return;
     }
@@ -660,13 +728,26 @@ export class ReviewView {
 
   // ------------------------------------------------------------ actions
 
+  private isSent(c: ReviewComment): boolean {
+    return sentToClaude.get(this.deps.info.shownPath)?.has(commentKey(c)) === true;
+  }
+
+  /** The comments not yet sent to Claude (every author's), in file order. */
+  get unsentComments(): ReviewComment[] {
+    return this.comments.filter((c) => !this.isSent(c));
+  }
+
   private async sendToClaude(): Promise<void> {
-    if (this.comments.length === 0) { this.showNote('There are no comments to send yet.'); return; }
+    const toSend = this.unsentComments;
+    if (toSend.length === 0) {
+      this.showNote(this.comments.length === 0 ? 'There are no comments to send yet.' : 'Every comment here has been sent to Claude already.');
+      return;
+    }
     this.busy.add('claude');
     this.refreshButtons();
     let why: string | null;
     try {
-      why = await this.deps.sendToClaude(reviewMessage(this.deps.info, this.comments));
+      why = await this.deps.sendToClaude(reviewMessage(this.deps.info, toSend));
     } catch (err) {
       rlog('error', '[REVIEW] send to Claude failed', { error: String(err) });
       why = 'The comments could not be sent.';
@@ -679,9 +760,14 @@ export class ReviewView {
       this.showNote(why);
       return;
     }
+    let sent = sentToClaude.get(this.deps.info.shownPath);
+    if (!sent) { sent = new Set(); sentToClaude.set(this.deps.info.shownPath, sent); }
+    for (const c of toSend) sent.add(commentKey(c));
     this.hideNote();
-    const n = this.comments.length;
+    const n = toSend.length;
     this.setStatus(`Sent ${n} comment${n === 1 ? '' : 's'} to Claude.`);
+    rlog('info', '[REVIEW] comments to Claude', { sent: n, earlier: this.comments.length - n });
+    this.renderComments();
   }
 
   private async openInWord(): Promise<void> {
@@ -710,8 +796,8 @@ export class ReviewView {
     if (this.disposed) return;
     this.refreshButtons();
     if (reply.ok === false) {
-      this.setStatus('');
-      this.showNote(reply.message);
+      this.setStatus(this.layoutStatus);
+      this.showNote(reply.message, reply.why === 'missing');
       return;
     }
     this.hideNote();
@@ -829,7 +915,13 @@ export class ReviewView {
     const laidOut = this.pdf !== null && this.slots.length > 0;
     this.printBtn.disabled = !laidOut || this.busy.has('print');
     this.driveBtn.disabled = this.busy.has('drive');
-    this.claudeBtn.disabled = this.comments.length === 0 || this.busy.has('claude');
+    const unsent = this.unsentComments.length;
+    this.claudeBtn.textContent = unsent === 0 ? 'Send comments to Claude' : `Send ${unsent} comment${unsent === 1 ? '' : 's'} to Claude`;
+    this.claudeBtn.title = unsent === 0 && this.comments.length > 0
+      ? 'Every comment here has been sent to Claude'
+      : 'Paste the comments not yet sent, each with its author and the text it is on, into the Claude session as one message';
+    this.claudeBtn.setAttribute('aria-description', this.claudeBtn.title);
+    this.claudeBtn.disabled = unsent === 0 || this.busy.has('claude');
     this.addBtn.disabled = !this.selected || !this.commentInput.value.trim() || this.busy.has('add');
   }
 
@@ -858,7 +950,7 @@ export class ReviewView {
     this.resizeObserver?.disconnect();
     if (this.resizeTimer) clearTimeout(this.resizeTimer);
     this.printCleanup?.();
-    this.pagesEl.removeEventListener('mouseup', this.onSelectionEnd);
+    document.removeEventListener('mouseup', this.onSelectionEnd);
     this.pagesEl.removeEventListener('keyup', this.onSelectionEnd);
     this.pagesEl.removeEventListener('click', this.onPagesClick);
     this.pagesEl.removeEventListener('mousemove', this.onPagesMove);

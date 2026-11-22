@@ -31,9 +31,11 @@ export const SOFFICE_CANDIDATES = [
   '/Applications/LibreOffice.app/Contents/MacOS/soffice',
 ];
 
-/** The PDF export filter, comments in the margin (R1). The page count stays
- *  the plain export's: LibreOffice scales the page to make room. */
-export const PDF_FILTER = 'pdf:writer_pdf_Export:{"ExportNotesInMargin":{"type":"boolean","value":"true"}}';
+/** The PDF export filter: the pages as Word prints them by default, without
+ *  the file's comments (R1). Comments live in the tab's side panel with their
+ *  highlights; in the margin, LibreOffice shrank every page to 75% to make
+ *  room, on screen and in print. Not as PDF annotations either. */
+export const PDF_FILTER = 'pdf:writer_pdf_Export:{"ExportNotes":{"type":"boolean","value":"false"},"ExportNotesInMargin":{"type":"boolean","value":"false"}}';
 
 export const LAYOUT_TIMEOUT_MS = 90 * 1000;
 /** Larger files are refused: a review is of a document, not an archive. */
@@ -111,7 +113,9 @@ export function vetDocx(bytes: Buffer): LayoutFailure | null {
 }
 
 export function cacheKey(real: string, mtimeMs: number, size: number): string {
-  return createHash('sha256').update(`${real}\0${mtimeMs}\0${size}`).digest('hex').slice(0, 32);
+  // The filter is part of the key: a PDF laid out with other options (the
+  // margin notes of before) is never answered for this one.
+  return createHash('sha256').update(`${real}\0${mtimeMs}\0${size}\0${PDF_FILTER}`).digest('hex').slice(0, 32);
 }
 
 async function pruneCache(cacheDir: string): Promise<void> {

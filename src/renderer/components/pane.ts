@@ -1070,8 +1070,23 @@ export class Pane {
       rlog('info', '[REVIEW] comments held', { pane: this.id, menu: facts.menu, draft: facts.draft });
       return skip;
     }
+    // Resolves once the Enter went (null) or was held: at the write, or at the
+    // Enter itself when Claude started asking in between (the pasted text then
+    // sits in Claude's input, unsent).
+    const outcome = await new Promise<{ held: string | null; typed: boolean }>((resolve) => {
+      this.queueSubmit(message, false, {
+        stashFirst: facts.draft, origin: 'patton', paste: true,
+        gate: () => this.reviewPasteRefusal(),
+        onSettled: (held, typed) => resolve({ held, typed: typed === true }),
+      });
+    });
+    if (outcome.held) {
+      rlog('info', '[REVIEW] comments held', { pane: this.id, at: outcome.typed ? 'enter' : 'write' });
+      return outcome.typed
+        ? 'Claude started asking you something before the comments were sent: they are in Claude\'s input, not sent. Answer it there, then press Return in that session.'
+        : outcome.held;
+    }
     rlog('info', '[REVIEW] comments sent', { pane: this.id, chars: message.length, stash: facts.draft });
-    this.queueSubmit(message, false, { stashFirst: facts.draft, origin: 'patton', paste: true, gate: () => this.reviewPasteRefusal() });
     return null;
   }
 
@@ -2029,7 +2044,13 @@ export class Pane {
   private queueSubmit(
     command: string,
     allowBroadcast: boolean,
-    opts: { stashFirst?: boolean; scroll?: boolean; origin?: 'patton'; onEnterSent?: () => void; own?: boolean; paste?: boolean; gate?: () => string | null } = {},
+    opts: {
+      stashFirst?: boolean; scroll?: boolean; origin?: 'patton'; onEnterSent?: () => void; own?: boolean; paste?: boolean;
+      gate?: () => string | null;
+      /** How it ended: null once the Enter went, else why it was held;
+       *  `typed` when the text was written and only the Enter was held. */
+      onSettled?: (held: string | null, typed?: boolean) => void;
+    } = {},
   ): string {
     // Broadcast mode: also write to all other panes in the tab
     const broadcast = allowBroadcast ? this.callbacks.onBroadcastWrite : undefined;
@@ -2053,12 +2074,12 @@ export class Pane {
     const origin = opts.origin;
     const own = opts.own === true ? () => this.noteOwnTyping() : () => {};
     this.submitQueue = this.submitQueue.then(() => new Promise<void>((resolve) => {
-      if (this.ptyId === null) { resolve(); return; }
+      if (this.ptyId === null) { opts.onSettled?.('The session closed before the message was sent.'); resolve(); return; }
       if (opts.stashFirst) {
         own();
         window.patton.pty.write(this.ptyId, '\x13', origin);
         setTimeout(() => {
-          if (this.ptyId === null) { resolve(); return; }
+          if (this.ptyId === null) { opts.onSettled?.('The session closed before the message was sent.'); resolve(); return; }
           submitLine(resolve);
         }, Pane.STASH_SETTLE_MS);
         return;
@@ -2066,12 +2087,13 @@ export class Pane {
       submitLine(resolve);
     }));
     const submitLine = (resolve: () => void): void => {
-      if (this.ptyId === null) { resolve(); return; }
+      if (this.ptyId === null) { opts.onSettled?.('The session closed before the message was sent.'); resolve(); return; }
       // `gate`: asked again the moment the text is written (after a stash's
       // wait, or a queued submit ahead of it), on the live facts.
       const held = opts.gate?.();
       if (held) {
         rlog('info', '[COMPOSE] submit held at write', { pane: this.id, why: held });
+        opts.onSettled?.(held);
         resolve();
         return;
       }
@@ -2091,31 +2113,38 @@ export class Pane {
         // in the whole paste first: 60 ms is meant to clear its paste debounce
         // (a margin chosen by reading, not yet measured live).
         setTimeout(() => {
-          if (this.ptyId !== null) {
-            own();
-            window.patton.pty.write(this.ptyId, '\r');
-            broadcast?.('\r');
-            opts.onEnterSent?.();
-          }
+          sendEnter(undefined);
           resolve();
         }, 60);
       } else if (command) {
         window.patton.pty.write(this.ptyId, command, origin);
         broadcast?.(command);
         setTimeout(() => {
-          if (this.ptyId !== null) {
-            own();
-            window.patton.pty.write(this.ptyId, '\r', origin);
-            broadcast?.('\r');
-            opts.onEnterSent?.();
-          }
+          sendEnter(origin);
           resolve();
         }, 10);
       } else {
-        window.patton.pty.write(this.ptyId, '\r', origin);
-        broadcast?.('\r');
+        sendEnter(origin);
         resolve();
       }
+    };
+    // The Enter is asked the gate again too (Gotcha S56): Claude may have
+    // started asking between the text and the Enter, and an Enter then would
+    // answer its question. The text stays in Claude's input; nothing is sent.
+    const sendEnter = (writeOrigin: 'patton' | undefined): void => {
+      if (this.ptyId === null) { opts.onSettled?.('The session closed before the message was sent.'); return; }
+      const held = opts.gate?.();
+      if (held) {
+        rlog('info', '[COMPOSE] enter held', { pane: this.id, why: held });
+        opts.onSettled?.(held, true);
+        return;
+      }
+      own();
+      if (writeOrigin) window.patton.pty.write(this.ptyId, '\r', writeOrigin);
+      else window.patton.pty.write(this.ptyId, '\r');
+      broadcast?.('\r');
+      opts.onEnterSent?.();
+      opts.onSettled?.(null);
     };
     return command;
   }

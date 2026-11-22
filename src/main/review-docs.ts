@@ -60,7 +60,7 @@ const LAYOUT_MESSAGES: Record<LayoutFailure, string> = {
   'not-docx': 'This file is not a Word document Patton can read.',
   timeout: 'LibreOffice took too long to lay this document out.',
   failed: 'LibreOffice could not lay this document out.',
-  missing: 'The file is no longer there.',
+  missing: 'The file is no longer there: moved, renamed or deleted. The pages shown are the last laid out; they show again if it comes back where it was.',
 };
 
 let authorName: string | null = null;
@@ -85,10 +85,18 @@ function watch(docId: string, doc: OpenDoc): void {
   if (doc.watching) return;
   doc.watching = true;
   let timer: ReturnType<typeof setTimeout> | null = null;
+  // What the file was at the last poll, by our own count: Node's `prev` is the
+  // last stats it saw of a present file, so a file renamed away and back (the
+  // same mtime and size) would look unchanged against it and the tab would
+  // keep saying the file is gone.
+  const keyOf = (st: Stats | null): string => (st && st.mtimeMs > 0 ? `${st.ino}:${st.mtimeMs}:${st.size}` : 'missing');
+  let last = keyOf((() => { try { return statSync(doc.real); } catch { return null; } })());
   // Polled, not fs.watch: an editor that saves by replacing the file (as
   // Patton's own comment writer does) ends an fs.watch on the old inode.
-  watchFile(doc.real, { interval: 1000, persistent: false }, (cur: Stats, prev: Stats) => {
-    if (cur.mtimeMs === prev.mtimeMs && cur.size === prev.size) return;
+  watchFile(doc.real, { interval: 1000, persistent: false }, (cur: Stats) => {
+    const now = keyOf(cur);
+    if (now === last) return;
+    last = now;
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => {
       if (!docs.has(docId) || doc.owner.isDestroyed()) return;

@@ -187,22 +187,68 @@ function electronMain() {
 
   const M = require(path.join(outDir, 'main-half.cjs'));
 
-  // A two-page .docx: two paragraphs, a page break, a third.
-  function makeDocx(file) {
-    const types = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>';
+  // A small striped PNG (the document's picture), made here.
+  function stripedPng(w, h) {
+    const zlib = require('node:zlib');
+    const rows = [];
+    for (let y = 0; y < h; y++) {
+      const row = Buffer.alloc(1 + w * 3);
+      for (let x = 0; x < w; x++) {
+        const on = Math.floor(x / 6) % 2 === 0;
+        row[1 + x * 3] = on ? 30 : 240; row[2 + x * 3] = on ? 90 : 240; row[3 + x * 3] = on ? 200 : 240;
+      }
+      rows.push(row);
+    }
+    const chunk = (type, data) => {
+      const len = Buffer.alloc(4); len.writeUInt32BE(data.length);
+      const td = Buffer.concat([Buffer.from(type, 'ascii'), data]);
+      const crc = Buffer.alloc(4); crc.writeUInt32BE(zlib.crc32(td) >>> 0);
+      return Buffer.concat([len, td, crc]);
+    };
+    const ihdr = Buffer.alloc(13);
+    ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr[8] = 8; ihdr[9] = 2;
+    return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('IDAT', zlib.deflateSync(Buffer.concat(rows))), chunk('IEND', Buffer.alloc(0))]);
+  }
+
+  // A two-page .docx: a heading, a paragraph, a table, a picture, a page
+  // break, then page two. `pages` > 2 adds that many more pages of text (the
+  // long file the memory check scrolls through).
+  function makeDocx(file, pages = 2) {
+    const W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"';
+    const types = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>';
     const rootRels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>';
-    const docRels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>';
+    const docRels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdImg" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/stripes.png"/></Relationships>';
     const p = (t, bold) => `<w:p><w:r>${bold ? '<w:rPr><w:b/><w:sz w:val="36"/></w:rPr>' : ''}<w:t xml:space="preserve">${t}</w:t></w:r></w:p>`;
-    const doc = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>'
+    const cell = (t) => `<w:tc><w:tcPr><w:tcW w:w="3000" w:type="dxa"/></w:tcPr>${p(t)}</w:tc>`;
+    const border = (side) => `<w:${side} w:val="single" w:sz="8" w:space="0" w:color="000000"/>`;
+    const table = '<w:tbl><w:tblPr><w:tblW w:w="9000" w:type="dxa"/><w:tblBorders>' + ['top', 'left', 'bottom', 'right', 'insideH', 'insideV'].map(border).join('') + '</w:tblBorders></w:tblPr>'
+      + '<w:tblGrid><w:gridCol w:w="3000"/><w:gridCol w:w="3000"/><w:gridCol w:w="3000"/></w:tblGrid>'
+      + `<w:tr>${cell('Team')}${cell('Budget')}${cell('Headcount')}</w:tr><w:tr>${cell('Platform')}${cell('1,200,000')}${cell('14')}</w:tr></w:tbl>`;
+    const emu = 914400; // one inch
+    const picture = `<w:p><w:r><w:drawing><wp:inline><wp:extent cx="${2 * emu}" cy="${emu / 2}"/><wp:docPr id="1" name="Stripes"/>`
+      + '<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic>'
+      + '<pic:nvPicPr><pic:cNvPr id="1" name="stripes.png"/><pic:cNvPicPr/></pic:nvPicPr>'
+      + '<pic:blipFill><a:blip r:embed="rIdImg"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>'
+      + `<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${2 * emu}" cy="${emu / 2}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>`
+      + '</pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>';
+    const pageBreak = '<w:p><w:r><w:br w:type="page"/></w:r></w:p>';
+    let more = '';
+    for (let i = 3; i <= pages; i++) more += pageBreak + p(`Section ${i}`, true) + p(`Notes for section ${i}: each team reports monthly against the plan, and the budget is reviewed in the quarter after.`);
+    const doc = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<w:document ${W}><w:body>`
       + p('Quarterly plan', true)
       + p('The budget is fixed for the year. Costs &amp; hiring follow the plan agreed in October.')
+      + table
+      + picture
       + p('Each team reports monthly against the plan.')
-      + '<w:p><w:r><w:br w:type="page"/></w:r></w:p>'
+      + pageBreak
       + p('Page two', true)
       + p('Risks: the budget is fixed, so new work waits for the next quarter.')
+      + more
       + '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr></w:body></w:document>';
     const entries = [];
     for (const [name, text] of [['[Content_Types].xml', types], ['_rels/.rels', rootRels], ['word/_rels/document.xml.rels', docRels], ['word/document.xml', doc]]) M.setEntryText(entries, name, text);
+    const png = stripedPng(120, 30);
+    entries.push({ name: 'word/media/stripes.png', method: 8, crc: 0, compressedSize: 0, size: png.length, raw: Buffer.alloc(0), replaced: png });
     fs.writeFileSync(file, M.writeZip(entries));
   }
 
@@ -267,9 +313,14 @@ function electronMain() {
       check('pdf.js runs in its Web Worker (not the main-thread fallback)', shown.workerMode === 'worker', shown.logs);
       check('every control in the tab has an accessible name', shown.unnamed.length === 0, shown.unnamed);
       check('the toolbar has the four buttons, each visible', JSON.stringify(shown.buttons) === JSON.stringify(['Print', 'Send to Drive', 'Open in Word', 'Send comments to Claude']), shown.buttons);
+      check('each toolbar button\'s accessible name holds its visible text', shown.namesHoldText.length === 0, shown.namesHoldText);
+      check('the table\'s text is on page 1', shown.tableText, shown);
+      check('the picture is drawn on page 1 (its blue stripes on the canvas)', shown.pictureInk > 500, { pictureInk: shown.pictureInk });
       measures.push(`tab: ${shown.pages} pages, ${shown.spans} text spans`);
 
       const added = await js(pageAddComment);
+      check('a selection holding no text shows a short note', /Select words/.test(added.noTextNote), added);
+      check('a selection that ends outside the pages (mouse let go over the panel) still becomes the quote, cut to the page\'s text', added.outsideSelected.includes('budget is fixed, so new work') && !/Comments/.test(added.outsideSelected), added);
       check('text selected on page 2 becomes the pending quote', added.selected.includes('budget is fixed, so'), added);
       check('the comment shows in the panel', added.listed.includes('Say which quarter.') && added.count === '1', added);
       const entries = M.readZip(fs.readFileSync(docx));
@@ -285,6 +336,8 @@ function electronMain() {
       // 2b. the comment's highlight, after the re-layout its write set off
       const marks = await js(pageMarks);
       check('the status "The file changed: laying it out again…" goes when the new layout shows', marks.relaidOut && !/changed/.test(marks.status) && /^2 pages/.test(marks.status), marks);
+      check('the pages carry no margin notes: the comment\'s text is not on them (it is in the panel)', !marks.layerHasComment, marks);
+      check('a comment leaves the page at 100%: the heading sits where it did before the comment', !!marks.headingBox && !!shown.headingBox && Math.abs(marks.headingBox.left - shown.headingBox.left) <= 1 && Math.abs(marks.headingBox.height - shown.headingBox.height) <= 1, { before: shown.headingBox, after: marks.headingBox });
       check('the comment\'s text is highlighted on page 2 (and only there)', marks.marksOnPage2 > 0 && marks.marksElsewhere === 0 && marks.markInside, marks);
       check('the highlight covers the quoted words (by the text layer\'s characters, whose centres in a stretched fallback font can sit a few px off the ink: the next check pins the edges)', marks.coveredText.includes('budget is fixed,') && !/the|new/.test(marks.coveredText) && marks.coveredText.length < 40, marks);
       check('the highlight starts on its first letter and ends on its last (the canvas ink at each edge, a gap just outside)', !!marks.inkEdges && marks.inkEdges.inkAtLeft && marks.inkEdges.gapBeforeLeft && marks.inkEdges.inkAtRight && marks.inkEdges.gapAfterRight, marks.inkEdges);
@@ -327,12 +380,17 @@ function electronMain() {
 
       // 4. Send comments to Claude
       const sent = await js(pageSendToClaude);
+      check('the button counts the comments not yet sent ("Send 1 comment to Claude")', sent.labelBefore === 'Send 1 comment to Claude', sent.labelBefore);
+      check('while Claude is blocked (7501) the send is refused with a visible note', sent.blocked.text.includes('asking you something') && sent.blocked.visible, sent.blocked);
+      check('while Claude is blocked nothing is written to its pty', sent.blocked.writes === 0, sent.blocked);
+      check('Claude starting to ask between the paste and its Enter: no Enter is sent', sent.between.pastedFirst && !sent.between.enter, sent.between);
+      check('… and the note says the comments are in Claude\'s input, not sent; they stay unsent', /not sent/.test(sent.between.text) && sent.between.visible && sent.between.labelAfter === 'Send 1 comment to Claude', sent.between);
       check('Send comments to Claude pastes one bracketed message into the origin pane', sent.pasted === 1 && sent.message.includes('Say which quarter.') && sent.message.startsWith('Comments on '), sent);
+      check('the message names each comment\'s author and the text it is on', /On "budget is fixed, so": Say which quarter\. \([^)]+\)/.test(sent.message), sent.message);
       check('the message ends with Enter after the paste', sent.enterAfter, sent);
       check('nothing went to any other pane', sent.otherWrites === 0, sent);
       check('the origin tab is shown after sending', sent.activeIsOrigin, sent);
-      check('while Claude is blocked (7501) the send is refused with a visible note', sent.blocked.note.includes('asking you something') && sent.blocked.visible, sent.blocked);
-      check('while Claude is blocked nothing is written to its pty', sent.blocked.writes === 0, sent.blocked);
+      check('sent comments are marked sent, and the button has nothing left to send', sent.markedSent && sent.labelAfter === 'Send comments to Claude' && sent.disabledAfter, sent);
 
       // 5. Lindus confirm before Send to Drive (fake upload in the page)
       M.openReview(win.webContents, lindusDocx);
@@ -343,6 +401,33 @@ function electronMain() {
       check('the Google Doc\'s link shows in the tab', drive.linkShown, drive);
       check('the link lands in the origin pane\'s session bar Links', drive.barLinks.some((l) => l.url === 'https://docs.google.com/document/d/fake-doc-id/edit' && /Google Doc/.test(l.label)), drive.barLinks);
       check('main refuses a Lindus file without confirmLindus', drive.mainGate === 'confirm-lindus', drive.mainGate);
+
+      // 6. a long file: canvases only near the view; tab switch keeps the view
+      const longDocx = path.join(docsDir, 'Long report.docx');
+      makeDocx(longDocx, 40);
+      const longWant = sofficePages(longDocx);
+      M.openReview(win.webContents, longDocx);
+      const long = await js(pageLong, { pages: longWant });
+      measures.push(`long file: ${long.pages} pages, at most ${long.maxDrawn} drawn at once (${long.maxMB} MB of canvas at DPR ${long.dpr})`);
+      check(`the long file shows soffice's ${longWant} pages, each drawn when scrolled to`, long.pages === longWant && long.allDrew, long);
+      check('only pages near the view keep a canvas (memory stays bounded)', long.maxDrawn <= 8 && long.drawnAtEnd <= 8, long);
+      check('switching to another tab and back keeps the page in view drawn', long.backShows && long.drawnWhileHidden > 0, long);
+
+      // 6b. the file goes away and comes back; the session; closing the tab
+      const open = await js(pageReviewState);
+      check('a review tab is not saved in the session (it would come back as a bare shell)', open.reviews > 0 && open.savedTabs === open.tabs - open.reviews && open.savedActive === 0, open);
+      const away = longDocx.replace(/\.docx$/, ' (moved).docx');
+      fs.renameSync(longDocx, away);
+      await new Promise((r) => setTimeout(r, 2500));
+      const gone = await js(pageReviewState);
+      check('a file renamed away while open: a visible note, the last pages still shown', /no longer there/.test(gone.note) && gone.canvases > 0 && /^40 pages/.test(gone.status), gone);
+      fs.renameSync(away, longDocx);
+      await new Promise((r) => setTimeout(r, 3500));
+      const back = await js(pageReviewState);
+      check('… renamed back (the same mtime and size): the note goes and the pages show', back.note === '' && back.canvases > 0, back);
+      const closed = await js(pageCloseReview);
+      check('closing a review tab ends it in main and the view', closed.afterClose === closed.before - 1 && closed.disposed && !closed.inDom && closed.mainWhy === 'unknown', closed);
+      check('Reopen Closed Tab does not bring it back as an empty terminal', closed.afterReopen === closed.afterClose, closed);
 
       // 8. the packaged build's worker asset
       if (asar) {
@@ -424,6 +509,13 @@ async function pageSetup() {
 }
 
 async function pageShown() {
+  const headingBox = () => {
+    const page = document.querySelector('.review-page[data-page="0"]');
+    const span = page && [...page.querySelectorAll('.review-text-layer span')].find((x) => x.textContent.includes('Quarterly plan'));
+    if (!span) return null;
+    const p = page.getBoundingClientRect(); const r = span.getBoundingClientRect();
+    return { left: Math.round(r.left - p.left), top: Math.round(r.top - p.top), height: Math.round(r.height) };
+  };
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const S = window.__S;
   const tm = window.__tm;
@@ -452,8 +544,24 @@ async function pageShown() {
     unnamed,
     buttons: root ? [...root.querySelectorAll('.review-actions button')].filter((b) => b.offsetParent !== null).map((b) => b.textContent) : [],
     status: root?.querySelector('.review-status')?.textContent,
+    // Each toolbar button's accessible name holds its visible text (voice control).
+    namesHoldText: root ? [...root.querySelectorAll('.review-actions button')].map((b) => ({ text: b.textContent, name: b.getAttribute('aria-label') || b.textContent }))
+      .filter((x) => !x.name.includes(x.text)) : ['no root'],
+    tableText: /Headcount/.test(document.querySelector('.review-text-layer[data-page="0"]')?.textContent || ''),
+    // The picture's blue stripes on page 1's canvas.
+    pictureInk: (() => {
+      const cv = document.querySelector('.review-page[data-page="0"] canvas.review-canvas');
+      if (!cv) return 0;
+      const d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
+      let n = 0;
+      for (let i = 0; i < d.length; i += 4) if (d[i + 2] > 150 && d[i] < 90 && d[i + 1] < 140) n++;
+      return n;
+    })(),
+    // Where the heading sits on page 1 (a layout with margin notes shrinks the page and moves it).
+    headingBox: headingBox(),
   };
 }
+
 
 async function pageAddComment() {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -464,6 +572,23 @@ async function pageAddComment() {
   if (!span) return { selected: '', listed: '', count: '', error: 'no span', spans: spans.map((s) => s.textContent) };
   const node = span.firstChild;
   const at = node.textContent.indexOf('budget is fixed, so');
+  const sel0 = document.getSelection();
+  const note = () => { const n = root.querySelector('.review-note'); return n.hidden ? '' : n.textContent; };
+  // A selection holding no text (only page 2's canvas) says so.
+  const page2 = root.querySelector('.review-page[data-page="1"]');
+  const blank = document.createRange();
+  blank.setStart(page2, 0); blank.setEnd(page2, 1);
+  sel0.removeAllRanges(); sel0.addRange(blank);
+  document.body.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+  const noTextNote = note();
+  // A drag that starts in page 2's text and ends over the comments panel,
+  // the mouse let go outside the pages: the words up to the page's end.
+  const outside = document.createRange();
+  outside.setStart(node, at);
+  outside.setEnd(root.querySelector('.review-side-title'), 0);
+  sel0.removeAllRanges(); sel0.addRange(outside);
+  root.querySelector('.review-side').dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+  const outsideSelected = root.querySelector('.review-selected').textContent;
   const range = document.createRange();
   range.setStart(node, at);
   range.setEnd(node, at + 'budget is fixed, so'.length);
@@ -483,7 +608,7 @@ async function pageAddComment() {
   }
   const view = window.__S.view;
   return {
-    selected, addDisabled,
+    selected, addDisabled, noTextNote, outsideSelected,
     occurrence: view && view.selected ? view.selected.occurrence : '(cleared)',
     listed: root.querySelector('.review-comments').textContent,
     count: root.querySelector('.review-count').textContent,
@@ -493,6 +618,13 @@ async function pageAddComment() {
 }
 
 async function pageMarks() {
+  const headingBox = () => {
+    const page = document.querySelector('.review-page[data-page="0"]');
+    const span = page && [...page.querySelectorAll('.review-text-layer span')].find((x) => x.textContent.includes('Quarterly plan'));
+    if (!span) return null;
+    const p = page.getBoundingClientRect(); const r = span.getBoundingClientRect();
+    return { left: Math.round(r.left - p.left), top: Math.round(r.top - p.top), height: Math.round(r.height) };
+  };
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const root = [...document.querySelectorAll('.review')].find((r) => r.getAttribute('aria-label') === 'Review of Quarterly plan.docx');
   const status = () => root.querySelector('.review-status').textContent;
@@ -582,6 +714,8 @@ async function pageMarks() {
   const selectedByMark = root.querySelector('.review-comment-btn').getAttribute('aria-current') === 'true'
     && root.querySelector('.review-page[data-page="1"] .review-mark').classList.contains('review-mark-active');
   return {
+    layerHasComment: [...root.querySelectorAll('.review-text-layer')].some((l) => l.textContent.includes('Say which quarter')),
+    headingBox: headingBox(),
     sawChanged, relaidOut, status: status(), marksOnPage2: marks2.length, marksElsewhere, markInside, coveredText, markBg, inkEdges, marksBelowText,
     scrolledFrom, scrolledTo, markInView, listCurrent, markActive, clearedByOther, selectedByMark,
   };
@@ -612,38 +746,139 @@ async function pageSendToClaude() {
   const S = window.__S;
   const tm = window.__tm;
   const pane = S.originPane;
+  const term = pane.terminalView.terminal;
   const root = () => [...document.querySelectorAll('.review')].find((r) => r.getAttribute('aria-label') === 'Review of Quarterly plan.docx');
+  const btn = () => root().querySelector('.review-claude-btn');
+  const noteOf = () => { const n = root().querySelector('.review-note'); return { text: n.textContent, visible: !n.hidden && n.offsetParent !== null }; };
+  const setState = (st) => new Promise((r) => term.write(`\x1b]7501;state=${st}:app=claude-code\x07`, r));
+  const mine = () => S.writes.filter((w) => w.id === pane.ptyId);
+  const labelBefore = btn().textContent;
+
+  // 1. Claude asks something (7501 blocked): refused, nothing written.
+  await setState('blocked:kind=permission');
+  await sleep(100);
   S.writes.length = 0;
-  root().querySelector('.review-claude-btn').click();
+  btn().click();
+  await sleep(600);
+  const blocked = { ...noteOf(), writes: mine().length };
+  await setState('idle');
+  await sleep(100);
+
+  // 2. Claude starts asking between the paste and its Enter: no Enter.
+  tm.switchToId(S.reviewTab.id);
+  await sleep(200);
+  S.writes.length = 0;
+  btn().click();
+  for (let i = 0; i < 400 && !mine().some((w) => w.data.includes('\x1b[200~')); i++) await sleep(2);
+  const pastedFirst = mine().some((w) => w.data.includes('\x1b[200~'));
+  await setState('blocked:kind=permission');
+  await sleep(400);
+  const between = { pastedFirst, enter: mine().some((w) => w.data === '\r'), ...noteOf(), labelAfter: btn().textContent };
+  await setState('idle');
+  await sleep(100);
+
+  // 3. Sent: one bracketed paste, then Enter; the button counts what is left.
+  tm.switchToId(S.reviewTab.id);
+  await sleep(200);
+  S.writes.length = 0;
+  btn().click();
   for (let i = 0; i < 100; i++) {
     if (S.writes.some((w) => w.data === '\r')) break;
     await sleep(50);
   }
-  const mine = S.writes.filter((w) => w.id === pane.ptyId);
-  const pastes = mine.filter((w) => w.data.includes('\x1b[200~'));
+  await sleep(100);
+  const pastes = mine().filter((w) => w.data.includes('\x1b[200~'));
   const message = pastes[0] ? pastes[0].data.replace('\x1b[200~', '').replace('\x1b[201~', '') : '';
-  const pasteAt = mine.findIndex((w) => w.data.includes('\x1b[200~'));
-  const enterAfter = pasteAt >= 0 && mine.slice(pasteAt + 1).some((w) => w.data === '\r');
+  const pasteAt = mine().findIndex((w) => w.data.includes('\x1b[200~'));
+  const enterAfter = pasteAt >= 0 && mine().slice(pasteAt + 1).some((w) => w.data === '\r');
   const otherWrites = S.writes.filter((w) => w.id !== pane.ptyId).length;
   const activeIsOrigin = tm.getActiveTab() === S.originTab;
   const status = root().querySelector('.review-status').textContent;
-
-  // Claude asks something (7501 blocked): refused, nothing written.
-  const term = pane.terminalView.terminal;
-  await new Promise((r) => term.write('\x1b]7501;state=blocked:kind=permission:app=claude-code\x07', r));
-  await sleep(100);
-  tm.switchToId(S.reviewTab.id);
-  await sleep(200);
-  S.writes.length = 0;
-  root().querySelector('.review-claude-btn').click();
-  await sleep(600);
-  const note = root().querySelector('.review-note');
-  const blocked = { note: note.textContent, visible: !note.hidden && note.offsetParent !== null, writes: S.writes.filter((w) => w.id === pane.ptyId).length };
-  await new Promise((r) => term.write('\x1b]7501;state=idle:app=claude-code\x07', r));
+  const labelAfter = btn().textContent;
+  const disabledAfter = btn().disabled;
+  const markedSent = /sent to Claude/.test(root().querySelector('.review-comment-meta')?.textContent || '');
   // The next document opens from the Claude pane, as a link in it would.
   tm.switchToId(S.originTab.id);
   await sleep(200);
-  return { pasted: pastes.length, message, enterAfter, otherWrites, activeIsOrigin, status, blocked };
+  return { labelBefore, pasted: pastes.length, message, enterAfter, otherWrites, activeIsOrigin, status, labelAfter, disabledAfter, markedSent, blocked, between };
+}
+
+// The front review tab's state, and the session as it would be saved.
+async function pageReviewState() {
+  const tm = window.__tm;
+  const view = tm.reviewTabs.viewOf(tm.getActiveTab());
+  if (!view) return { error: 'no review tab in front' };
+  const r = view.element;
+  const n = r.querySelector('.review-note');
+  const orig = window.patton;
+  let saved = null;
+  window.patton = new Proxy(orig, { get: (t, k) => (k === 'session' ? { set: async (x) => { saved = x; }, get: async () => null } : t[k]) });
+  try { await tm.saveSession(); } finally { window.patton = orig; }
+  return {
+    note: n.hidden ? '' : n.textContent, status: r.querySelector('.review-status').textContent,
+    canvases: r.querySelectorAll('.review-page canvas').length, tabs: tm.tabs.length,
+    reviews: tm.tabs.filter((t) => tm.reviewTabs.viewOf(t)).length,
+    savedTabs: saved ? saved.tabs.length : -1, savedActive: saved ? saved.activeTabIndex : -1,
+  };
+}
+
+// Close the front review tab, then Reopen Closed Tab.
+async function pageCloseReview() {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const tm = window.__tm;
+  const tab = tm.getActiveTab();
+  const view = tm.reviewTabs.viewOf(tab);
+  const docId = view.deps.info.docId;
+  const before = tm.tabs.length;
+  await tm.closeById(tab.id);
+  await sleep(300);
+  const main = await window.__ipc.invoke('review:layout', docId);
+  const afterClose = tm.tabs.length;
+  await tm.reopenClosed();
+  await sleep(300);
+  return { before, afterClose, afterReopen: tm.tabs.length, disposed: view.disposed, mainWhy: main && main.why, inDom: document.body.contains(view.element) };
+}
+
+// The long file: only pages near the view keep a canvas while he scrolls
+// through all of it; each page is drawn when it comes into view; switching
+// tabs and back keeps what shows.
+async function pageLong(arg) {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const S = window.__S;
+  const tm = window.__tm;
+  let view = null;
+  for (let i = 0; i < 400; i++) {
+    const tab = tm.getActiveTab();
+    view = tab && tm.reviewTabs.viewOf(tab);
+    if (view && view.pageCount === arg.pages && view.element.querySelectorAll('.review-page canvas').length > 0) break;
+    await sleep(100);
+  }
+  if (!view) return { error: 'no view' };
+  const root = view.element;
+  const canvasBytes = () => [...root.querySelectorAll('.review-page canvas')].reduce((n, c) => n + c.width * c.height * 4, 0);
+  let maxDrawn = 0; let maxBytes = 0; let allDrew = true;
+  for (let i = 0; i < view.pageCount; i++) {
+    const slot = root.querySelector(`.review-page[data-page="${i}"]`);
+    slot.scrollIntoView({ block: 'start' });
+    let drew = false;
+    for (let k = 0; k < 60 && !drew; k++) { drew = !!slot.querySelector('canvas') && !!slot.querySelector('.review-text-layer span'); if (!drew) await sleep(50); }
+    allDrew = allDrew && drew;
+    maxDrawn = Math.max(maxDrawn, view.drawnPages ?? root.querySelectorAll('.review-page canvas').length);
+    maxBytes = Math.max(maxBytes, canvasBytes());
+  }
+  await sleep(300);
+  const drawnAtEnd = root.querySelectorAll('.review-page canvas').length;
+  // Away to the Claude tab and back: the page in view still shows.
+  const here = tm.getActiveTab();
+  const statusBefore = root.querySelector('.review-status').textContent;
+  tm.switchToId(S.originTab.id);
+  await sleep(400);
+  const drawnWhileHidden = root.querySelectorAll('.review-page canvas').length;
+  tm.switchToId(here.id);
+  await sleep(50);
+  const last = root.querySelector(`.review-page[data-page="${view.pageCount - 1}"]`);
+  const backShows = !!last.querySelector('canvas') && root.querySelector('.review-status').textContent === statusBefore;
+  return { pages: view.pageCount, maxDrawn, maxMB: Math.round(maxBytes / 1048576), allDrew, drawnAtEnd, drawnWhileHidden, backShows, dpr: window.devicePixelRatio };
 }
 
 async function pageDrive() {
