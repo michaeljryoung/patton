@@ -241,6 +241,28 @@ try {
   const after = p2.push(text.slice(linkLine + 40));
   check('the carried-over line parses once completed', after.some((e) => e.label === 'A label'), after.length);
   check('fixture ends with a whole line', lastLineStart < text.length);
+
+  // Turn activity (the turn-end ring): newest assistant line and newest blocked Stop per push,
+  // read beside the events, which stay as they were.
+  {
+    const ta = new TranscriptParser({ home: HOME, now: () => 0 });
+    const line = (o) => JSON.stringify({ parentUuid: 'a', isSidechain: false, ...o }) + '\n';
+    const evs = ta.push(
+      line({ type: 'assistant', timestamp: '2026-11-22T19:37:51.000Z', message: { content: [{ type: 'text', text: 'done' }] } })
+      + line({ type: 'attachment', timestamp: '2026-11-22T19:37:58.600Z', attachment: { type: 'hook_blocking_error', hookName: 'Stop', hookEvent: 'Stop', blockingError: { blockingError: 'x' } } })
+      + line({ type: 'assistant', timestamp: '2026-11-22T19:38:05.000Z', message: { content: [{ type: 'text', text: 'again' }] } }),
+    );
+    check('turn activity: the parser\'s own events carry none', !evs.some((e) => e.type === 'turn-activity'), evs);
+    const act = ta.turnActivity?.() ?? [];
+    check('turn activity: a blocked Stop at its line time', act.some((e) => e.why === 'stop-blocked' && e.at === Date.parse('2026-11-22T19:37:58.600Z')), act);
+    check('turn activity: the newest assistant line', act.some((e) => e.why === 'assistant' && e.at === Date.parse('2026-11-22T19:38:05.000Z')), act);
+    ta.push(line({ type: 'user', timestamp: '2026-11-22T19:39:00.000Z', message: { role: 'user', content: 'Stop hook feedback:\nnumber straight through' } }));
+    const act2 = ta.turnActivity();
+    check('turn activity: a "Stop hook feedback" prompt is a blocked Stop; nothing carried from the last push', act2.length === 1 && act2[0].why === 'stop-blocked', act2);
+    ta.push(line({ type: 'attachment', timestamp: '2026-11-22T19:39:01.000Z', attachment: { type: 'hook_blocking_error', hookEvent: 'PreToolUse' } })
+      + line({ type: 'assistant', isSidechain: true, timestamp: '2026-11-22T19:39:02.000Z', message: { content: [{ type: 'text', text: 'sub' }] } }));
+    check('turn activity: another event\'s block and a sidechain line give none', ta.turnActivity().length === 0, ta.turnActivity());
+  }
 } finally {
   rmSync(work, { recursive: true, force: true });
 }

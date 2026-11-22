@@ -439,6 +439,40 @@ async function paneChecks() {
     advance(30_000); t.hook(1, 0); advance(100);
     check(`prompt (${via}): that turn's end (subagent still running) rings again`, t.pane.claudeState.activity === 'parked', t.pane.claudeState.activity);
   }
+  // Q: BLOCKED STOP. Another Stop hook (the closing-block gate) blocks the stop the ring came from:
+  // Claude carries on with the root still working. main's transcript feed shows the block (and then
+  // Claude writing again): the ring goes back to working, and the continuation's own Stop rings again.
+  const feed = (t, why, at) => t.pane.applyFeedEvent(1, { type: 'turn-activity', why, at });
+  for (const first of ['stop-blocked', 'assistant']) {
+    logs.length = 0;
+    const t = newPane();
+    t.pane.ptyId = 1; // a Claude pane on pty 1 follows its feed (syncSessionFeed)
+    t.root('working'); advance(1000); t.child('a1', 'working', { title: 'agent' }); advance(4000);
+    const stopAt = now; t.hook(1, 0); advance(100);
+    check(`blocked (${first}): ring after the Stop`, t.pane.claudeState.activity === 'parked', t.pane.claudeState.activity);
+    feed(t, 'assistant', stopAt - 30);                 // the turn's own last line, read late
+    check(`blocked (${first}): the turn's own last assistant line keeps the ring`, t.pane.claudeState.activity === 'parked', t.pane.claudeState.activity);
+    if (first === 'stop-blocked') {
+      advance(7000); feed(t, 'stop-blocked', stopAt - 40); // written as the hooks finish
+    } else {
+      advance(15_000); feed(t, 'assistant', now - 500);    // Claude writing again
+    }
+    check(`blocked (${first}): working again, no alert`, t.pane.claudeState.activity === 'working' && t.pane.claudeState.parked === null && t.ev.alerts === 0, [t.pane.claudeState.activity, t.ev.alerts]);
+    check(`blocked (${first}): logged as a new turn`, newTurnLogs().some((l) => l[1].via === first), newTurnLogs());
+    advance(20_000);
+    const stop2 = now; t.hook(1, 0); advance(100);
+    check(`blocked (${first}): the continuation's Stop rings again`, t.pane.claudeState.activity === 'parked', t.pane.claudeState.activity);
+    feed(t, 'stop-blocked', stop2 - 5000);             // the earlier stop's block, read late
+    check(`blocked (${first}): an older stop's block keeps the new ring`, t.pane.claudeState.activity === 'parked', t.pane.claudeState.activity);
+  }
+  // Q2: feed activity with no ring does nothing
+  {
+    const t = newPane();
+    t.pane.ptyId = 1; // a Claude pane on pty 1 follows its feed (syncSessionFeed)
+    t.root('working'); advance(1000); t.hook(0, 0); advance(500); t.root('done'); advance(1700);
+    feed(t, 'assistant', now);
+    check('feed activity without a ring changes nothing', t.ev.alerts === 1 && t.pane.claudeState.activity === 'waiting', [t.ev.alerts, t.pane.claudeState.activity]);
+  }
   // P: GENOME (main.log 22 Nov 2026, pane-9), timed as logged: background shells, no child records,
   // the hook (2 tasks) then a done -> parked by the hook, unchanged.
   {

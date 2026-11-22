@@ -247,10 +247,16 @@ export class Pane {
   // it launched runs, and sends no done at all (22 Nov 2026, House tab). The
   // pane shows the ring until a new turn: any change of the root or of the
   // working children (turnEndedAfterChange), or his own send
-  // (noteTurnSubmitted). See endedTurnSignal. Known and left: when another
-  // Stop hook blocks that stop, Claude carries on under the ring until its
-  // next Stop or a child changes (Patton's hook can't see the block).
+  // (noteTurnSubmitted), or the transcript moving on after the Stop: another
+  // Stop hook blocked it, or Claude wrote again (noteTurnActivity; 7501 says
+  // nothing, and Patton's hook, running beside the blocking one, can't see it).
+  // See endedTurnSignal.
   private turnEnded = false;
+  /** When the Stop that set turnEnded arrived. */
+  private turnEndedAtMs = 0;
+  // A blocked Stop's transcript line is written as the hooks finish, around
+  // the time Patton's own verdict lands, so it counts from a little before.
+  private static readonly STOP_BLOCKED_SLACK_MS = 2000;
   private lastWorkingChildren = 0;
   private rootDoneAtMs: number | null = null;
   private lastRootState: ProgramState | null = null;
@@ -892,6 +898,7 @@ export class Pane {
       else if (turnEndedOverWork(this.lastRootState, this.lastWorkingChildren)) {
         rlog('info', '[DOT] Turn ended over a working root', { pane: this.id, tasks, crons, children: this.lastWorkingChildren });
         this.turnEnded = true;
+        this.turnEndedAtMs = Date.now();
         this.applyProgramStatus();
       }
       return;
@@ -1169,6 +1176,10 @@ export class Pane {
     // Late events for a session the pane no longer follows are dropped.
     if (this.feedPtyId === null || ptyId !== this.feedPtyId) return;
     this.feedWatch.noteEvent(event);
+    if (event.type === 'turn-activity') {
+      this.noteTurnActivity(event.why, event.at);
+      return;
+    }
     if (event.type === 'error') {
       rlog('warn', '[BAR] feed error', { pane: this.id, why: event.why });
     }
@@ -2352,15 +2363,26 @@ export class Pane {
     if (this.turnEnded && this.claudeBarHoldsText()) this.noteTurnSubmitted('enter');
   }
 
+  /** The session's transcript (main's feed) moved on after the Stop that set
+   *  the ring: another Stop hook blocked it (Claude carries on), or Claude
+   *  wrote again. Either way Claude is working, though 7501 says nothing new. */
+  private noteTurnActivity(why: 'assistant' | 'stop-blocked', at: number): void {
+    if (!this.turnEnded) return;
+    const from = why === 'stop-blocked' ? this.turnEndedAtMs - Pane.STOP_BLOCKED_SLACK_MS : this.turnEndedAtMs;
+    if (why === 'assistant' ? at <= from : at < from) return;
+    this.noteTurnSubmitted(why);
+  }
+
   private claudeBarHoldsText(): boolean {
     const reading = readClaudeBar(this.terminalView.terminal.buffer.active);
     return reading.found && !reading.empty;
   }
 
-  /** A message went to Claude while the turn-end ring showed over a working
-   *  root: 7501 sends nothing (the root already works), so this is the new
-   *  turn's only sign. The verdict was that turn's; the pane goes to working. */
-  private noteTurnSubmitted(via: 'enter' | 'compose'): void {
+  /** A message went to Claude, or its transcript moved on, while the turn-end
+   *  ring showed over a working root: 7501 sends nothing (the root already
+   *  works), so this is the new turn's only sign. The verdict was that turn's;
+   *  the pane goes to working. */
+  private noteTurnSubmitted(via: 'enter' | 'compose' | 'assistant' | 'stop-blocked'): void {
     if (!this.turnEnded) return;
     this.turnEnded = false;
     rlog('info', '[DOT] Hook verdict cleared: new turn', {
