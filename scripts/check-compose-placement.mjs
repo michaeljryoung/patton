@@ -1061,23 +1061,201 @@ const newPane = async () => {
     p.dispose();
   }
 
-  // 9.6 An Esc long after the send (a menu, not the turn): no watch.
-  {
+  // ── Synthesized bars (the same frame Claude draws: a rule, `❯ ` and
+  //    two-space rows, a rule, the footer, the cursor at the text's end) for
+  //    the cases the recording has no screen for. ──
+  const drawBar = async (p, rowsIn) => {
+    const t = term(p);
+    const rule = '─'.repeat(t.cols);
+    const body = rowsIn.map((r, i) => (i === 0 ? `❯ ${r}` : `  ${r}`)).join('\r\n');
+    const col = 3 + [...rowsIn[rowsIn.length - 1]].length;
+    await write(t, `\x1b[2J\x1b[H${rule}\r\n${body}\r\n${rule}\r\n  ? for shortcuts\x1b[${1 + rowsIn.length};${col}H`);
+    await frames();
+  };
+  const escInTerminal = async (p) => { view(p).__emit('onTerminalData', '\x1b'); await frames(); };
+  const typeInTerminal = async (p, d) => { view(p).__emit('onTerminalData', d); await frames(); };
+  /** A pane over an empty bar, `text` sent from the box, Claude `working`
+   *  `workingAt` ms later (null: never reported), then `wait` ms. */
+  const sent = async (text, { workingAt = 100, wait = 1400, before } = {}) => {
     const p = await newPane();
-    const f = erFeeder(p);
-    await f.to('single-send');
-    await sendFromBox(p, T.single);
+    await drawBar(p, ['']);
+    if (before) await before(p);
+    await sendFromBox(p, text);
     advance(10);
-    state(p, 'working');
-    await f.to('single-esc');
-    advance(12_000);
+    if (workingAt !== null) { advance(workingAt - 10); state(p, 'working'); advance(wait); } else advance(wait);
+    writes.length = 0; logs.length = 0;
+    return p;
+  };
+  const S1 = 'Stop and say hi.';
+
+  // 9.6 An Esc after the send's turn has ended (Claude went idle, another
+  //     turn runs): not the send's turn, no watch.
+  {
+    const p = await sent(S1);
+    state(p, 'idle');
+    advance(1000);
+    state(p, 'working'); // a turn Patton didn't start (a task's notification)
+    advance(500);
     writes.length = 0; logs.length = 0;
     await escInBox(p);
-    await f.to('single-restored');
+    await drawBar(p, [S1]);
     state(p, 'idle');
     await frames();
-    check('9.6 Esc 12 s after the send: nothing taken back, nothing typed but the Esc',
-      p.editorInput.getValue() === '' && strings().length === 1 && ofTag('restored').length === 0, strings());
+    check('9.6 Esc after the send\'s turn ended: nothing taken back, nothing typed but the Esc',
+      p.editorInput.getValue() === '' && strings().join('|') === '\x1b' && ofTag('restored').length === 0, strings());
+    p.dispose();
+  }
+  // 9.6b A send that never started a turn (no `working`), Esc 5 s later: no watch.
+  {
+    const p = await sent(S1, { workingAt: null, wait: 5000 });
+    await escInBox(p);
+    await drawBar(p, [S1]);
+    state(p, 'idle');
+    await frames();
+    check('9.6b a send that started no turn, Esc 5 s on: nothing typed but the Esc',
+      p.editorInput.getValue() === '' && strings().join('|') === '\x1b', strings());
+    p.dispose();
+  }
+
+  // 9.7 Long thinking (review finding 2): Esc 15 s after the send while the
+  //     turn still works; Claude goes idle before it redraws the bar.
+  {
+    const p = await sent(S1, { wait: 15_000 });
+    await escInBox(p);
+    state(p, 'idle');
+    await frames();
+    check('9.7 Esc 15 s into the turn: nothing typed before the bar is back', strings().join('|') === '\x1b', strings());
+    await drawBar(p, [S1]);
+    check('9.7 ...idle before the redraw, then the bar: the box holds the message, Ctrl+C once',
+      p.editorInput.getValue() === S1 && strings().join('|') === '\x1b|\x03', strings());
+    const wl = ofTag('restore watch');
+    check('9.7 ...logged restore watch {from box, started}, no text', wl.length === 1 && wl[0].from === 'box' && wl[0].started === true
+      && !JSON.stringify(logs).includes(S1), wl);
+    p.dispose();
+  }
+  // 9.7b Esc before Claude's first `working` report (within 2 s of the send).
+  {
+    const p = await sent(S1, { workingAt: null, wait: 500 });
+    await escInBox(p);
+    await drawBar(p, [S1]);
+    state(p, 'idle');
+    await frames();
+    check('9.7b Esc 0.5 s after the send, before any report: taken back, Ctrl+C', p.editorInput.getValue() === S1
+      && strings().join('|') === '\x1b|\x03', strings());
+    p.dispose();
+  }
+
+  // 9.8 Esc typed in the terminal (review finding 2), with a draft already
+  //     in the box: the message goes first, a line break, then the draft.
+  {
+    const p = await sent(S1, { wait: 3000 });
+    p.editorInput.setValue('my draft');
+    await escInTerminal(p);
+    await drawBar(p, [S1]);
+    state(p, 'idle');
+    await frames();
+    check('9.8 terminal Esc, draft in the box: the box holds message, break, draft', p.editorInput.getValue() === `${S1}\nmy draft`,
+      p.editorInput.getValue());
+    check('9.8 ...Claude\'s bar emptied with Ctrl+C once', strings().join('|') === '\x1b|\x03', strings());
+    check('9.8 ...restore watch {from terminal}', ofTag('restore watch')[0]?.from === 'terminal', ofTag('restore watch'));
+    p.dispose();
+  }
+  // 9.8b A key he types in the terminal during the watch is his own edit:
+  //      the watch ends, nothing typed; a focus report doesn't end it.
+  {
+    let p = await sent(S1);
+    await escInTerminal(p);
+    await typeInTerminal(p, 'x');
+    await drawBar(p, [`${S1}x`]);
+    state(p, 'idle');
+    await frames();
+    check('9.8b a key typed in the terminal after the Esc: nothing typed by Patton, the box empty',
+      strings().join('|') === '\x1b|x' && p.editorInput.getValue() === '', strings());
+    check('9.8b ...restore skipped {reason typed}', ofTag('restore skipped')[0]?.reason === 'typed', ofTag('restore skipped'));
+    p.dispose();
+    p = await sent(S1);
+    await escInTerminal(p);
+    await typeInTerminal(p, '\x1b[I');
+    await typeInTerminal(p, '\x1b[12;40R');
+    await drawBar(p, [S1]);
+    state(p, 'idle');
+    await frames();
+    check('9.8b ...a focus report and a cursor report don\'t end it: taken back', p.editorInput.getValue() === S1
+      && strings().slice(-1)[0] === '\x03', strings());
+    p.dispose();
+  }
+
+  // 9.9 Images in the sent message: Backspace per character, the images stay
+  //     in Claude's bar and their thumbnails come back to the box.
+  {
+    const text = 'look at this';
+    const p = await sent(text, { before: async (q) => { await q.pasteImage('compose'); } });
+    check('9.9 (setup) the send cleared the thumbnail', p.pasteChips.length === 0, p.pasteChips.length);
+    await escInBox(p);
+    await drawBar(p, [`[Image #1] ${text}`]);
+    state(p, 'idle');
+    await frames();
+    check('9.9 images: the box holds the text, its thumbnail back', p.editorInput.getValue() === text && p.pasteChips.length === 1
+      && p.pasteChips[0].label === '800×600', { v: p.editorInput.getValue(), chips: p.pasteChips.length });
+    check('9.9 ...Claude\'s bar: one Backspace per character, no Ctrl+C', strings().join('|') === `\x1b|${'\x7f'.repeat(text.length)}`,
+      strings().map((d) => d.length));
+    check('9.9 ...bar cleared {keys backspace×12}', ofTag('bar cleared')[0]?.keys === `backspace×${text.length}`, ofTag('bar cleared'));
+    p.dispose();
+  }
+
+  // 9.10 A second send between the Esc and Claude's restore ends the watch.
+  {
+    const p = await sent(S1);
+    await escInBox(p);
+    await sendFromBox(p, 'second message');
+    advance(10);
+    writes.length = 0;
+    await drawBar(p, [S1]);
+    state(p, 'idle');
+    await frames();
+    check('9.10 a second send after the Esc: no Ctrl+C or Backspace, nothing restored',
+      !strings().some((d) => d.includes('\x03') || d.includes('\x7f')) && ofTag('restored').length === 0 && p.editorInput.getValue() === '',
+      { w: strings(), v: p.editorInput.getValue() });
+    p.dispose();
+  }
+
+  // 9.11 The 3 s watch: Claude still working when it ends, or no text back.
+  {
+    let p = await sent(S1);
+    await escInBox(p);
+    await drawBar(p, [S1]);
+    advance(3000);
+    check('9.11 still working 3 s after the Esc: restore skipped {reason still-working}',
+      ofTag('restore skipped')[0]?.reason === 'still-working', ofTag('restore skipped'));
+    state(p, 'idle');
+    await frames();
+    check('9.11 ...idle after that: nothing typed, the box empty', strings().join('|') === '\x1b' && p.editorInput.getValue() === '', strings());
+    p.dispose();
+    p = await sent(S1);
+    await escInBox(p);
+    state(p, 'idle');
+    await frames();
+    advance(3000);
+    check('9.11 idle, the bar empty for 3 s: restore skipped {reason no-text}', ofTag('restore skipped')[0]?.reason === 'no-text',
+      ofTag('restore skipped'));
+    await drawBar(p, [S1]);
+    check('9.11 ...the bar holding it later: nothing typed', strings().join('|') === '\x1b' && p.editorInput.getValue() === '', strings());
+    p.dispose();
+  }
+
+  // 9.12 Review finding 1: he pasted 40 lines into Claude's own bar (Claude
+  //      shows `[Pasted text #1 +39 lines]`), sent "hello" from the box after
+  //      it, Esc. Ctrl+C would wipe his paste: nothing typed, the note shows.
+  {
+    const p = await sent('hello');
+    await escInBox(p);
+    await drawBar(p, ['[Pasted text #1 +39 lines] hello']);
+    state(p, 'idle');
+    await frames();
+    check('9.12 his own paste before the sent text: no Ctrl+C, nothing typed but the Esc', strings().join('|') === '\x1b', strings());
+    check('9.12 ...the box empty, restore skipped {reason not-readable}, the note shows',
+      p.editorInput.getValue() === '' && ofTag('restore skipped')[0]?.reason === 'not-readable' && noteShown(p),
+      { v: p.editorInput.getValue(), sk: ofTag('restore skipped') });
     p.dispose();
   }
 }

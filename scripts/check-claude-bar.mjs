@@ -231,9 +231,29 @@ for (const [label, line, col, want] of [
     p = planEscRestore('héllo 👍🏽\nx', one(['[Image #1] héllo 👍🏽', 'x'], { images: 1 }));
     check('D18 plan: with images, Backspace per character of the text (graphemes, the break included), images kept',
       p.source === 'sent' && p.keepImages && p.keys === CLAUDE_BACKSPACE.repeat(9), { keys: p.keys?.length });
+    const forty = Array.from({ length: 41 }, (_, i) => `line ${i + 1}`).join('\n'); // 40 line breaks
+    p = planEscRestore(`intro ${forty}`, one(['intro [Pasted text #1 +40 lines]'], { pasted: true }));
+    check('D18 plan: a [Pasted text] placeholder after the start of what was sent, its +40 lines the hidden part\'s 40 breaks -> sent',
+      p.source === 'sent' && p.keys === CLAUDE_CLEAR_INPUT, p);
+    const ten = Array.from({ length: 10 }, (_, i) => `row ${i}`).join('\n'); // 9 breaks, 11 with its edges
+    p = planEscRestore(`see:\n${ten}\nthanks`, one(['see:', '[Pasted text #1 +9 lines]', 'thanks'], { pasted: true }));
+    check('D18 plan: text before and after the placeholder, the start and end of what was sent -> sent', p.source === 'sent', p);
+    p = planEscRestore(`see:\n${ten}\nthanks`, one(['see:', '[Pasted text #1 +11 lines]', 'thanks'], { pasted: true }));
+    check('D18 plan: ...the edges\' breaks counted too (+11) -> sent', p.source === 'sent', p);
+    // Review finding 1: a paste he made in Claude's own bar, his send typed after it.
+    p = planEscRestore('hello', one(['[Pasted text #1 +39 lines] tail'], { pasted: true }));
+    check('D18 plan: a bar starting with his own paste, then other text -> not-readable, no Ctrl+C', p.skip === 'not-readable', p);
+    p = planEscRestore('hello', one(['[Pasted text #1 +39 lines] hello'], { pasted: true }));
+    check('D18 plan: his own paste, then exactly what was sent -> not-readable (nothing of the send behind the placeholder)', p.skip === 'not-readable', p);
+    p = planEscRestore('hello', one(['[Pasted text #1]hello'], { pasted: true }));
+    check('D18 plan: his own one-line paste, then what was sent -> not-readable', p.skip === 'not-readable', p);
     p = planEscRestore('intro then a long paste', one(['intro [Pasted text #1 +40 lines]'], { pasted: true }));
-    check('D18 plan: a [Pasted text] placeholder after the start of what was sent -> sent', p.source === 'sent' && p.keys === CLAUDE_CLEAR_INPUT, p);
-    p = planEscRestore('x', one(['[Image #1] x [Pasted text #1 +40 lines]'], { images: 1, pasted: true }));
+    check('D18 plan: the start matches but +40 lines is not the rest\'s 0 breaks -> not-readable', p.skip === 'not-readable', p);
+    p = planEscRestore(`a ${forty} b ${forty}`, one(['a [Pasted text #1 +40 lines] b [Pasted text #2 +40 lines]'], { pasted: true }));
+    check('D18 plan: two placeholders -> not-readable', p.skip === 'not-readable', p);
+    p = planEscRestore(`x ${forty}`, one(['x [Pasted text #1 something else]'], { pasted: true }));
+    check('D18 plan: a placeholder not in Claude\'s form -> not-readable', p.skip === 'not-readable', p);
+    p = planEscRestore(`x ${forty}`, one(['[Image #1] x [Pasted text #1 +40 lines]'], { images: 1, pasted: true }));
     check('D18 plan: images and a pasted placeholder -> skip', p.skip === 'images-and-paste', p);
     p = planEscRestore('sent', one(['typed in the bar sent']));
     check('D18 plan: one foreign row -> screen, Ctrl+C', p.source === 'screen' && p.text === 'typed in the bar sent' && p.keys === CLAUDE_CLEAR_INPUT, p);
@@ -243,6 +263,15 @@ for (const [label, line, col, want] of [
     check('D18 plan: a foreign row with an image -> not-readable (Ctrl+C would drop the image)', p.skip === 'not-readable', p);
     p = planEscRestore('sent', one(['typed [Pasted text #2 +9 lines]'], { pasted: true }));
     check('D18 plan: a foreign row with a pasted placeholder -> not-readable', p.skip === 'not-readable', p);
+
+    const { isEscKey, isTypedInput } = er;
+    check('D18 Esc keys: plain and CSI u', isEscKey('\x1b') && isEscKey('\x1b[27u') && !isEscKey('\x1b[A') && !isEscKey('x'));
+    const typed = ['a', 'hello', '\r', '\x7f', '\x03', '\x15', '\x1bb', '\x1b[A', '\x1bOB', '\x1b[1;5D', '\x1b[3~', '\x1b[13;2u', '\x1b[200~pasted\x1b[201~'];
+    const notTyped = ['\x1b', '\x1b[27u', '\x1b[I', '\x1b[O', '\x1b[12;40R', '\x1b[?1;2c', '\x1b[<0;10;5M', '\x1b[<0;10;5m', ''];
+    check('D18 typed input: text, Enter, Backspace, control, Alt, arrows, editing keys, a paste',
+      typed.every(isTypedInput), typed.filter((d) => !isTypedInput(d)).map((d) => JSON.stringify(d)));
+    check('D18 not typed: Esc, focus and mouse reports, xterm\'s replies to queries',
+      !notTyped.some(isTypedInput), notTyped.filter(isTypedInput).map((d) => JSON.stringify(d)));
   }
 }
 

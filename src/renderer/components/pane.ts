@@ -34,7 +34,8 @@ import {
 } from '../services/compose-aside';
 import { readClaudeBar, type BarMissReason } from '../services/claude-bar';
 import {
-  ESC_RESTORE_AFTER_SEND_MS, ESC_RESTORE_WATCH_MS, describeClearKeys, planEscRestore, readClaudeBarInput,
+  ESC_RESTORE_UNSTARTED_MS, ESC_RESTORE_WATCH_MS, describeClearKeys, isEscKey, isTypedInput, planEscRestore,
+  readClaudeBarInput,
 } from '../services/esc-restore';
 import {
   COMPOSE_BAR_LOST_MS, COMPOSE_BAR_NOT_FOUND_LOG_MS, COMPOSE_OVERLAY_MAX_FRACTION, COMPOSE_OWN_TYPING_MS,
@@ -433,9 +434,12 @@ export class Pane {
   // in the overlays with a draft in it; announced once per aside.
   private draftNote!: HTMLElement;
   // D18: the last send from the box (Patton's own copy, its images with it),
-  // and the watch an Esc soon after it arms: Claude Code puts an interrupted
+  // and the watch an Esc during its turn arms: Claude Code puts an interrupted
   // message back into its own bar, and the box takes it back from there.
-  private lastBoxSend: { text: string; atMs: number; chips: { dataUrl: string; label: string }[] } | null = null;
+  // `started`: Claude's 7501 root has been `working` or `blocked` since the
+  // send; once it then reports `idle`, `done` or `error` the turn is over and
+  // the send is forgotten (an Esc then is not stopping it).
+  private lastBoxSend: { text: string; atMs: number; chips: { dataUrl: string; label: string }[]; started: boolean } | null = null;
   private escRestore: { send: { text: string; chips: { dataUrl: string; label: string }[] }; deadline: number; timer: ReturnType<typeof setTimeout> } | null = null;
   // D18: shown in the box when Claude's bar holds text Patton couldn't take
   // in whole: it goes before the box's text on the next send.
@@ -688,6 +692,7 @@ export class Pane {
     this.claudeActive = isClaude;
     if (isClaude) this.feedWatch.claudeReport();
     this.claudeBlocked = rootState === 'blocked';
+    this.noteSendTurn(rootState);
     if (rootState !== null && rootState !== 'idle') this.hadTurn = true;
     try {
       if (signal.kind === 'working') {
@@ -1791,6 +1796,10 @@ export class Pane {
     const termDataDispose = this.terminalView.onTerminalData((data) => {
       if (this.ptyId !== null) {
         window.patton.pty.write(this.ptyId, data, data.includes('\x03') ? this.atPromptOrigin : undefined);
+        // D18: an Esc typed in the terminal stops the turn as one from the box
+        // does; any other key he types is his own edit of Claude's bar.
+        if (isEscKey(data)) this.armEscRestore('terminal');
+        else if (this.escRestore !== null && isTypedInput(data)) this.endEscRestore('typed');
         // A lone Enter sends the message: a paste arrives as one larger string and
         // Shift+Enter as `\x1b[13;2u`, neither is exactly '\r'.
         if (data === '\r') this.noteEnterSent();
@@ -1962,7 +1971,9 @@ export class Pane {
     if (command.trim()) {
       this.historyManager.add(command);
     }
-    this.lastBoxSend = this.composeFirstEngaged && command.trim() !== '' ? { text: command, atMs: Date.now(), chips } : null;
+    // Sent while a turn runs (queued): that turn is the one an Esc stops.
+    const started = this.statusReporting && (this.claudeWorking || this.claudeBlocked);
+    this.lastBoxSend = this.composeFirstEngaged && command.trim() !== '' ? { text: command, atMs: Date.now(), chips, started } : null;
     this.historyManager.resetCursor();
     return true;
   }
@@ -3307,14 +3318,27 @@ export class Pane {
     if (key === 'Escape') this.terminalView.focus(); // a click focuses xterm itself
   }
 
-  /** D18: Esc forwarded from the empty box. Soon after a send from the box it
-   *  most likely stopped that turn, and Claude Code then puts the message back
-   *  into its own bar (probed: 60-80 ms): watch for it. One watch per send. */
-  private armEscRestore(): void {
+  /** D18: an Esc reached Claude, from the empty box or typed in the terminal.
+   *  While the last send from the box started the turn that is still the
+   *  current one (however long Claude thinks), it most likely stopped that
+   *  turn, and Claude Code then puts the message back into its own bar
+   *  (probed: 60-80 ms): watch for it. One watch per send. */
+  private armEscRestore(from: 'box' | 'terminal'): void {
     const send = this.lastBoxSend;
-    if (send === null || Date.now() - send.atMs > ESC_RESTORE_AFTER_SEND_MS) return;
+    if (send === null || !this.composeFirstEngaged) return;
+    if (!send.started && Date.now() - send.atMs > ESC_RESTORE_UNSTARTED_MS) {
+      this.lastBoxSend = null; // that send never started a turn (a local command)
+      return;
+    }
+    // An Esc that answers Claude's question or permission prompt says no to
+    // it; it is not stopping the message (and nothing is typed while it asks).
+    if (this.claudeAsksNow()) return;
     this.lastBoxSend = null;
     this.endEscRestore(null);
+    if (!this.statusReporting) {
+      rlog('info', '[COMPOSE] restore skipped', { pane: this.id, reason: 'no-status' });
+      return;
+    }
     // Claude's redraw with the message back is caused by this key: like the
     // box's own typing, it doesn't count toward going under (D9).
     this.noteOwnTyping();
@@ -3324,6 +3348,15 @@ export class Pane {
       if (this.escRestore?.timer === timer) this.endEscRestore(this.claudeWorking ? 'still-working' : 'no-text');
     }, ESC_RESTORE_WATCH_MS);
     this.escRestore = { send: { text: send.text, chips: send.chips }, deadline: Date.now() + ESC_RESTORE_WATCH_MS, timer };
+    rlog('info', '[COMPOSE] restore watch', { pane: this.id, from, sinceSendMs: Date.now() - send.atMs, started: send.started });
+  }
+
+  /** D18: the send's turn from Claude's 7501 root: begun, or over. */
+  private noteSendTurn(rootState: string | null): void {
+    const send = this.lastBoxSend;
+    if (send === null) return;
+    if (rootState === 'working' || rootState === 'blocked') send.started = true;
+    else if (send.started) this.lastBoxSend = null;
   }
 
   /** End the watch; with a reason, log why nothing was restored. */
@@ -3409,7 +3442,8 @@ export class Pane {
     if (seq === null) return false;
     window.patton.pty.write(this.ptyId, seq);
     if (seq === '\r') this.noteEnterSent();
-    if (seq === '\x1b') this.armEscRestore();
+    if (seq === '\x1b') this.armEscRestore('box');
+    else if (this.escRestore !== null) this.endEscRestore('typed'); // his own key for Claude's bar
     this.terminalView.terminal.scrollToBottom(); // as xterm's scrollOnUserInput would
     rlog('info', '[COMPOSE] handoff', {
       pane: this.id, key: e.shiftKey ? `Shift+${e.key}` : e.key, route: 'pty',

@@ -1,9 +1,10 @@
 import { CLAUDE_BAR_GLYPH, readClaudeBar, type BarBuffer, type BarLine } from './claude-bar';
 
 /**
- * Esc after a send (docs/compose-box.md D18). When he presses Esc in the
- * empty compose box shortly after sending from it, Patton hands the Escape to
- * Claude Code, which interrupts the turn and, before any answer, puts the
+ * Esc after a send (docs/compose-box.md D18). When he presses Esc (in the
+ * empty compose box or in the terminal) during the turn his last send from
+ * the box started, the Escape reaches Claude Code, which interrupts the
+ * turn and, before any answer, puts the
  * message back into its own input bar. His next Enter in the box would then
  * send that message and the box's text as one. Patton instead takes the
  * message back into the box and empties Claude's bar.
@@ -21,9 +22,13 @@ import { CLAUDE_BAR_GLYPH, readClaudeBar, type BarBuffer, type BarLine } from '.
  * bar reader (services/claude-bar.ts).
  */
 
-/** An Esc this soon after a send from the box arms the watch. The five
- *  cases in main.log (20-22 Nov 2026) pressed Esc 0.97-2.1 s after the send. */
-export const ESC_RESTORE_AFTER_SEND_MS = 10_000;
+/** An Esc arms the watch while the last send from the box started the turn
+ *  that is still the current one (Claude's 7501 root went `working` or
+ *  `blocked` after it and has not since reported `idle`, `done` or `error`),
+ *  however long Claude thinks. Before Claude's first report of the turn, an
+ *  Esc this soon after the send counts too: in main.log (20-22 Nov 2026)
+ *  `working` came 64-763 ms after the send. */
+export const ESC_RESTORE_UNSTARTED_MS = 2_000;
 
 /** How long after the Esc the watch waits for Claude to put the message back
  *  and stop working. Probed restore: 60-80 ms; in main.log Claude's `idle`
@@ -42,6 +47,11 @@ const MAX_INPUT_ROWS = 400;
 const RULE = /^─+$/;
 const IMAGE_PLACEHOLDER = /\[Image #\d+\]/g;
 const PASTED_PLACEHOLDER = /\[Pasted text #\d+[^\]]*\]/;
+const PASTED_PLACEHOLDERS = /\[Pasted text #\d+[^\]]*\]/g;
+/** Claude Code's form: `+N lines` is the pasted text's line-break count
+ *  (a 40-line paste shows `+39 lines`); none shown for a paste of one line. */
+const PASTED_EXACT = /^\[Pasted text #\d+(?: \+(\d+) lines?)?\]$/;
+const LINE_BREAK = /\r\n|\r|\n/g;
 
 export type BarInputReading =
   | { kind: 'none' }
@@ -120,25 +130,61 @@ function graphemes(s: string): number {
   return [...new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(s)].length;
 }
 
+function lineBreaks(s: string): number {
+  return (s.match(LINE_BREAK) ?? []).length;
+}
+
+/**
+ * Whether a bar showing one `[Pasted text #N +M lines]` placeholder holds
+ * `sent`: what it shows before the placeholder is the start of `sent`, what
+ * it shows after it is the end, at least one character of `sent` is left
+ * between them, and that part has M line breaks (give or take the line
+ * breaks at its two edges, which a wrapped row hides). A placeholder with
+ * nothing of `sent` behind it (a paste he made in Claude's own bar, his send
+ * typed after it) never matches, so Ctrl+C can't wipe that paste.
+ */
+function pasteHoldsSent(sent: string, shown: string): boolean {
+  const all = [...shown.matchAll(PASTED_PLACEHOLDERS)];
+  if (all.length !== 1) return false;
+  const exact = PASTED_EXACT.exec(all[0][0]);
+  if (exact === null) return false;
+  const claimed = exact[1] === undefined ? 0 : Number(exact[1]);
+  const at = all[0].index ?? 0;
+  const head = squeeze(shown.slice(0, at));
+  const tail = squeeze(shown.slice(at + all[0][0].length));
+  const whole = squeeze(sent);
+  if (!whole.startsWith(head) || !whole.endsWith(tail) || head.length + tail.length >= whole.length) return false;
+  // Where each non-blank character of `sent` sits, to find the hidden part.
+  const at0: number[] = [];
+  for (let i = 0; i < sent.length; i++) if (!/\s/.test(sent[i])) at0.push(i);
+  const first = at0[head.length];
+  const last = at0[whole.length - tail.length - 1];
+  const fewest = lineBreaks(sent.slice(first, last + 1));
+  const from = head.length === 0 ? 0 : at0[head.length - 1] + 1;
+  const to = tail.length === 0 ? sent.length : at0[whole.length - tail.length];
+  const most = lineBreaks(sent.slice(from, to));
+  return claimed >= fewest && claimed <= most;
+}
+
 /**
  * Whether the bar holds the message Patton just sent (`sent`, as typed into
  * Claude), and what to do. Compared with all whitespace removed, since a
  * wrapped line and a line break look the same on screen; Claude's
  * `[Image #N]` placeholders are the pasted images, not text. A
  * `[Pasted text]` placeholder stands for text the screen doesn't show: the
- * bar matches when what it shows before it is the start of `sent`.
- * Otherwise the bar must show exactly `sent`.
+ * bar matches only on the evidence `pasteHoldsSent` asks for. Otherwise the
+ * bar must show exactly `sent`.
  *
  * A bar holding anything else is text Patton didn't send (he typed in
  * Claude's bar): taken in from the screen only when it reads whole, one row,
- * no placeholders; else left where it is.
+ * no placeholders; else left where it is. Every plan that sends Ctrl+C has
+ * the bar's whole content in the box first.
  */
 export function planEscRestore(sent: string, input: { rows: string[]; images: number; pasted: boolean }): EscRestorePlan {
   const shown = input.rows.join('\n').replace(IMAGE_PLACEHOLDER, '');
   let matches: boolean;
   if (input.pasted) {
-    const prefix = shown.slice(0, shown.search(PASTED_PLACEHOLDER));
-    matches = squeeze(sent).startsWith(squeeze(prefix));
+    matches = pasteHoldsSent(sent, shown);
   } else {
     matches = squeeze(sent) !== '' && squeeze(shown) === squeeze(sent);
   }
@@ -153,6 +199,27 @@ export function planEscRestore(sent: string, input: { rows: string[]; images: nu
     return { source: 'screen', text: input.rows[0], keys: CLAUDE_CLEAR_INPUT, keepImages: false };
   }
   return { skip: 'not-readable' };
+}
+
+/** Esc as the terminal sends it (plain, or CSI u when Claude asks for it). */
+export function isEscKey(data: string): boolean {
+  return data === '\x1b' || data === '\x1b[27u';
+}
+
+/**
+ * Whether terminal input is a key he typed (text, Enter, Backspace, a control
+ * or Alt key, an arrow or editing key, a paste), as opposed to xterm's own
+ * replies to a program's queries, focus reports and mouse reports, which
+ * change nothing in Claude's bar. A typed key during the watch is his own
+ * edit of Claude's bar: the watch leaves the bar to him.
+ */
+export function isTypedInput(data: string): boolean {
+  if (data === '' || isEscKey(data)) return false;
+  if (data[0] !== '\x1b') return true;
+  if (data.length === 2 && data[1] !== '[' && data[1] !== 'O') return true; // Alt+key
+  if (data.startsWith('\x1b[200~')) return true; // a bracketed paste
+  // eslint-disable-next-line no-control-regex -- the keys are escape sequences
+  return /^\x1b\[[\d;]*[A-DHF~u]$/.test(data) || /^\x1bO[A-DHFPQRS]$/.test(data);
 }
 
 /** The keys as a log word, never the text: `ctrl-c` or `backspace×N`. */
