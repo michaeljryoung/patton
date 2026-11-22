@@ -48,6 +48,7 @@
     "esbuild": "0.28.2",
     "eslint": "9.39.5",
     "eslint-plugin-import": "2.32.0",
+    "pdfjs-dist": "6.5.438",
     "typescript": "5.7.3",
     "vite": "8.3.5"
   },

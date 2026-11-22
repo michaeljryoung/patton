@@ -13,6 +13,7 @@ import * as store from './store';
 import { registerClipboardImageHandlers } from './clipboard-image';
 import { registerSessionFeedHandlers } from './session-feed-ipc';
 import { registerPageTitleHandlers } from './page-titles-ipc';
+import { openReview, registerReviewHandlers } from './review-docs';
 import { getSystemFonts } from './system-fonts';
 import { RateLimiter } from './rate-limiter';
 import { titleBarActionFor } from './title-bar-action';
@@ -608,7 +609,10 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
   //   open   → shell.openPath, only for view-only types (text, images, PDF, HTML)
   //   reveal → shell.showItemInFolder: bundles, executables, installers,
   //            .webloc and friends, unknown types, code files with no editor
-  ipcMain.handle(IPC.APP_OPEN_IN_EDITOR, (_event, rawPath: unknown, webFallback?: unknown) => {
+  //   review → a .docx that may open goes to a review tab in the window that
+  //            asked (review-docs.ts, docs/review-tab.md), unless the
+  //            reviewTab setting is off; then Word, as before
+  ipcMain.handle(IPC.APP_OPEN_IN_EDITOR, (event, rawPath: unknown, webFallback?: unknown) => {
     const plan = planFileLink(rawPath);
     if (plan.kind === 'refused') {
       console.warn('[LINK] file link refused', { reason: plan.reason });
@@ -624,6 +628,10 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
       } else {
         console.info('[LINK] No such file', { path: pathForLog(plan.path) });
       }
+      return;
+    }
+    if (plan.decision.action === 'open' && plan.ext === 'docx' && store.getSettings().reviewTab !== false) {
+      openReview(event.sender, plan.real);
       return;
     }
     carryOut(plan);
@@ -1005,6 +1013,7 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
   // --- end Claude Code Stop hook ---
   // --- image paste ---
   registerClipboardImageHandlers();
+  registerReviewHandlers();
   const pageTitles = registerPageTitleHandlers();
   registerSessionFeedHandlers(ptyManager, (p) => {
     pageTitles.learnPublish(p).catch((err) => console.warn('[TITLE] learn failed', { code: (err as { code?: unknown } | null)?.code ?? null }));

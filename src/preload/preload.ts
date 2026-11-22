@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { IPC, uiTextScaleFromArgv } from '../shared/constants';
 import type { BoardLayout, BoardPayload, Bookmark, ConfirmRequest, PageTitleMap, PattonAPI, PauseAllRunRequest, RenderSnapshot } from '../shared/types';
 import { SESSION_FEED_IPC, type SessionFeedEvent } from '../shared/session-feed';
+import { REVIEW_IPC, type ReviewDocInfo } from '../shared/review';
 
 const api: PattonAPI = {
   getPathForFile: (file) => webUtils.getPathForFile(file),
@@ -80,6 +81,25 @@ const api: PattonAPI = {
     },
   },
   // --- end bookmarks ---
+  // --- Review tab (docs/review-tab.md): only an opaque doc id goes back to main ---
+  review: {
+    onOpen: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, info: ReviewDocInfo) => callback(info);
+      ipcRenderer.on(REVIEW_IPC.OPEN, listener);
+      return () => ipcRenderer.removeListener(REVIEW_IPC.OPEN, listener);
+    },
+    onChanged: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, docId: string) => callback(docId);
+      ipcRenderer.on(REVIEW_IPC.CHANGED, listener);
+      return () => ipcRenderer.removeListener(REVIEW_IPC.CHANGED, listener);
+    },
+    layout: (docId) => ipcRenderer.invoke(REVIEW_IPC.LAYOUT, docId),
+    comments: (docId) => ipcRenderer.invoke(REVIEW_IPC.COMMENTS, docId),
+    addComment: (docId, comment) => ipcRenderer.invoke(REVIEW_IPC.ADD_COMMENT, docId, comment),
+    openInWord: (docId) => ipcRenderer.invoke(REVIEW_IPC.OPEN_IN_WORD, docId),
+    sendToDrive: (docId, opts) => ipcRenderer.invoke(REVIEW_IPC.DRIVE, docId, opts),
+    close: (docId) => ipcRenderer.invoke(REVIEW_IPC.CLOSE, docId),
+  },
   pageTitles: {
     get: () => ipcRenderer.invoke(IPC.PAGE_TITLES_GET),
     onChanged: (callback) => {
