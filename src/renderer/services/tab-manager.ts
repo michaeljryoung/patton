@@ -17,6 +17,7 @@ import type { ITheme } from '@xterm/xterm';
 import { SessionBar, type SessionBarTarget } from '../components/session-bar';
 import type { LinkRow } from './session-bar-model';
 import { resolveHyperlink } from './link-target';
+import { ReviewTabs } from './review-tabs';
 import {
   cleanGroupName, moveGroupFirst, nearestVisible, newGroupId, placeAfterGroup, repairRuns, stepMove, takeOutOfGroup,
   visibleItems, MAX_GROUPS, type TabGroup,
@@ -82,6 +83,8 @@ export class TabManager {
   private userNewTabHandler: (() => Promise<Tab>) | null = null;
   // Told about every tab that leaves the window, however it went.
   private tabClosedListeners: ((tab: Tab) => void)[] = [];
+  /** Word files open as review tabs over a shell tab (docs/review-tab.md). */
+  readonly reviewTabs: ReviewTabs;
   // --- end project board ---
   // --- Tab groups (services/tab-groups.ts) ---
   // This window's groups, and which group each tab is in. A group's tabs are
@@ -158,6 +161,19 @@ export class TabManager {
       this.paneForPty(ptyId)?.applyFeedEvent(ptyId, event);
     });
     if (offFeed) this.disposables.push(offFeed);
+
+    // Word files open in review tabs (services/review-tabs.ts, docs/review-tab.md).
+    this.reviewTabs = new ReviewTabs({
+      focusedPane: () => this.activeTab?.focusedPane ?? null,
+      createTab: (cwd) => this.createTab(cwd),
+      onTabClosed: (listener) => this.onTabClosed(listener),
+      paneAlive: (pane) => this.tabs.some((t) => t.panes.includes(pane)),
+      showPane: (pane) => {
+        const tab = this.tabs.find((t) => t.panes.includes(pane));
+        if (tab) this.goToSession(tab.id, pane.id);
+      },
+      confirm: (opts) => this.confirmDialog.confirm(opts),
+    });
 
     // Tabs are named after their project. A project renamed in any window
     // renames its tabs here too.
@@ -1799,6 +1815,7 @@ export class TabManager {
 
   dispose(): void {
     for (const d of this.disposables) d();
+    this.reviewTabs.dispose();
     for (const tab of this.tabs) tab.dispose();
     this.sessionBar.dispose();
     this.tabBar.dispose();

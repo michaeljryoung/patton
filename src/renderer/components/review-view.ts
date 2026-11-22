@@ -1,0 +1,672 @@
+/**
+ * The review tab's view (docs/review-tab.md): a Word file laid out by
+ * LibreOffice (main's review-layout.ts) and drawn page by page by pdf.js on
+ * Patton's own canvases, with pdf.js's text layer over each page so text can
+ * be selected. A toolbar of visible buttons (he won't remember shortcuts):
+ * Print, Send to Drive, Open in Word, Send comments to Claude. A side panel
+ * lists the file's Word comments and adds one on the selected text, saved
+ * into the .docx by main.
+ *
+ * Document text reaches the DOM only through pdf.js's text layer (textContent)
+ * and the comment list (textContent, never innerHTML). The renderer holds only
+ * the opaque doc id main gave; every action goes back through it.
+ *
+ * Print (R6): each page is drawn again at PRINT_DPI into a print-only
+ * container of images, one per sheet at the page's own size (@page), and
+ * everything else is hidden under @media print; then window.print(). The
+ * check proves the page count with webContents.printToPDF.
+ */
+import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist';
+import { REVIEW_COMMENT_MAX, REVIEW_QUOTE_MAX, type ReviewApi, type ReviewComment, type ReviewDocInfo } from '../../shared/review';
+import { matchesOf, textKey } from '../../shared/review-text';
+import { announce } from '../services/announcer';
+import { rlog } from '../services/renderer-logger';
+import { loadPdfjs, openPdf, type OpenedPdf } from '../services/review-pdf';
+import { reviewMessage } from '../services/review-message';
+import type { ConfirmOptions } from './confirm-dialog';
+
+/** Resolution pages are drawn at for printing. */
+export const PRINT_DPI = 200;
+/** CSS px per PDF point at 100% (96 / 72). */
+const PX_PER_PT = 96 / 72;
+/** The largest zoom pages are drawn at on screen (their real size). */
+const MAX_SCALE = PX_PER_PT;
+/** Space around the pages column. */
+const PAGES_GUTTER = 48;
+
+export interface ReviewViewDeps {
+  info: ReviewDocInfo;
+  api: ReviewApi;
+  /** Paste this message into the Claude session the document opened from.
+   *  Resolves null when sent, else why not (shown in the view). */
+  sendToClaude(message: string): Promise<string | null>;
+  /** Patton's in-app confirm (components/confirm-dialog.ts). */
+  confirm(opts: ConfirmOptions): Promise<boolean>;
+  /** A Google Doc was made: add it to the session bar's Links. */
+  onDriveLink(link: string, name: string): void;
+  /** Open a web link through main (the Google Doc). */
+  openLink(url: string): void;
+}
+
+interface PageSlot {
+  index: number;
+  el: HTMLElement;
+  /** Width and height in PDF points. */
+  wPt: number;
+  hPt: number;
+  drawnScale: number;
+  drawing: Promise<void> | null;
+}
+
+/** A pending comment: the selected text and which match of it he chose. */
+interface Selected {
+  quote: string;
+  occurrence: number;
+}
+
+function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, text?: string): HTMLElementTagNameMap[K] {
+  const e = document.createElement(tag);
+  if (className) e.className = className;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+
+function button(className: string, label: string, ariaLabel?: string): HTMLButtonElement {
+  const b = el('button', `review-btn ${className}`, label);
+  b.type = 'button';
+  if (ariaLabel) b.setAttribute('aria-label', ariaLabel);
+  return b;
+}
+
+function shortDate(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
+
+function cut(text: string, max: number): string {
+  const chars = [...text.replace(/\s+/g, ' ').trim()];
+  return chars.length <= max ? chars.join('') : `${chars.slice(0, max - 1).join('')}…`;
+}
+
+export class ReviewView {
+  readonly element: HTMLElement;
+  private readonly deps: ReviewViewDeps;
+  private readonly statusEl: HTMLElement;
+  private readonly noteEl: HTMLElement;
+  private readonly linkEl: HTMLButtonElement;
+  private readonly pagesEl: HTMLElement;
+  private readonly printBtn: HTMLButtonElement;
+  private readonly driveBtn: HTMLButtonElement;
+  private readonly wordBtn: HTMLButtonElement;
+  private readonly claudeBtn: HTMLButtonElement;
+  private readonly selectedEl: HTMLElement;
+  private readonly commentInput: HTMLTextAreaElement;
+  private readonly addBtn: HTMLButtonElement;
+  private readonly countEl: HTMLElement;
+  private readonly listEl: HTMLOListElement;
+
+  private pdf: OpenedPdf | null = null;
+  private slots: PageSlot[] = [];
+  /** The quote key of each page's text (pdf.js text content), in page order. */
+  private pageKeys: string[] = [];
+  private allKey = '';
+  private comments: ReviewComment[] = [];
+  private selected: Selected | null = null;
+  private loadSeq = 0;
+  private scale = 1;
+  private disposed = false;
+  private busy = new Set<string>();
+  private driveLink: string | null = null;
+  private observer: IntersectionObserver | null = null;
+  private resizeObserver: ResizeObserver | null = null;
+  private resizeTimer: ReturnType<typeof setTimeout> | null = null;
+  private printCleanup: (() => void) | null = null;
+  private offChanged: (() => void) | null = null;
+  private readonly onSelectionEnd = (): void => this.captureSelection();
+
+  constructor(deps: ReviewViewDeps) {
+    this.deps = deps;
+    const { info } = deps;
+    const root = el('div', 'review');
+    root.setAttribute('role', 'region');
+    root.setAttribute('aria-label', `Review of ${info.name}`);
+    root.tabIndex = -1;
+    this.element = root;
+
+    // --- toolbar
+    const head = el('div', 'review-head');
+    const titles = el('div', 'review-titles');
+    const title = el('h2', 'review-title', info.name);
+    const path = el('span', 'review-path', info.shownPath);
+    path.title = info.shownPath;
+    titles.append(title, path);
+    const bar = el('div', 'review-actions');
+    bar.setAttribute('role', 'toolbar');
+    bar.setAttribute('aria-label', 'Document actions');
+    this.printBtn = button('review-print-btn', 'Print', 'Print the document as laid out');
+    this.driveBtn = button('review-drive-btn', 'Send to Drive', 'Send to Google Drive as a Google Doc');
+    this.wordBtn = button('review-word-btn', 'Open in Word', 'Open the file in Word');
+    this.claudeBtn = button('review-claude-btn', 'Send comments to Claude', 'Send the comments to Claude as one message');
+    bar.append(this.printBtn, this.driveBtn, this.wordBtn, this.claudeBtn);
+    head.append(titles, bar);
+
+    const msgs = el('div', 'review-msgs');
+    this.statusEl = el('span', 'review-status');
+    this.statusEl.setAttribute('role', 'status');
+    this.statusEl.setAttribute('aria-live', 'polite');
+    this.linkEl = button('review-doc-link', 'Open the Google Doc', 'Open the Google Doc in the browser');
+    this.linkEl.hidden = true;
+    this.noteEl = el('span', 'review-note');
+    this.noteEl.setAttribute('role', 'alert');
+    this.noteEl.hidden = true;
+    msgs.append(this.statusEl, this.linkEl, this.noteEl);
+
+    // --- pages and comments
+    const body = el('div', 'review-body');
+    this.pagesEl = el('div', 'review-pages');
+    this.pagesEl.setAttribute('aria-label', 'Pages');
+    this.pagesEl.setAttribute('role', 'document');
+    this.pagesEl.tabIndex = 0;
+
+    const side = el('aside', 'review-side');
+    side.setAttribute('aria-label', 'Comments');
+    const sideHead = el('h3', 'review-side-title', 'Comments ');
+    this.countEl = el('span', 'review-count', '0');
+    sideHead.append(this.countEl);
+    const form = el('div', 'review-add');
+    this.selectedEl = el('p', 'review-selected', 'Select text on a page to comment on it.');
+    this.selectedEl.id = `review-selected-${info.docId}`;
+    this.commentInput = el('textarea', 'review-input');
+    this.commentInput.rows = 3;
+    this.commentInput.maxLength = REVIEW_COMMENT_MAX;
+    this.commentInput.placeholder = 'Your comment';
+    this.commentInput.setAttribute('aria-label', 'Comment on the selected text');
+    this.commentInput.setAttribute('aria-describedby', this.selectedEl.id);
+    this.addBtn = button('review-add-btn', 'Add comment', 'Add the comment to the selected text');
+    form.append(this.selectedEl, this.commentInput, this.addBtn);
+    this.listEl = el('ol', 'review-comments');
+    this.listEl.setAttribute('aria-label', 'Comments in the file');
+    side.append(sideHead, form, this.listEl);
+    body.append(this.pagesEl, side);
+
+    root.append(head, msgs, body);
+
+    this.printBtn.addEventListener('click', () => { void this.print(); });
+    this.driveBtn.addEventListener('click', () => { void this.sendToDrive(); });
+    this.wordBtn.addEventListener('click', () => { void this.openInWord(); });
+    this.claudeBtn.addEventListener('click', () => { void this.sendToClaude(); });
+    this.addBtn.addEventListener('click', () => { void this.addComment(); });
+    this.linkEl.addEventListener('click', () => { if (this.driveLink) this.deps.openLink(this.driveLink); });
+    this.commentInput.addEventListener('input', () => this.refreshButtons());
+    this.pagesEl.addEventListener('mouseup', this.onSelectionEnd);
+    this.pagesEl.addEventListener('keyup', this.onSelectionEnd);
+
+    this.offChanged = deps.api.onChanged((docId) => {
+      if (docId !== info.docId || this.disposed) return;
+      void this.load('changed');
+    });
+    if (typeof ResizeObserver !== 'undefined') {
+      this.resizeObserver = new ResizeObserver(() => {
+        if (this.resizeTimer) clearTimeout(this.resizeTimer);
+        this.resizeTimer = setTimeout(() => this.refit(), 100);
+      });
+      this.resizeObserver.observe(this.pagesEl);
+    }
+    this.refreshButtons();
+    void this.load('open');
+    void this.loadComments();
+  }
+
+  focus(): void {
+    this.pagesEl.focus({ preventScroll: true });
+  }
+
+  /** Pages laid out now (0 until the first layout lands). */
+  get pageCount(): number {
+    return this.slots.length;
+  }
+
+  // ------------------------------------------------------------ layout
+
+  private async load(why: 'open' | 'changed'): Promise<void> {
+    const seq = ++this.loadSeq;
+    this.busy.add('layout');
+    this.refreshButtons();
+    this.setStatus(why === 'open' ? 'Laying out…' : 'The file changed: laying it out again…');
+    const reply = await this.deps.api.layout(this.deps.info.docId);
+    if (seq !== this.loadSeq || this.disposed) return;
+    this.busy.delete('layout');
+    if (reply.ok === false) {
+      this.refreshButtons();
+      this.setStatus('');
+      this.showNote(reply.message);
+      rlog('warn', '[REVIEW] layout refused', { why: reply.why });
+      return;
+    }
+    let opened: OpenedPdf;
+    try {
+      opened = await openPdf(reply.pdf);
+    } catch (err) {
+      if (seq !== this.loadSeq || this.disposed) return;
+      this.refreshButtons();
+      this.setStatus('');
+      this.showNote('The laid-out pages could not be read.');
+      rlog('error', '[REVIEW] pdf open failed', { error: String(err) });
+      return;
+    }
+    if (seq !== this.loadSeq || this.disposed) { void opened.destroy(); return; }
+    const old = this.pdf;
+    this.pdf = opened;
+    const scrollTop = this.pagesEl.scrollTop;
+    await this.buildPages(opened.doc);
+    if (seq !== this.loadSeq || this.disposed) return;
+    this.pagesEl.scrollTop = scrollTop;
+    if (old) void old.destroy();
+    this.hideNote();
+    const n = this.slots.length;
+    this.setStatus(`${n} page${n === 1 ? '' : 's'}${reply.cached ? '' : `, laid out in ${(reply.ms / 1000).toFixed(1)} s`}`);
+    rlog('info', '[REVIEW] shown', { pages: n, cached: reply.cached, mode: opened.mode, why });
+    this.refreshButtons();
+  }
+
+  private fitScale(wPt: number): number {
+    const avail = this.pagesEl.clientWidth - PAGES_GUTTER;
+    if (!(avail > 0)) return MAX_SCALE;
+    return Math.max(0.5, Math.min(MAX_SCALE, avail / wPt));
+  }
+
+  private async buildPages(doc: PDFDocumentProxy): Promise<void> {
+    this.observer?.disconnect();
+    this.pagesEl.replaceChildren();
+    this.slots = [];
+    const keys: string[] = [];
+    const pages: PDFPageProxy[] = [];
+    for (let i = 1; i <= doc.numPages; i++) {
+      const page = await doc.getPage(i);
+      pages.push(page);
+      const content = await page.getTextContent();
+      let text = '';
+      for (const item of content.items) if ('str' in item) text += item.str;
+      keys.push(textKey(text));
+    }
+    this.pageKeys = keys;
+    this.allKey = keys.join('');
+    const first = pages[0]?.getViewport({ scale: 1 });
+    this.scale = first ? this.fitScale(first.width) : 1;
+    for (const page of pages) {
+      const vp = page.getViewport({ scale: 1 });
+      const slot: PageSlot = { index: page.pageNumber - 1, el: el('div', 'review-page'), wPt: vp.width, hPt: vp.height, drawnScale: 0, drawing: null };
+      slot.el.dataset.page = String(slot.index);
+      slot.el.setAttribute('role', 'group');
+      slot.el.setAttribute('aria-label', `Page ${page.pageNumber} of ${pages.length}`);
+      this.sizeSlot(slot);
+      this.pagesEl.append(slot.el);
+      this.slots.push(slot);
+    }
+    if (typeof IntersectionObserver !== 'undefined') {
+      this.observer = new IntersectionObserver((entries) => {
+        for (const e of entries) {
+          if (!e.isIntersecting) continue;
+          const slot = this.slots.find((s) => s.el === e.target);
+          if (slot) void this.drawSlot(slot);
+        }
+      }, { root: this.pagesEl, rootMargin: '100% 0px' });
+      for (const s of this.slots) this.observer.observe(s.el);
+    }
+    // The first two pages at once: what he sees first, and what a check reads.
+    await Promise.all(this.slots.slice(0, 2).map((s) => this.drawSlot(s)));
+  }
+
+  private sizeSlot(slot: PageSlot): void {
+    slot.el.style.width = `${Math.floor(slot.wPt * this.scale)}px`;
+    slot.el.style.height = `${Math.floor(slot.hPt * this.scale)}px`;
+  }
+
+  /** Draw a page's canvas and text layer at the current scale (once per scale). */
+  private drawSlot(slot: PageSlot): Promise<void> {
+    if (slot.drawnScale === this.scale) return slot.drawing ?? Promise.resolve();
+    const pdf = this.pdf;
+    if (!pdf) return Promise.resolve();
+    const scale = this.scale;
+    slot.drawnScale = scale;
+    const run = (async () => {
+      const pdfjs = await loadPdfjs();
+      const page = await pdf.doc.getPage(slot.index + 1);
+      if (this.pdf !== pdf || slot.drawnScale !== scale) return;
+      const vp = page.getViewport({ scale });
+      const dpr = window.devicePixelRatio || 1;
+      const canvas = el('canvas', 'review-canvas');
+      canvas.setAttribute('aria-hidden', 'true');
+      canvas.width = Math.floor(vp.width * dpr);
+      canvas.height = Math.floor(vp.height * dpr);
+      canvas.style.width = `${Math.floor(vp.width)}px`;
+      canvas.style.height = `${Math.floor(vp.height)}px`;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      await page.render({ canvasContext: ctx, canvas, viewport: vp, transform: dpr === 1 ? undefined : [dpr, 0, 0, dpr, 0, 0] }).promise;
+      if (this.pdf !== pdf || slot.drawnScale !== scale) return;
+      const layer = el('div', 'textLayer review-text-layer');
+      layer.dataset.page = String(slot.index);
+      slot.el.style.setProperty('--scale-factor', String(scale));
+      slot.el.style.setProperty('--total-scale-factor', String(scale));
+      const tl = new pdfjs.TextLayer({ textContentSource: await page.getTextContent(), container: layer, viewport: vp });
+      await tl.render();
+      if (this.pdf !== pdf || slot.drawnScale !== scale) return;
+      slot.el.replaceChildren(canvas, layer);
+    })().catch((err) => {
+      slot.drawnScale = 0;
+      rlog('error', '[REVIEW] page draw failed', { page: slot.index + 1, error: String(err) });
+    });
+    slot.drawing = run;
+    return run;
+  }
+
+  /** The pages column changed width: redraw at the new fit (debounced). */
+  private refit(): void {
+    if (this.disposed || this.slots.length === 0) return;
+    const next = this.fitScale(this.slots[0].wPt);
+    if (Math.abs(next - this.scale) / this.scale < 0.02) return;
+    this.scale = next;
+    for (const s of this.slots) {
+      this.sizeSlot(s);
+      s.drawnScale = 0;
+      s.el.replaceChildren();
+    }
+    this.observer?.disconnect();
+    for (const s of this.slots) this.observer?.observe(s.el);
+    if (!this.observer) for (const s of this.slots) void this.drawSlot(s);
+  }
+
+  // ------------------------------------------------------------ comments
+
+  private async loadComments(): Promise<void> {
+    const list = await this.deps.api.comments(this.deps.info.docId);
+    if (this.disposed) return;
+    this.comments = Array.isArray(list) ? list : [];
+    this.renderComments();
+  }
+
+  private renderComments(): void {
+    this.countEl.textContent = String(this.comments.length);
+    const items = this.comments.map((c) => {
+      const li = el('li', 'review-comment');
+      if (c.quote) li.append(el('p', 'review-comment-quote', cut(c.quote, 160)));
+      li.append(el('p', 'review-comment-text', c.text));
+      const meta = [c.author, shortDate(c.date)].filter(Boolean).join(' · ');
+      if (meta) li.append(el('p', 'review-comment-meta', meta));
+      return li;
+    });
+    if (items.length === 0) items.push(el('li', 'review-comment review-comment-none', 'No comments in the file yet.'));
+    this.listEl.replaceChildren(...items);
+    this.refreshButtons();
+  }
+
+  /** The text layer a node sits in, if any. */
+  private layerOf(node: Node | null): HTMLElement | null {
+    const e = node && (node.nodeType === Node.ELEMENT_NODE ? node as Element : node.parentElement);
+    const layer = e?.closest<HTMLElement>('.review-text-layer') ?? null;
+    return layer && this.pagesEl.contains(layer) ? layer : null;
+  }
+
+  /** Take the page selection as the comment's quote, and count the matches of
+   *  its key in the pages' text before it (R7: main picks the same match in
+   *  the body, else the last). */
+  captureSelection(): void {
+    const sel = document.getSelection();
+    if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return;
+    const range = sel.getRangeAt(0);
+    const startLayer = this.layerOf(range.startContainer);
+    if (!startLayer || !this.layerOf(range.endContainer)) return;
+    const quote = range.toString();
+    const key = textKey(quote);
+    if (!key) return;
+    if (quote.length > REVIEW_QUOTE_MAX) {
+      this.showNote(`Select less text: up to ${REVIEW_QUOTE_MAX.toLocaleString()} characters.`);
+      return;
+    }
+    const page = Number(startLayer.dataset.page);
+    const pre = document.createRange();
+    pre.setStart(startLayer, 0);
+    pre.setEnd(range.startContainer, range.startOffset);
+    const before = this.pageKeys.slice(0, page).join('').length + textKey(pre.toString()).length;
+    const occurrence = matchesOf(this.allKey, key).filter((i) => i < before).length;
+    this.selected = { quote, occurrence };
+    this.selectedEl.textContent = `On “${cut(quote, 120)}”`;
+    this.selectedEl.classList.add('review-selected-set');
+    this.hideNote();
+    this.refreshButtons();
+  }
+
+  private async addComment(): Promise<void> {
+    const text = this.commentInput.value.trim();
+    if (!this.selected) { this.showNote('Select text on a page first.'); return; }
+    if (!text) { this.showNote('Write the comment first.'); this.commentInput.focus(); return; }
+    this.busy.add('add');
+    this.refreshButtons();
+    this.setStatus('Saving the comment into the file…');
+    const reply = await this.deps.api.addComment(this.deps.info.docId, { quote: this.selected.quote, occurrence: this.selected.occurrence, text });
+    this.busy.delete('add');
+    if (this.disposed) return;
+    if (reply.ok === false) {
+      this.setStatus('');
+      this.showNote(reply.message);
+      this.refreshButtons();
+      return;
+    }
+    this.commentInput.value = '';
+    this.selected = null;
+    this.selectedEl.textContent = 'Select text on a page to comment on it.';
+    this.selectedEl.classList.remove('review-selected-set');
+    document.getSelection()?.removeAllRanges();
+    this.hideNote();
+    this.setStatus('Comment saved in the file.');
+    announce('Comment saved in the file');
+    await this.loadComments();
+  }
+
+  // ------------------------------------------------------------ actions
+
+  private async sendToClaude(): Promise<void> {
+    if (this.comments.length === 0) { this.showNote('There are no comments to send yet.'); return; }
+    this.busy.add('claude');
+    this.refreshButtons();
+    let why: string | null;
+    try {
+      why = await this.deps.sendToClaude(reviewMessage(this.deps.info, this.comments));
+    } catch (err) {
+      rlog('error', '[REVIEW] send to Claude failed', { error: String(err) });
+      why = 'The comments could not be sent.';
+    }
+    this.busy.delete('claude');
+    if (this.disposed) return;
+    this.refreshButtons();
+    if (why) {
+      this.setStatus('');
+      this.showNote(why);
+      return;
+    }
+    this.hideNote();
+    const n = this.comments.length;
+    this.setStatus(`Sent ${n} comment${n === 1 ? '' : 's'} to Claude.`);
+  }
+
+  private async openInWord(): Promise<void> {
+    const ok = await this.deps.api.openInWord(this.deps.info.docId);
+    if (this.disposed) return;
+    if (ok) { this.hideNote(); this.setStatus('Opened in Word.'); } else this.showNote('The file could not be opened in Word.');
+  }
+
+  private async sendToDrive(): Promise<void> {
+    const { info } = this.deps;
+    let confirmLindus = false;
+    if (info.lindus) {
+      confirmLindus = await this.confirmLindus();
+      if (!confirmLindus) { this.setStatus('Not sent to Drive.'); return; }
+    }
+    this.busy.add('drive');
+    this.refreshButtons();
+    this.setStatus('Sending to Drive…');
+    let reply = await this.deps.api.sendToDrive(info.docId, { confirmLindus });
+    if (reply.ok === false && reply.why === 'confirm-lindus' && !confirmLindus) {
+      // Main judged it Lindus after all: ask, then send once more.
+      if (await this.confirmLindus()) reply = await this.deps.api.sendToDrive(info.docId, { confirmLindus: true });
+      else { this.busy.delete('drive'); this.refreshButtons(); this.setStatus('Not sent to Drive.'); return; }
+    }
+    this.busy.delete('drive');
+    if (this.disposed) return;
+    this.refreshButtons();
+    if (reply.ok === false) {
+      this.setStatus('');
+      this.showNote(reply.message);
+      return;
+    }
+    this.hideNote();
+    if (reply.dryRun === true) {
+      this.setStatus(`Dry run, nothing sent (as ${reply.account}): ${reply.summary.split('\n').length} requests built.`);
+      rlog('info', '[REVIEW] drive dry run shown');
+      return;
+    }
+    this.driveLink = reply.link;
+    this.linkEl.hidden = false;
+    this.linkEl.title = reply.link;
+    this.setStatus(`Sent to Drive as the Google Doc “${reply.name}”.`);
+    announce('Sent to Drive as a Google Doc');
+    this.deps.onDriveLink(reply.link, reply.name);
+  }
+
+  private confirmLindus(): Promise<boolean> {
+    return this.deps.confirm({
+      title: 'Send a Lindus document to your personal Drive?',
+      message: `${this.deps.info.name} looks like Lindus work. Send to Drive puts it in your personal Google Drive, not the Lindus one.`,
+      confirmLabel: 'Send to my Drive',
+      cancelLabel: 'Don’t send',
+      defaultFocus: 'cancel',
+    });
+  }
+
+  // ------------------------------------------------------------ print
+
+  /** Build the print-only pages (images at PRINT_DPI, one sheet each at the
+   *  page's own size). Returns the cleanup. */
+  async preparePrint(): Promise<() => void> {
+    this.printCleanup?.();
+    const pdf = this.pdf;
+    if (!pdf) throw new Error('nothing laid out');
+    const host = el('div', 'review-print');
+    host.setAttribute('aria-hidden', 'true');
+    const style = el('style');
+    const sizes = new Map<string, string>();
+    const rules: string[] = [];
+    for (let i = 1; i <= pdf.doc.numPages; i++) {
+      const page = await pdf.doc.getPage(i);
+      const pt = page.getViewport({ scale: 1 });
+      const sizeKey = `${pt.width.toFixed(2)}x${pt.height.toFixed(2)}`;
+      let name = sizes.get(sizeKey);
+      if (!name) {
+        name = `review-sheet-${sizes.size}`;
+        sizes.set(sizeKey, name);
+        rules.push(`@page ${name} { size: ${pt.width.toFixed(2)}pt ${pt.height.toFixed(2)}pt; margin: 0; }`);
+      }
+      const vp = page.getViewport({ scale: PRINT_DPI / 72 });
+      const canvas = el('canvas');
+      canvas.width = Math.floor(vp.width);
+      canvas.height = Math.floor(vp.height);
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('no canvas');
+      await page.render({ canvasContext: ctx, canvas, viewport: vp, background: '#ffffff' }).promise;
+      const img = el('img', 'review-print-page');
+      img.alt = '';
+      img.src = canvas.toDataURL('image/png');
+      canvas.width = 0;
+      canvas.height = 0;
+      img.style.width = `${pt.width.toFixed(2)}pt`;
+      img.style.height = `${pt.height.toFixed(2)}pt`;
+      img.style.setProperty('page', name);
+      await img.decode().catch(() => {});
+      host.append(img);
+    }
+    // The first sheet's size for anything unnamed (Chromium's fallback page).
+    const firstSize = [...sizes.keys()][0]?.split('x');
+    if (firstSize) rules.unshift(`@page { size: ${firstSize[0]}pt ${firstSize[1]}pt; margin: 0; }`);
+    style.textContent = rules.join('\n');
+    style.dataset.review = 'print';
+    document.head.append(style);
+    document.body.append(host);
+    document.documentElement.classList.add('review-printing');
+    const cleanup = (): void => {
+      host.remove();
+      style.remove();
+      document.documentElement.classList.remove('review-printing');
+      if (this.printCleanup === cleanup) this.printCleanup = null;
+    };
+    this.printCleanup = cleanup;
+    return cleanup;
+  }
+
+  private async print(): Promise<void> {
+    if (!this.pdf) return;
+    this.busy.add('print');
+    this.refreshButtons();
+    this.setStatus('Preparing the pages to print…');
+    let cleanup: () => void;
+    try {
+      cleanup = await this.preparePrint();
+    } catch (err) {
+      this.busy.delete('print');
+      this.refreshButtons();
+      this.setStatus('');
+      this.showNote('The pages could not be prepared for printing.');
+      rlog('error', '[REVIEW] print prepare failed', { error: String(err) });
+      return;
+    }
+    // The print snapshot is taken from the print-only pages; they go once the
+    // dialog is done (afterprint), or at the next Print or when the tab closes.
+    window.addEventListener('afterprint', () => cleanup(), { once: true });
+    rlog('info', '[REVIEW] print', { pages: this.slots.length });
+    this.setStatus('');
+    this.busy.delete('print');
+    this.refreshButtons();
+    window.print();
+  }
+
+  // ------------------------------------------------------------ state
+
+  private refreshButtons(): void {
+    const laidOut = this.pdf !== null && this.slots.length > 0;
+    this.printBtn.disabled = !laidOut || this.busy.has('print');
+    this.driveBtn.disabled = this.busy.has('drive');
+    this.claudeBtn.disabled = this.comments.length === 0 || this.busy.has('claude');
+    this.addBtn.disabled = !this.selected || !this.commentInput.value.trim() || this.busy.has('add');
+  }
+
+  private setStatus(text: string): void {
+    this.statusEl.textContent = text;
+  }
+
+  private showNote(text: string): void {
+    this.noteEl.textContent = text;
+    this.noteEl.hidden = false;
+  }
+
+  private hideNote(): void {
+    this.noteEl.textContent = '';
+    this.noteEl.hidden = true;
+  }
+
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.loadSeq++;
+    this.offChanged?.();
+    this.observer?.disconnect();
+    this.resizeObserver?.disconnect();
+    if (this.resizeTimer) clearTimeout(this.resizeTimer);
+    this.printCleanup?.();
+    this.pagesEl.removeEventListener('mouseup', this.onSelectionEnd);
+    this.pagesEl.removeEventListener('keyup', this.onSelectionEnd);
+    if (this.pdf) void this.pdf.destroy();
+    this.pdf = null;
+    void this.deps.api.close(this.deps.info.docId);
+  }
+}

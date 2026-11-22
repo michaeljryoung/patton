@@ -1028,6 +1028,53 @@ export class Pane {
     return null;
   }
 
+  /** Why the review tab's comments can't be pasted into this pane now, on
+   *  the live facts (never a debounced copy: Gotcha S56), else null. */
+  private reviewPasteRefusal(): string | null {
+    if (this.disposed || this.ptyId === null) return 'The Claude session this document opened from is closed.';
+    if (!this.claudeActive) return 'Claude Code is not running in the tab this document opened from.';
+    if (this.claudeBlocked || this.claudeAsksNow()) {
+      return 'Claude is asking you something in that session. Answer it there, then send the comments again.';
+    }
+    // A multi-line message typed without bracketed paste would be sent line by line.
+    if (!this.terminalView.terminal.modes.bracketedPasteMode) return 'Claude\'s input can\'t take a pasted message right now.';
+    return null;
+  }
+
+  /** Paste the review tab's comments into this pane's Claude session as one
+   *  message (a bracketed paste, then Enter; docs/review-tab.md R4). Refused
+   *  while Claude asks something (the live 7501 `blocked` fact, checked again
+   *  at the moment of writing), and when Claude may be showing a menu. A draft
+   *  in Claude's input is stashed first with Ctrl+S, as the checkpoint does.
+   *  Resolves null when sent, else why not (the review tab shows it). */
+  async pasteReviewComments(message: string): Promise<string | null> {
+    const first = this.reviewPasteRefusal();
+    if (first) {
+      rlog('info', '[REVIEW] comments held', { pane: this.id, why: first });
+      return first;
+    }
+    const ptyId = this.ptyId;
+    const [input, key] = await Promise.all([this.readInputState(), window.patton.pauseAll.stashKey()]);
+    const again = this.ptyId !== ptyId ? 'The session changed: send the comments again.' : this.reviewPasteRefusal();
+    if (again) {
+      rlog('info', '[REVIEW] comments held', { pane: this.id, why: again });
+      return again;
+    }
+    const facts = this.inputFacts(input);
+    const keyWhy = 'why' in key ? key.why : null;
+    const skip = facts.menu ? 'Claude may be showing a menu (a / command was typed). Close it, then send the comments again.'
+      : facts.draft && keyWhy !== null ? 'A draft may be in Claude\'s input and Ctrl+S is not its stash key. Send or clear it, then send the comments again.'
+      : facts.draft && facts.stashed ? 'A draft is in Claude\'s input and another is already set aside. Send or clear it, then send the comments again.'
+      : null;
+    if (skip) {
+      rlog('info', '[REVIEW] comments held', { pane: this.id, menu: facts.menu, draft: facts.draft });
+      return skip;
+    }
+    rlog('info', '[REVIEW] comments sent', { pane: this.id, chars: message.length, stash: facts.draft });
+    this.queueSubmit(message, false, { stashFirst: facts.draft, origin: 'patton', paste: true, gate: () => this.reviewPasteRefusal() });
+    return null;
+  }
+
   /** Main's unsent-input tracker on this pane's PTY; null if it can't say. */
   async readInputState(): Promise<UnsentInputState | null> {
     if (this.ptyId === null) return null;
@@ -1982,7 +2029,7 @@ export class Pane {
   private queueSubmit(
     command: string,
     allowBroadcast: boolean,
-    opts: { stashFirst?: boolean; scroll?: boolean; origin?: 'patton'; onEnterSent?: () => void; own?: boolean } = {},
+    opts: { stashFirst?: boolean; scroll?: boolean; origin?: 'patton'; onEnterSent?: () => void; own?: boolean; paste?: boolean; gate?: () => string | null } = {},
   ): string {
     // Broadcast mode: also write to all other panes in the tab
     const broadcast = allowBroadcast ? this.callbacks.onBroadcastWrite : undefined;
@@ -1998,7 +2045,7 @@ export class Pane {
     // text: typed raw, each newline would be an Enter and send the first line
     // alone. Without bracketed-paste mode a paste is no better than typing, so
     // the mode is read when the submit actually runs, not when it is queued.
-    const multiLineCompose = this.composeFirstEngaged && command.includes('\n');
+    const multiLineCompose = (this.composeFirstEngaged || opts.paste === true) && command.includes('\n');
     const lines = command ? command.split('\n').length : 0;
 
     // Queue submits sequentially to prevent rapid double-submit from dropping the first Enter.
@@ -2020,6 +2067,14 @@ export class Pane {
     }));
     const submitLine = (resolve: () => void): void => {
       if (this.ptyId === null) { resolve(); return; }
+      // `gate`: asked again the moment the text is written (after a stash's
+      // wait, or a queued submit ahead of it), on the live facts.
+      const held = opts.gate?.();
+      if (held) {
+        rlog('info', '[COMPOSE] submit held at write', { pane: this.id, why: held });
+        resolve();
+        return;
+      }
       const route: 'paste' | 'type' =
         multiLineCompose && this.terminalView.terminal.modes.bracketedPasteMode ? 'paste' : 'type';
       rlog('info', '[COMPOSE] submit', { pane: this.id, lines, route, ...(opts.stashFirst ? { stashed: true } : {}) });

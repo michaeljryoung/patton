@@ -6,6 +6,7 @@ import './styles/editor.css';
 import './styles/settings.css';
 import './styles/board.css';
 import './styles/session-bar.css';
+import './styles/review.css';
 
 import { App } from './components/app';
 import { applyUiTextScale } from './services/ui-text-scale';
