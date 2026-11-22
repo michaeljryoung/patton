@@ -761,6 +761,10 @@ export class TerminalView {
     return lines.join('\n');
   }
 
+  get copyOnSelect(): boolean {
+    return this.copyOnSelectEnabled;
+  }
+
   setCopyOnSelect(enabled: boolean): void {
     this.copyOnSelectEnabled = enabled;
   }

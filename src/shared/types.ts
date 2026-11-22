@@ -271,6 +271,9 @@ export interface RenderSnapshot {
 }
 
 // --- image paste ---
+/** What main did with a copy (main/copy-original.ts); 'refused' wrote nothing. */
+export type CopySelectionResult = 'original' | 'fallback' | 'late' | 'refused';
+
 export interface ClipboardImageThumb {
   /** PNG data URL, downscaled to at most 160 px on the long side */
   dataUrl: string;
@@ -400,6 +403,9 @@ export interface PattonAPI {
   clipboard: {
     /** Reads the clipboard image once; save=true also writes it under userData/pastes and returns `path`. */
     readImage: (save: boolean) => Promise<ClipboardImageThumb | null>;
+    /** Copies a Claude tab's selection as Claude's original text (plain and HTML), else as drawn.
+     *  'copy' writes the clipboard; 'upgrade' only replaces the drawn text already there. */
+    copySelection: (ptyId: number, text: string, mode: 'copy' | 'upgrade') => Promise<CopySelectionResult>;
   };
   // --- end image paste ---
   // --- System fonts ---

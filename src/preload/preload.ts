@@ -133,6 +133,7 @@ const api: PattonAPI = {
   // --- image paste ---
   clipboard: {
     readImage: (save: boolean) => ipcRenderer.invoke(IPC.CLIPBOARD_READ_IMAGE, save),
+    copySelection: (ptyId, text, mode) => ipcRenderer.invoke(IPC.CLIPBOARD_COPY_SELECTION, ptyId, text, mode),
   },
   // --- end image paste ---
   // --- System fonts ---
