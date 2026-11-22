@@ -17,6 +17,7 @@ import type { FeedTaskEndStatus, FeedTaskKind, HookCron, HookTask, SessionFeedEv
 import type { PattonState } from './patton-osc';
 import type { ProgramRecord } from './program-status';
 import { shownText } from './shown-text';
+import { pageTitleOf } from './page-titles';
 import { nextCronFire } from './cron-next';
 import { checkpointTime } from './checkpoint-clock';
 
@@ -213,6 +214,14 @@ function defaultLinkLabel(kind: LinkKind, url: string | null, path: string | nul
     return `Page ${id.slice(0, 8)}`;
   }
   return url ?? '';
+}
+
+/** A page link with only the made-up "Page <id start>" shows the page's own title once
+ *  main has learned it (services/page-titles.ts); a label Claude gave stays (D6). */
+function shownLinkLabel(l: { kind: LinkKind; label: string; url: string | null; fallback: boolean }): string {
+  if (l.kind !== 'Page') return l.label;
+  if (!l.fallback && l.label !== defaultLinkLabel('Page', l.url, null)) return l.label;
+  return pageTitleOf(l.url) || l.label;
 }
 
 // ---------------------------------------------------------------- the model
@@ -471,7 +480,7 @@ export class SessionBarModel {
     const failures: FailureRow[] = [...this.failures].reverse().map((f) => ({
       key: f.key, kind: f.kind, text: f.text, at: f.at, when: clock(f.at, now), tooltip: f.tooltip,
     }));
-    const links: LinkRow[] = this.links.map((l) => ({ key: l.key, kind: l.kind, label: l.label, url: l.url, path: l.path, at: l.at, when: clock(l.at, now) }));
+    const links: LinkRow[] = this.links.map((l) => ({ key: l.key, kind: l.kind, label: shownLinkLabel(l), url: l.url, path: l.path, at: l.at, when: clock(l.at, now) }));
     return { running, liveCount: running.filter((r) => !r.ended).length, scheduled, failures, links };
   }
 

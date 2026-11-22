@@ -19,6 +19,7 @@ import { loadSystemFonts } from '../services/system-fonts';
 import { applyUiTextScale } from '../services/ui-text-scale';
 import type { OpenProjectHost } from '../services/open-project';
 import { ProjectBoards } from '../services/project-boards';
+import { startPageTitles } from '../services/page-titles';
 
 export class App {
   private tabManager: TabManager;
@@ -179,6 +180,7 @@ export class App {
   }
 
   async init(): Promise<void> {
+    startPageTitles();
     // Load settings, history and the Mac's SF Mono in parallel. The fonts
     // must be registered before the first terminal below is created: xterm
     // measures its cell when fontFamily changes and never re-measures when a

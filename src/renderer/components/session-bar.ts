@@ -20,6 +20,7 @@ import { formatAge } from '../services/session-bar-model';
 import type { CheckpointView } from '../services/checkpoint-clock';
 import { onUiTextScaleApplied } from '../services/ui-text-scale';
 import { rlog } from '../services/renderer-logger';
+import { onPageTitlesChanged } from '../services/page-titles';
 
 /** D1, D2: widths at UI text scale 1. */
 export const SESSION_BAR_WIDTH_PX = 248;
@@ -157,6 +158,8 @@ export class SessionBar {
       this.disposables.push(() => ro.disconnect());
     }
     this.disposables.push(onUiTextScaleApplied(() => this.scheduleFold()));
+    // A page's title learned: a link showing "Page <id start>" shows it.
+    this.disposables.push(onPageTitlesChanged(() => this.renderLists()));
   }
 
   /** The window's saved choice (D2), as restored from its session. */

@@ -6,7 +6,9 @@
  * start of an artifact's id. Pure: no DOM.
  */
 
+import { DEFAULTS } from '../../shared/constants';
 import type { Bookmark } from '../../shared/types';
+import { pageTitleOf } from './page-titles';
 
 function segments(path: string): string[] {
   return path.split('/').filter(Boolean);
@@ -41,10 +43,11 @@ export function defaultArtifactLabel(url: string): string {
   return isArtifact && id ? `Artifact ${id.slice(0, 8)}` : host;
 }
 
-/** The name a row shows. Artifact bookmarks saved before the id-start naming were all
- *  named by their host ("claude.ai"), the automatic name: those show as "Artifact <id start>"
- *  like new ones. A name that is anything but the bare host was set by the user and stays.
- *  Display only: the saved name is never rewritten here. */
+/** The name a row shows. An artifact bookmark still carrying an automatic name (the bare
+ *  host "claude.ai" it got before the id-start naming, or "Artifact <id start>") shows the
+ *  page's own title when main has learned it (services/page-titles.ts), else
+ *  "Artifact <id start>". A name the user typed stays. Display only: the saved name is
+ *  never rewritten here. */
 export function displayLabel(bookmark: Bookmark): string {
   if (bookmark.kind !== 'artifact' || !bookmark.url) return bookmark.label;
   let host = '';
@@ -53,9 +56,17 @@ export function displayLabel(bookmark: Bookmark): string {
   } catch {
     return bookmark.label;
   }
-  if (bookmark.label !== host) return bookmark.label;
   const generated = defaultArtifactLabel(bookmark.url);
-  return generated.startsWith('Artifact ') ? generated : bookmark.label;
+  if (bookmark.label !== host && bookmark.label !== generated) return bookmark.label;
+  if (!generated.startsWith('Artifact ')) return bookmark.label;
+  return pageTitleOf(bookmark.url) || generated;
+}
+
+/** The name a new artifact bookmark is saved with: what the user typed, else the page's
+ *  learned title, else the automatic name; capped as main caps it. */
+export function newArtifactLabel(url: string, typed: string): string {
+  const name = typed.trim() || pageTitleOf(url) || defaultArtifactLabel(url);
+  return name.slice(0, DEFAULTS.BOOKMARK_LABEL_MAX_CHARS);
 }
 
 /** The text that tells a row from another of the same name, or '' when its name is unique in `group`. */

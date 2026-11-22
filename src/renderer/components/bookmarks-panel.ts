@@ -6,7 +6,8 @@ import { projectRootName } from '../services/project-names';
 import { openProject, type OpenProjectHost } from '../services/open-project';
 import { CLOSED_STATE, projectLiveState, type ProjectLiveState } from '../services/project-live-state';
 import { rlog } from '../services/renderer-logger';
-import { defaultArtifactLabel, disambiguator, displayLabel, fullTarget } from '../services/bookmark-labels';
+import { disambiguator, displayLabel, fullTarget, newArtifactLabel } from '../services/bookmark-labels';
+import { onPageTitlesChanged } from '../services/page-titles';
 import { ConfirmDialog } from './confirm-dialog';
 import { ContextMenu } from './context-menu';
 import type { Tab } from './tab';
@@ -203,6 +204,8 @@ export class BookmarksPanel {
         this.bookmarks = list;
         this.render();
       }),
+      // A page's title learned or changed: automatic names show it.
+      onPageTitlesChanged(() => this.render()),
     );
 
     // Saved open: keep the strip out of the way while the list loads, so the
@@ -891,7 +894,7 @@ export class BookmarksPanel {
       this.urlInput.focus();
       return;
     }
-    const label = (this.labelInput.value.trim() || defaultArtifactLabel(url)).slice(0, DEFAULTS.BOOKMARK_LABEL_MAX_CHARS);
+    const label = newArtifactLabel(url, this.labelInput.value);
     const bookmark: Bookmark = { id: newId(), kind: 'artifact', label, url, addedAt: Date.now() };
     const saved = await this.save([...this.bookmarks, bookmark]);
     if (!saved) {
