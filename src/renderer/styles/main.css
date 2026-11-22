@@ -60,6 +60,20 @@
   --compose-aside-rule: var(--grey);
   --compose-aside-hint: var(--muted);
 
+  /* The session bar (session-bar.css): derived from the palette; the dark
+   * block brightens the two blues that sit on text. */
+  --sb-bg: var(--bg);
+  --sb-ink: var(--ink);
+  --sb-muted: var(--muted);
+  --sb-hairline: var(--hairline);
+  --sb-rule: var(--grey);
+  --sb-hover: var(--surface-hover);
+  --sb-focus: var(--focus);
+  --sb-long: var(--accent);
+  --sb-fail: var(--error-text);
+  --sb-link: var(--accent);
+  --sb-due: var(--amber-text);
+
   /* Type and density (the mock's compact scale) */
   --font-mono: 'SF Mono', 'Menlo', 'Monaco', 'Courier New', monospace;
   --font-ui: "Helvetica Neue", Helvetica, Arial, sans-serif;
@@ -98,6 +112,9 @@
        default terminal. State cues that must stay bright read --ink directly. */
     --hairline: color-mix(in srgb, var(--ink) 45%, var(--bg));
     --amber-text: var(--amber);
+    /* Session bar: --accent (#2f6bff) is 4.17:1 on #111214; --focus is 7.53:1 (light: --accent 4.5:1 on #fff). */
+    --sb-long: var(--focus);
+    --sb-link: var(--focus);
     color-scheme: dark;
   }
 }

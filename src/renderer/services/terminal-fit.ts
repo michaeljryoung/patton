@@ -32,13 +32,20 @@ export const FIT_MIN_ROWS = 1;
 export function fitGrid(f: FitInput): { cols: number; rows: number } | null {
   if (!(f.cellWidth > 0) || !(f.cellHeight > 0)) return null;
   if (!Number.isFinite(f.height) || !Number.isFinite(f.width)) return null;
-  const outerH = f.borderBox ? f.padLeft + f.padRight : 0;
   const availH = fitAvailHeight(f);
-  const availW = Math.max(0, f.width - outerH - f.innerPadH - f.scrollbarWidth);
+  const availW = fitAvailWidth(f);
   return {
     cols: Math.max(FIT_MIN_COLS, Math.floor(availW / f.cellWidth)),
     rows: Math.max(FIT_MIN_ROWS, Math.floor(availH / f.cellHeight)),
   };
+}
+
+/** The width (px) the grid's columns are cut from: the parent's, less its
+ *  padding (when its size includes it), the `.xterm` element's own and the
+ *  scrollbar's. */
+export function fitAvailWidth(f: FitInput): number {
+  const outerH = f.borderBox ? f.padLeft + f.padRight : 0;
+  return Math.max(0, f.width - outerH - f.innerPadH - f.scrollbarWidth);
 }
 
 /** The height (px) the grid's rows are cut from: the parent's, less its padding

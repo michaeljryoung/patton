@@ -1,0 +1,323 @@
+/* The session bar (docs/session-bar.md D1–D6; sketch docs/mocks/session-bar.html v3).
+ * One per window: #content's next sibling inside #main, so the terminal fits
+ * in what is left. Widths and type are px × --ui-scale (Interface Text Size).
+ * Every colour is a --sb-* token from main.css. */
+
+.session-bar {
+  flex: 0 0 calc(248px * var(--ui-scale));
+  width: calc(248px * var(--ui-scale));
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-left: 1px solid var(--sb-hairline);
+  background: var(--sb-bg);
+  color: var(--sb-ink);
+  font-family: var(--font-ui);
+  font-size: calc(12.5px * var(--ui-scale));
+  line-height: 1.35;
+}
+
+.session-bar[hidden] {
+  display: none;
+}
+
+.session-bar[data-state="strip"] {
+  flex-basis: calc(26px * var(--ui-scale));
+  width: calc(26px * var(--ui-scale));
+}
+
+/* Only one of the two faces shows. */
+.session-bar .sb-open,
+.session-bar .sb-strip {
+  display: none;
+}
+
+.session-bar[data-state="open"] .sb-open {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.session-bar[data-state="strip"] .sb-strip {
+  display: flex;
+}
+
+/* --- buttons */
+.sb-btn {
+  font-family: var(--font-ui);
+  font-size: calc(12px * var(--ui-scale));
+  line-height: 1;
+  letter-spacing: 0;
+  text-transform: none;
+  border: 1px solid var(--sb-hairline);
+  background: var(--sb-bg);
+  color: var(--sb-ink);
+  padding: 4px 8px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.sb-btn:hover {
+  background: var(--sb-hover);
+}
+
+.sb-btn:focus-visible,
+.sb-x:focus-visible,
+.sb-link:focus-visible {
+  outline: 2px solid var(--sb-focus);
+  outline-offset: 1px;
+}
+
+.sb-btn.sb-icon {
+  padding: 3px 7px;
+  font-weight: 700;
+}
+
+.sb-btn[aria-disabled="true"] {
+  color: var(--sb-muted);
+  cursor: default;
+}
+
+.sb-btn.due {
+  color: var(--sb-due);
+  border-color: var(--sb-due);
+}
+
+/* --- header */
+.sb-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: calc(7px * var(--ui-scale)) 8px calc(7px * var(--ui-scale)) 12px;
+  border-bottom: 1px solid var(--sb-hairline);
+  flex: 0 0 auto;
+}
+
+.sb-title {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-family: var(--font-ui);
+  font-size: calc(11px * var(--ui-scale));
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.sb-project {
+  color: var(--sb-muted);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: none;
+}
+
+/* --- the lists scroll; the checkpoint stays at the foot */
+.sb-lists {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.sb-sec {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--sb-rule);
+}
+
+.sb-lists .sb-sec:last-child {
+  border-bottom: 0;
+}
+
+.sb-sec-checkpoint {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--sb-rule);
+  border-bottom: 0;
+}
+
+.sb-h {
+  margin: 0;
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-ui);
+  font-size: calc(10.5px * var(--ui-scale));
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--sb-ink);
+}
+
+.sb-count {
+  color: var(--sb-muted);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.sb-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+
+/* --- rows: kind, description, time (and a failure's ×) */
+.sb-item {
+  display: grid;
+  grid-template-columns: calc(52px * var(--ui-scale)) minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: baseline;
+}
+
+.sb-item.fail {
+  grid-template-columns: calc(52px * var(--ui-scale)) minmax(0, 1fr) auto auto;
+}
+
+.sb-kind {
+  font-size: calc(10px * var(--ui-scale));
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--sb-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sb-what {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+code.sb-what {
+  font-family: var(--font-mono);
+  font-size: calc(11.5px * var(--ui-scale));
+}
+
+.sb-t {
+  font-variant-numeric: tabular-nums;
+  color: var(--sb-muted);
+  white-space: nowrap;
+}
+
+.sb-empty {
+  color: var(--sb-muted);
+}
+
+/* Over an hour: the accent. */
+.sb-item.long .sb-t {
+  color: var(--sb-long);
+  font-weight: 700;
+}
+
+/* Ended: struck through and faded for its 30 s. */
+.sb-item.done {
+  opacity: 0.5;
+}
+
+.sb-item.done .sb-what {
+  text-decoration: line-through;
+}
+
+/* Failures */
+.sb-item.fail .sb-what {
+  color: var(--sb-fail);
+}
+
+.sb-x {
+  font-family: var(--font-ui);
+  font-size: calc(13px * var(--ui-scale));
+  line-height: 1;
+  border: 0;
+  background: transparent;
+  color: var(--sb-muted);
+  padding: 0 2px;
+  cursor: pointer;
+}
+
+.sb-x:hover {
+  color: var(--sb-ink);
+}
+
+/* Links: a button that reads as a link. */
+.sb-link {
+  font: inherit;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--sb-link);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+/* --- the checkpoint (D7 moves the clock here; markup from session-bar.ts) */
+.sb-ckpt {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.sb-ckpt-text {
+  min-width: 0;
+}
+
+.sb-big {
+  font-size: calc(15px * var(--ui-scale));
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.sb-big.due {
+  color: var(--sb-due);
+}
+
+.sb-note {
+  color: var(--sb-muted);
+}
+
+/* --- the minimized strip (D2) */
+.sb-strip {
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding-top: 6px;
+  font-family: var(--font-ui);
+  font-size: calc(10.5px * var(--ui-scale));
+  font-weight: 700;
+  line-height: 1;
+}
+
+.sb-strip .sb-btn {
+  padding: 3px 5px;
+}
+
+.sb-n {
+  display: grid;
+  place-items: center;
+  width: calc(18px * var(--ui-scale));
+  height: calc(18px * var(--ui-scale));
+  border: 1px solid var(--sb-hairline);
+  font-variant-numeric: tabular-nums;
+}
+
+.sb-n-failures.some {
+  color: var(--sb-fail);
+  border-color: var(--sb-fail);
+}

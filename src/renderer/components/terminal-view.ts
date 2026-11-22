@@ -5,7 +5,7 @@ import { SearchAddon } from '@xterm/addon-search';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { DEFAULTS } from '../../shared/constants';
 import { rlog } from '../services/renderer-logger';
-import { fitGrid, roomPadding, type FitInput } from '../services/terminal-fit';
+import { fitAvailWidth, fitGrid, roomPadding, type FitInput } from '../services/terminal-fit';
 import { parsePattonOsc, type PattonState } from '../services/patton-osc';
 import { parseProgramStatus, PROGRAM_STATUS_REPLY, type ParsedSequence } from '../services/program-status';
 import { programStatusEnabled } from '../services/program-status-switch';
@@ -692,6 +692,15 @@ export class TerminalView {
       scrollbarWidth: this.terminal.options.scrollback === 0 ? 0 : (this.terminal.options.overviewRuler?.width || 14),
       cellWidth: cell.width, cellHeight: cell.height,
     };
+  }
+
+  /** The width the grid's columns are cut from and one cell's width (px),
+   *  as fitGrid reads them; null while unmeasurable (the session bar's fold). */
+  fitWidthInfo(): { availWidth: number; cellWidth: number } | null {
+    let f: FitInput | null;
+    try { f = this.fitInput(); } catch { return null; }
+    if (!f || !(f.cellWidth > 0) || !Number.isFinite(f.width)) return null;
+    return { availWidth: fitAvailWidth(f), cellWidth: f.cellWidth };
   }
 
   getDimensions(): { cols: number; rows: number } {

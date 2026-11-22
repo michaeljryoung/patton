@@ -41,6 +41,8 @@ import {
 } from '../services/compose-placement';
 import { composeRoomRows } from '../services/compose-room';
 import { onUiTextScaleApplied } from '../services/ui-text-scale';
+import { SessionBarModel, stopListsOf, type ModelNote } from '../services/session-bar-model';
+import type { SessionFeedEvent } from '../../shared/session-feed';
 
 /** Background work a parked Claude Code session is waiting on: from the Stop
  *  hook (tasks + crons), or from OSC 7501 child records (tasks + their titles,
@@ -191,6 +193,15 @@ export class Pane {
   // running in this pane, so image pastes go to it as Ctrl+V (it reads the
   // clipboard itself) instead of as a file path.
   private claudeActive = false;
+  /** What the session bar shows for this pane (docs/session-bar.md D3–D6). */
+  readonly sessionBarModel = new SessionBarModel();
+  /** The pty main's transcript feed follows for this pane, null when none. */
+  private feedPtyId: number | null = null;
+  /** The transcript path last passed to main as a hint (from a Stop's `tp`). */
+  private feedTranscriptHint: string | null = null;
+  private barRowsLoggedAtMs = 0;
+  private barRowsTimer: ReturnType<typeof setTimeout> | null = null;
+  private static readonly BAR_ROWS_LOG_MS = 60_000;
   // Claude Code's own status (OSC 7501, services/program-status.ts). Once a
   // pane has had a report, it is the only source: Claude stops putting its
   // glyph in the title, so the title path stands aside, and the Stop hook's
@@ -610,6 +621,10 @@ export class Pane {
   /** Turn this pane's 7501 records into the pane state (see programSignal). */
   private applyProgramStatus(): void {
     const root = this.programStatus.root;
+    // The bar's agents, workflows and root error come from Claude's records only.
+    if (isClaudeProgram(this.programStatus)) {
+      this.logBarNotes(this.sessionBarModel.applyProgramRecords(root, this.programStatus.children(), Date.now()));
+    }
     const rootState = root?.state ?? null;
     if (rootState === 'done' && this.lastRootState !== 'done') this.rootDoneAtMs = Date.now();
     else if (rootState !== 'done') this.rootDoneAtMs = null;
@@ -717,6 +732,7 @@ export class Pane {
     this.lastRootState = null;
     this.lastWorkingChildren = 0;
     this.hadTurn = false;
+    this.sessionBarModel.applyProgramRecords(null, [], Date.now());
     if (!wasReporting) return;
     // Claude left (a bare `state=clear`, the shell's prompt). A full reset
     // (RIS) alone doesn't end the session.
@@ -918,6 +934,7 @@ export class Pane {
    *  starts at "✓ —". */
   private notifyCheckpoint(): void {
     this.noteActivity();
+    this.syncSessionFeed();
     if (!this.claudeActive) {
       this.ctxTokens = null;
       this.sinceTokens = null;
@@ -1081,6 +1098,113 @@ export class Pane {
     this.queueSubmit('pause', false, { stashFirst: opts.stash, scroll: false, origin: 'patton' });
   }
 
+  // ---- Session bar (docs/session-bar.md) ----
+
+  /** Claude runs in this pane (7501 `app=claude-code`, else the title fallback). */
+  get isClaudePane(): boolean {
+    return this.claudeActive;
+  }
+
+  /** The terminal's grid columns now. */
+  get columns(): number {
+    return this.terminalView.getDimensions().cols;
+  }
+
+  /** The width the grid is cut from and one cell's width (px), for the bar's
+   *  narrow fold; null while the terminal can't be measured. */
+  sessionBarWidthInfo(): { availWidth: number; cellWidth: number } | null {
+    return this.terminalView.fitWidthInfo();
+  }
+
+  /** A transcript-feed event main sent for this pane's pty (TabManager routes it). */
+  applyFeedEvent(ptyId: number, event: SessionFeedEvent): void {
+    // Late events for a session the pane no longer follows are dropped.
+    if (this.feedPtyId === null || ptyId !== this.feedPtyId) return;
+    if (event.type === 'error') {
+      rlog('warn', '[BAR] feed error', { pane: this.id, why: event.why });
+    }
+    this.logBarNotes(this.sessionBarModel.applyFeed(event, Date.now()));
+  }
+
+  /** The container changed size for the bar: fit now through the pane's
+   *  normal resize path, not after the observer's 100 ms debounce. */
+  refitAfterLayout(): void {
+    if (this.disposed) return;
+    if (this.resizeTimer) {
+      clearTimeout(this.resizeTimer);
+      this.resizeTimer = null;
+    }
+    this.fitToContainer();
+  }
+
+  /** Follow the pane's Claude session in main while Claude runs here; stop
+   *  (and clear the bar's lists) once it leaves or the pty changes. Called
+   *  from notifyCheckpoint, which every Claude start and exit reaches. */
+  private syncSessionFeed(): void {
+    const want = this.claudeActive && !this.disposed && this.ptyId !== null && !this.ptyExited ? this.ptyId : null;
+    if (want === this.feedPtyId) return;
+    if (this.feedPtyId !== null) this.stopSessionFeed();
+    if (want === null) return;
+    this.feedPtyId = want;
+    this.feedTranscriptHint = null;
+    this.watchSessionFeed(want);
+  }
+
+  private watchSessionFeed(ptyId: number, transcriptPath?: string): void {
+    const feed = window.patton.sessionFeed;
+    if (!feed) return;
+    feed.watch(ptyId, transcriptPath ? { transcriptPath } : undefined).catch((err: unknown) => {
+      rlog('warn', '[BAR] feed error', { pane: this.id, why: `watch failed: ${String(err)}` });
+    });
+  }
+
+  private stopSessionFeed(): void {
+    const ptyId = this.feedPtyId;
+    this.feedPtyId = null;
+    this.feedTranscriptHint = null;
+    this.sessionBarModel.reset();
+    if (ptyId === null) return;
+    window.patton.sessionFeed?.unwatch(ptyId).catch(() => { /* main forgets it with the pty */ });
+  }
+
+  /** A Stop: reconcile the bar with the hook's lists, and pass its transcript
+   *  path to main when it is new (D8: accepted only if main's checks pass). */
+  private applyStopToBar(state: PattonState): void {
+    const lists = stopListsOf(state);
+    this.sessionBarModel.applyStop(lists, Date.now());
+    const tp = lists.transcriptPath;
+    if (tp && this.feedPtyId !== null && tp !== this.feedTranscriptHint) {
+      this.feedTranscriptHint = tp;
+      this.watchSessionFeed(this.feedPtyId, tp);
+    }
+  }
+
+  /** D11: `[BAR] link` and `[BAR] failure` as the model adds them. */
+  private logBarNotes(notes: ModelNote[]): void {
+    for (const n of notes) {
+      if (n.note === 'link') rlog('info', '[BAR] link', { pane: this.id, kind: n.kind });
+      else rlog('info', '[BAR] failure', { pane: this.id, kind: n.kind });
+    }
+  }
+
+  /** D11: `[BAR] rows` at most once a minute per pane; a change inside the
+   *  minute is logged when it ends. */
+  private noteBarRows(): void {
+    if (this.barRowsTimer !== null || this.disposed) return;
+    const wait = this.barRowsLoggedAtMs + Pane.BAR_ROWS_LOG_MS - Date.now();
+    if (wait <= 0) { this.logBarRows(); return; }
+    this.barRowsTimer = setTimeout(() => {
+      this.barRowsTimer = null;
+      if (!this.disposed) this.logBarRows();
+    }, wait);
+  }
+
+  private logBarRows(): void {
+    this.barRowsLoggedAtMs = Date.now();
+    const v = this.sessionBarModel.view(this.barRowsLoggedAtMs);
+    rlog('info', '[BAR] rows', { pane: this.id, running: v.liveCount, scheduled: v.scheduled.length, failures: v.failures.length, links: v.links.length });
+  }
+
   /** Claude isn't running in this pane any more: the shell is back at its
    *  prompt, or the pane's shell was replaced (respawn) and the new one has
    *  never run it. Drops every sign of the old session. */
@@ -1105,6 +1229,7 @@ export class Pane {
     this.lastSignalAtMs = this.stopSeenAtMs;
     this.composeMenuPending = false;
     this.syncComposeAside('stop-hook');
+    if (state.kind === 'stop') this.applyStopToBar(state);
     if (state.kind === 'stop') this.handleHookStop(state.tasks, state.crons);
     if (state.kind === 'stop' && state.context) this.noteFinishHeld(state.tasks, state.context);
     if (state.context) this.handleContextReading(state.context);
@@ -1648,27 +1773,14 @@ export class Pane {
     const resizeObserver = new ResizeObserver(() => {
       if (this.resizeTimer) clearTimeout(this.resizeTimer);
       this.resizeTimer = setTimeout(() => {
-        // D15: rows given up stay given up at the new size (the padding that
-        // gives them up is measured from the container's size).
-        const before = this.terminalView.getDimensions();
-        if (this.composeRoomRows > 0) this.terminalView.setRowsGivenUp(this.composeRoomRows);
-        else this.terminalView.fit();
-        const dims = this.terminalView.getDimensions();
-        if (this.ptyId !== null) window.patton.pty.resize(this.ptyId, dims.cols, dims.rows);
-        if (dims.rows !== before.rows || dims.cols !== before.cols) this.openComposeSettle('resize', true);
-        // The box's cap is a share of the pane's height, so follow resizes.
-        if (this.composeFirstEngaged) this.editorInput.refreshSize();
-        this.layoutComposeOverlay();
-        // D15: the cap on k is a third of the pane, so a pane that changed
-        // height works k out again. The observer also fires for Patton's own
-        // padding change (it narrows .terminal-container's content box), which
-        // leaves the pane's height as it was and so does nothing here.
-        if (this.element.clientHeight !== this.composeRoomPaneH) this.syncComposeRoom('resize');
-        this.scheduleBarReading();
+        this.resizeTimer = null;
+        this.fitToContainer();
       }, 100);
     });
     resizeObserver.observe(this.terminalContainer);
     this.disposables.push(() => resizeObserver.disconnect());
+    // D11: the bar's rows line follows the model.
+    this.disposables.push(this.sessionBarModel.onChange(() => this.noteBarRows()));
 
     // In the overlays the paste strip sits on the box's top edge, which moves
     // as the box grows upward (D12). Not debounced, unlike the terminal's fit
@@ -2131,6 +2243,27 @@ export class Pane {
     this.boxImages.replaceChildren(...nodes);
     this.boxImages.hidden = entries.length === 0;
     this.syncComposeRoom('chip'); // D15: a chip may change the box's height
+  }
+
+  /** The terminal's container changed size: fit, tell the PTY, re-place the box. */
+  private fitToContainer(): void {
+    // D15: rows given up stay given up at the new size (the padding that
+    // gives them up is measured from the container's size).
+    const before = this.terminalView.getDimensions();
+    if (this.composeRoomRows > 0) this.terminalView.setRowsGivenUp(this.composeRoomRows);
+    else this.terminalView.fit();
+    const dims = this.terminalView.getDimensions();
+    if (this.ptyId !== null) window.patton.pty.resize(this.ptyId, dims.cols, dims.rows);
+    if (dims.rows !== before.rows || dims.cols !== before.cols) this.openComposeSettle('resize', true);
+    // The box's cap is a share of the pane's height, so follow resizes.
+    if (this.composeFirstEngaged) this.editorInput.refreshSize();
+    this.layoutComposeOverlay();
+    // D15: the cap on k is a third of the pane, so a pane that changed
+    // height works k out again. The observer also fires for Patton's own
+    // padding change (it narrows .terminal-container's content box), which
+    // leaves the pane's height as it was and so does nothing here.
+    if (this.element.clientHeight !== this.composeRoomPaneH) this.syncComposeRoom('resize');
+    this.scheduleBarReading();
   }
 
   /** Showing or hiding the strip changes the terminal's height: re-fit and tell the PTY now. */
@@ -3454,8 +3587,10 @@ export class Pane {
   }
 
   dispose(): void {
+    if (this.feedPtyId !== null) this.stopSessionFeed();
     this.disposed = true;
     if (this.resizeTimer) clearTimeout(this.resizeTimer);
+    if (this.barRowsTimer !== null) clearTimeout(this.barRowsTimer);
     this.clearComposeBlockedTimer();
     this.clearComposeKeyboardTimer();
     this.clearBarLostTimer();

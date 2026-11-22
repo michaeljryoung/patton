@@ -47,6 +47,8 @@ export interface SessionBarCallbacks {
   onMinimizedChange: (minimized: boolean) => void;
   /** A link row was clicked: open it through main's link-open path. */
   onOpenLink: (link: LinkRow) => void;
+  /** The bar opened, folded or hid: the terminal beside it has a new width. */
+  onShownChange?: (state: 'hidden' | 'open' | 'strip') => void;
 }
 
 type Shown = 'hidden' | 'open' | 'strip';
@@ -229,6 +231,7 @@ export class SessionBar {
       this.element.hidden = next === 'hidden';
       this.element.dataset.state = next;
       this.element.setAttribute('aria-label', next === 'strip' ? 'Session bar, minimized' : 'Session bar');
+      this.callbacks.onShownChange?.(next);
     }
     // Folded only for want of room: ⇤ can't open it, and says why.
     const restore = this.element.querySelector<HTMLButtonElement>('.sb-restore');

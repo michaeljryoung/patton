@@ -138,6 +138,9 @@ export interface SessionState {
   activeTabIndex: number;
   /** Tab groups (19 Nov 2026); absent in sessions saved before them. */
   groups?: SessionGroupState[];
+  /** The session bar's saved choice (docs/session-bar.md D2); absent before
+   *  the bar, so read `minimized === true`. */
+  sessionBar?: { minimized: boolean };
 }
 
 /** The project a terminal's folder belongs to, which names its tab. See

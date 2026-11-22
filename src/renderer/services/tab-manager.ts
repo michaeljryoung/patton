@@ -14,6 +14,9 @@ import type { SessionState, SessionTabState, RendererMode, TabFlag, WindowCloseI
 import { runPause, emptyReport, pauseSummary, type PauseTarget } from './pause-all';
 import { orderSessions, sessionNeedsYou, stripClaudeGlyph, type SessionInfo, type SessionStatus } from './sessions';
 import type { ITheme } from '@xterm/xterm';
+import { SessionBar, type SessionBarTarget } from '../components/session-bar';
+import type { LinkRow } from './session-bar-model';
+import { resolveHyperlink } from './link-target';
 import {
   cleanGroupName, moveGroupFirst, nearestVisible, newGroupId, placeAfterGroup, repairRuns, stepMove, takeOutOfGroup,
   visibleItems, MAX_GROUPS, type TabGroup,
@@ -48,6 +51,10 @@ export class TabManager {
   closeIpcTimeoutMs = 1500;
   private contentContainer: HTMLElement;
   private disposables: (() => void)[] = [];
+  /** The window's session bar (docs/session-bar.md D1, D2). */
+  private sessionBar: SessionBar;
+  /** One bar target per pane, so following the same pane again is a no-op. */
+  private barTargets = new WeakMap<Pane, SessionBarTarget>();
   private currentFontSize: number | undefined;
   private currentFontFamily: string | undefined;
   private currentScrollback: number | undefined;
@@ -139,6 +146,19 @@ export class TabManager {
     this.listenForMainConfirmations();
     this.listenForPauseAll();
     this.onTabsChanged = options?.onTabsChanged ?? null;
+
+    // The session bar: one per window, after #content inside #main.
+    this.sessionBar = new SessionBar(contentContainer, {
+      onCheckpoint: () => { void this.runCheckpoint(); },
+      onMinimizedChange: () => { this.saveSession().catch(() => {}); },
+      onOpenLink: (link) => { void this.openBarLink(link); },
+      onShownChange: () => this.refitForBar(),
+    });
+    // main's transcript feed, routed by pty to the pane that asked for it.
+    const offFeed = window.patton.sessionFeed?.onEvent((ptyId, event) => {
+      this.paneForPty(ptyId)?.applyFeedEvent(ptyId, event);
+    });
+    if (offFeed) this.disposables.push(offFeed);
 
     // Tabs are named after their project. A project renamed in any window
     // renames its tabs here too.
@@ -1356,6 +1376,7 @@ export class TabManager {
       };
       const groups = [...this.groups.values()].filter((g) => usedGroups.has(g.id));
       if (groups.length > 0) session.groups = groups.map((g) => ({ id: g.id, name: g.name, folded: g.folded }));
+      session.sessionBar = { minimized: this.sessionBar.isMinimized };
       await window.patton.session.set(session);
     } catch (err) {
       console.warn('Failed to save session:', err);
@@ -1368,6 +1389,8 @@ export class TabManager {
     try {
       const session = await window.patton.session.get();
       if (!session || !session.tabs || session.tabs.length === 0) return false;
+      // D2: the window's bar choice; absent in sessions saved before the bar.
+      this.sessionBar.setMinimized(session.sessionBar?.minimized === true, 'restore');
 
       const savedActive = Math.max(0, Math.min(session.activeTabIndex, session.tabs.length - 1));
       let startupTab: Tab | null = null;
@@ -1549,7 +1572,83 @@ export class TabManager {
   /** Show the active tab's focused pane on the strip's checkpoint clock. */
   private updateCheckpoint(): void {
     const pane = this.activeTab?.focusedPane;
-    this.tabBar.setCheckpoint(checkpointView(pane ? pane.checkpointSource : null, this.checkpointNudgePct));
+    const view = checkpointView(pane ? pane.checkpointSource : null, this.checkpointNudgePct);
+    this.tabBar.setCheckpoint(view);
+    this.updateSessionBar(view);
+  }
+
+  // ---- Session bar (components/session-bar.ts) ----
+
+  /** The bar follows the active tab's focused pane while it runs Claude (D1).
+   *  Every tab switch, focus change and Claude start or exit reaches here
+   *  through updateCheckpoint. */
+  private updateSessionBar(view: ReturnType<typeof checkpointView>): void {
+    const tab = this.activeTab;
+    const pane = tab?.focusedPane ?? null;
+    const showing = pane !== null && pane.isClaudePane && pane.title !== WAKE_TITLE;
+    let target: SessionBarTarget | null = null;
+    if (tab && pane && showing) {
+      target = this.barTargets.get(pane) ?? null;
+      if (!target) {
+        target = {
+          paneId: pane.id,
+          model: pane.sessionBarModel,
+          project: null,
+          widthInfo: () => pane.sessionBarWidthInfo(),
+        };
+        this.barTargets.set(pane, target);
+      }
+      const claudePanes = tab.panes.filter((p) => p.isClaudePane).length;
+      target.project = claudePanes > 1 && tab.project ? projectName(tab.project) : null;
+    }
+    this.sessionBar.follow(target);
+    this.sessionBar.setCheckpoint(target ? view : null);
+  }
+
+  /** The bar opened, folded or hid: fit the active tab's terminals once the
+   *  layout has the new width, through each pane's normal resize path (its
+   *  observer would, 100 ms later). A tab switch with the same bar state calls
+   *  nothing; a tab hidden meanwhile refits from its own observer when shown.
+   *  A width change from the UI text scale reaches the observers alone. */
+  private refitForBar(): void {
+    const tab = this.activeTab;
+    if (!tab) return;
+    requestAnimationFrame(() => {
+      if (this.activeTab !== tab) return;
+      for (const p of tab.panes) p.refitAfterLayout();
+    });
+  }
+
+  private paneForPty(ptyId: number): Pane | null {
+    const known = this.panesByPtyId.get(ptyId);
+    if (known && known.ptyId === ptyId) return known;
+    // A respawned pane's new pty may not be in the map: look.
+    for (const tab of this.tabs) {
+      for (const p of tab.panes) if (p.ptyId === ptyId) return p;
+    }
+    return null;
+  }
+
+  /** A link row's click (D6, D12): a web URL through openExternal, a file
+   *  through the editor path, both judged by main (link-open-policy.ts). */
+  private async openBarLink(link: LinkRow): Promise<void> {
+    try {
+      if (link.url) {
+        const target = resolveHyperlink(link.url, '', []);
+        if (target.kind !== 'web') {
+          rlog('warn', '[BAR] link refused', { kind: link.kind });
+          return;
+        }
+        await window.patton.openExternal(target.url);
+      } else if (link.path) {
+        await window.patton.editor.openFile(link.path);
+      } else {
+        return;
+      }
+      rlog('info', '[BAR] link open', { kind: link.kind });
+    } catch (err) {
+      rlog('warn', '[BAR] link open failed', { kind: link.kind, error: String(err) });
+    }
   }
 
   // ---- Tab hover card (services/tab-hover.ts) ----
@@ -1601,6 +1700,7 @@ export class TabManager {
       // Seen and heard, from the clock's click and the palette alike.
       announce(why, 'assertive');
       this.tabBar.showCheckpointReason(why);
+      this.sessionBar.showCheckpointReason(why);
     }
     // The click left focus on the strip's button; the keyboard belongs to Claude.
     pane.focus();
@@ -1702,6 +1802,7 @@ export class TabManager {
   dispose(): void {
     for (const d of this.disposables) d();
     for (const tab of this.tabs) tab.dispose();
+    this.sessionBar.dispose();
     this.tabBar.dispose();
     this.confirmDialog.dispose();
   }
