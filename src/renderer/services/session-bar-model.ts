@@ -30,7 +30,6 @@ export const MAX_LINKS = 8;
 export const SCHEDULE_PROMPT_MAX = 60;
 /** Rows a pane may hold, whatever its sources claim: a runaway list can't grow the bar without bound. */
 const MAX_RUNS = 64;
-const MAX_LIST = 64;
 const MAX_WAKES = 16;
 const TEXT_MAX = 200;
 
@@ -101,6 +100,9 @@ export type ModelNote =
 // ---------------------------------------------------------------- the Stop hook's lists
 
 export interface StopLists {
+  /** How many running tasks the hook counted (`tasks=`): more than `taskList` holds
+   *  when the hook cut the list to fit Claude Code's 4096-byte limit. */
+  tasks: number;
   /** Null when the hook sent no list (an older hook): nothing is reconciled. */
   taskList: HookTask[] | null;
   cronList: HookCron[] | null;
@@ -109,33 +111,19 @@ export interface StopLists {
 
 const isStr = (v: unknown): v is string => typeof v === 'string';
 
-/** The one place the bar reads the Stop hook's lists off a parsed OSC 777 message.
- *  Every field is checked: anything malformed is dropped, never trusted. */
-export function stopListsOf(state: PattonState): StopLists {
-  // merge: the hook_lists branch adds optional `taskList?: HookTask[]`,
-  // `cronList?: HookCron[]` and `transcriptPath?: string` to PattonState
-  // (services/patton-osc.ts). Until it lands they are read defensively here;
-  // once merged, these casts can read the typed fields directly.
-  const s = state as { taskList?: unknown; cronList?: unknown; transcriptPath?: unknown };
-  let taskList: HookTask[] | null = null;
-  if (Array.isArray(s.taskList)) {
-    taskList = [];
-    for (const t of s.taskList.slice(0, MAX_LIST)) {
-      const o = t as Partial<HookTask> | null;
-      if (o && isStr(o.id) && o.id !== '' && isStr(o.type)) taskList.push({ id: o.id, type: o.type, d: isStr(o.d) ? o.d : '' });
-    }
-  }
-  let cronList: HookCron[] | null = null;
-  if (Array.isArray(s.cronList)) {
-    cronList = [];
-    for (const c of s.cronList.slice(0, MAX_LIST)) {
-      const o = c as Partial<HookCron> | null;
-      if (o && isStr(o.id) && o.id !== '' && isStr(o.s)) cronList.push({ id: o.id, s: o.s, r: o.r === true, p: isStr(o.p) ? o.p : '' });
-    }
-  }
-  const transcriptPath = isStr(s.transcriptPath) && s.transcriptPath.startsWith('/') && s.transcriptPath.length < 1024
-    ? s.transcriptPath : null;
-  return { taskList, cronList, transcriptPath };
+/** The stop variant of a parsed OSC 777 message. */
+export type StopState = Extract<PattonState, { kind: 'stop' }>;
+
+/** The one place the bar reads the Stop hook's lists off a parsed Stop. The
+ *  lists were checked entry by entry when parsed (services/hook-lists.ts), so
+ *  they are taken as they are; a missing list stays null, never empty. */
+export function stopListsOf(state: StopState): StopLists {
+  return {
+    tasks: state.tasks,
+    taskList: state.taskList ?? null,
+    cronList: state.cronList ?? null,
+    transcriptPath: state.transcriptPath ?? null,
+  };
 }
 
 // ---------------------------------------------------------------- text helpers
@@ -401,13 +389,16 @@ export class SessionBarModel {
   }
 
   /** The Stop hook's lists at a Stop (D3, D4): an id missing from `taskList`
-   *  ends (unless 7501 still reports it), an unknown listed id is added. */
+   *  ends (unless 7501 still reports it), an unknown listed id is added. A list
+   *  shorter than the hook's count was cut to fit Claude Code's length limit, so
+   *  an id missing from it may still run: nothing ends, listed ids still merge. */
   applyStop(lists: StopLists, now: number): void {
     let dirty = false;
     if (lists.taskList !== null) {
       const listed = new Map(lists.taskList.map((t) => [t.id, t]));
+      const complete = lists.taskList.length >= lists.tasks;
       for (const run of this.runs.values()) {
-        if (run.endedAt !== null || run.in7501 || listed.has(run.id)) continue;
+        if (!complete || run.endedAt !== null || run.in7501 || listed.has(run.id)) continue;
         this.end(run, 'done', 'hook', now);
         dirty = true;
       }

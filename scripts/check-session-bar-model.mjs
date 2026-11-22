@@ -69,14 +69,14 @@ const MIN = 60 * S;
   check('oldest first', v.running.map((r) => r.id).join() === 'a1,b7', v.running.map((r) => r.id));
   check('live count 2', v.liveCount === 2, v.liveCount);
   // Hook reconcile: b7 missing ends; c3 unknown is added; a1 still in 7501 stays.
-  m.applyStop({ taskList: [{ id: 'c3', type: 'monitor', d: 'main.log for [COMPOSE] room' }], cronList: null, transcriptPath: null }, T0 + 2 * MIN);
+  m.applyStop({ tasks: 1, taskList: [{ id: 'c3', type: 'monitor', d: 'main.log for [COMPOSE] room' }], cronList: null, transcriptPath: null }, T0 + 2 * MIN);
   v = m.view(T0 + 2 * MIN);
   const b7 = v.running.find((r) => r.id === 'b7');
   check('reconcile: an id missing from the list ends (struck, "done")', b7 && b7.ended && b7.endLabel === 'done', b7);
   check('reconcile: an unknown listed id is added from the list (Monitor)', v.running.some((r) => r.id === 'c3' && r.kind === 'Monitor' && r.description === 'main.log for [COMPOSE] room' && !r.ended), v.running);
   check('reconcile: an id 7501 still reports stays running', v.running.some((r) => r.id === 'a1' && !r.ended), v.running);
   check('reconcile: no list (an older hook) ends nothing', (() => {
-    m.applyStop({ taskList: null, cronList: null, transcriptPath: null }, T0 + 2 * MIN);
+    m.applyStop({ tasks: 1, taskList: null, cronList: null, transcriptPath: null }, T0 + 2 * MIN);
     return m.view(T0 + 2 * MIN).running.find((r) => r.id === 'c3' && !r.ended);
   })());
   // Linger
@@ -118,7 +118,7 @@ const MIN = 60 * S;
   check('cron 0 0 29 2 * → 29 Feb 2028', M.nextCronFire('0 0 29 2 *', now) === new Date(2028, 1, 29, 0, 0).getTime());
   check('cron unparseable → null', M.nextCronFire('every 20 minutes', now) === null && M.nextCronFire('61 * * * *', now) === null && M.nextCronFire('* * * *', now) === null);
   const m = new M.SessionBarModel();
-  m.applyStop({ taskList: null, transcriptPath: null, cronList: [
+  m.applyStop({ tasks: 0, taskList: null, transcriptPath: null, cronList: [
     { id: 'k1', s: '*/20 * * * *', r: true, p: '/loop 20m check the release' },
     { id: 'k2', s: 'whenever', r: true, p: 'x'.repeat(100) },
   ] }, now);
@@ -134,7 +134,7 @@ const MIN = 60 * S;
   check('wake-up: a Wake row at 11:30, first', v.scheduled[0].kind === 'Wake' && v.scheduled[0].when === '11:30', v.scheduled);
   check('wake-up: gone once its time passes', !m.view(at(11, 30) + 1).scheduled.some((r) => r.kind === 'Wake'));
   m.applyFeed({ type: 'wake', fireAt: at(12, 5), prompt: 'one-off', at: now }, now);
-  m.applyStop({ taskList: null, transcriptPath: null, cronList: [{ id: 'k3', s: '5 12 22 11 *', r: false, p: 'one-off' }] }, now);
+  m.applyStop({ tasks: 0, taskList: null, transcriptPath: null, cronList: [{ id: 'k3', s: '5 12 22 11 *', r: false, p: 'one-off' }] }, now);
   v = m.view(now);
   check('a wake-up the cron list also carries is one row', v.scheduled.filter((r) => r.prompt === 'one-off').length === 1, v.scheduled);
 }
@@ -220,10 +220,33 @@ const MIN = 60 * S;
   const base = { kind: 'stop', tasks: 1, crons: 1, context: null };
   let l = M.stopListsOf(base);
   check('adapter: no lists on an older hook → null, null, null', l.taskList === null && l.cronList === null && l.transcriptPath === null, l);
-  l = M.stopListsOf({ ...base, taskList: [{ id: 't1', type: 'shell', d: 'x' }, { id: 5 }, null, { id: '', type: 'shell' }], cronList: [{ id: 'c', s: '* * * * *', r: true, p: 'p' }, { s: 'x' }], transcriptPath: '/Users/m/.claude/projects/p/s.jsonl' });
-  check('adapter: malformed entries dropped, good ones kept', l.taskList.length === 1 && l.taskList[0].id === 't1' && l.cronList.length === 1 && l.transcriptPath.endsWith('s.jsonl'), l);
-  check('adapter: a relative transcript path refused', M.stopListsOf({ ...base, transcriptPath: '../x.jsonl' }).transcriptPath === null);
+  check('adapter: carries the hook\'s task count', l.tasks === 1, l);
+  l = M.stopListsOf({ ...base, taskList: [{ id: 't1', type: 'shell', d: 'x' }], cronList: [{ id: 'c', s: '* * * * *', r: true, p: 'p' }], transcriptPath: '/Users/m/.claude/projects/p/s.jsonl' });
+  check('adapter: the parsed lists passed through', l.taskList.length === 1 && l.taskList[0].id === 't1' && l.cronList.length === 1 && l.transcriptPath.endsWith('s.jsonl'), l);
+  check('adapter: an empty list stays a list (everything ended), not null', Array.isArray(M.stopListsOf({ ...base, tasks: 0, taskList: [] }).taskList));
   check('hook types map to kinds', ['shell', 'subagent', 'monitor', 'workflow', 'teammate', 'cloud session', 'MCP task'].map(M.kindOfHookType).join() === 'Shell,Agent,Monitor,Workflow,Teammate,Cloud,Task');
+}
+
+// ── 7b. A cut list (fewer entries than the hook's count) ends nothing ──
+{
+  const m = new M.SessionBarModel();
+  m.applyFeed({ type: 'task-start', id: 's1', kind: 'shell', description: 'npm run check', at: T0 }, T0);
+  m.applyFeed({ type: 'task-start', id: 's2', kind: 'shell', description: 'gh run watch', at: T0 }, T0);
+  m.applyFeed({ type: 'task-start', id: 's3', kind: 'monitor', description: 'main.log', at: T0 }, T0);
+  // The hook counted 4 but listed only s1 and a new s4: s2 and s3 were cut, not ended.
+  m.applyStop({ tasks: 4, taskList: [{ id: 's1', type: 'shell', d: 'npm run check' }, { id: 's4', type: 'subagent', d: 'review' }], cronList: null, transcriptPath: null }, T0 + MIN);
+  let v = m.view(T0 + MIN);
+  check('cut list: ids missing from it are not ended', ['s2', 's3'].every((id) => v.running.some((r) => r.id === id && !r.ended)), v.running);
+  check('cut list: a listed unknown id is still added', v.running.some((r) => r.id === 's4' && r.kind === 'Agent' && !r.ended), v.running);
+  check('cut list: live count 4', v.liveCount === 4, v.liveCount);
+  // The next Stop sends a complete list without s2: now s2 ends.
+  m.applyStop({ tasks: 3, taskList: [{ id: 's1', type: 'shell', d: '' }, { id: 's3', type: 'monitor', d: '' }, { id: 's4', type: 'subagent', d: '' }], cronList: null, transcriptPath: null }, T0 + 2 * MIN);
+  v = m.view(T0 + 2 * MIN);
+  check('complete list: an id missing from it ends', v.running.some((r) => r.id === 's2' && r.ended), v.running);
+  check('complete list: listed ids stay running', ['s1', 's3', 's4'].every((id) => v.running.some((r) => r.id === id && !r.ended)), v.running);
+  // Complete and empty (tasks=0): everything not in 7501 ends.
+  m.applyStop({ tasks: 0, taskList: [], cronList: null, transcriptPath: null }, T0 + 3 * MIN);
+  check('complete empty list: every row ends', m.view(T0 + 3 * MIN).liveCount === 0, m.view(T0 + 3 * MIN).running);
 }
 
 // ── 8. reset ──

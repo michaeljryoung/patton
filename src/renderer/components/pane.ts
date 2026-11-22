@@ -41,7 +41,7 @@ import {
 } from '../services/compose-placement';
 import { composeRoomRows } from '../services/compose-room';
 import { onUiTextScaleApplied } from '../services/ui-text-scale';
-import { SessionBarModel, stopListsOf, type ModelNote } from '../services/session-bar-model';
+import { SessionBarModel, stopListsOf, type ModelNote, type StopState } from '../services/session-bar-model';
 import type { SessionFeedEvent } from '../../shared/session-feed';
 
 /** Background work a parked Claude Code session is waiting on: from the Stop
@@ -1169,7 +1169,7 @@ export class Pane {
 
   /** A Stop: reconcile the bar with the hook's lists, and pass its transcript
    *  path to main when it is new (D8: accepted only if main's checks pass). */
-  private applyStopToBar(state: PattonState): void {
+  private applyStopToBar(state: StopState): void {
     const lists = stopListsOf(state);
     this.sessionBarModel.applyStop(lists, Date.now());
     const tp = lists.transcriptPath;
