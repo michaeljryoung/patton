@@ -28,7 +28,9 @@
 //  6. every toolbar and panel control has an accessible name;
 //  7. light and dark screenshots of the real tab (REVIEW_SHOTS_DIR, if set);
 //  8. with REVIEW_ASAR=<packaged app.asar>: pdf.js's worker asset inside the
-//     packaged asar starts as a real Web Worker.
+//     packaged asar starts as a real Web Worker, under the packaged main
+//     bundle's own CSP (the whole check runs under the app's CSP, read from
+//     the packaged bundle with REVIEW_ASAR, else from window-manager.ts).
 // Run: node scripts/check-review-tab.cjs   (needs LibreOffice and poppler's pdfinfo; skips with a line without)
 //   REVIEW_SHOTS_DIR=<folder>   save review-light.png and review-dark.png there
 //   REVIEW_ASAR=<app.asar>      also check the packaged build's worker asset
@@ -91,8 +93,8 @@ async function nodeRunner() {
       resolveDir: repo, loader: 'ts',
       contents: `
         import { TabManager } from './src/renderer/services/tab-manager';
-        import { loadPdfjs } from './src/renderer/services/review-pdf';
-        (window as any).__rt = { TabManager, loadPdfjs };
+        import { loadPdfjs, startPdfWorker } from './src/renderer/services/review-pdf';
+        (window as any).__rt = { TabManager, loadPdfjs, startPdfWorker };
       `,
     },
     bundle: true, platform: 'browser', format: 'iife', outfile: path.join(outDir, 'page.js'),
@@ -222,11 +224,35 @@ function electronMain() {
       check('the test document lays out on two pages in LibreOffice', want === 2, { pages: want });
 
       M.registerReviewHandlers();
+      // The window runs under the app's own CSP, set as window-manager.ts sets
+      // it, on a file:// page as the packaged renderer is: from the packaged
+      // main bundle with REVIEW_ASAR, else from window-manager.ts without the
+      // dev server's part.
+      const asar = process.env.REVIEW_ASAR ? path.resolve(process.env.REVIEW_ASAR) : '';
+      const cspSource = asar
+        ? fs.readFileSync(path.join(asar, '.vite/build/main.cjs'), 'utf8')
+        : fs.readFileSync(path.join(__dirname, '../src/main/window-manager.ts'), 'utf8');
+      const csp = ((/`(default-src 'self';[^`]*)`/.exec(cspSource) || [])[1] || '').replace(/\$\{[^}]*\}/g, '');
+      check(`the window has the ${asar ? 'packaged' : 'source'} app's CSP (script-src 'self', no blob:)`, /script-src 'self'/.test(csp) && !/blob:/.test(csp), csp);
       const win = new BrowserWindow({
         show: false, width: 1400, height: 1000,
         webPreferences: { backgroundThrottling: false, contextIsolation: false, nodeIntegration: false, sandbox: false, preload: path.join(outDir, 'preload.cjs') },
       });
+      win.webContents.session.webRequest.onHeadersReceived((details, cb) => cb({ responseHeaders: { ...details.responseHeaders, 'Content-Security-Policy': [csp] } }));
       await win.loadFile(path.join(outDir, 'page.html'));
+      const evalBlocked = await win.webContents.executeJavaScript('(() => { try { (0, eval)("1"); return false; } catch { return true; } })()');
+      check('the CSP is in force on the page (eval refused)', evalBlocked, { evalBlocked });
+      // Why review-pdf.ts starts its own worker: on this opaque-origin page
+      // pdf.js would wrap the worker in a blob: URL, which this CSP refuses.
+      const blobWorker = await win.webContents.executeJavaScript(`new Promise((resolve) => {
+        let w;
+        try { w = new Worker(URL.createObjectURL(new Blob(['postMessage(1)'], { type: 'text/javascript' }))); } catch (err) { resolve('refused: ' + err.name); return; }
+        const t = setTimeout(() => resolve('silent'), 3000);
+        w.onmessage = () => { clearTimeout(t); resolve('ran'); };
+        w.onerror = () => { clearTimeout(t); resolve('refused: error event'); };
+      })`);
+      check('under that CSP a blob: worker (pdf.js\'s own wrapper) is refused', blobWorker !== 'ran', { blobWorker });
+      measures.push(`blob: worker under the CSP: ${blobWorker}`);
       win.webContents.focus();
       const js = (fn, arg) => win.webContents.executeJavaScript(`(${fn.toString()})(${JSON.stringify(arg ?? null)})`);
 
@@ -253,6 +279,17 @@ function electronMain() {
       const after = sofficePages(docx);
       check('LibreOffice still lays the commented file out on two pages', after === 2, { pages: after });
       measures.push(`comments.xml: ${commentsXml.length} bytes, quote occurrence ${added.occurrence}`);
+
+      // 2b. the comment's highlight, after the re-layout its write set off
+      const marks = await js(pageMarks);
+      check('the status "The file changed: laying it out again…" goes when the new layout shows', marks.relaidOut && !/changed/.test(marks.status) && /^2 pages/.test(marks.status), marks);
+      check('the comment\'s text is highlighted on page 2 (and only there)', marks.marksOnPage2 > 0 && marks.marksElsewhere === 0 && marks.markInside, marks);
+      check('the highlight covers the quoted words', marks.coveredText.includes('budget is fixed, so') && marks.coveredText.length < 40, marks);
+      check('the highlight has a colour from its token, under the text layer', marks.markBg !== 'rgba(0, 0, 0, 0)' && marks.marksBelowText, marks);
+      check('clicking the comment in the panel scrolls its page into view', marks.scrolledFrom !== marks.scrolledTo && marks.markInView, marks);
+      check('the clicked comment is marked current in the panel and on the page', marks.listCurrent && marks.markActive, marks);
+      check('clicking elsewhere on a page clears it; clicking the highlight selects its comment', marks.clearedByOther && marks.selectedByMark, marks);
+      measures.push(`highlight: ${marks.marksOnPage2} box(es) on page 2, scrolled ${marks.scrolledFrom} → ${marks.scrolledTo}`);
 
       // 3. Print
       const printed = await js(pagePrint);
@@ -304,13 +341,13 @@ function electronMain() {
       check('main refuses a Lindus file without confirmLindus', drive.mainGate === 'confirm-lindus', drive.mainGate);
 
       // 8. the packaged build's worker asset
-      const asar = process.env.REVIEW_ASAR;
       if (asar) {
         const assets = path.join(asar, '.vite/renderer/main_window/assets');
         const worker = (fs.existsSync(assets) ? fs.readdirSync(assets) : []).find((f) => /^pdf\.worker.*\.mjs$/.test(f));
         check('the packaged asar holds the pdf.js worker asset', !!worker, { assets });
         if (worker) {
-          const mode = await js(pagePackagedWorker, `file://${path.join(assets, worker)}`);
+          const workerUrl = `file://${path.join(assets, worker)}`;
+          const mode = await js(pagePackagedWorker, workerUrl);
           check('the packaged worker asset starts as a real Web Worker and opens the PDF', mode.mode === 'worker' && mode.pages === want, mode);
           measures.push(`packaged worker: ${worker} → ${mode.mode}, ${mode.pages} pages`);
         }
@@ -451,6 +488,80 @@ async function pageAddComment() {
   };
 }
 
+async function pageMarks() {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const root = [...document.querySelectorAll('.review')].find((r) => r.getAttribute('aria-label') === 'Review of Quarterly plan.docx');
+  const status = () => root.querySelector('.review-status').textContent;
+  // The comment's write changes the file: main sees it (1 s poll + 400 ms),
+  // and the view lays it out again.
+  let sawChanged = false;
+  for (let i = 0; i < 40 && !sawChanged; i++) { sawChanged = /changed/.test(status()); if (!sawChanged) await sleep(100); }
+  let relaidOut = false;
+  for (let i = 0; i < 200; i++) {
+    if (!/Laying out|changed|Saving/.test(status()) && root.querySelector('.review-text-layer[data-page="1"]') && root.querySelector('.review-page[data-page="1"] .review-mark')) { relaidOut = true; break; }
+    await sleep(100);
+  }
+  const pages = root.querySelector('.review-pages');
+  const page2 = root.querySelector('.review-page[data-page="1"]');
+  const marks2 = page2 ? [...page2.querySelectorAll('.review-mark')] : [];
+  const marksElsewhere = [...root.querySelectorAll('.review-mark')].length - marks2.length;
+  const pr = page2 ? page2.getBoundingClientRect() : { left: 0, top: 0, right: 0, bottom: 0 };
+  const mr = marks2[0] ? marks2[0].getBoundingClientRect() : null;
+  const markInside = !!mr && mr.left >= pr.left && mr.right <= pr.right && mr.top >= pr.top && mr.bottom <= pr.bottom;
+  // Which text-layer characters fall inside the first box (by their centres).
+  let coveredText = '';
+  if (mr) {
+    for (const span of page2.querySelectorAll('.review-text-layer span')) {
+      const node = span.firstChild;
+      if (!node || node.nodeType !== 3) continue;
+      for (let i = 0; i < node.data.length; i++) {
+        const r = document.createRange(); r.setStart(node, i); r.setEnd(node, i + 1);
+        const b = r.getBoundingClientRect();
+        const cx = b.left + b.width / 2; const cy = b.top + b.height / 2;
+        if (b.width > 0 && cx >= mr.left && cx <= mr.right && cy >= mr.top && cy <= mr.bottom) coveredText += node.data[i];
+      }
+    }
+  }
+  const markBg = marks2[0] ? getComputedStyle(marks2[0]).backgroundColor : '';
+  const layerEl = page2 && page2.querySelector('.review-text-layer');
+  const marksEl = page2 && page2.querySelector('.review-marks');
+  const marksBelowText = !!layerEl && !!marksEl && (marksEl.compareDocumentPosition(layerEl) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0 && getComputedStyle(marksEl).pointerEvents === 'none';
+
+  // Panel click → page scrolls to it.
+  pages.scrollTop = 0;
+  await sleep(100);
+  const scrolledFrom = pages.scrollTop;
+  root.querySelector('.review-comment-btn').click();
+  await sleep(500);
+  const scrolledTo = pages.scrollTop;
+  const vr = pages.getBoundingClientRect();
+  const m = root.querySelector('.review-page[data-page="1"] .review-mark');
+  const r2 = m ? m.getBoundingClientRect() : null;
+  const markInView = !!r2 && r2.top >= vr.top && r2.bottom <= vr.bottom;
+  const listCurrent = root.querySelector('.review-comment-btn').getAttribute('aria-current') === 'true';
+  const markActive = !!m && m.classList.contains('review-mark-active');
+
+  // A click elsewhere on the page clears it; a click on the highlight selects it.
+  document.getSelection().removeAllRanges();
+  const clickAt = (x, y) => {
+    const target = document.elementFromPoint(x, y) || pages;
+    target.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: x, clientY: y }));
+  };
+  const p2 = page2.getBoundingClientRect();
+  clickAt(p2.left + 10, Math.min(p2.bottom, vr.bottom) - 10);
+  await sleep(100);
+  const clearedByOther = root.querySelector('.review-comment-btn').getAttribute('aria-current') !== 'true';
+  const r3 = root.querySelector('.review-page[data-page="1"] .review-mark').getBoundingClientRect();
+  clickAt(r3.left + r3.width / 2, r3.top + r3.height / 2);
+  await sleep(100);
+  const selectedByMark = root.querySelector('.review-comment-btn').getAttribute('aria-current') === 'true'
+    && root.querySelector('.review-page[data-page="1"] .review-mark').classList.contains('review-mark-active');
+  return {
+    sawChanged, relaidOut, status: status(), marksOnPage2: marks2.length, marksElsewhere, markInside, coveredText, markBg, marksBelowText,
+    scrolledFrom, scrolledTo, markInView, listCurrent, markActive, clearedByOther, selectedByMark,
+  };
+}
+
 async function pagePrint() {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const S = window.__S;
@@ -547,15 +658,17 @@ async function pageDrive() {
 }
 
 async function pagePackagedWorker(workerUrl) {
+  // As review-pdf.ts starts its worker, with the packaged asset's URL.
   const pdfjs = await window.__rt.loadPdfjs();
   const S = window.__S;
   const bytes = await window.__ipc.invoke('review:layout', S.view.deps.info.docId);
-  pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
-  const task = pdfjs.getDocument({ data: bytes.pdf.slice(), worker: new pdfjs.PDFWorker({ name: 'packaged' }), isOffscreenCanvasSupported: false, disableWorkerRendering: true });
+  const port = await window.__rt.startPdfWorker(workerUrl);
+  if (!port) return { mode: 'failed', error: 'the worker did not start', logs: S.logs.filter((l) => l.includes('pdf worker')) };
+  const worker = pdfjs.PDFWorker.create({ port });
+  const task = pdfjs.getDocument({ data: bytes.pdf.slice(), worker, isOffscreenCanvasSupported: false, disableWorkerRendering: true });
   try {
     const doc = await task.promise;
-    const port = task._worker && task._worker.port;
-    return { mode: port instanceof Worker ? 'worker' : 'main-thread', pages: doc.numPages };
+    return { mode: worker.port instanceof Worker ? 'worker' : 'main-thread', pages: doc.numPages };
   } catch (err) {
     return { mode: 'failed', error: String(err) };
   }

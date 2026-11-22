@@ -11,6 +11,12 @@
  * and the comment list (textContent, never innerHTML). The renderer holds only
  * the opaque doc id main gave; every action goes back through it.
  *
+ * Highlights: the text each comment is anchored on is marked on its page (a
+ * layer of boxes under the transparent text layer, measured from a DOM Range
+ * over the text layer's own spans). Clicking a comment in the panel scrolls
+ * its page to it; clicking a highlight selects its comment (hit-tested by
+ * point, since the text layer above takes the clicks for selection).
+ *
  * Print (R6): each page is drawn again at PRINT_DPI into a print-only
  * container of images, one per sheet at the page's own size (@page), and
  * everything else is hidden under @media print; then window.print(). The
@@ -18,7 +24,7 @@
  */
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist';
 import { REVIEW_COMMENT_MAX, REVIEW_QUOTE_MAX, type ReviewApi, type ReviewComment, type ReviewDocInfo } from '../../shared/review';
-import { matchesOf, textKey } from '../../shared/review-text';
+import { keyOf, matchesOf, textKey } from '../../shared/review-text';
 import { announce } from '../services/announcer';
 import { rlog } from '../services/renderer-logger';
 import { loadPdfjs, openPdf, type OpenedPdf } from '../services/review-pdf';
@@ -123,6 +129,14 @@ export class ReviewView {
   private resizeTimer: ReturnType<typeof setTimeout> | null = null;
   private printCleanup: (() => void) | null = null;
   private offChanged: (() => void) | null = null;
+  /** The note came from a layout failure, so a good re-layout clears it;
+   *  other notes (a refused send) stay until replaced. */
+  private noteFromLayout = false;
+  /** The comment selected in the panel or by its highlight. */
+  private activeComment: string | null = null;
+  private hoverFrame = 0;
+  private readonly onPagesClick = (e: MouseEvent): void => this.clickPages(e);
+  private readonly onPagesMove = (e: MouseEvent): void => this.hoverPages(e);
   private readonly onSelectionEnd = (): void => this.captureSelection();
 
   constructor(deps: ReviewViewDeps) {
@@ -201,10 +215,14 @@ export class ReviewView {
     this.commentInput.addEventListener('input', () => this.refreshButtons());
     this.pagesEl.addEventListener('mouseup', this.onSelectionEnd);
     this.pagesEl.addEventListener('keyup', this.onSelectionEnd);
+    this.pagesEl.addEventListener('click', this.onPagesClick);
+    this.pagesEl.addEventListener('mousemove', this.onPagesMove);
 
     this.offChanged = deps.api.onChanged((docId) => {
       if (docId !== info.docId || this.disposed) return;
       void this.load('changed');
+      // Word (or Claude) may have added or removed comments too.
+      void this.loadComments();
     });
     if (typeof ResizeObserver !== 'undefined') {
       this.resizeObserver = new ResizeObserver(() => {
@@ -240,7 +258,7 @@ export class ReviewView {
     if (reply.ok === false) {
       this.refreshButtons();
       this.setStatus('');
-      this.showNote(reply.message);
+      this.showNote(reply.message, true);
       rlog('warn', '[REVIEW] layout refused', { why: reply.why });
       return;
     }
@@ -251,7 +269,7 @@ export class ReviewView {
       if (seq !== this.loadSeq || this.disposed) return;
       this.refreshButtons();
       this.setStatus('');
-      this.showNote('The laid-out pages could not be read.');
+      this.showNote('The laid-out pages could not be read.', true);
       rlog('error', '[REVIEW] pdf open failed', { error: String(err) });
       return;
     }
@@ -263,7 +281,7 @@ export class ReviewView {
     if (seq !== this.loadSeq || this.disposed) return;
     this.pagesEl.scrollTop = scrollTop;
     if (old) void old.destroy();
-    this.hideNote();
+    if (this.noteFromLayout) this.hideNote();
     const n = this.slots.length;
     this.setStatus(`${n} page${n === 1 ? '' : 's'}${reply.cached ? '' : `, laid out in ${(reply.ms / 1000).toFixed(1)} s`}`);
     rlog('info', '[REVIEW] shown', { pages: n, cached: reply.cached, mode: opened.mode, why });
@@ -309,7 +327,9 @@ export class ReviewView {
         for (const e of entries) {
           if (!e.isIntersecting) continue;
           const slot = this.slots.find((s) => s.el === e.target);
-          if (slot) void this.drawSlot(slot);
+          // Marks are measured from the laid-out text, so a page drawn while
+          // the tab was hidden is measured again once it is seen.
+          if (slot) void this.drawSlot(slot).then(() => this.paintMarks(slot));
         }
       }, { root: this.pagesEl, rootMargin: '100% 0px' });
       for (const s of this.slots) this.observer.observe(s.el);
@@ -353,7 +373,8 @@ export class ReviewView {
       const tl = new pdfjs.TextLayer({ textContentSource: await page.getTextContent(), container: layer, viewport: vp });
       await tl.render();
       if (this.pdf !== pdf || slot.drawnScale !== scale) return;
-      slot.el.replaceChildren(canvas, layer);
+      slot.el.replaceChildren(canvas, el('div', 'review-marks'), layer);
+      this.paintMarks(slot);
     })().catch((err) => {
       slot.drawnScale = 0;
       rlog('error', '[REVIEW] page draw failed', { page: slot.index + 1, error: String(err) });
@@ -389,17 +410,166 @@ export class ReviewView {
 
   private renderComments(): void {
     this.countEl.textContent = String(this.comments.length);
+    if (this.activeComment && !this.comments.some((c) => c.id === this.activeComment)) this.activeComment = null;
     const items = this.comments.map((c) => {
       const li = el('li', 'review-comment');
-      if (c.quote) li.append(el('p', 'review-comment-quote', cut(c.quote, 160)));
-      li.append(el('p', 'review-comment-text', c.text));
+      // One button per comment: its text is its name; it shows the comment's
+      // place on the pages.
+      const go = el('button', 'review-comment-btn');
+      go.type = 'button';
+      go.dataset.comment = c.id;
+      go.title = 'Show where this comment is on the pages';
+      if (c.quote) go.append(el('span', 'review-comment-quote', cut(c.quote, 160)));
+      go.append(el('span', 'review-comment-text', c.text));
       const meta = [c.author, shortDate(c.date)].filter(Boolean).join(' · ');
-      if (meta) li.append(el('p', 'review-comment-meta', meta));
+      if (meta) go.append(el('span', 'review-comment-meta', meta));
+      go.addEventListener('click', () => { void this.selectComment(c.id, 'list'); });
+      li.append(go);
       return li;
     });
     if (items.length === 0) items.push(el('li', 'review-comment review-comment-none', 'No comments in the file yet.'));
     this.listEl.replaceChildren(...items);
+    this.markActive();
+    for (const slot of this.slots) this.paintMarks(slot);
     this.refreshButtons();
+  }
+
+  // ------------------------------------------------------------ highlights
+
+  /** Where a comment's quote sits in the pages' key: its start and end. */
+  private anchorOf(c: ReviewComment): { start: number; end: number } | null {
+    const key = textKey(c.quote);
+    if (!key || !this.allKey) return null;
+    const matches = matchesOf(this.allKey, key);
+    if (matches.length === 0) return null;
+    const occ = Number.isInteger(c.occurrence) && c.occurrence >= 0 ? c.occurrence : 0;
+    const start = matches[Math.min(occ, matches.length - 1)];
+    return { start, end: start + key.length };
+  }
+
+  /** The page an index of the pages' key falls on. */
+  private pageOfKey(at: number): number {
+    let pos = 0;
+    for (let i = 0; i < this.pageKeys.length; i++) {
+      pos += this.pageKeys[i].length;
+      if (at < pos) return i;
+    }
+    return Math.max(0, this.pageKeys.length - 1);
+  }
+
+  /** Mark every comment's quote on a drawn page (boxes under the text layer). */
+  private paintMarks(slot: PageSlot): void {
+    const marks = slot.el.querySelector<HTMLElement>(':scope > .review-marks');
+    const layer = slot.el.querySelector<HTMLElement>(':scope > .review-text-layer');
+    if (!marks || !layer || this.disposed) return;
+    const pageStart = this.pageKeys.slice(0, slot.index).join('').length;
+    const pageEnd = pageStart + (this.pageKeys[slot.index]?.length ?? 0);
+    const wanted = this.comments
+      .map((c) => ({ c, a: this.anchorOf(c) }))
+      .filter((x): x is { c: ReviewComment; a: { start: number; end: number } } => x.a !== null && x.a.start < pageEnd && x.a.end > pageStart);
+    if (wanted.length === 0) { marks.replaceChildren(); return; }
+    // key[i] of this page came from chars[i] of the text layer's text.
+    const chars: { node: Text; from: number; to: number }[] = [];
+    const walker = document.createTreeWalker(layer, NodeFilter.SHOW_TEXT);
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      const node = n as Text;
+      let off = 0;
+      for (const ch of node.data) {
+        const k = keyOf(ch);
+        for (let j = 0; j < k.length; j++) chars.push({ node, from: off, to: off + ch.length });
+        off += ch.length;
+      }
+    }
+    const base = slot.el.getBoundingClientRect();
+    if (base.width === 0) return; // not laid out (tab hidden): measured when seen
+    const boxes: HTMLElement[] = [];
+    for (const { c, a } of wanted) {
+      const from = Math.max(a.start, pageStart) - pageStart;
+      const to = Math.min(a.end, pageEnd) - pageStart;
+      const first = chars[from];
+      const last = chars[to - 1];
+      if (!first || !last) continue;
+      const range = document.createRange();
+      range.setStart(first.node, first.from);
+      range.setEnd(last.node, last.to);
+      for (const r of range.getClientRects()) {
+        if (r.width < 0.5 || r.height < 0.5) continue;
+        const box = el('div', 'review-mark');
+        box.dataset.comment = c.id;
+        if (c.id === this.activeComment) box.classList.add('review-mark-active');
+        box.style.left = `${r.left - base.left}px`;
+        box.style.top = `${r.top - base.top}px`;
+        box.style.width = `${r.width}px`;
+        box.style.height = `${r.height}px`;
+        boxes.push(box);
+      }
+    }
+    marks.replaceChildren(...boxes);
+  }
+
+  /** Show which comment is selected, in the panel and on the pages. */
+  private markActive(): void {
+    for (const b of this.listEl.querySelectorAll<HTMLElement>('.review-comment-btn')) {
+      const on = b.dataset.comment === this.activeComment;
+      b.classList.toggle('review-comment-active', on);
+      if (on) b.setAttribute('aria-current', 'true'); else b.removeAttribute('aria-current');
+    }
+    for (const m of this.pagesEl.querySelectorAll<HTMLElement>('.review-mark')) {
+      m.classList.toggle('review-mark-active', m.dataset.comment === this.activeComment);
+    }
+  }
+
+  /** Select a comment: from the panel, scroll its page to it; from its
+   *  highlight, bring it into view in the panel. */
+  async selectComment(id: string, from: 'list' | 'page'): Promise<void> {
+    const c = this.comments.find((x) => x.id === id);
+    if (!c || this.disposed) return;
+    this.activeComment = id;
+    this.markActive();
+    if (from === 'page') {
+      this.listEl.querySelector<HTMLElement>(`.review-comment-btn[data-comment="${CSS.escape(id)}"]`)?.scrollIntoView({ block: 'nearest' });
+      return;
+    }
+    const a = this.anchorOf(c);
+    const slot = a ? this.slots[this.pageOfKey(a.start)] : undefined;
+    if (!slot) {
+      this.setStatus('The text this comment is on was not found on the pages.');
+      rlog('info', '[REVIEW] comment not on the pages', { quoteChars: c.quote.length });
+      return;
+    }
+    await this.drawSlot(slot);
+    if (this.disposed || this.activeComment !== id) return;
+    this.paintMarks(slot);
+    const mark = slot.el.querySelector<HTMLElement>(`.review-mark[data-comment="${CSS.escape(id)}"]`);
+    const top = slot.el.getBoundingClientRect().top - this.pagesEl.getBoundingClientRect().top + this.pagesEl.scrollTop;
+    this.pagesEl.scrollTop = Math.max(0, top + (mark ? mark.offsetTop - 64 : -16));
+  }
+
+  /** The comment whose highlight is under a point, if any. */
+  private markAt(x: number, y: number): string | null {
+    for (const m of this.pagesEl.querySelectorAll<HTMLElement>('.review-mark')) {
+      const r = m.getBoundingClientRect();
+      if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return m.dataset.comment ?? null;
+    }
+    return null;
+  }
+
+  private clickPages(e: MouseEvent): void {
+    const sel = document.getSelection();
+    if (sel && !sel.isCollapsed) return; // the end of a text selection, not a click
+    const id = this.markAt(e.clientX, e.clientY);
+    if (id) { void this.selectComment(id, 'page'); return; }
+    if (this.activeComment) { this.activeComment = null; this.markActive(); }
+  }
+
+  /** A pointer over a highlight says it can be clicked. */
+  private hoverPages(e: MouseEvent): void {
+    if (this.hoverFrame) return;
+    const { clientX, clientY } = e;
+    this.hoverFrame = requestAnimationFrame(() => {
+      this.hoverFrame = 0;
+      if (!this.disposed) this.pagesEl.classList.toggle('review-over-mark', this.markAt(clientX, clientY) !== null);
+    });
   }
 
   /** The text layer a node sits in, if any. */
@@ -644,14 +814,16 @@ export class ReviewView {
     this.statusEl.textContent = text;
   }
 
-  private showNote(text: string): void {
+  private showNote(text: string, fromLayout = false): void {
     this.noteEl.textContent = text;
     this.noteEl.hidden = false;
+    this.noteFromLayout = fromLayout;
   }
 
   private hideNote(): void {
     this.noteEl.textContent = '';
     this.noteEl.hidden = true;
+    this.noteFromLayout = false;
   }
 
   dispose(): void {
@@ -665,6 +837,9 @@ export class ReviewView {
     this.printCleanup?.();
     this.pagesEl.removeEventListener('mouseup', this.onSelectionEnd);
     this.pagesEl.removeEventListener('keyup', this.onSelectionEnd);
+    this.pagesEl.removeEventListener('click', this.onPagesClick);
+    this.pagesEl.removeEventListener('mousemove', this.onPagesMove);
+    if (this.hoverFrame) cancelAnimationFrame(this.hoverFrame);
     if (this.pdf) void this.pdf.destroy();
     this.pdf = null;
     void this.deps.api.close(this.deps.info.docId);

@@ -4,11 +4,20 @@
  * paper) in both schemes; the ground around them is --surface. */
 :root {
   --review-paper-shadow: rgba(11, 13, 18, 0.18);
+  /* A comment's text on the page. The paper is white in both schemes, so the
+     marks are the same light yellow in both, multiplied under black text. */
+  --review-mark: rgba(255, 205, 40, 0.38);
+  --review-mark-active: rgba(255, 170, 0, 0.6);
+  --review-mark-edge: #b37a00;
+  --review-comment-active-bg: var(--surface-hover);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
     --review-paper-shadow: rgba(0, 0, 0, 0.6);
+    --review-mark: rgba(255, 205, 40, 0.42);
+    --review-mark-active: rgba(255, 170, 0, 0.62);
+    --review-mark-edge: #b37a00;
   }
 }
 
@@ -166,6 +175,30 @@
   display: block;
 }
 
+/* Comment highlights: under the text layer (which takes the clicks and the
+   selection), over the canvas. */
+.review-marks {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.review-mark {
+  position: absolute;
+  background: var(--review-mark);
+  mix-blend-mode: multiply;
+}
+
+.review-mark-active {
+  background: var(--review-mark-active);
+  box-shadow: 0 1px 0 var(--review-mark-edge);
+}
+
+.review-over-mark .review-text-layer span {
+  cursor: pointer;
+}
+
 /* pdf.js's text layer (its pdf_viewer.css, the rules the layer needs):
    transparent text over the canvas, there to be selected. */
 .review-text-layer {
@@ -308,20 +341,48 @@
 }
 
 .review-comment {
-  padding: 10px 14px;
   border-bottom: 1px solid var(--grey);
   overflow-wrap: anywhere;
 }
 
-.review-comment p {
+.review-comment-btn {
+  display: block;
+  width: 100%;
   margin: 0;
+  padding: 10px 14px 10px 12px;
+  border: 0;
+  border-left: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.review-comment-btn:hover {
+  background: var(--surface-hover);
+}
+
+.review-comment-btn:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.review-comment-btn.review-comment-active {
+  border-left-color: var(--review-mark-edge);
+  background: var(--review-comment-active-bg);
+}
+
+.review-comment-btn > span {
+  display: block;
 }
 
 .review-comment-quote {
   color: var(--muted);
-  border-left: 2px solid var(--grey);
+  border-left: 2px solid var(--review-mark);
   padding-left: 8px;
-  margin-bottom: 4px !important;
+  margin-bottom: 4px;
 }
 
 .review-comment-text {
@@ -329,12 +390,13 @@
 }
 
 .review-comment-meta {
-  margin-top: 4px !important;
+  margin-top: 4px;
   color: var(--muted);
   font-size: calc(11px * var(--ui-scale));
 }
 
 .review-comment-none {
+  padding: 10px 14px;
   color: var(--muted);
 }
 

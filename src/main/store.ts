@@ -9,6 +9,7 @@ import { ALLOWED_SHELLS } from './pty-manager';
 import { cleanProjectName, type ProjectNameTarget } from './projects';
 import { sanitiseSessionGroups } from './session-groups';
 import type { HistoryEntry, AppSettings, WindowState, SessionState, Bookmark } from '../shared/types';
+import { driveAccountValid, driveFolderValid } from '../shared/drive-settings';
 
 // Keychain-protected random encryption key for electron-store.
 // The key itself is 32 random bytes, stored in userData/key.enc encrypted by
@@ -296,12 +297,12 @@ export function setSettings(partial: Partial<AppSettings>): void {
   if (partial.driveFolder !== undefined) {
     // One folder at the top of My Drive: no slash, no control characters.
     const f = String(partial.driveFolder).trim();
-    if (f.length <= 100 && !/[\p{Cc}/]/u.test(f)) validated.driveFolder = f;
+    if (driveFolderValid(f)) validated.driveFolder = f;
   }
 
   if (partial.driveAccount !== undefined) {
     const a = String(partial.driveAccount).trim();
-    if (a === '' || (a.length <= 254 && /^[^\s@]+@[^\s@]+$/.test(a))) validated.driveAccount = a;
+    if (driveAccountValid(a)) validated.driveAccount = a;
   }
 
   if (partial.projectListFile !== undefined) {

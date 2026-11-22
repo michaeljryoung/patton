@@ -186,6 +186,9 @@ export interface DocComment {
   text: string;
   /** The text the comment is anchored on, '' when the file doesn't say. */
   quote: string;
+  /** Which match of the quote's key in the body (0-based) it is anchored on:
+   *  the renderer highlights the same match in the PDF's text (R7). */
+  occurrence: number;
 }
 
 /** The text of a run of XML: its `<w:t>` contents, paragraphs on new lines. */
@@ -208,6 +211,7 @@ export function listComments(entries: ZipEntry[]): DocComment[] {
   const xml = entryText(entries, part);
   if (!xml) return [];
   const doc = entryText(entries, docPart) ?? '';
+  let body: BodyText | null = null;
   const out: DocComment[] = [];
   for (const m of xml.matchAll(/<w:comment\b([^>]*)>([\s\S]*?)<\/w:comment>/g)) {
     const attr = (name: string): string => unescapeXml(new RegExp(`w:${name}="([^"]*)"`).exec(m[1])?.[1] ?? '');
@@ -218,7 +222,17 @@ export function listComments(entries: ZipEntry[]): DocComment[] {
       const end = doc.slice(start).search(new RegExp(`<w:commentRangeEnd\\b[^>]*w:id="${id.replace(/[^0-9A-Za-z-]/g, '')}"`));
       if (end !== -1) quote = plainText(doc.slice(start, start + end)).replace(/\s+/g, ' ');
     }
-    out.push({ id, author: attr('author'), date: attr('date'), text: plainText(m[2]), quote });
+    let occurrence = 0;
+    const quoteKey = textKey(quote);
+    if (quoteKey && start !== -1) {
+      body ??= bodyText(doc);
+      const b = body;
+      // The first match whose first character sits after the range's start.
+      const matches = matchesOf(b.key, quoteKey);
+      const at = matches.findIndex((i) => b.spans[b.keyChars[i].span].contentStart + b.keyChars[i].from >= start);
+      occurrence = at === -1 ? Math.max(0, matches.length - 1) : at;
+    }
+    out.push({ id, author: attr('author'), date: attr('date'), text: plainText(m[2]), quote, occurrence });
   }
   return out;
 }

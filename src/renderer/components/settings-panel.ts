@@ -1,4 +1,5 @@
 import type { AppSettings, ClaudeHookStatus } from '../../shared/types';
+import { driveAccountValid, driveFolderValid } from '../../shared/drive-settings';
 import { DEFAULTS, isNotificationSoundName, notificationVolumeOf, resolveNotificationSound, uiTextScaleOf } from '../../shared/constants';
 import { settingsShortcuts, displayKeys, acceleratorToDisplay } from '../../shared/shortcuts';
 import { trapFocus } from '../services/focus-trap';
@@ -224,6 +225,29 @@ export class SettingsPanel {
               <span class="settings-hint">The clock at the right of the tab bar shows the share of the context window a Claude session has used (needs the hook above), and turns amber and bold once it has grown by this share since its last /checkpoint. Click it to run /checkpoint.</span>
             </div>
           </div>
+          <div class="shortcuts-section" aria-labelledby="review-settings-title">
+            <h3 class="shortcuts-title" id="review-settings-title">Word documents</h3>
+            <div class="settings-group settings-group-toggle">
+              <label class="settings-label" for="setting-review-tab">Open Word files in a Patton tab</label>
+              <label class="settings-toggle">
+                <input type="checkbox" id="setting-review-tab" />
+                <span class="settings-toggle-slider"></span>
+              </label>
+              <span class="settings-hint">A .docx link opens in a review tab: the pages as LibreOffice prints them, Print, Send to Drive, Open in Word and comments. Off: Word opens it, as before.</span>
+            </div>
+            <div class="settings-group">
+              <label class="settings-label" for="setting-drive-folder">Send to Drive folder</label>
+              <input class="settings-input" id="setting-drive-folder" type="text" placeholder="Patton" maxlength="100" spellcheck="false" aria-describedby="setting-drive-folder-hint setting-drive-folder-error" />
+              <span class="settings-hint" id="setting-drive-folder-hint">A folder at the top of your personal My Drive; made the first time if it isn't there. Empty means Patton.</span>
+              <span class="settings-hint claude-hook-error" id="setting-drive-folder-error" role="alert" hidden>One folder name, without a slash: not saved.</span>
+            </div>
+            <div class="settings-group">
+              <label class="settings-label" for="setting-drive-account">Send to Drive account</label>
+              <input class="settings-input" id="setting-drive-account" type="email" placeholder="the one personal account gcloud holds" maxlength="254" spellcheck="false" autocomplete="off" aria-describedby="setting-drive-account-hint setting-drive-account-error" />
+              <span class="settings-hint" id="setting-drive-account-hint">The Google account gcloud sends with (gcloud auth list shows them). Empty means the one @gmail.com account gcloud holds.</span>
+              <span class="settings-hint claude-hook-error" id="setting-drive-account-error" role="alert" hidden>An email address, like name@gmail.com: not saved.</span>
+            </div>
+          </div>
           <div class="shortcuts-section">
             <h3 class="shortcuts-title">Keyboard Shortcuts</h3>
             <!-- Rendered from the shortcuts registry by renderShortcuts(). Never
@@ -399,6 +423,33 @@ export class SettingsPanel {
       this.saveAndNotify({ boardWakeCommand: boardWakeCommandInput.value.trim() }, true);
     });
 
+    const reviewTabInput = this.overlay.querySelector('#setting-review-tab') as HTMLInputElement;
+    listen(reviewTabInput, 'change', () => {
+      this.saveAndNotify({ reviewTab: reviewTabInput.checked });
+    });
+
+    // Debounced (settings:set allows 10/s). Main refuses a folder with a slash
+    // or a malformed address without a word, so they are shown as not saved
+    // here and not sent.
+    const driveFolderInput = this.overlay.querySelector('#setting-drive-folder') as HTMLInputElement;
+    const driveFolderError = this.overlay.querySelector('#setting-drive-folder-error') as HTMLElement;
+    listen(driveFolderInput, 'input', () => {
+      const value = driveFolderInput.value.trim();
+      const bad = !driveFolderValid(value);
+      driveFolderError.hidden = !bad;
+      driveFolderInput.setAttribute('aria-invalid', String(bad));
+      if (!bad) this.saveAndNotify({ driveFolder: value }, true);
+    });
+    const driveAccountInput = this.overlay.querySelector('#setting-drive-account') as HTMLInputElement;
+    const driveAccountError = this.overlay.querySelector('#setting-drive-account-error') as HTMLElement;
+    listen(driveAccountInput, 'input', () => {
+      const value = driveAccountInput.value.trim();
+      const bad = !driveAccountValid(value);
+      driveAccountError.hidden = !bad;
+      driveAccountInput.setAttribute('aria-invalid', String(bad));
+      if (!bad) this.saveAndNotify({ driveAccount: value }, true);
+    });
+
     const shellIntegrationInput = this.overlay.querySelector('#setting-shell-integration') as HTMLInputElement;
     listen(shellIntegrationInput, 'change', () => {
       this.saveAndNotify({ shellIntegration: shellIntegrationInput.checked });
@@ -534,6 +585,14 @@ export class SettingsPanel {
     (this.overlay.querySelector('#setting-project-list-file') as HTMLInputElement).value = settings.projectListFile || '';
     // Absent in older settings: the default, shown as itself (empty would mean hidden).
     (this.overlay.querySelector('#setting-board-wake-command') as HTMLInputElement).value = wakeCommandOf(settings);
+    // Added in S61: absent from older settings files, so read defensively.
+    (this.overlay.querySelector('#setting-review-tab') as HTMLInputElement).checked = settings.reviewTab !== false;
+    for (const [id, value] of [['drive-folder', settings.driveFolder], ['drive-account', settings.driveAccount]] as const) {
+      const input = this.overlay.querySelector(`#setting-${id}`) as HTMLInputElement;
+      input.value = typeof value === 'string' ? value : '';
+      input.removeAttribute('aria-invalid');
+      (this.overlay.querySelector(`#setting-${id}-error`) as HTMLElement).hidden = true;
+    }
 
     (this.overlay.querySelector('#setting-theme') as HTMLSelectElement).value = settings.theme || 'system';
 

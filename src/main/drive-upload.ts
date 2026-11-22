@@ -17,6 +17,7 @@
  */
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { driveAccountValid } from '../shared/drive-settings';
 
 export const DEFAULT_DRIVE_FOLDER = 'Patton';
 const API = 'https://www.googleapis.com/drive/v3/files';
@@ -76,7 +77,7 @@ export function docNameOf(fileName: string): string {
  * (@gmail.com / @googlemail.com) account gcloud holds. Null when that can't be told.
  */
 export function chooseAccount(setting: unknown, accounts: string[]): string | null {
-  if (typeof setting === 'string' && /^[^\s@]+@[^\s@]+$/.test(setting.trim())) return setting.trim();
+  if (typeof setting === 'string' && setting.trim() !== '' && driveAccountValid(setting.trim())) return setting.trim();
   const personal = accounts.filter((a) => /@(gmail|googlemail)\.com$/i.test(a));
   return personal.length === 1 ? personal[0] : null;
 }

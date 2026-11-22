@@ -34,6 +34,8 @@ export interface ReviewComment {
   date: string;
   text: string;
   quote: string;
+  /** Which match of the quote's key (0-based) in the body it is anchored on. */
+  occurrence: number;
 }
 
 export interface ReviewNewComment {
