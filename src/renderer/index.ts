@@ -6,14 +6,20 @@ import './styles/editor.css';
 import './styles/settings.css';
 import './styles/board.css';
 import './styles/session-bar.css';
+import './styles/review.css';
 
+// eslint-disable-next-line import/no-unresolved -- a Vite `?url` asset import, resolved by Vite, not Node
+import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { App } from './components/app';
+import { setPdfWorkerUrl } from './services/review-pdf';
 import { applyUiTextScale } from './services/ui-text-scale';
 
 // Before App builds the tab bar and sidebar: the preload already holds the saved
 // value (a synchronous command-line switch from main), so the first paint is at
 // size. App.init() applies the stored value again, which changes nothing.
 applyUiTextScale(window.patton.settings.uiTextScaleAtLaunch, 'startup');
+
+setPdfWorkerUrl(pdfWorkerUrl);
 
 const app = new App();
 app.init().catch(console.error);

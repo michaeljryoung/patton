@@ -1330,6 +1330,42 @@ const newPane = async () => {
       { s: strings(), sk: ofTag('restore skipped') });
     p.dispose();
   }
+
+  // 9.14 Patton's own typing (the review tab's comments, Pause all) next to
+  //      D18 (S61 integration): while the watch is putting the box's message
+  //      back, nothing is typed (it would be joined onto the message or wiped
+  //      by the Ctrl+C); and text on Claude's bar that main's tracker never
+  //      saw (Claude put it back there) is stashed first, never joined.
+  {
+    let p = await sent(S1);
+    await write(term(p), '\x1b[?2004h');
+    await escInBox(p);
+    writes.length = 0; logs.length = 0;
+    const why = await p.pasteReviewComments('Comment one\nComment two');
+    p.typePauseWord({ stash: false });
+    await frames();
+    advance(100);
+    await frames();
+    check('9.14a during the restore watch: the comments are refused, saying why', typeof why === 'string' && why.includes('put back'), why);
+    check('9.14a ...nothing typed, by the comments or by Pause all', strings().length === 0, strings());
+    p.dispose();
+    p = await newPane();
+    await write(term(p), '\x1b[?2004h');
+    term(p).paste = (d) => { writes.push(`paste:${d}`); }; // jsdom's xterm has no textarea to paste through
+    state(p, 'idle');
+    await drawBar(p, ['text Claude put back']);
+    writes.length = 0; logs.length = 0;
+    const going = p.pasteReviewComments('Comment one\nComment two');
+    await frames();
+    advance(150);
+    await frames();
+    advance(60);
+    await frames();
+    const res = await going;
+    check('9.14b text on Claude\'s bar the tracker calls clean: Ctrl+S first, then the comments, sent',
+      strings().join('|') === '\x13|paste:Comment one\nComment two|\r' && res === null, { s: strings().map((d) => JSON.stringify(d).slice(0, 30)), res });
+    p.dispose();
+  }
 }
 
 finished = true;

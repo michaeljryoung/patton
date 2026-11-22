@@ -1064,9 +1064,9 @@ export class Pane {
 
   /** Whether `/checkpoint` may be typed into this pane now. The one gate for
    *  the clock's click and the palette entry.
-   *  Limitation: if the user has a half-typed draft in Claude's prompt, Patton
-   *  cannot see it and the command is appended to it; erasing it (Ctrl+U)
-   *  would destroy his text, so nothing is sent to clear it. */
+   *  A draft in Claude's prompt (main's tracker, or Claude's bar on screen)
+   *  is stashed first in runCheckpoint; a bar Patton can't read on screen
+   *  and the tracker calls clean is the one case still joined. */
   private get checkpointReady(): boolean {
     if (!this.claudeActive || this.ptyId === null) return false;
     // Claude Code reports its own state (OSC 7501): its prompt is open only
@@ -1117,7 +1117,106 @@ export class Pane {
       return 'Checkpoint: something was typed since Claude stopped';
     }
     rlog('info', '[CKPT] run', { pane: this.id, stash: facts.draft });
-    this.queueSubmit('/checkpoint', false, { stashFirst: facts.draft, origin: 'patton' });
+    // Gated at the write and at the Enter on the live 7501 `blocked` fact
+    // (Gotcha S56): Claude may start asking during the stash's wait or between
+    // the word and its Enter, and an Enter then would answer its question.
+    const outcome = await new Promise<{ held: string | null; typed: boolean }>((resolve) => {
+      this.queueSubmit('/checkpoint', false, {
+        stashFirst: facts.draft, origin: 'patton',
+        gate: () => this.asksNowRefusal(),
+        onSettled: (held, typed) => resolve({ held, typed: typed === true }),
+      });
+    });
+    if (outcome.held) {
+      rlog('info', '[CKPT] run held', { pane: this.id, at: outcome.typed ? 'enter' : 'write' });
+      if (outcome.held === Pane.RESTORING_NOW) {
+        return outcome.typed
+          ? 'Checkpoint: an Esc stopped Claude: /checkpoint is in its input, not sent'
+          : 'Checkpoint: your last message is being put back into the box, try again in a moment';
+      }
+      return outcome.typed
+        ? 'Checkpoint: Claude started asking you something: /checkpoint is in its input, not sent'
+        : 'Checkpoint: Claude started asking you something, so /checkpoint was not sent';
+    }
+    return null;
+  }
+
+  /** Why nothing Patton types may be sent into this pane now: Claude Code is
+   *  asking him something (the live 7501 `blocked` fact, the root or a
+   *  background task, from the first report; Gotcha S56). Null when it may. */
+  private asksNowRefusal(): string | null {
+    if (this.claudeBlocked || this.claudeAsksNow()) return Pane.ASKS_NOW;
+    // D18: an Esc stopped the box's send and Claude is putting it back in its
+    // bar, which the watch then empties (Ctrl+C) into the box: a line typed
+    // now would be joined onto the message or wiped with it. Up to 3 s.
+    if (this.escRestore !== null) return Pane.RESTORING_NOW;
+    return null;
+  }
+
+  private static readonly ASKS_NOW = 'Claude is asking you something';
+  private static readonly RESTORING_NOW = 'Your last message is being put back into the box';
+
+  /** Why the review tab's comments can't be pasted into this pane now, on
+   *  the live facts (never a debounced copy: Gotcha S56), else null. */
+  private reviewPasteRefusal(): string | null {
+    if (this.disposed || this.ptyId === null) return 'The Claude session this document opened from is closed.';
+    if (!this.claudeActive) return 'Claude Code is not running in the tab this document opened from.';
+    if (this.claudeBlocked || this.claudeAsksNow()) {
+      return 'Claude is asking you something in that session. Answer it there, then send the comments again.';
+    }
+    if (this.escRestore !== null) return 'Your last message to Claude is being put back into its box. Send the comments again in a moment.';
+    // A multi-line message typed without bracketed paste would be sent line by line.
+    if (!this.terminalView.terminal.modes.bracketedPasteMode) return 'Claude\'s input can\'t take a pasted message right now.';
+    return null;
+  }
+
+  /** Paste the review tab's comments into this pane's Claude session as one
+   *  message (a bracketed paste, then Enter; docs/review-tab.md R4). Refused
+   *  while Claude asks something (the live 7501 `blocked` fact, checked again
+   *  at the moment of writing), and when Claude may be showing a menu. A draft
+   *  in Claude's input is stashed first with Ctrl+S, as the checkpoint does.
+   *  Resolves null when sent, else why not (the review tab shows it). */
+  async pasteReviewComments(message: string): Promise<string | null> {
+    const first = this.reviewPasteRefusal();
+    if (first) {
+      rlog('info', '[REVIEW] comments held', { pane: this.id, why: first });
+      return first;
+    }
+    const ptyId = this.ptyId;
+    const [input, key] = await Promise.all([this.readInputState(), window.patton.pauseAll.stashKey()]);
+    const again = this.ptyId !== ptyId ? 'The session changed: send the comments again.' : this.reviewPasteRefusal();
+    if (again) {
+      rlog('info', '[REVIEW] comments held', { pane: this.id, why: again });
+      return again;
+    }
+    const facts = this.inputFacts(input);
+    const keyWhy = 'why' in key ? key.why : null;
+    const skip = facts.menu ? 'Claude may be showing a menu (a / command was typed). Close it, then send the comments again.'
+      : facts.draft && keyWhy !== null ? 'A draft may be in Claude\'s input and Ctrl+S is not its stash key. Send or clear it, then send the comments again.'
+      : facts.draft && facts.stashed ? 'A draft is in Claude\'s input and another is already set aside. Send or clear it, then send the comments again.'
+      : null;
+    if (skip) {
+      rlog('info', '[REVIEW] comments held', { pane: this.id, menu: facts.menu, draft: facts.draft });
+      return skip;
+    }
+    // Resolves once the Enter went (null) or was held: at the write, or at the
+    // Enter itself when Claude started asking in between (the pasted text then
+    // sits in Claude's input, unsent).
+    const outcome = await new Promise<{ held: string | null; typed: boolean }>((resolve) => {
+      this.queueSubmit(message, false, {
+        stashFirst: facts.draft, origin: 'patton', paste: true,
+        gate: () => this.reviewPasteRefusal(),
+        onSettled: (held, typed) => resolve({ held, typed: typed === true }),
+      });
+    });
+    if (outcome.held) {
+      rlog('info', '[REVIEW] comments held', { pane: this.id, at: outcome.typed ? 'enter' : 'write' });
+      if (!outcome.typed) return outcome.held;
+      return this.escRestore !== null
+        ? 'An Esc stopped Claude before the comments were sent: they are in Claude\'s input, not sent. Press Return in that session to send them.'
+        : 'Claude started asking you something before the comments were sent: they are in Claude\'s input, not sent. Answer it there, then press Return in that session.';
+    }
+    rlog('info', '[REVIEW] comments sent', { pane: this.id, chars: message.length, stash: facts.draft });
     return null;
   }
 
@@ -1145,7 +1244,11 @@ export class Pane {
   private inputFacts(input: UnsentInputState | null): { draft: boolean; menu: boolean; stopSeen: boolean; stashed: boolean } {
     if (input === null) return { draft: true, menu: false, stopSeen: this.stopSeenSinceWork, stashed: true };
     return {
-      draft: input.dirty,
+      // D18's "Claude's bar has text": the tracker counts only what was typed
+      // into the pty, so text Claude put back in its own bar (an Esc after a
+      // send) reads clean there. Patton's line would be joined onto it: the
+      // bar on screen counts too, and the draft is stashed first.
+      draft: input.dirty || this.barShowsText(),
       stashed: (input.userStashAt > 0 && input.userStashAt >= this.claudeSessionAtMs) || input.pattonStashAt > 0,
       menu: input.slashSubmitAt > 0 && input.slashSubmitAt >= this.lastSignalAtMs,
       stopSeen: this.stopSeenSinceWork && input.lastInputAt < this.stopSeenAtMs,
@@ -1197,7 +1300,15 @@ export class Pane {
    *  out of the way; Claude Code restores it after the submit by itself, so
    *  no second Ctrl+S is sent (it would stash the restored draft again). */
   typePauseWord(opts: { stash: boolean }): void {
-    this.queueSubmit('pause', false, { stashFirst: opts.stash, scroll: false, origin: 'patton' });
+    // Gated at the write and at the Enter on the live 7501 `blocked` fact, as
+    // the checkpoint is: the press decided on facts read before the stash wait.
+    this.queueSubmit('pause', false, {
+      stashFirst: opts.stash, scroll: false, origin: 'patton',
+      gate: () => this.asksNowRefusal(),
+      onSettled: (held, typed) => {
+        if (held) rlog('info', '[PAUSE-ALL] pause held', { pane: this.id, at: typed === true ? 'enter' : 'write' });
+      },
+    });
   }
 
   // ---- Session bar (docs/session-bar.md) ----
@@ -2089,8 +2200,21 @@ export class Pane {
     const chips = this.pasteChips.map((c) => ({ dataUrl: c.dataUrl, label: c.label }));
     this.endEscRestore(null);
     this.setBarTextNote(false);
+    // Gated again at the write and the Enter on the live 7501 `blocked` fact
+    // (Gotcha S56): queued behind Patton's own typing (a stash's wait, the
+    // comments paste) Claude may have started asking. Held at the write, the
+    // text comes back to the box; held at the Enter, it stays in Claude's bar.
+    const sent = command;
     command = this.queueSubmit(command, true, {
       own: true, ...(menu ? { onEnterSent: () => this.noteComposeMenuSent() } : {}),
+      gate: () => (this.composeFirstEngaged && this.claudeAsksNow() ? Pane.ASKS_NOW : null),
+      onSettled: (held, typed) => {
+        if (!held || typed === true || this.disposed || sent.trim() === '') return;
+        if (this.lastBoxSend?.text === sent) this.lastBoxSend = null;
+        const existing = this.editorInput.getValue();
+        this.editorInput.setValue(existing.trim() === '' ? sent : `${sent}\n${existing}`);
+        rlog('info', '[COMPOSE] send returned to the box', { pane: this.id, why: 'blocked' });
+      },
     });
     if (command.trim()) {
       this.historyManager.add(command);
@@ -2142,7 +2266,13 @@ export class Pane {
   private queueSubmit(
     command: string,
     allowBroadcast: boolean,
-    opts: { stashFirst?: boolean; scroll?: boolean; origin?: 'patton'; onEnterSent?: () => void; own?: boolean } = {},
+    opts: {
+      stashFirst?: boolean; scroll?: boolean; origin?: 'patton'; onEnterSent?: () => void; own?: boolean; paste?: boolean;
+      gate?: () => string | null;
+      /** How it ended: null once the Enter went, else why it was held;
+       *  `typed` when the text was written and only the Enter was held. */
+      onSettled?: (held: string | null, typed?: boolean) => void;
+    } = {},
   ): string {
     // Broadcast mode: also write to all other panes in the tab
     const broadcast = allowBroadcast ? this.callbacks.onBroadcastWrite : undefined;
@@ -2158,7 +2288,7 @@ export class Pane {
     // text: typed raw, each newline would be an Enter and send the first line
     // alone. Without bracketed-paste mode a paste is no better than typing, so
     // the mode is read when the submit actually runs, not when it is queued.
-    const multiLineCompose = this.composeFirstEngaged && command.includes('\n');
+    const multiLineCompose = (this.composeFirstEngaged || opts.paste === true) && command.includes('\n');
     const lines = command ? command.split('\n').length : 0;
 
     // Queue submits sequentially to prevent rapid double-submit from dropping the first Enter.
@@ -2166,12 +2296,12 @@ export class Pane {
     const origin = opts.origin;
     const own = opts.own === true ? () => this.noteOwnTyping() : () => {};
     this.submitQueue = this.submitQueue.then(() => new Promise<void>((resolve) => {
-      if (this.ptyId === null) { resolve(); return; }
+      if (this.ptyId === null) { opts.onSettled?.('The session closed before the message was sent.'); resolve(); return; }
       if (opts.stashFirst) {
         own();
         window.patton.pty.write(this.ptyId, '\x13', origin);
         setTimeout(() => {
-          if (this.ptyId === null) { resolve(); return; }
+          if (this.ptyId === null) { opts.onSettled?.('The session closed before the message was sent.'); resolve(); return; }
           submitLine(resolve);
         }, Pane.STASH_SETTLE_MS);
         return;
@@ -2179,19 +2309,22 @@ export class Pane {
       submitLine(resolve);
     }));
     const submitLine = (resolve: () => void): void => {
-      if (this.ptyId === null) { resolve(); return; }
+      if (this.ptyId === null) { opts.onSettled?.('The session closed before the message was sent.'); resolve(); return; }
+      // `gate`: asked again the moment the text is written (after a stash's
+      // wait, or a queued submit ahead of it), on the live facts.
+      const held = opts.gate?.();
+      if (held) {
+        rlog('info', '[COMPOSE] submit held at write', { pane: this.id, why: held });
+        opts.onSettled?.(held);
+        resolve();
+        return;
+      }
       const route: 'paste' | 'type' =
         multiLineCompose && this.terminalView.terminal.modes.bracketedPasteMode ? 'paste' : 'type';
       rlog('info', '[COMPOSE] submit', { pane: this.id, lines, route, ...(opts.stashFirst ? { stashed: true } : {}) });
       // The user's own send takes the pasted images with it; Patton's own typing
       // (Pause all, checkpoint) says nothing about the user's message.
       if (origin !== 'patton') this.clearPasteChipsOnSend('compose');
-      // Patton's own lines start a turn as his do; a line that may run
-      // locally (a /usage) leaves the ring to the feed's next assistant line.
-      if (command.trim()) {
-        if (!mayRunLocally(command)) this.noteTurnSubmitted('compose');
-        else if (this.turnEnded) rlog('info', '[DOT] Ring kept: a local command', { pane: this.id, via: 'compose' });
-      }
       // xterm's scrollOnUserInput only sees its own keys, not the box's.
       if (opts.scroll !== false) this.terminalView.terminal.scrollToBottom();
       own();
@@ -2202,32 +2335,51 @@ export class Pane {
         // in the whole paste first: 60 ms is meant to clear its paste debounce
         // (a margin chosen by reading, not yet measured live).
         setTimeout(() => {
-          if (this.ptyId !== null) {
-            own();
-            window.patton.pty.write(this.ptyId, '\r');
-            broadcast?.('\r');
-            opts.onEnterSent?.();
-          }
+          sendEnter(undefined);
           resolve();
         }, 60);
       } else if (command) {
         window.patton.pty.write(this.ptyId, command, origin);
         broadcast?.(command);
         setTimeout(() => {
-          if (this.ptyId !== null) {
-            own();
-            window.patton.pty.write(this.ptyId, '\r', origin);
-            broadcast?.('\r');
-            opts.onEnterSent?.();
-          }
+          sendEnter(origin);
           resolve();
         }, 10);
       } else {
-        if (this.turnEnded) this.noteBarSend('compose');
-        window.patton.pty.write(this.ptyId, '\r', origin);
-        broadcast?.('\r');
+        sendEnter(origin);
         resolve();
       }
+    };
+    // The Enter is asked the gate again too (Gotcha S56): Claude may have
+    // started asking between the text and the Enter, and an Enter then would
+    // answer its question. The text stays in Claude's input; nothing is sent.
+    const sendEnter = (writeOrigin: 'patton' | undefined): void => {
+      if (this.ptyId === null) { opts.onSettled?.('The session closed before the message was sent.'); return; }
+      const held = opts.gate?.();
+      if (held) {
+        rlog('info', '[COMPOSE] enter held', { pane: this.id, why: held });
+        opts.onSettled?.(held, true);
+        return;
+      }
+      // The turn starts with the Enter, so a held Enter leaves the ring as it
+      // is. Patton's own lines start a turn as his do; a line that may run
+      // locally (a /usage) leaves the ring to the feed's next assistant line;
+      // the empty box's Enter sends what is on Claude's bar, if anything.
+      if (command.trim()) {
+        if (!mayRunLocally(command)) this.noteTurnSubmitted('compose');
+        else if (this.turnEnded) rlog('info', '[DOT] Ring kept: a local command', { pane: this.id, via: 'compose' });
+      } else if (this.turnEnded) {
+        this.noteBarSend('compose');
+      }
+      // D18: a line Patton typed (comments, checkpoint, pause) is a send of
+      // its own: an Esc from here stops its turn, not the box's last send.
+      if (origin === 'patton') this.lastBoxSend = null;
+      own();
+      if (writeOrigin) window.patton.pty.write(this.ptyId, '\r', writeOrigin);
+      else window.patton.pty.write(this.ptyId, '\r');
+      broadcast?.('\r');
+      opts.onEnterSent?.();
+      opts.onSettled?.(null);
     };
     return command;
   }
@@ -2512,6 +2664,13 @@ export class Pane {
       : at > this.turnEndedAtMs;
     if (!moved) return;
     this.noteTurnSubmitted(why);
+  }
+
+  /** Claude's bar on screen holds text (one row or several, placeholders
+   *  included); false when empty or not readable. */
+  private barShowsText(): boolean {
+    if (!this.claudeActive) return false;
+    return readClaudeBarInput(this.terminalView.terminal.buffer.active).kind === 'text';
   }
 
   /** The text on Claude's bar when it holds his text, else null. */

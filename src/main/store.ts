@@ -9,6 +9,7 @@ import { ALLOWED_SHELLS } from './pty-manager';
 import { cleanProjectName, type ProjectNameTarget } from './projects';
 import { sanitiseSessionGroups } from './session-groups';
 import type { HistoryEntry, AppSettings, WindowState, SessionState, Bookmark } from '../shared/types';
+import { driveAccountValid, driveFolderValid } from '../shared/drive-settings';
 
 // Keychain-protected random encryption key for electron-store.
 // The key itself is 32 random bytes, stored in userData/key.enc encrypted by
@@ -101,6 +102,9 @@ const defaults: StoreSchema = {
     programStatus: DEFAULTS.PROGRAM_STATUS,
     checkpointNudgePct: DEFAULTS.CHECKPOINT_NUDGE_PCT,
     projectBoard: DEFAULTS.PROJECT_BOARD,
+    reviewTab: true,
+    driveFolder: 'Patton',
+    driveAccount: '',
     projectListFile: DEFAULTS.PROJECT_LIST_FILE,
     boardWakeCommand: DEFAULTS.BOARD_WAKE_COMMAND,
   },
@@ -284,6 +288,21 @@ export function setSettings(partial: Partial<AppSettings>): void {
 
   if (partial.projectBoard !== undefined) {
     validated.projectBoard = !!partial.projectBoard;
+  }
+
+  if (partial.reviewTab !== undefined) {
+    validated.reviewTab = !!partial.reviewTab;
+  }
+
+  if (partial.driveFolder !== undefined) {
+    // One folder at the top of My Drive: no slash, no control characters.
+    const f = String(partial.driveFolder).trim();
+    if (driveFolderValid(f)) validated.driveFolder = f;
+  }
+
+  if (partial.driveAccount !== undefined) {
+    const a = String(partial.driveAccount).trim();
+    if (driveAccountValid(a)) validated.driveAccount = a;
   }
 
   if (partial.projectListFile !== undefined) {

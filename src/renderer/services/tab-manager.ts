@@ -17,6 +17,7 @@ import type { ITheme } from '@xterm/xterm';
 import { SessionBar, type SessionBarTarget } from '../components/session-bar';
 import type { LinkRow } from './session-bar-model';
 import { resolveHyperlink } from './link-target';
+import { ReviewTabs } from './review-tabs';
 import {
   cleanGroupName, moveGroupFirst, nearestVisible, newGroupId, placeAfterGroup, repairRuns, stepMove, takeOutOfGroup,
   visibleItems, MAX_GROUPS, type TabGroup,
@@ -82,6 +83,8 @@ export class TabManager {
   private userNewTabHandler: (() => Promise<Tab>) | null = null;
   // Told about every tab that leaves the window, however it went.
   private tabClosedListeners: ((tab: Tab) => void)[] = [];
+  /** Word files open as review tabs over a shell tab (docs/review-tab.md). */
+  readonly reviewTabs: ReviewTabs;
   // --- end project board ---
   // --- Tab groups (services/tab-groups.ts) ---
   // This window's groups, and which group each tab is in. A group's tabs are
@@ -158,6 +161,19 @@ export class TabManager {
       this.paneForPty(ptyId)?.applyFeedEvent(ptyId, event);
     });
     if (offFeed) this.disposables.push(offFeed);
+
+    // Word files open in review tabs (services/review-tabs.ts, docs/review-tab.md).
+    this.reviewTabs = new ReviewTabs({
+      focusedPane: () => this.activeTab?.focusedPane ?? null,
+      createTab: (cwd) => this.createTab(cwd),
+      onTabClosed: (listener) => this.onTabClosed(listener),
+      paneAlive: (pane) => this.tabs.some((t) => t.panes.includes(pane)),
+      showPane: (pane) => {
+        const tab = this.tabs.find((t) => t.panes.includes(pane));
+        if (tab) this.goToSession(tab.id, pane.id);
+      },
+      confirm: (opts) => this.confirmDialog.confirm(opts),
+    });
 
     // Tabs are named after their project. A project renamed in any window
     // renames its tabs here too.
@@ -516,9 +532,13 @@ export class TabManager {
     const tab = this.tabs[idx];
     const closedTitle = tab.title;
 
-    // Save pane state for undo before disposing
-    for (const pane of tab.panes) {
-      this.saveClosedPane(pane);
+    // Save pane state for undo before disposing. Not a review tab's: its
+    // shell is only what the document lies over, and Reopen Closed Tab
+    // would bring back an empty terminal instead of the document.
+    if (!this.reviewTabs.viewOf(tab)) {
+      for (const pane of tab.panes) {
+        this.saveClosedPane(pane);
+      }
     }
 
     this.removeTab(tab);
@@ -1349,7 +1369,11 @@ export class TabManager {
 
   async saveSession(): Promise<void> {
     try {
-      const tabs = [...this.tabs];
+      // A review tab is not saved (docs/review-tab.md R9): after a relaunch it
+      // would come back as the bare shell it lies over. Kept only when it is
+      // all there is, so the session is never saved empty.
+      const kept = this.tabs.filter((t) => !this.reviewTabs.viewOf(t));
+      const tabs = kept.length > 0 ? kept : [...this.tabs];
       const results = await Promise.allSettled(tabs.map(t => t.serializeTree()));
       const tabStates: SessionTabState[] = [];
       const usedGroups = new Set<string>();
@@ -1368,7 +1392,12 @@ export class TabManager {
         return;
       }
       // Adjust active index if some tabs failed serialization
-      const activeIdx = this.activeTab ? this.tabs.indexOf(this.activeTab) : 0;
+      // (By the saved tabs: a review tab in front counts as the tab before it.)
+      let activeIdx = 0;
+      if (this.activeTab) {
+        const all = this.tabs.indexOf(this.activeTab);
+        activeIdx = Math.max(0, tabs.filter((t) => this.tabs.indexOf(t) <= all).length - 1);
+      }
       const session: SessionState = {
         tabs: tabStates,
         activeTabIndex: Math.min(Math.max(0, activeIdx), tabStates.length - 1),
@@ -1799,6 +1828,7 @@ export class TabManager {
 
   dispose(): void {
     for (const d of this.disposables) d();
+    this.reviewTabs.dispose();
     for (const tab of this.tabs) tab.dispose();
     this.sessionBar.dispose();
     this.tabBar.dispose();

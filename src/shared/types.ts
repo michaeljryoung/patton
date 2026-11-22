@@ -91,6 +91,13 @@ export interface AppSettings {
    *  file exists). Absent in settings saved before it existed, so read it as
    *  `!== false` (on by default). */
   projectBoard: boolean;
+  /** A .docx file link opens in a review tab (docs/review-tab.md); off opens
+   *  Word. Absent in older settings: on, so read it as `!== false`. */
+  reviewTab?: boolean;
+  /** Send to Drive's folder at the top of his personal My Drive (default "Patton"). */
+  driveFolder?: string;
+  /** The gcloud account Send to Drive uses; '' or absent: the one personal account gcloud holds. */
+  driveAccount?: string;
   /** The Markdown project list the board reads (the `cc` launcher's format).
    *  Empty means ~/.claude/projects.md. Absent in older settings: read `|| ''`. */
   projectListFile: string;
@@ -351,6 +358,8 @@ export interface PattonAPI {
   };
   // --- end bookmarks ---
   /** Page titles: the learned map (null when the call was refused), and every change to it. */
+  /** The review tab (docs/review-tab.md). */
+  review: import('./review').ReviewApi;
   pageTitles: {
     get: () => Promise<PageTitleMap | null>;
     onChanged: (callback: (titles: PageTitleMap) => void) => () => void;

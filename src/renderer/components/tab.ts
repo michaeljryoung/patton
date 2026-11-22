@@ -20,11 +20,14 @@ import { DEFAULTS } from '../../shared/constants';
 
 let tabIdCounter = 0;
 
-/** Something shown over a tab's panes (the project board). While a tab has
- *  one, the tab is called "Projects" and keyboard focus stays inside it. */
+/** Something shown over a tab's panes (the project board, a review tab).
+ *  While a tab has one, the tab is called by the cover's `title` ("Projects"
+ *  when it has none) and keyboard focus stays inside it. */
 export interface TabCover {
   element: HTMLElement;
   focus(): void;
+  /** The tab's name while the cover shows (a review tab: the file's name). */
+  title?: string;
 }
 
 /** The tab's name while a cover shows. */
@@ -465,7 +468,7 @@ export class Tab {
   /** What the tab is called when the user hasn't named it: its project's name,
    *  else the title the program in the focused pane set. */
   get autoTitle(): string {
-    if (this._cover) return COVERED_TAB_TITLE;
+    if (this._cover) return this._cover.title || COVERED_TAB_TITLE;
     return this._project ? projectTitle(this._project) : this._focusedPane.title;
   }
 

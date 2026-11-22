@@ -173,6 +173,7 @@ function makeWindow(id) {
       write: (ptyId, data, origin) => {
         tracker.note(ptyId, data, origin);
         win.writes.push([ptyId, data]);
+        win.onWrite?.(ptyId, data);
       },
       inputState: (ids) => Promise.resolve(ids.map((i) => tracker.state(i))),
       onData: () => () => {},
@@ -450,6 +451,65 @@ await wait(300);
   await A.tm.runCheckpoint();
   await wait(100);
   check('checkpoint: no draft, plain /checkpoint', bytesByPty(A).get(r.ptyId) === '/checkpoint\r', bytesByPty(A).get(r.ptyId));
+}
+
+// ── 9b. The checkpoint's and Pause all's Enters gate on the live 7501 `blocked` fact ──
+// (Gotcha S56.) Claude starts asking during the stash's 150 ms wait, or between
+// the word and its Enter: nothing more is written, and no Enter answers it.
+{
+  const askOn = (win, p, when) => {
+    win.onWrite = (id, data) => {
+      if (id === p.ptyId && data === when) { win.onWrite = null; report(win, p, ROOT('blocked', ':kind=permission')); }
+    };
+  };
+  const mine = (win, p) => win.writes.filter(([id]) => id === p.ptyId).map(([, d]) => d);
+
+  // Checkpoint, with a draft: asked during the stash's wait.
+  const c1 = await makePane(A);
+  doneAfterTurn(A, c1);
+  type(c1, 'draft words');
+  setTabs(A, [tab('gate1', [c1])]);
+  clearWrites();
+  askOn(A, c1, '\x13');
+  const why1 = await c1.runCheckpoint();
+  await wait(50);
+  check('checkpoint gate: Claude asks during the stash wait, so only the Ctrl+S went (no /checkpoint, no Enter)', JSON.stringify(mine(A, c1)) === JSON.stringify(['\x13']), mine(A, c1));
+  check('checkpoint gate: … and it says why, not "sent"', typeof why1 === 'string' && /asking you something/.test(why1) && /not sent/.test(why1), why1);
+  check('checkpoint gate: … logged as held at the write', A.logs.some((l) => l.includes('[CKPT] run held') && l.includes('"at":"write"')));
+
+  // Checkpoint, no draft: asked between /checkpoint and its Enter.
+  const c2 = await makePane(A);
+  doneAfterTurn(A, c2);
+  setTabs(A, [tab('gate2', [c2])]);
+  clearWrites();
+  askOn(A, c2, '/checkpoint');
+  const why2 = await c2.runCheckpoint();
+  await wait(50);
+  check('checkpoint gate: Claude asks between /checkpoint and its Enter, so no Enter', JSON.stringify(mine(A, c2)) === JSON.stringify(['/checkpoint']), mine(A, c2));
+  check('checkpoint gate: … and it says the word sits in Claude\'s input, not sent', typeof why2 === 'string' && /in its input, not sent/.test(why2), why2);
+
+  // Pause all, with a draft: asked during the stash's wait.
+  const p1 = await makePane(A);
+  doneAfterTurn(A, p1);
+  type(p1, 'another draft');
+  setTabs(A, [tab('gate3', [p1])]);
+  setTabs(B, []);
+  clearWrites();
+  askOn(A, p1, '\x13');
+  await press(A);
+  check('pause gate: Claude asks during the stash wait, so only the Ctrl+S went (no pause, no Enter)', JSON.stringify(mine(A, p1)) === JSON.stringify(['\x13']), mine(A, p1));
+  check('pause gate: … logged as held at the write', A.logs.some((l) => l.includes('[PAUSE-ALL] pause held') && l.includes('"at":"write"')));
+
+  // Pause all, no draft: asked between `pause` and its Enter.
+  const p2 = await makePane(A);
+  doneAfterTurn(A, p2);
+  setTabs(A, [tab('gate4', [p2])]);
+  clearWrites();
+  askOn(A, p2, 'pause');
+  await press(A);
+  check('pause gate: Claude asks between pause and its Enter, so no Enter', JSON.stringify(mine(A, p2)) === JSON.stringify(['pause']), mine(A, p2));
+  check('pause gate: … logged as held at the Enter', A.logs.some((l) => l.includes('[PAUSE-ALL] pause held') && l.includes('"at":"enter"')));
+  A.onWrite = null;
 }
 
 // ── 10. Title path: a stale stop flag is cleared by user input, restored by the next Stop hook ──
