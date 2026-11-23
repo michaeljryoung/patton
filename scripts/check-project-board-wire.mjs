@@ -421,7 +421,10 @@ async function main() {
     check('shell tabs: (7501) Claude reporting in a project folder: the project names the tab', pane.isClaudePane && reads('AI-Brain'), shown());
     emit(pty, '\x1b]7501;state=clear\x07');
     await until(() => !pane.isClaudePane);
-    check('shell tabs: (7501) Claude quits: a title from before Claude started stays (the shell\'s own)', pane.shownTitle === 'my shell' && reads('my shell'), { pane: pane.shownTitle, ...shown() });
+    check('shell tabs: (7501) Claude quits: a title the shell set before its prompt is retired, the tab reads "Terminal"', pane.shownTitle === 'Terminal' && reads('Terminal'), { pane: pane.shownTitle, ...shown() });
+    emit(pty, '\x1b]133;D;0\x07\x1b]133;A\x07\x1b]0;my shell\x07'); // a title set after the next prompt shows
+    await until(() => pane.shownTitle === 'my shell');
+    check('shell tabs: (7501) ...and one the shell sets after its prompt names the tab', reads('my shell'), shown());
     emit(pty, '\x1b]7501;state=idle:app=claude-code\x07');
     emit(pty, '\x1b]0;Fix the tab names\x07'); // Claude's topic, no glyph
     await until(() => pane.isClaudePane && pane.title === 'Fix the tab names');
@@ -579,7 +582,7 @@ async function main() {
       await tm2.closeById(tab.id);
     }
 
-    // The shell's own title from before Claude started survives the exit (a prompt came after it).
+    // The shell's own title, set after its prompt (the command running now), shows after Claude left.
     {
       const tab = await newTab();
       const pane = tab.focusedPane;
@@ -588,9 +591,227 @@ async function main() {
       await claude7501(pane, 'Fix the tab names');
       emit(pane.ptyId, '\x1b]7501;state=clear\x07');
       await until(() => !pane.isClaudePane);
-      emit(pane.ptyId, '\x1b]0;mike@host: ~\x07' + PROMPT);
+      emit(pane.ptyId, PROMPT + '\x1b]0;mike@host: ~\x07');
       await tick(40);
-      check('review: the shell\'s own title set after Claude left is shown', pane.shownTitle === 'mike@host: ~' && tab.title === 'mike@host: ~', { shown: pane.shownTitle, t: tab.title });
+      check('review: the shell\'s own title set after Claude left (after its prompt) is shown', pane.shownTitle === 'mike@host: ~' && tab.title === 'mike@host: ~', { shown: pane.shownTitle, t: tab.title });
+      await tm2.closeById(tab.id);
+    }
+
+    // --- review of 219eea8: the rule is "the command running now, else Terminal" ---
+    const IDLE = '\x1b]7501;state=idle:app=claude-code\x07';
+    const CLEAR = '\x1b]7501;state=clear\x07';
+    const T = (t) => '\x1b]0;' + t + '\x07';
+    const quit = async (pane) => { emit(pane.ptyId, CLEAR); await until(() => !pane.isClaudePane); await tick(20); };
+
+    // B2a/B2b: a second session that sets no title (or the same one) leaves "Terminal" after it quits.
+    {
+      const tab = await newTab();
+      const pane = tab.focusedPane;
+      emit(pane.ptyId, IDLE); emit(pane.ptyId, T('Fix x'));
+      await until(() => pane.isClaudePane && pane.title === 'Fix x');
+      await quit(pane);
+      emit(pane.ptyId, PROMPT);
+      await tick(30);
+      emit(pane.ptyId, IDLE);
+      await until(() => pane.isClaudePane);
+      await quit(pane);
+      check('review B2: a second session that sets no title: "Terminal" after it quits', pane.shownTitle === 'Terminal' && tab.title === 'Terminal', { shown: pane.shownTitle, t: tab.title });
+      await tm2.closeById(tab.id);
+    }
+    // B3/B4: a second session that sets the same title before its first report.
+    {
+      const tab = await newTab();
+      const pane = tab.focusedPane;
+      emit(pane.ptyId, IDLE); emit(pane.ptyId, T('Fix x'));
+      await until(() => pane.isClaudePane && pane.title === 'Fix x');
+      await quit(pane);
+      emit(pane.ptyId, PROMPT);
+      await tick(30);
+      emit(pane.ptyId, T('Fix x'));
+      await tick(20);
+      emit(pane.ptyId, IDLE);
+      await until(() => pane.isClaudePane);
+      check('review B3: the second session reads as Claude\'s: the project names the tab', tab.title === 'AI-Brain', tab.title);
+      await quit(pane);
+      check('review B4: the second session sets the same title: "Terminal" after it quits', pane.shownTitle === 'Terminal' && tab.title === 'Terminal', { shown: pane.shownTitle, t: tab.title });
+      await tm2.closeById(tab.id);
+    }
+    // B2 with no OSC 133 at all: a title Claude set stays hidden after the second session.
+    {
+      const tab = await newTab();
+      const pane = tab.focusedPane;
+      emit(pane.ptyId, IDLE); emit(pane.ptyId, T('Fix x'));
+      await until(() => pane.isClaudePane && pane.title === 'Fix x');
+      await quit(pane);
+      emit(pane.ptyId, IDLE);
+      await until(() => pane.isClaudePane);
+      await quit(pane);
+      check('review B2 (no OSC 133): Claude\'s title stays hidden after a second session that sets none', pane.shownTitle === 'Terminal' && tab.title === 'Terminal', { shown: pane.shownTitle, t: tab.title });
+      await tm2.closeById(tab.id);
+    }
+
+    // C1/C2: Claude quits before its first report (a cancelled --resume picker), leaving its start-up title.
+    {
+      const tab = await newTab();
+      const pane = tab.focusedPane;
+      emit(pane.ptyId, T('mike@host: ~') + PROMPT);
+      await tick(20);
+      emit(pane.ptyId, T('Claude Code'));
+      await until(() => pane.title === 'Claude Code');
+      check('review C1: the command running now sets "Claude Code": it shows while it runs', pane.shownTitle === 'Claude Code', pane.shownTitle);
+      emit(pane.ptyId, PROMPT);
+      await tick(40);
+      check('review C2: the prompt returns with no report ever: "Terminal" on the pane and the tab', pane.shownTitle === 'Terminal' && tab.title === 'Terminal' && stripText(tab) === 'Terminal', { shown: pane.shownTitle, t: tab.title, s: stripText(tab) });
+      await tm2.closeById(tab.id);
+    }
+
+    // A2/A3: title path (no 7501): Claude's glyph title, then a shell's or program's own title.
+    {
+      const tab = await newTab();
+      const pane = tab.focusedPane;
+      emit(pane.ptyId, T('✳ Fix x'));
+      await until(() => pane.isClaudePane);
+      emit(pane.ptyId, T('fish ~/code'));
+      await until(() => pane.title === 'fish ~/code');
+      check('review A2: after Claude (title path) the next title is shown, not hidden as Claude\'s', pane.shownTitle === 'fish ~/code' && tab.title === 'fish ~/code' && !pane.isClaudePane, { shown: pane.shownTitle, t: tab.title });
+      emit(pane.ptyId, T('fish ~/code'));
+      await tick(40);
+      check('review A3: ...and the same title arriving again', pane.shownTitle === 'fish ~/code' && tab.title === 'fish ~/code', { shown: pane.shownTitle, t: tab.title });
+      await tm2.closeById(tab.id);
+    }
+
+    // H1/H2: bash order, the prompt mark first and the shell's title after it.
+    {
+      const tab = await newTab();
+      const pane = tab.focusedPane;
+      emit(pane.ptyId, IDLE); emit(pane.ptyId, T('Fix x'));
+      await until(() => pane.isClaudePane && pane.title === 'Fix x');
+      await quit(pane);
+      emit(pane.ptyId, PROMPT + T('user@host: ~/proj'));
+      await until(() => pane.title === 'user@host: ~/proj');
+      check('review H1: a title set after the prompt mark is shown', pane.shownTitle === 'user@host: ~/proj' && tab.title === 'user@host: ~/proj', { shown: pane.shownTitle, t: tab.title });
+      emit(pane.ptyId, IDLE);
+      await until(() => pane.isClaudePane);
+      await quit(pane);
+      emit(pane.ptyId, PROMPT + T('user@host: ~/proj'));
+      await tick(40);
+      check('review H2: a second session, then the shell\'s next title after its prompt shows again', pane.shownTitle === 'user@host: ~/proj' && tab.title === 'user@host: ~/proj', { shown: pane.shownTitle, t: tab.title });
+      await tm2.closeById(tab.id);
+    }
+
+    // I2: no OSC 133 at all (fish): the shell's title, set before Claude and again after it.
+    {
+      const tab = await newTab();
+      const pane = tab.focusedPane;
+      emit(pane.ptyId, T('fish ~/code'));
+      await tick(20);
+      emit(pane.ptyId, IDLE);
+      await until(() => pane.isClaudePane);
+      await quit(pane);
+      emit(pane.ptyId, T('fish ~/code'));
+      await tick(30);
+      check('review I2: with no OSC 133 the title the shell sets again after Claude shows', pane.shownTitle === 'fish ~/code' && tab.title === 'fish ~/code', { shown: pane.shownTitle, t: tab.title });
+      emit(pane.ptyId, T('vim notes.md'));
+      await tick(30);
+      check('review I2: ...and a program\'s after it', tab.title === 'vim notes.md', tab.title);
+      await tm2.closeById(tab.id);
+    }
+
+    // L: respawn resets what was known about the title.
+    {
+      const tab = await newTab();
+      const pane = tab.focusedPane;
+      emit(pane.ptyId, IDLE); emit(pane.ptyId, T('Fix x'));
+      await until(() => pane.isClaudePane && pane.title === 'Fix x');
+      const respawnsBefore = state.respawns.length;
+      await tab.respawnShell({ cwd: '/tmp/ai-brain' });
+      state.respawns.length = respawnsBefore; // later cases count the respawns of the board's tile open
+      await tick(30);
+      check('review L: after a respawn the pane reads "Terminal"', pane.shownTitle === 'Terminal' && tab.title === 'Terminal', { shown: pane.shownTitle, t: tab.title });
+      emit(pane.ptyId, T('htop'));
+      await until(() => pane.title === 'htop');
+      check('review L: a title the new shell\'s command sets shows (nothing of the old Claude carries over)', pane.shownTitle === 'htop', pane.shownTitle);
+      await tm2.closeById(tab.id);
+    }
+
+    // The pane-drag overlay names the pane as the tab does.
+    {
+      const tab = await newTab();
+      const pane = tab.focusedPane;
+      emit(pane.ptyId, IDLE); emit(pane.ptyId, T('Fix x'));
+      await until(() => pane.isClaudePane && pane.title === 'Fix x');
+      await quit(pane);
+      const handle = pane.element.querySelector('.pane-drag-handle');
+      handle.dispatchEvent(new w.MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: 5, clientY: 5 }));
+      const shownInOverlay = doc.querySelector('.pane-drag-overlay')?.textContent;
+      doc.dispatchEvent(new w.MouseEvent('mouseup', { bubbles: true, cancelable: true, clientX: 5, clientY: 5 }));
+      doc.querySelectorAll('.pane-drag-overlay').forEach((o) => o.remove());
+      check('review overlay: dragging a pane Claude left shows "Terminal", not Claude\'s topic', shownInOverlay === 'Terminal', shownInOverlay);
+      await tm2.closeById(tab.id);
+    }
+
+    // Tab.namedForProject and the split-tab menu (D1, D2): the menu acts on the project that names the tab.
+    {
+      const setNameCalls = [];
+      const setNameWas = w.patton.projects.setName;
+      w.patton.projects.setName = async (key, name) => { setNameCalls.push([key, name]); };
+      const openMenu = (tab) => {
+        tm2['updateTabBar']();
+        tm2Bar.querySelector('.tab-bar-tab[data-tab-id="' + tab.id + '"]').dispatchEvent(new w.MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }));
+        return [...doc.querySelectorAll('.context-menu-item')];
+      };
+      const closeMenu = () => doc.querySelectorAll('.context-menu-overlay').forEach((o) => o.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })));
+      const labelsOf = (items) => items.map((n) => n.textContent.replace(/\s+/g, ' ').trim());
+
+      const tab = await newTab();
+      const A = tab.focusedPane;
+      check('Tab.namedForProject: a plain shell in a project folder is not named for it', tab.namedForProject === false && tab.title === 'Terminal', { named: tab.namedForProject, t: tab.title });
+      emit(A.ptyId, '\x1b]7501;state=idle:app=claude-code\x07');
+      await until(() => A.isClaudePane);
+      check('Tab.namedForProject: true while Claude runs in it', tab.namedForProject === true, tab.namedForProject);
+      tab.setCustomTitle('mine');
+      check('Tab.namedForProject: false once the user named it', tab.namedForProject === false, tab.namedForProject);
+      tab.clearCustomTitle();
+      check('Tab.namedForProject: true again when the name is cleared', tab.namedForProject === true, tab.namedForProject);
+
+      // D1: Claude in the unfocused A (project AI-Brain); the focused B sits in no project.
+      tm2.splitVertical();
+      await until(() => tab.panes.length === 2);
+      await tick(20);
+      const B = tab.focusedPane;
+      w.patton.projects.resolve = async () => null;
+      tab['lookUpProject'](B);
+      await tick(10);
+      let items = openMenu(tab);
+      let labels = labelsOf(items);
+      check('review D1: focused shell in no project, Claude in A: the menu offers the project\'s default name and its bookmark', tab.namedForProject && labels.includes('Set Default Tab Name for Project…') && labels.includes('Bookmark Project'), labels);
+      closeMenu();
+
+      // D2: the focused shell sits in project Other; the rename must reach AI-Brain, the project naming the tab.
+      w.patton.projects.resolve = async () => ({ root: '/tmp/other', defaultName: 'Other' });
+      tab['lookUpProject'](B);
+      await tick(10);
+      items = openMenu(tab);
+      items.find((n) => n.textContent.trim().startsWith('Set Default Tab Name')).click();
+      const box = [...doc.querySelectorAll('.tab-bar-tab-rename')][0];
+      check('review D2: the box offers AI-Brain (the project naming the tab), not Other', !!box && box.placeholder === 'AI-Brain', box && box.placeholder);
+      if (box) {
+        box.value = 'Renamed';
+        box.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+      }
+      check('review D2: the rename reaches AI-Brain\'s folder', setNameCalls.length === 1 && setNameCalls[0][0] === '/tmp/ai-brain' && setNameCalls[0][1] === 'Renamed', setNameCalls);
+      closeMenu();
+      check('review D2: the bookmark is of the same project', tab.menuProject?.root === '/tmp/ai-brain', tab.menuProject?.root);
+
+      // Claude quits: the tab is no longer named for a project, so it gets "Rename Tab…", and the focused pane's project.
+      emit(A.ptyId, '\x1b]7501;state=clear\x07');
+      await until(() => !A.isClaudePane);
+      await tick(20);
+      labels = labelsOf(openMenu(tab));
+      check('review D: with no Claude the tab offers "Rename Tab…" and the focused pane\'s project', !tab.namedForProject && labels.includes('Rename Tab…') && labels.includes('Set Default Tab Name for Project…') && tab.menuProject?.root === '/tmp/other', { labels, p: tab.menuProject?.root });
+      closeMenu();
+      w.patton.projects.resolve = projResolve;
+      w.patton.projects.setName = setNameWas;
       await tm2.closeById(tab.id);
     }
 

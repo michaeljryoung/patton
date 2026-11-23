@@ -309,7 +309,7 @@ check('...and the palette and the box agree with the tab', sessionOf(lifesciProj
 // the real BookmarksPanel: a bookmark from a worktree tab points at the PARENT
 // root, so it is labelled with the parent's name, never the worktree's own
 const bookmarkHost = { getTabs: () => [], getActiveTab: () => null, switchToTab() {}, createTab: async () => null, listSessions: () => [], goToSession: () => false, focusTerminal() {} };
-const bookmarkTab = (project, cwd) => ({ project, focusedPane: { getCwd: () => cwd } });
+const bookmarkTab = (project, cwd) => ({ menuProject: project, focusedPane: { getCwd: () => cwd } });
 const bookmarkFrom = async (project, cwd) => {
   const panel = new BookmarksPanel(doc.getElementById('bookmarks'), bookmarkHost);
   savedBookmarks.length = 0;
