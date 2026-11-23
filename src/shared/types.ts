@@ -536,12 +536,16 @@ export type StashKeyVerdict = { ok: true } | { ok: false; why: string };
  *    question or login (Enter would answer it).
  *  - 'menu': the last line sent began with `/` and Claude hasn't reported since
  *    (a picker such as /model, where Enter selects).
- *  - 'fresh': a session that has never run a turn.
+ *  - 'quiet': nothing is running there (no working root, child, parked work or
+ *    Stop-verdict tasks or timers): counted in the summary, never named.
+ *  - 'fresh': a session that has never run a turn, with something running.
  *  - 'draft': a draft may be in the input line and Ctrl+S is not the stash key.
  *  - 'stashed': a draft may be in the input line and a stash may already be
  *    held (the user pressed Ctrl+S this session, or Patton did and no line
  *    was submitted since): Ctrl+S would overwrite or pop it.
- *  - 'unclear': Claude's state can't rule out a dialog (title path, or 7501 error).
+ *  - 'unclear': Claude's state can't rule out a dialog (title path stopped with
+ *    no Stop hook since, or a 7501 root error with a child still working; an
+ *    error with nothing running is 'quiet').
  *  - 'held': chosen for the word, but Claude started asking before it went
  *    (held at the stash or the write), so it was not sent.
  *  - 'held-restoring': the same, held because D18 was putting the pane's
@@ -583,7 +587,7 @@ export interface PauseAllReport {
   /** Of `sent`, how many were mid-turn (the word queues behind the turn). */
   queued: number;
   skipped: Record<PauseSkipReason, number>;
-  /** Up to PAUSE_NAMED_MAX skipped panes by tab title (not plain shells). */
+  /** Up to PAUSE_NAMED_MAX skipped panes by tab title (not plain shells, not quiet ones). */
   named: PauseSkipName[];
 }
 

@@ -10,10 +10,11 @@
  * running after "pause"; a Claude Code hook acts on a bare `pause`):
  * - Only a session with something running gets the word (Michael, 23 Nov
  *   2026: "it should only do stuff where claude is working not pointlessly
- *   post to quiet chats"): its activity (pane-activity.ts, the reading the
- *   dot and hover card show) is `working` or `parked` (stopped, its own
- *   background tasks, agents or timers still going). Done, idle or stopped on
- *   an error with nothing running: skip ('quiet'), counted, not named.
+ *   post to quiet chats"): `PauseInput.running` (Pane.pauseInput), true while
+ *   the root or a child record works, the title path works, the pane is
+ *   parked, or the turn's last Stop hook verdict counted tasks or timers (kept
+ *   until the next turn, past the dot's drain and TTL). Nothing running (done,
+ *   idle, or stopped on an error): skip ('quiet'), counted, not named.
  * - Claude at its prompt with its background work running: send.
  * - Claude mid-turn with no background task blocked: send. Claude Code queues
  *   a line typed mid-turn and takes it at its next step (seen 10 Nov:
@@ -25,13 +26,14 @@
  *   came since: skip ('menu'), a picker may be open where Enter selects.
  * - Claude on the title path (no 7501 reports) that has stopped without a Stop
  *   hook since its last turn: skip ('unclear'); a dialog looks like that there.
+ *   Checked before 'quiet', so it is named. A 7501 root `error` with a working
+ *   child is running, and 'unclear' too (named); with nothing running, quiet.
  * - No Claude (a plain shell, the `wake` tab), or no live shell: skip.
  * A draft in Claude's input line (main's unsent-input tracker) is stashed
  * with Ctrl+S first, and Claude Code puts it back after the submit. Skipped
  * instead when Ctrl+S isn't the stash key ('draft') or a stash may already be
  * held ('stashed'): Ctrl+S would then overwrite or pop it.
  */
-import type { PaneActivity } from './pane-activity';
 import {
   PAUSE_HELD_REASONS, PAUSE_NAMED_MAX, PAUSE_SKIP_REASONS,
   type PauseAllOutcome, type PauseAllReport, type PauseSkipName, type PauseSkipReason,
@@ -47,9 +49,11 @@ export interface PauseInput {
   live: boolean;
   /** Claude Code runs here (7501 `app=claude-code`, or a title glyph). */
   claude: boolean;
-  /** What the pane is doing (`Pane.claudeState.activity`): only `working`
-   *  and `parked` have anything running to pause. */
-  activity: PaneActivity;
+  /** Work is running here (`Pane.pauseInput`): the root or a child record
+   *  working, the title path working, parked, or the turn's last Stop verdict
+   *  counting tasks or timers. Not the dot's activity word, which is ranked
+   *  for alerting (a root error over a working child reads as an error). */
+  running: boolean;
   /** Where the state comes from: Claude Code's own reports, or its title. */
   source: '7501' | 'title';
   /** The root's 7501 state (null on the title path). */
@@ -90,12 +94,14 @@ export function pauseSkipReason(i: PauseInput, key: StashKeyVerdict): PauseSkipR
   if (!i.claude) return 'not-claude';
   if (i.blocked || i.taskBlocked) return 'waiting';
   if (i.menu) return 'menu';
-  if (i.activity !== 'working' && i.activity !== 'parked') return 'quiet';
+  // Title path, stopped with no Stop hook since: a dialog looks like that, so
+  // named even when nothing is known to run.
+  if (i.source === 'title' && !i.working && !i.stopSeen) return 'unclear';
+  if (!i.running) return 'quiet';
   if (i.source === '7501') {
     if (i.root === 'idle' && !i.hadTurn) return 'fresh';
+    // A root error with a working child lands here: running, state unclear.
     if (i.root !== 'done' && i.root !== 'idle' && i.root !== 'working') return 'unclear';
-  } else if (!i.working && !i.stopSeen) {
-    return 'unclear';
   }
   if (i.draft && !key.ok) return 'draft';
   if (i.draft && i.stashed) return 'stashed';
@@ -192,7 +198,7 @@ export const PAUSE_SKIP_WORDS: Record<PauseSkipReason, string> = {
 
 const sessions = (n: number): string => `${n} Claude session${n === 1 ? '' : 's'}`;
 
-/** The skips the summary counts: Claude panes. */
+/** The skips the summary names and counts: Claude panes, quiet ones aside (counted on their own). */
 function countedSkips(o: PauseAllOutcome): PauseSkipReason[] {
   return PAUSE_SKIP_REASONS.filter((r) => o.skipped[r] > 0 && nameable(r));
 }
@@ -204,9 +210,11 @@ export function pauseSummary(o: PauseAllOutcome): string {
     const atPrompt = o.sent - o.queued;
     parts.push(`Paused ${sessions(o.sent)} (${atPrompt} at the prompt, ${o.queued} queued behind a running turn)`);
   } else {
-    parts.push(o.skipped.quiet > 0 ? 'Nothing running to pause' : 'Nothing paused');
+    // "Nothing running" is only true when quiet is the only skip and every window answered.
+    const onlyQuiet = o.skipped.quiet > 0 && countedSkips(o).length === 0 && o.windows === o.answered;
+    parts.push(onlyQuiet ? 'Nothing running to pause' : 'Nothing paused');
   }
-  if (o.skipped.quiet > 0) parts.push(`${sessions(o.skipped.quiet)} with nothing running left alone`);
+  if (o.skipped.quiet > 0) parts.push(`${o.skipped.quiet} quiet Claude session${o.skipped.quiet === 1 ? '' : 's'} left alone`);
   const reasons = countedSkips(o);
   const total = reasons.reduce((n, r) => n + o.skipped[r], 0);
   if (total > 0) {

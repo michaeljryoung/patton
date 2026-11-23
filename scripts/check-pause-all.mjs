@@ -28,7 +28,11 @@
 // until the user submits; the session bar's checkpoint button stashes a
 // draft the same way; the summary names skipped tabs and splits at-the-prompt
 // from queued, counts quiet sessions without naming them, and counts a word the gate
-// held (Claude started asking) as held. Main side: a window closed mid-press, a send that throws, a
+// held (Claude started asking) as held. "Running" means work, not the dot's word: a root error
+// over a working child is named unclear, the turn's last Stop verdict keeps counting past the
+// children draining and the 40 s TTL until the next turn, a title ✳ with no Stop hook is named
+// unclear, and the summary opens "Nothing running to pause" only when quiet is the only skip.
+// Main side: a window closed mid-press, a send that throws, a
 // late report, a second press, and an untrusted report.
 // Run: JSDOM_DIR=<a folder whose node_modules has jsdom> node scripts/check-pause-all.mjs
 //   jsdom is not a project dependency: install it in a scratch folder.
@@ -334,9 +338,9 @@ await wait(300);
   check('pause: nothing else written anywhere', wa.size === 6 && B.writes.length === 2, [[...wa.keys()], B.writes]);
   const text = resultText(A);
   check('pause: summary splits at-the-prompt from queued, counts quiet sessions and names the other skipped tabs',
-    text === 'Paused 7 Claude sessions (6 at the prompt, 1 queued behind a running turn); 6 Claude sessions with nothing running left alone; skipped 7: perm (waiting on you), quest (waiting on you), fresh (new session), 4 more', text);
+    text === 'Paused 7 Claude sessions (6 at the prompt, 1 queued behind a running turn); 6 quiet Claude sessions left alone; skipped 7: perm (waiting on you), quest (waiting on you), fresh (new session), 4 more', text);
   check('pause: quiet sessions are counted in the summary and never named',
-    /; 6 Claude sessions with nothing running left alone;/.test(text) && !/\b(err|qDone|qIdle|qFresh|qTitle|qDraft)\b/.test(text) && !/nothing running\)/.test(text), text);
+    /; 6 quiet Claude sessions left alone;/.test(text) && !/\b(err|qDone|qIdle|qFresh|qTitle|qDraft)\b/.test(text) && !/nothing running\)/.test(text), text);
   check('pause: after a press that sent, neither window\'s button turns to Resume all',
     btnOf(B).textContent === '⏸' && resultText(B) === null && !btnOf(B).classList.contains('resume') && !btnOf(A).classList.contains('resume'), [btnOf(A).textContent, btnOf(B).textContent, resultText(B)]);
   check('pause: main\'s run requests carry nothing but the request id (no action to flip)',
@@ -442,13 +446,13 @@ await wait(300);
   clearWrites();
   await press(A);
   check('nothing running: no writes', A.writes.length === 0 && B.writes.length === 0);
-  check('nothing running: says so, counting the quiet session without naming it', resultText(A) === 'Nothing running to pause; 1 Claude session with nothing running left alone', resultText(A));
+  check('nothing running: says so, counting the quiet session without naming it', resultText(A) === 'Nothing running to pause; 1 quiet Claude session left alone', resultText(A));
   const g = await makePane(A);
   doneAfterTurn(A, g);
   setTabs(A, [tab('sh', [s]), tab('new', [f]), tab('quiet2', [g])]);
   clearWrites();
   await press(A);
-  check('nothing running: several quiet sessions are counted, plural', resultText(A) === 'Nothing running to pause; 2 Claude sessions with nothing running left alone', resultText(A));
+  check('nothing running: several quiet sessions are counted, plural', resultText(A) === 'Nothing running to pause; 2 quiet Claude sessions left alone', resultText(A));
   // The same idle session with a background task going is the 'fresh' skip, named.
   report(A, f, BG_CHILD);
   setTabs(A, [tab('sh', [s]), tab('new', [f])]);
@@ -589,7 +593,7 @@ await wait(300);
   titleStop(A, p, 0, 0);
   clearWrites();
   await press(A);
-  check('title path: a Stop verdict with nothing running, not yet settled, leaves the pane quiet', !bytesByPty(A).has(p.ptyId) && /^Nothing running to pause; 1 Claude session with nothing running/.test(resultText(A) ?? ''), [bytesByPty(A).get(p.ptyId), resultText(A)]);
+  check('title path: a Stop verdict with nothing running, not yet settled, leaves the pane quiet', !bytesByPty(A).has(p.ptyId) && /^Nothing running to pause; 1 quiet Claude session left alone/.test(resultText(A) ?? ''), [bytesByPty(A).get(p.ptyId), resultText(A)]);
 }
 
 // ── 10b. What counts as running: a timer, a working root, a subagent ──
@@ -616,10 +620,121 @@ await wait(300);
   check('running: 7501 done with only a timer left (Stop hook crons=1) gets "pause\\r"', wa.get(rTimer.ptyId) === 'pause\r', wa.get(rTimer.ptyId));
   check('running: 7501 root still working with a subagent running gets "pause\\r"', wa.get(rSub.ptyId) === 'pause\r', wa.get(rSub.ptyId));
   check('running: nothing else written', wa.size === 4 && B.writes.length === 0, [...wa.keys()]);
-  check('running: summary counts the two at the prompt, the two queued and the quiet one', resultText(A) === 'Paused 4 Claude sessions (2 at the prompt, 2 queued behind a running turn); 1 Claude session with nothing running left alone', resultText(A));
+  check('running: summary counts the two at the prompt, the two queued and the quiet one', resultText(A) === 'Paused 4 Claude sessions (2 at the prompt, 2 queued behind a running turn); 1 quiet Claude session left alone', resultText(A));
   // `turnEnded` (a Stop over a working root, the ring) needs main's transcript feed attached; the
   // check has none, so that route is not driven here. Such a pane reads `parked` or `working`
   // either way, and both get the word.
+}
+
+// ── 10c. "Running" is what is running, not the dot's activity word (review of 6b272aa) ──
+{
+  // The Stop hook's verdict is kept for Pause until the next turn: not dropped when the 7501 children
+  // drain, not by the 40 s TTL. Date.now is faked in window A for the long gap.
+  const realNow = A.w.Date.now.bind(A.w.Date);
+  let skew = 0;
+  A.w.Date.now = () => realNow() + skew;
+  const named = (id, p) => { setTabs(A, [tab(id, [p])]); clearWrites(); };
+  const CHILD_DONE = 'state=done:id=bg1:app=claude-code';
+  const sentTo = (p) => bytesByPty(A).get(p.ptyId) === 'pause\r';
+
+  // P1: a root error over a working child is running, so named as unclear, not hidden as quiet.
+  const p1 = await makePane(A);
+  report(A, p1, ROOT('working')); report(A, p1, BG_CHILD); report(A, p1, ROOT('error'));
+  named('p1', p1);
+  await press(A);
+  check('running: a root error over a working child is not sent', !bytesByPty(A).has(p1.ptyId), bytesByPty(A).get(p1.ptyId));
+  check('running: … it is named "state unclear", not counted as quiet, and the line starts "Nothing paused"',
+    resultText(A) === 'Nothing paused; skipped 1: p1 (state unclear)', resultText(A));
+
+  // P4: the hook counted two tasks, 7501 shows one child, and it finishes: the verdict still stands.
+  const p4 = await makePane(A);
+  report(A, p4, ROOT('working')); report(A, p4, BG_CHILD); stopHook(A, p4, 2, 0); report(A, p4, ROOT('done'));
+  report(A, p4, CHILD_DONE);
+  named('p4', p4);
+  await press(A);
+  check('running: hook says tasks=2, 7501 showed one child and it finished: still gets "pause\\r"', sentTo(p4), bytesByPty(A).get(p4.ptyId));
+
+  // P4b: the hook counted a timer, a child finishes: still sent.
+  const p4b = await makePane(A);
+  report(A, p4b, ROOT('working')); report(A, p4b, BG_CHILD); stopHook(A, p4b, 0, 1); report(A, p4b, ROOT('done'));
+  report(A, p4b, CHILD_DONE);
+  named('p4b', p4b);
+  await press(A);
+  check('running: hook says crons=1 and a child finished: still gets "pause\\r"', sentTo(p4b), bytesByPty(A).get(p4b.ptyId));
+
+  // P5: the verdict came more than 40 s before the done (the dot's TTL): still sent.
+  const p5 = await makePane(A);
+  report(A, p5, ROOT('working')); stopHook(A, p5, 0, 1);
+  skew += 60_000;
+  report(A, p5, ROOT('done'));
+  named('p5', p5);
+  await press(A);
+  check('running: a verdict 60 s before the done (past the 40 s TTL) still gets "pause\\r"', sentTo(p5), bytesByPty(A).get(p5.ptyId));
+  skew = 0;
+
+  // A new turn clears it: tasks > 0 verdict, then a turn that ends 0 / 0 is quiet.
+  const pn = await makePane(A);
+  report(A, pn, ROOT('working')); stopHook(A, pn, 2, 0); report(A, pn, ROOT('done'));
+  named('pn', pn);
+  await press(A);
+  check('new turn: after a tasks=2 verdict the pane gets "pause\\r"', sentTo(pn), bytesByPty(A).get(pn.ptyId));
+  report(A, pn, ROOT('working')); stopHook(A, pn, 0, 0); report(A, pn, ROOT('done'));
+  named('pn', pn);
+  await press(A);
+  check('new turn: … then a turn that ends 0 / 0 leaves it quiet', !bytesByPty(A).has(pn.ptyId) && resultText(A) === 'Nothing running to pause; 1 quiet Claude session left alone', [bytesByPty(A).get(pn.ptyId), resultText(A)]);
+  // Mid-turn the new turn works, so it is running whatever the old verdict said.
+  report(A, pn, ROOT('working'));
+  named('pn', pn);
+  await press(A);
+  check('new turn: a working root is running', sentTo(pn), bytesByPty(A).get(pn.ptyId));
+
+  // The same on the title path.
+  const tn = await makePane(A);
+  titleStop(A, tn, 2); await wait(TITLE_SETTLE_MS);
+  named('tn', tn);
+  await press(A);
+  check('new turn (title path): after a tasks=2 verdict the pane gets "pause\\r"', sentTo(tn), bytesByPty(A).get(tn.ptyId));
+  await wait(3);
+  titleStop(A, tn, 0, 0); await wait(TITLE_SETTLE_MS);
+  named('tn', tn);
+  await press(A);
+  check('new turn (title path): … then a turn that ends 0 / 0 is quiet', !bytesByPty(A).has(tn.ptyId) && resultText(A) === 'Nothing running to pause; 1 quiet Claude session left alone', [bytesByPty(A).get(tn.ptyId), resultText(A)]);
+
+  // P8: title path stopped with no Stop hook since: a dialog looks like that, so named, not quiet.
+  const p8 = await makePane(A);
+  title(p8, '◐ Working'); title(p8, '✳ Claude Code');
+  await wait(TITLE_SETTLE_MS);
+  named('p8', p8);
+  await press(A);
+  check('title path: ✳ with no Stop hook is not sent', !bytesByPty(A).has(p8.ptyId), bytesByPty(A).get(p8.ptyId));
+  check('title path: … it is named unclear, not quiet', resultText(A) === 'Nothing paused; skipped 1: p8 (state unclear)', resultText(A));
+  A.w.Date.now = realNow;
+}
+
+// ── 10d. The summary's first words and the quiet clause ──
+{
+  const REASONS = ['waiting', 'menu', 'quiet', 'fresh', 'draft', 'stashed', 'unclear', 'held', 'held-restoring', 'held-typed', 'held-stashed', 'held-typed-stashed', 'bar-text', 'not-claude', 'no-shell'];
+  const out = (sent, queued, skipped, names, windows = 1, answered = 1) => ({
+    sent, queued, skipped: Object.fromEntries(REASONS.map((r) => [r, skipped[r] ?? 0])), named: names, windows, answered, closed: 0,
+  });
+  const sum = (o) => A.PA.pauseSummary(o);
+  const cases = [
+    ['quiet only: "Nothing running to pause"', out(0, 0, { quiet: 1 }, []), 'Nothing running to pause; 1 quiet Claude session left alone'],
+    ['quiet only, plural', out(0, 0, { quiet: 3 }, []), 'Nothing running to pause; 3 quiet Claude sessions left alone'],
+    ['quiet and a plain shell: shells are not counted', out(0, 0, { quiet: 1, 'not-claude': 2 }, []), 'Nothing running to pause; 1 quiet Claude session left alone'],
+    ['quiet and a named skip: "Nothing paused", no contradiction', out(0, 0, { quiet: 1, waiting: 1 }, [{ title: 'build', reason: 'waiting' }]), 'Nothing paused; 1 quiet Claude session left alone; skipped 1: build (waiting on you)'],
+    ['quiet and a held word (work running)', out(0, 0, { quiet: 1, 'held-typed': 1 }, [{ title: 'jobs', reason: 'held-typed' }]), 'Nothing paused; 1 quiet Claude session left alone; skipped 1: jobs (not sent: "pause" is left in its input)'],
+    ['quiet and an unclear one', out(0, 0, { quiet: 2, unclear: 1 }, [{ title: 'x', reason: 'unclear' }]), 'Nothing paused; 2 quiet Claude sessions left alone; skipped 1: x (state unclear)'],
+    ['quiet only but a window did not answer', out(0, 0, { quiet: 2 }, [], 2, 1), 'Nothing paused; 2 quiet Claude sessions left alone; 1 window didn\'t answer'],
+    ['sent and quiet', out(2, 1, { quiet: 2 }, []), 'Paused 2 Claude sessions (1 at the prompt, 1 queued behind a running turn); 2 quiet Claude sessions left alone'],
+    ['nothing at all', out(0, 0, {}, []), 'Nothing paused; no Claude session found'],
+    ['only a plain shell', out(0, 0, { 'not-claude': 2 }, []), 'Nothing paused; no Claude session found'],
+    ['a named skip, no quiet', out(0, 0, { fresh: 1 }, [{ title: 'new', reason: 'fresh' }]), 'Nothing paused; skipped 1: new (new session)'],
+    ['no quiet and a window silent', out(0, 0, {}, [], 2, 1), 'Nothing paused; no Claude session found; 1 window didn\'t answer'],
+  ];
+  for (const [name, o, want] of cases) check(`summary: ${name}`, sum(o) === want, sum(o));
+  check('summary: "nothing running" never sits beside a skipped pane',
+    !cases.some(([, o]) => /^Nothing running/.test(sum(o)) && /skipped/.test(sum(o))));
 }
 
 // ── 11. Stash-key verdicts on keybindings.json text ──
