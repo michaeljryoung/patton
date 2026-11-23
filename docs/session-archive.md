@@ -904,3 +904,16 @@ _Earlier entries archived → `docs/session-archive.md` (latest trim 2026-11-20,
 ## Gotchas (S60 trim 2026-11-22)
 
 - **A linked worktree resolves to its main repo, so anything keyed by `project.root` is shared by the repo and every worktree** (S52). The tab-name store was: a name set from the LifeSci worktree's tab renamed `next-venture` and its Defence worktree too (fixed in v1.27.0 by keying on `worktree.path`). Before keying new per-project state on `root`, decide whether a worktree should share it.
+
+## Session Log (S61 trim 2026-11-23)
+
+### 2026-11-20 (Session 57 — v1.31.0 installed; Homebrew, release and Stop hook checked)
+- Patton quit 11:53:22 and the session ran in iTerm; his "Install v1.31.0 now". Stopped the 13 Nov crash reporter (pid 96466) still running out of /Applications, built from the tag in `.worktrees/install-1.31.0` (`npm run package`, prod audit 0), installed 11:55:30: Info.plist 1.31.0, codesign ok, file list identical to `out/`, `[COMPOSE] aside`, `[GROUP]`, `[OKAY]` and `cpd` in the bundle; worktree removed. `box_ship` and `groups_ship` now live.
+- His "You sure everything's updated, Homebrew, etc.?": the tap's cask reads 1.31.0 with sha `65ad2b08…`, the release DMG's digest; every step of run 44728983899 succeeded; brew doesn't manage this Mac's copy; main past the tag holds notes and a dev-only lockfile. The Stop hook in userData was the copy shipped v1.14–v1.28: refreshed by hand to v1.31.0's at 12:03, probe passed.
+- My mistakes: I told him Patton refreshes the hook only when Settings opens, having read the Settings path first; `ipc-handlers.ts` refreshes it at every packaged launch (since `ec60a3e`, 7 Nov), corrected in the same reply. And `npx asar extract-file` from the scratch worktree overwrote its `package.json` (as in S43 and S45); the worktree was removed, nothing real changed, and `docs/reference/build-and-install.md` now says to extract the whole asar into a scratch folder.
+
+_Earlier entries archived → `docs/session-archive.md` (latest trim 2026-11-22, S60)._
+
+## Decisions (S61 trim 2026-11-23)
+
+- **2026-11-22 (S60) — The session bar reads the session's own transcript; no second hook.** Claude Code's 7501 carries agents but never shells, monitors or loops, and the Stop hook only speaks at turn end, so main maps a pane to its Claude process (`~/.claude/sessions/<pid>.json`) and follows its transcript (`src/main/session-*.ts`, `transcript-*.ts`); the Stop hook's `tl`/`cl` lists reconcile at each Stop, and a cut list ends nothing. The PostToolUse hook he agreed to was not needed. Office files (.docx/.xlsx/.pptx) open from links; macro-enabled ones are only revealed. All in `docs/session-bar.md`.
