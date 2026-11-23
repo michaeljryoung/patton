@@ -555,11 +555,11 @@ export type PauseHeldReason =
   | 'held' | 'held-restoring' | 'held-typed' | 'held-stashed' | 'held-typed-stashed' | 'bar-text' | 'stashed';
 
 export type PauseSkipReason =
-  | 'waiting' | 'menu' | 'fresh' | 'draft' | 'stashed' | 'unclear' | 'held' | 'held-restoring' | 'held-typed'
+  | 'waiting' | 'menu' | 'quiet' | 'fresh' | 'draft' | 'stashed' | 'unclear' | 'held' | 'held-restoring' | 'held-typed'
   | 'held-stashed' | 'held-typed-stashed' | 'bar-text' | 'not-claude' | 'no-shell';
 
 export const PAUSE_SKIP_REASONS: readonly PauseSkipReason[] = [
-  'waiting', 'menu', 'fresh', 'draft', 'stashed', 'unclear', 'held', 'held-restoring', 'held-typed',
+  'waiting', 'menu', 'quiet', 'fresh', 'draft', 'stashed', 'unclear', 'held', 'held-restoring', 'held-typed',
   'held-stashed', 'held-typed-stashed', 'bar-text', 'not-claude', 'no-shell',
 ];
 

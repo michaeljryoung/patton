@@ -8,7 +8,13 @@
  *
  * The rules (Michael, 10 Nov 2026: a shut MacBook overheated on jobs left
  * running after "pause"; a Claude Code hook acts on a bare `pause`):
- * - Claude's root done, or idle after at least one turn: send.
+ * - Only a session with something running gets the word (Michael, 23 Nov
+ *   2026: "it should only do stuff where claude is working not pointlessly
+ *   post to quiet chats"): its activity (pane-activity.ts, the reading the
+ *   dot and hover card show) is `working` or `parked` (stopped, its own
+ *   background tasks, agents or timers still going). Done, idle or stopped on
+ *   an error with nothing running: skip ('quiet'), counted, not named.
+ * - Claude at its prompt with its background work running: send.
  * - Claude mid-turn with no background task blocked: send. Claude Code queues
  *   a line typed mid-turn and takes it at its next step (seen 10 Nov:
  *   `enqueue pause` … `absorbed_mid_turn`). Counted as queued.
@@ -25,6 +31,7 @@
  * instead when Ctrl+S isn't the stash key ('draft') or a stash may already be
  * held ('stashed'): Ctrl+S would then overwrite or pop it.
  */
+import type { PaneActivity } from './pane-activity';
 import {
   PAUSE_HELD_REASONS, PAUSE_NAMED_MAX, PAUSE_SKIP_REASONS,
   type PauseAllOutcome, type PauseAllReport, type PauseSkipName, type PauseSkipReason,
@@ -40,6 +47,9 @@ export interface PauseInput {
   live: boolean;
   /** Claude Code runs here (7501 `app=claude-code`, or a title glyph). */
   claude: boolean;
+  /** What the pane is doing (`Pane.claudeState.activity`): only `working`
+   *  and `parked` have anything running to pause. */
+  activity: PaneActivity;
   /** Where the state comes from: Claude Code's own reports, or its title. */
   source: '7501' | 'title';
   /** The root's 7501 state (null on the title path). */
@@ -80,6 +90,7 @@ export function pauseSkipReason(i: PauseInput, key: StashKeyVerdict): PauseSkipR
   if (!i.claude) return 'not-claude';
   if (i.blocked || i.taskBlocked) return 'waiting';
   if (i.menu) return 'menu';
+  if (i.activity !== 'working' && i.activity !== 'parked') return 'quiet';
   if (i.source === '7501') {
     if (i.root === 'idle' && !i.hadTurn) return 'fresh';
     if (i.root !== 'done' && i.root !== 'idle' && i.root !== 'working') return 'unclear';
@@ -154,15 +165,17 @@ function heldReason(result: string): PauseSkipReason {
   return (PAUSE_HELD_REASONS as readonly string[]).includes(result) ? result as PauseSkipReason : 'held';
 }
 
-/** Named in the summary: Claude panes left unpaused, not plain shells. */
+/** Named in the summary: Claude panes left unpaused for a reason he may need
+ *  to act on; not plain shells, nor quiet sessions (counted on their own). */
 function nameable(reason: PauseSkipReason): boolean {
-  return reason !== 'not-claude' && reason !== 'no-shell';
+  return reason !== 'not-claude' && reason !== 'no-shell' && reason !== 'quiet';
 }
 
 /** Each skip reason in plain words. */
 export const PAUSE_SKIP_WORDS: Record<PauseSkipReason, string> = {
   waiting: 'waiting on you',
   menu: 'in a menu?',
+  quiet: 'nothing running',
   fresh: 'new session',
   draft: 'draft: stash key rebound',
   stashed: 'a draft is set aside here',
@@ -191,8 +204,9 @@ export function pauseSummary(o: PauseAllOutcome): string {
     const atPrompt = o.sent - o.queued;
     parts.push(`Paused ${sessions(o.sent)} (${atPrompt} at the prompt, ${o.queued} queued behind a running turn)`);
   } else {
-    parts.push('Nothing paused');
+    parts.push(o.skipped.quiet > 0 ? 'Nothing running to pause' : 'Nothing paused');
   }
+  if (o.skipped.quiet > 0) parts.push(`${sessions(o.skipped.quiet)} with nothing running left alone`);
   const reasons = countedSkips(o);
   const total = reasons.reduce((n, r) => n + o.skipped[r], 0);
   if (total > 0) {
@@ -200,7 +214,7 @@ export function pauseSummary(o: PauseAllOutcome): string {
     const rest = total - named.length;
     if (rest > 0) named.push(`${rest} more`);
     parts.push(`skipped ${total}: ${named.join(', ')}`);
-  } else if (o.sent === 0) {
+  } else if (o.sent === 0 && o.skipped.quiet === 0) {
     parts.push('no Claude session found');
   }
   const silent = o.windows - o.answered;

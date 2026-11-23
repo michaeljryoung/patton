@@ -1379,6 +1379,7 @@ export class Pane {
     return {
       live: this.ptyId !== null && !this.ptyExited,
       claude: this.claudeActive,
+      activity: this.currentActivity(),
       source: this.statusReporting ? '7501' : 'title',
       root: this.statusReporting ? this.programStatus.root?.state ?? null : null,
       working: this.claudeWorking,
