@@ -59,7 +59,7 @@ git(nv, 'worktree', 'add', '-q', defence, '-b', 'defence');
 mkdirSync(join(lifesci, 'sub'));
 const loose = join(projects, 'loose-folder');
 mkdirSync(join(loose, 'inner'), { recursive: true });
-const outside = join(home, 'elsewhere', 'deep'); // not under ~/Projects, not in a repo
+const outside = join(home, 'elsewhere', 'deep'); // outside the fake home's Projects folder, not in a repo
 mkdirSync(outside, { recursive: true });
 
 // ---- main half ----
