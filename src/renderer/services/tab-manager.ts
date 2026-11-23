@@ -12,7 +12,8 @@ import { onProjectNamesChanged, projectDisplay, projectName, projectNameKey, pro
 import { hoverBlocks, type HoverBlock, type HoverPaneInput } from './tab-hover';
 import type { SessionState, SessionTabState, RendererMode, TabFlag, WindowCloseInfo, ConfirmRequest, PauseAllReport } from '../../shared/types';
 import { runPause, emptyReport, pauseSummary, type PauseTarget } from './pause-all';
-import { orderSessions, sessionNeedsYou, stripClaudeGlyph, type SessionInfo, type SessionStatus } from './sessions';
+import { orderSessions, sessionNeedsYou, type SessionInfo, type SessionStatus } from './sessions';
+import { paneShownTitle } from './tab-name';
 import type { ITheme } from '@xterm/xterm';
 import { SessionBar, type SessionBarTarget } from '../components/session-bar';
 import type { LinkRow } from './session-bar-model';
@@ -1311,7 +1312,7 @@ export class TabManager {
           cwd: pane.getCwd(),
           tabTitle: tab.title,
           hasCustomTitle: tab.hasCustomTitle,
-          paneTitle: stripClaudeGlyph(pane.title),
+          paneTitle: paneShownTitle(pane.title, pane.isClaudePane),
           state,
           awaitingSince,
         });
@@ -1518,7 +1519,8 @@ export class TabManager {
     const state: ClosedPaneState = {
       cwd: pane.getCwd() || '',
       scrollback,
-      title: pane.title || 'Terminal',
+      // A title Claude set names Claude's topic, not the shell that reopens.
+      title: pane.isClaudePane ? 'Terminal' : (pane.title || 'Terminal'),
     };
     this.closedPanes.push(state);
     if (this.closedPanes.length > TabManager.MAX_CLOSED) {
@@ -1691,8 +1693,9 @@ export class TabManager {
       const c = pane.claudeState;
       const input: HoverPaneInput = {
         // Without the ◐/◑/✳ glyph: the card shows the name, and a spinner
-        // flip then leaves its text (and so its DOM) unchanged.
-        title: stripClaudeGlyph(pane.title),
+        // flip then leaves its text (and so its DOM) unchanged. A shell's
+        // reads "Terminal", not a title Claude left when it quit.
+        title: paneShownTitle(pane.title, pane.isClaudePane),
         cwd: pane.getCwd(),
         project: focused ? project : null,
         claude: {

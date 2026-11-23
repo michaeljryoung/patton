@@ -1,4 +1,22 @@
-import { stripClaudeGlyph } from './sessions';
+import { hasClaudeGlyph, stripClaudeGlyph } from './sessions';
+
+/** What a pane Claude Code isn't running in is called until its program sets
+ *  a title of its own: a plain shell. */
+export const SHELL_TITLE = 'Terminal';
+
+/**
+ * A pane's title as the tab, its hover card and the palette show it. Where
+ * Claude Code runs: its title without the state glyph. Anywhere else: the
+ * title the program set (`wake`'s WAKE), else "Terminal". A title that still
+ * carries Claude's glyph there is one Claude left when it quit, so it reads
+ * "Terminal" too (Michael, 23 Nov 2026, of a shell tab named after its
+ * project: "it should name terminal not the thing prompt is about").
+ */
+export function paneShownTitle(title: string, runsClaude: boolean): string {
+  if (runsClaude) return stripClaudeGlyph(title);
+  if (!title.trim() || hasClaudeGlyph(title)) return SHELL_TITLE;
+  return title;
+}
 
 /** How long a tab's automatic name may be, the "…" included (Michael, 12 Nov:
  *  "it should always default to 10 to 15 characters max"). */

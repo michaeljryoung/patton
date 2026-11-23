@@ -159,6 +159,8 @@ function makePatton(state) {
     projects: { getNames: async () => ({}), onNamesChanged: () => () => {}, resolve: async () => null, setName: async () => {} },
     history: { get: async () => { if (state.historyDelayMs) await new Promise((r) => setTimeout(r, state.historyDelayMs)); return []; }, add: () => {}, clear: () => {} },
     log: { send: () => {} },
+    // A Claude pane asks main to follow its transcript (session-feed-watch.ts).
+    sessionFeed: { watch: async () => true, unwatch: async () => {}, onEvent: () => () => {} },
   };
   return new Proxy(api, { get: (t, prop) => (prop in t ? t[prop] : loose) });
 }
@@ -333,8 +335,14 @@ async function main() {
     rt.setCustomTitle('A name I typed myself');
     check('tab names: a name the user typed is shown whole', rt.displayTitle === 'A name I typed myself' && spanOf().querySelector('.tab-bar-tab-title').textContent === 'A name I typed myself');
     rt.clearCustomTitle();
-    rt.focusedPane.title = LONG;
+    // A project's name names the tab only while Claude Code runs in it (23 Nov:
+    // a shell in a project folder reads "Terminal", below). Claude starts as the
+    // title path sees it: a title carrying its ✳ glyph.
+    const CLAUDE_LONG = '✳ ' + LONG;
+    rt.focusedPane.title = CLAUDE_LONG;
+    rt.focusedPane['trackClaudeState'](CLAUDE_LONG);
     rt.refreshTitle();
+    check('tab names: Claude running in the pane (the title path)', rt.focusedPane.isClaudePane && rt.runsClaude, { pane: rt.focusedPane.isClaudePane });
     // The project arrives through the tab's own lookup (window.patton.projects.resolve ->
     // setProject), not by setting its state. The lookup has no public trigger (a pane's
     // folder change or a focus change fires it from inside), so the private method is called.
@@ -355,8 +363,84 @@ async function main() {
     w.patton.projects.resolve = async () => null;
     rt['lookUpProject']();
     await new Promise((r) => setTimeout(r, 0));
-    w.patton.projects.resolve = resolveWas;
     check('tab names: leaving the project goes back to the short title', rt.displayTitle === 'Repeated permi…', rt.displayTitle);
+
+    // 23 Nov (his screenshot of a shell tab reading "AI-Brain"): "when a tab is
+    // terminal ... it should name terminal not the thing prompt is about". A tab
+    // with no Claude in it is named by its program's title, else "Terminal".
+    const shown = () => {
+      const el = spanOf();
+      return { display: rt.displayTitle, title: rt.title, span: el.querySelector('.tab-bar-tab-title').textContent, aria: el.getAttribute('aria-label') };
+    };
+    const reads = (name) => { const s = shown(); return s.display === name && s.title === name && s.span === name && s.aria === name; };
+    w.patton.projects.resolve = async () => ({ root: '/tmp/ai-brain', defaultName: 'AI-Brain' });
+    rt['lookUpProject']();
+    await new Promise((r) => setTimeout(r, 0));
+    check('shell tabs: Claude running in a project folder: the project names the tab', reads('AI-Brain'), shown());
+    // Claude quits: its last title stays on the pane; the shell's prompt clears Claude.
+    rt.focusedPane['claudeGone']('shell-prompt');
+    check('shell tabs: Claude quits: the tab reads "Terminal" at once (no manual refresh), not the project or Claude\'s last topic', !rt.runsClaude && reads('Terminal'), shown());
+    const session = tm2.listSessions().find((s) => s.paneId === rt.focusedPane.id);
+    check('shell tabs: ...the palette lists the shell as "Terminal", not Claude\'s last topic', session?.paneTitle === 'Terminal' && session?.state === 'shell', session && { paneTitle: session.paneTitle, state: session.state });
+    const card = tm2['describeTab'](rt.id);
+    check('shell tabs: ...the hover card heads it "Terminal" and still names the project and folder', card?.[0]?.title === 'Terminal' && /AI-Brain/.test(card?.[0]?.place ?? ''), card?.[0]);
+    rt.focusedPane.title = 'Terminal'; // a fresh shell's own title
+    rt.refreshTitle();
+    check('shell tabs: a fresh shell in a project folder reads "Terminal"', reads('Terminal'), shown());
+    rt.focusedPane.title = 'WAKE'; // `wake` titles its pane WAKE
+    rt.refreshTitle();
+    check('shell tabs: a program\'s own title (wake\'s WAKE) still names the tab in a project folder', reads('WAKE'), shown());
+    rt.focusedPane.title = '';
+    rt.refreshTitle();
+    check('shell tabs: an empty title reads "Terminal"', reads('Terminal'), shown());
+    rt.setCustomTitle('Scripts');
+    check('shell tabs: a name he typed still wins', shown().display === 'Scripts' && shown().span === 'Scripts', shown());
+    rt.clearCustomTitle();
+    check('shell tabs: ...and clearing it goes back to "Terminal"', reads('Terminal'), shown());
+    // Claude starts again: the title arrives first (the tab hears it before Claude
+    // is known), then the title path marks Claude; the project's name comes back
+    // without a manual refresh.
+    rt.focusedPane.title = '✳ Claude Code';
+    rt.refreshTitle();
+    check('shell tabs: Claude\'s first title, before Claude is known, reads "Terminal", not "Claude Code"', reads('Terminal'), shown());
+    rt.focusedPane['trackClaudeState']('✳ Claude Code');
+    check('shell tabs: Claude starting renames the tab to the project by itself', reads('AI-Brain'), shown());
+    rt.focusedPane['claudeGone']('shell-prompt');
+    check('shell tabs: (title path) Claude quits, its ✳ title is dropped from the pane itself', rt.focusedPane.title === 'Terminal' && reads('Terminal'), { pane: rt.focusedPane.title, ...shown() });
+
+    // The 7501 path, as Claude Code 2.1 runs in Patton: its reports through the
+    // real terminal, and titles with no glyph to mark them as Claude's.
+    const pty = rt.focusedPane.ptyId;
+    const pane = rt.focusedPane;
+    emit(pty, '\x1b]0;my shell\x07'); // the shell's own title, before Claude starts
+    await until(() => pane.title === 'my shell');
+    pane['titleSetAtMs'] -= 5000;
+    emit(pty, '\x1b]7501;state=idle:app=claude-code\x07');
+    await until(() => pane.isClaudePane);
+    check('shell tabs: (7501) Claude reporting in a project folder: the project names the tab', pane.isClaudePane && reads('AI-Brain'), shown());
+    emit(pty, '\x1b]7501;state=clear\x07');
+    await until(() => !pane.isClaudePane);
+    check('shell tabs: (7501) Claude quits: a title from before Claude started stays (the shell\'s own)', pane.title === 'my shell' && reads('my shell'), { pane: pane.title, ...shown() });
+    emit(pty, '\x1b]7501;state=idle:app=claude-code\x07');
+    emit(pty, '\x1b]0;Fix the tab names\x07'); // Claude's topic, no glyph
+    await until(() => pane.isClaudePane && pane.title === 'Fix the tab names');
+    check('shell tabs: (7501) Claude\'s glyph-less topic doesn\'t name a project tab while Claude runs', reads('AI-Brain'), shown());
+    const sessionsWhile = tm2.listSessions().find((s) => s.paneId === pane.id);
+    check('shell tabs: (7501) ...the palette still shows Claude\'s topic while it runs', sessionsWhile?.paneTitle === 'Fix the tab names', sessionsWhile?.paneTitle);
+    emit(pty, '\x1b]7501;state=clear\x07');
+    await until(() => !pane.isClaudePane);
+    check('shell tabs: (7501) Claude quits: its glyph-less topic is dropped, the tab reads "Terminal"', pane.title === 'Terminal' && reads('Terminal'), { pane: pane.title, ...shown() });
+    emit(pty, '\x1b]0;htop\x07');
+    await until(() => pane.title === 'htop');
+    check('shell tabs: (7501) a program run after Claude names the tab with its own title', reads('htop'), shown());
+    // Reopen Closed brings a closed Claude pane back as a shell: not under Claude's topic.
+    emit(pty, '\x1b]7501;state=idle:app=claude-code\x07');
+    emit(pty, '\x1b]0;Fix the tab names\x07');
+    await until(() => pane.isClaudePane && pane.title === 'Fix the tab names');
+    tm2['saveClosedPane'](pane);
+    check('shell tabs: a closed Claude pane is kept for Reopen Closed as "Terminal", not Claude\'s topic', tm2['closedPanes'].at(-1)?.title === 'Terminal', tm2['closedPanes'].at(-1)?.title);
+    tm2['closedPanes'].pop();
+    w.patton.projects.resolve = resolveWas;
   }
 
   // --- last tab is never discarded ---

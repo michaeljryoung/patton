@@ -76,9 +76,17 @@ export function orderSessions(sessions: SessionInfo[]): SessionInfo[] {
     .map(({ s }) => s);
 }
 
+/** Claude Code's state glyph at the start of a title, and the space after it. */
+const CLAUDE_GLYPH = /^[◐◑✳]\s*/u;
+
 /** Claude Code's ◐ ◑ ✳ prefix (and the space after it) off a title. */
 export function stripClaudeGlyph(title: string): string {
-  return title.replace(/^[◐◑✳]\s*/u, '').trim();
+  return title.replace(CLAUDE_GLYPH, '').trim();
+}
+
+/** The title starts with Claude Code's ◐ ◑ ✳ state glyph: Claude set it. */
+export function hasClaudeGlyph(title: string): boolean {
+  return CLAUDE_GLYPH.test(title);
 }
 
 /** A project's display title: "patton", or "patton ⎇ feat-x" in a linked

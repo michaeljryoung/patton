@@ -4,7 +4,7 @@ import { SearchOverlay } from './search-overlay';
 import { HistoryManager } from '../services/history-manager';
 import { projectStripTitle, projectTitle } from '../services/project-names';
 import { rlog } from '../services/renderer-logger';
-import { shortTabName } from '../services/tab-name';
+import { paneShownTitle, shortTabName } from '../services/tab-name';
 import {
   splitPane as splitPaneInTree,
   closePane as closePaneInTree,
@@ -214,6 +214,10 @@ export class Tab {
       },
       onWorkStarted: () => this.clearAwaitingInput(pane),
       onCheckpointChange: (p) => {
+        // Fires whenever Claude starts or leaves a pane (its key includes
+        // claudeActive): the tab's name follows (runsClaude). A pane still
+        // being built isn't in _panes yet; the tab names itself once it is.
+        if (this._panes.includes(p)) this.refreshTitle();
         if (p === this._focusedPane) this.onCheckpointChanged?.();
       },
       onStatusChange: (p) => {
@@ -465,11 +469,21 @@ export class Tab {
     return this._project;
   }
 
-  /** What the tab is called when the user hasn't named it: its project's name,
-   *  else the title the program in the focused pane set. */
+  /** Claude Code runs in one of this tab's panes. Only then is the tab named
+   *  after its project: a shell opened in a project's folder reads "Terminal"
+   *  (Michael, 23 Nov 2026). */
+  get runsClaude(): boolean {
+    return this._panes.some((p) => p.isClaudePane);
+  }
+
+  /** What the tab is called when the user hasn't named it: its project's name
+   *  while Claude runs in it, else the title the program in the focused pane
+   *  set ("Terminal" for a plain shell, `paneShownTitle`). */
   get autoTitle(): string {
     if (this._cover) return this._cover.title || COVERED_TAB_TITLE;
-    return this._project ? projectTitle(this._project) : this._focusedPane.title;
+    if (this._project && this.runsClaude) return projectTitle(this._project);
+    const pane = this._focusedPane;
+    return pane.isClaudePane ? pane.title : paneShownTitle(pane.title, false);
   }
 
   /** What the tab strip writes on the tab. A name the user typed, a project's
@@ -481,7 +495,7 @@ export class Tab {
    *  dialogs; the hover card shows the project's name and the folder's path. */
   get displayTitle(): string {
     if (this._customTitle || this._cover) return this.title;
-    if (this._project) return projectStripTitle(this._project);
+    if (this._project && this.runsClaude) return projectStripTitle(this._project);
     return shortTabName(this.title);
   }
 
