@@ -37,7 +37,7 @@ import {
 } from '../services/compose-aside';
 import { readClaudeBar, claudeBarInputText, type BarMissReason } from '../services/claude-bar';
 import {
-  ESC_RESTORE_UNSTARTED_MS, ESC_RESTORE_WATCH_MS, describeClearKeys, isEscKey, isTypedInput, planEscRestore,
+  CLAUDE_CLEAR_INPUT, CTRL_C_AFTER_SUBMIT_MS, ESC_RESTORE_UNSTARTED_MS, ESC_RESTORE_WATCH_MS, describeClearKeys, isEscKey, isTypedInput, planEscRestore,
   planHoldsSent, readClaudeBarInput,
 } from '../services/esc-restore';
 import {
@@ -494,7 +494,10 @@ export class Pane {
   // D18: the watch wrote its clear keys, so what Claude's bar still shows (the
   // message, now in the box) is going; no draft until the bar reads empty.
   private restoreClearPending = false;
-  private escRestore: { send: { text: string; chips: { dataUrl: string; label: string }[] }; deadline: number; timer: ReturnType<typeof setTimeout> } | null = null;
+  private escRestore: { send: { text: string; chips: { dataUrl: string; label: string }[] }; deadline: number; timer: ReturnType<typeof setTimeout>; recheck?: ReturnType<typeof setTimeout> } | null = null;
+  // The last Enter that reached Claude (Patton's, the box's or his own): no
+  // Ctrl+C from Patton within CTRL_C_AFTER_SUBMIT_MS of it (ctrlCRefusal).
+  private lastSubmitAtMs = 0;
   // D18: shown in the box when Claude's bar holds text Patton couldn't take
   // in whole: it goes before the box's text on the next send.
   private barTextNote!: HTMLElement;
@@ -1186,10 +1189,12 @@ export class Pane {
   private static readonly BAR_KEPT = 'Claude\'s input still has text Patton couldn\'t take back into the box';
   private static readonly STASH_BACK = 'Claude put a stashed draft back into its input';
   /** How long a box send queued behind a stashed Patton line waits for
-   *  Claude Code to put the draft back. The stash's own restore is
-   *  unmeasured; D18's probes put Claude's restore after an Esc at 60-80 ms,
-   *  and its restore after a submit doesn't happen in every case (S47). */
-  private static readonly STASH_BACK_WAIT_MS = 1_000;
+   *  Claude Code to put the draft back. Probed in 2.1.321 (pty, 100x30,
+   *  hooks off, 23 Nov 2026): the draft is back in the bar in the submit's
+   *  own redraw, 16-35 ms after the Enter with Claude idle (9 runs) and
+   *  5-18 ms with the line queued while Claude works (5 runs), every run;
+   *  300 ms is about eight times the slowest. */
+  private static readonly STASH_BACK_WAIT_MS = 300;
   private static readonly STASH_BACK_POLL_MS = 20;
 
   /** Why Ctrl+S may not go now, else null: D18 is putting the box's message
@@ -2411,7 +2416,7 @@ export class Pane {
           this.stashBackHeldSeq = this.submitSeq;
           this.stashReturned = null;
           opts.onSettled?.(Pane.STASH_BACK, false, false);
-          this.takeStashBack(back);
+          this.takeStashBack();
           resolve();
         });
         return;
@@ -2510,6 +2515,7 @@ export class Pane {
       // Claude Code puts a stash back after a submit: none is held now.
       this.pattonStashOpen = false;
       own();
+      this.lastSubmitAtMs = Date.now();
       if (writeOrigin) window.patton.pty.write(this.ptyId, '\r', writeOrigin);
       else window.patton.pty.write(this.ptyId, '\r');
       if (stashed) {
@@ -2760,6 +2766,7 @@ export class Pane {
    *  question that Enter answers the dialog and the image is still in the draft,
    *  so the chips stay. */
   noteEnterSent(): void {
+    this.lastSubmitAtMs = Date.now();
     this.pattonStashOpen = false; // Claude Code puts a stash back after a submit
     if (this.claudeBlocked) return;
     this.clearPasteChipsOnSend('enter');
@@ -3896,6 +3903,7 @@ export class Pane {
   private endEscRestore(skipped: string | null): void {
     if (this.escRestore === null) return;
     clearTimeout(this.escRestore.timer);
+    if (this.escRestore.recheck !== undefined) clearTimeout(this.escRestore.recheck);
     this.escRestore = null;
     if (skipped !== null) rlog('info', '[COMPOSE] restore skipped', { pane: this.id, reason: skipped });
   }
@@ -3927,6 +3935,26 @@ export class Pane {
       this.endEscRestore(plan.skip);
       this.setBarTextNote(true);
       return;
+    }
+    // Ctrl+C only on a Claude that reports idle, not just sent a line (its
+    // `working` may not have come yet): else it would interrupt the turn.
+    // Too soon after an Enter, look again once the gap has passed (the watch
+    // runs 3 s from the Esc, the Enter came before it); over a root kept
+    // working by a subagent, never: Claude's bar keeps the message, the
+    // note says so.
+    const refused = plan.keys === CLAUDE_CLEAR_INPUT ? this.ctrlCRefusal() : null;
+    if (refused === 'just-sent') {
+      watch.recheck ??= setTimeout(() => {
+        if (this.escRestore === watch) { watch.recheck = undefined; this.checkEscRestore(); }
+      }, this.lastSubmitAtMs + CTRL_C_AFTER_SUBMIT_MS - Date.now());
+      return;
+    }
+    if (refused === 'not-idle') {
+      if (overAgents) {
+        this.endEscRestore('still-working');
+        this.setBarTextNote(true);
+      }
+      return; // a root not yet idle: the watch's end shows the note if it never is
     }
     this.endEscRestore(null);
     window.patton.pty.write(this.ptyId, plan.keys, 'patton');
@@ -3974,28 +4002,25 @@ export class Pane {
   }
 
   /** D18 for the draft Claude put back from Patton's stash, text Patton
-   *  didn't send: pulled into the box, before the send that came back there,
-   *  only when it reads whole (one row, no placeholders) and Claude neither
-   *  works nor asks (Ctrl+C then only empties its bar); else Claude's bar
-   *  keeps it and the note says so. Never anything typed after it. */
-  private takeStashBack(back: Extract<ReturnType<typeof readClaudeBarInput>, { kind: 'text' }>): void {
+   *  didn't send: never pulled in, since Claude has just been sent Patton's
+   *  line and is working on it (Ctrl+C would interrupt that turn). Claude's
+   *  bar keeps the draft, the send that came back waits in the box, and the
+   *  note says the bar's text goes first. Never anything typed after it. */
+  private takeStashBack(): void {
     if (this.ptyId === null || this.disposed) return;
-    const plan = planEscRestore('', back);
-    if ('skip' in plan || this.claudeWorking || this.claudeAsksNow()) {
-      this.setBarTextNote(true);
-      rlog('info', '[COMPOSE] restore skipped', {
-        pane: this.id, reason: 'skip' in plan ? plan.skip : this.claudeAsksNow() ? 'blocked' : 'still-working', source: 'stash',
-      });
-      return;
-    }
-    window.patton.pty.write(this.ptyId, plan.keys, 'patton');
-    this.restoreClearPending = true;
-    this.noteOwnTyping();
-    rlog('info', '[COMPOSE] bar cleared', { pane: this.id, keys: describeClearKeys(plan.keys) });
-    const existing = this.editorInput.getValue();
-    this.editorInput.setValue(existing.trim() === '' ? plan.text : `${plan.text}\n${existing}`);
-    this.stashReturned = this.stashReturned ? `${plan.text}\n${this.stashReturned}` : plan.text;
-    rlog('info', '[COMPOSE] restored', { pane: this.id, chars: plan.text.length, source: 'stash' });
+    this.setBarTextNote(true);
+    rlog('info', '[COMPOSE] restore skipped', { pane: this.id, reason: 'just-sent', source: 'stash' });
+  }
+
+  /** Why Patton may not write Ctrl+C to Claude now, else null: Claude's
+   *  live 7501 root is not reported `idle` (working, asking or no report),
+   *  or an Enter reached it within CTRL_C_AFTER_SUBMIT_MS (its `working`
+   *  may still be on the way). Ctrl+C on a working Claude, or on its empty
+   *  bar, interrupts the turn. */
+  private ctrlCRefusal(): 'not-idle' | 'just-sent' | null {
+    if (this.lastRootState !== 'idle' || this.claudeWorking || this.claudeAsksNow()) return 'not-idle';
+    if (Date.now() - this.lastSubmitAtMs < CTRL_C_AFTER_SUBMIT_MS) return 'just-sent';
+    return null;
   }
 
   /** D18's note in the box: Claude's bar holds text that goes first. */

@@ -974,14 +974,23 @@ const newPane = async () => {
     if (endState === 'blocked') state(p, 'blocked', 'permission');
     else state(p, endState);
     await frames();
-    return { p, f, afterEsc, beforeIdle };
+    const atIdle = strings().slice();
+    // No Ctrl+C within 2 s of the Enter (Claude's `working` may be on the
+    // way): past it, the watch looks again.
+    const enterAt = text.includes('\n') ? 60 : 10;
+    if (at.idle < enterAt + 2000) { advance(enterAt + 2000 - at.idle); await frames(); }
+    return { p, f, afterEsc, beforeIdle, atIdle };
   };
 
   // 9.1 The five cases, each with the single-line recording.
   for (const [n, c] of er.cases.entries()) {
     const tag = `9.1.${n + 1} (${c.at.slice(0, 16)}, ${c.pane})`;
-    const { p, f, afterEsc, beforeIdle } = await scene('single', T.single, c);
+    const { p, f, afterEsc, beforeIdle, atIdle } = await scene('single', T.single, c);
     check(`${tag} the Esc goes to Claude, alone`, afterEsc.length === 1 && afterEsc[0] === '\x1b', afterEsc);
+    if (c.idle < 2010) {
+      check(`${tag} ...idle ${c.idle} ms after the send: no Ctrl+C yet, within 2 s of the Enter`,
+        atIdle.join('|') === '\x1b', atIdle);
+    }
     check(`${tag} ...nothing typed while Claude still works (the message already back)`,
       beforeIdle.length === 1, beforeIdle);
     check(`${tag} after idle the box holds the sent message, caret at its end`,
@@ -1140,7 +1149,11 @@ const newPane = async () => {
     await drawBar(p, [S1]);
     state(p, 'idle');
     await frames();
-    check('9.7b Esc 0.5 s after the send, before any report: taken back, Ctrl+C', p.editorInput.getValue() === S1
+    check('9.7b Esc 0.5 s after the send, idle, the message back: no Ctrl+C within 2 s of the Enter',
+      p.editorInput.getValue() === '' && strings().join('|') === '\x1b', strings());
+    advance(1600);
+    await frames();
+    check('9.7b ...past 2 s, still idle with the message back: taken back, Ctrl+C', p.editorInput.getValue() === S1
       && strings().join('|') === '\x1b|\x03', strings());
     p.dispose();
   }
@@ -1179,6 +1192,8 @@ const newPane = async () => {
     await typeInTerminal(p, '\x1b[12;40R');
     await drawBar(p, [S1]);
     state(p, 'idle');
+    await frames();
+    advance(600); // past 2 s from the Enter
     await frames();
     check('9.8b ...a focus report and a cursor report don\'t end it: taken back', p.editorInput.getValue() === S1
       && strings().slice(-1)[0] === '\x03', strings());
@@ -1271,10 +1286,13 @@ const newPane = async () => {
     let p = await sent(S1, { before: (q) => { state(q, 'working'); agentRuns(q); } });
     await escInBox(p);
     await drawBar(p, [S1]);
-    check('9.13a subagent running, root stays working: the box takes the message back, Claude\'s bar emptied with Ctrl+C',
-      p.editorInput.getValue() === S1 && strings().join('|') === '\x1b|\x03', { v: p.editorInput.getValue(), s: strings() });
-    check('9.13a ...logged restored {source sent, rootWorking true}',
-      ofTag('restored')[0]?.source === 'sent' && ofTag('restored')[0]?.rootWorking === true, ofTag('restored'));
+    advance(1000);
+    await frames();
+    check('9.13a subagent running, root stays working, the message back: no Ctrl+C (it would interrupt), the box empty',
+      p.editorInput.getValue() === '' && strings().join('|') === '\x1b', { v: p.editorInput.getValue(), s: strings() });
+    check('9.13a ...restore skipped {reason still-working}, the note shows, nothing restored',
+      ofTag('restore skipped')[0]?.reason === 'still-working' && noteShown(p) && ofTag('restored').length === 0,
+      { sk: ofTag('restore skipped'), note: noteShown(p) });
     p.dispose();
     // b. The turn-end ring showed (a Stop over the working root), then the send.
     p = await newPane();
@@ -1299,15 +1317,19 @@ const newPane = async () => {
     await escInBox(p);
     check('9.13b a send after the ring arms the watch', ofTag('restore watch')[0]?.started === true, ofTag('restore watch'));
     await drawBar(p, [S1]);
-    check('9.13b ...the message back: taken into the box, Ctrl+C', p.editorInput.getValue() === S1 && strings().join('|') === '\x1b|\x03',
-      { v: p.editorInput.getValue(), s: strings() });
+    advance(1000);
+    await frames();
+    check('9.13b ...the message back over the working root: no Ctrl+C, the note shows', p.editorInput.getValue() === ''
+      && strings().join('|') === '\x1b' && noteShown(p), { v: p.editorInput.getValue(), s: strings() });
     p.dispose();
     // d. His own text before the send: the row ends with what Patton sent.
     p = await sent(S1, { before: async (q) => { state(q, 'working'); agentRuns(q); await drawBar(q, ['Note: ']); } });
     await escInBox(p);
     await drawBar(p, [`Note: ${S1}`]);
-    check('9.13d his text then the send, over the subagent: the whole row into the box, Ctrl+C',
-      p.editorInput.getValue() === `Note: ${S1}` && strings().join('|') === '\x1b|\x03', { v: p.editorInput.getValue(), s: strings() });
+    advance(1000);
+    await frames();
+    check('9.13d his text then the send, over the subagent: no Ctrl+C, the box empty, the note shows',
+      p.editorInput.getValue() === '' && strings().join('|') === '\x1b' && noteShown(p), { v: p.editorInput.getValue(), s: strings() });
     p.dispose();
     // e. Text that isn't the sent message: never Ctrl+C while the root works;
     //    at 3 s the watch ends still-working and the note shows.
@@ -1328,6 +1350,32 @@ const newPane = async () => {
     check('9.13f the subagent asks: nothing typed but the Esc, restore skipped {reason blocked}',
       strings().join('|') === '\x1b' && p.editorInput.getValue() === '' && ofTag('restore skipped')[0]?.reason === 'blocked',
       { s: strings(), sk: ofTag('restore skipped') });
+    p.dispose();
+  }
+
+  // 9.15 No Ctrl+C while Claude may be working: an Esc 0.6 s after the send,
+  //      the message back and `idle`, then Claude reports `working` again
+  //      before 2 s from the Enter have passed. Ctrl+C then would interrupt
+  //      the turn: never typed, and the watch's end shows the note.
+  {
+    const p = await sent(S1, { wait: 500 });
+    await escInBox(p);
+    await drawBar(p, [S1]);
+    state(p, 'idle');
+    await frames();
+    check('9.15 idle 0.6 s after the send, the message back: no Ctrl+C within 2 s of the Enter', strings().join('|') === '\x1b', strings());
+    advance(500);
+    state(p, 'working');
+    await frames();
+    advance(1000);
+    await frames();
+    check('9.15 ...working again before the 2 s passed: still no Ctrl+C past them, the box empty',
+      strings().join('|') === '\x1b' && p.editorInput.getValue() === '', { s: strings(), v: p.editorInput.getValue() });
+    advance(2000);
+    await frames();
+    check('9.15 ...the watch ends still-working, the note shows, nothing typed',
+      strings().join('|') === '\x1b' && ofTag('restore skipped')[0]?.reason === 'still-working' && noteShown(p),
+      { s: strings(), sk: ofTag('restore skipped'), note: noteShown(p) });
     p.dispose();
   }
 
@@ -1381,6 +1429,8 @@ const newPane = async () => {
     state(p, 'idle');
     await frames();
     let res2 = await g2;
+    advance(400); // past 2 s from the box's Enter
+    await frames();
     check('9.14c Pause all with a stash during the watch, the message back in Claude\'s bar: no Ctrl+S, only the restore\'s Ctrl+C',
       strings().join('|') === '\x03', strings());
     check('9.14c ...the message is in the box, the word held for the restore',
@@ -1549,11 +1599,13 @@ const newPane = async () => {
     p.dispose();
 
     // i. A box send queued behind a Patton line that stashed a draft: Claude
-    //    Code puts the stash back into its bar after that line's Enter (at
-    //    D18's measured restore timing, 70 ms), so the box send, typed then,
-    //    would be joined onto the draft. It waits for the draft, then treats
-    //    it as text Patton didn't send: never typed after it.
-    const stashThenSend = async (p, { restoreAt = 70, rows = ['my draft'], working = true, also } = {}) => {
+    //    Code puts the stash back into its bar in that line's own redraw
+    //    (probed 23 Nov: 5-35 ms after the Enter), so the box send, typed
+    //    then, would be joined onto the draft. It waits for the draft, then
+    //    treats it as text Patton didn't send: never typed after it, and
+    //    never pulled in (Claude has just been sent the line: Ctrl+C would
+    //    interrupt it).
+    const stashThenSend = async (p, { restoreAt = 35, rows = ['my draft'], working = true, also } = {}) => {
       await drawBar(p, ['my draft']);
       writes.length = 0; logs.length = 0;
       const g = p.typePauseWord({ stash: true });
@@ -1578,9 +1630,12 @@ const newPane = async () => {
     p.dispose();
     p = await newPane();
     await stashThenSend(p, { working: false });
-    check('9.14i the draft back on one row, Claude not yet working: pulled into the box before the send, Ctrl+C',
-      strings().join('|') === '\x13|pause|\r|\x03' && p.editorInput.getValue() === `my draft\n${S1}` && !noteShown(p),
+    for (let i = 0; i < 30; i++) { advance(100); await frames(); }
+    check('9.14i the draft back on one row, Claude not yet reporting working: no Ctrl+C (the line was just sent), the send in the box, the note shows',
+      strings().join('|') === '\x13|pause|\r' && p.editorInput.getValue() === S1 && noteShown(p),
       { s: strings(), v: p.editorInput.getValue() });
+    check('9.14i ...restore skipped {reason just-sent, source stash}',
+      ofTag('restore skipped').some((r) => r.reason === 'just-sent' && r.source === 'stash'), ofTag('restore skipped'));
     p.dispose();
     p = await newPane();
     await stashThenSend(p, { working: false, rows: ['my draft over', 'two rows'] });
@@ -1591,8 +1646,14 @@ const newPane = async () => {
     // Two box sends queued in the same wait: both held, in queue order after the draft.
     p = await newPane();
     await stashThenSend(p, { working: false, also: (q) => sendFromBox(q, 'Second one.') });
-    check('9.14i two box sends queued in the wait: neither typed, both in the box after the draft, in order',
-      strings().join('|') === '\x13|pause|\r|\x03' && p.editorInput.getValue() === `my draft\n${S1}\nSecond one.`,
+    check('9.14i two box sends queued in the wait: neither typed, both in the box in order, the draft left in Claude\'s bar',
+      strings().join('|') === '\x13|pause|\r' && p.editorInput.getValue() === `${S1}\nSecond one.` && noteShown(p),
+      { s: strings(), v: p.editorInput.getValue() });
+    p.dispose();
+    p = await newPane();
+    await stashThenSend(p, { restoreAt: 250 });
+    check('9.14i the draft back 250 ms after the Enter, within the 300 ms wait: still held, the note shows',
+      strings().join('|') === '\x13|pause|\r' && p.editorInput.getValue() === S1 && noteShown(p),
       { s: strings(), v: p.editorInput.getValue() });
     p.dispose();
     p = await newPane();

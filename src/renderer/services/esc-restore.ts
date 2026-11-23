@@ -35,6 +35,12 @@ export const ESC_RESTORE_UNSTARTED_MS = 2_000;
  *  came up to 842 ms after the Esc. */
 export const ESC_RESTORE_WATCH_MS = 3_000;
 
+/** Patton writes Ctrl+C only this long after the last Enter that reached
+ *  Claude: an Enter starts a turn whose `working` report can come up to
+ *  763 ms later (main.log, 20-22 Nov 2026), and Ctrl+C on a working Claude,
+ *  or on its empty bar, interrupts the turn. */
+export const CTRL_C_AFTER_SUBMIT_MS = 2_000;
+
 /** Ctrl+C: empties Claude Code's whole input while it holds text (probed). */
 export const CLAUDE_CLEAR_INPUT = '\x03';
 
