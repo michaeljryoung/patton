@@ -140,7 +140,7 @@ CLAUDE.md's `## Next Steps` section points here; this is the canonical list. Ite
 ### 2026-11-23 — hand-off (S61): install v1.38.0 with Patton quit, then a walk-through
 
 v1.38.0 released 23 Nov (main `1e270d6`, run 45134218680 green, cask `218b4a84…` equals the DMG's digest), on his "nice" to the preview page https://claude.ai/code/artifact/ee7b5553-4a3f-4f2a-ac33-189f8f22c6b7. It holds everything since v1.33.0. /Applications is still the 20 Nov v1.33.0 build.
-- [ ] **Install v1.38.0** by the S56 steps below (from the tag, in a worktree, Patton quit, the session in iTerm), proven by the asar's mtime, codesign and Info.plist.
+- [ ] **Install v1.38.1** (the same code as v1.38.0; the S61 checkpoint commit went out without the no-release marker, so it released too) by the S56 steps below (from the tag, in a worktree, Patton quit, the session in iTerm), proven by the asar's mtime, codesign and Info.plist.
 - [ ] **Walk through each change with him live**, in this order: the yellow box and Send on the first line; Esc right after a send (the message back in the box); ⌘C on part of a reply pasted into Mail; the session bar (agents, links with page titles, the clock); group shades; the bookmarks panel (no blue dot); a .docx link from Claude opening in the review tab (a comment, Print, Send to Drive, Send comments to Claude); the marimba. Then the live checks from main.log (`bar_ship`, `room_ship`, `box_ship`, `groups_ship`, `rt_ship`, `[TITLE] backfill`, `[COPY] original`).
 - Known trade-off: an Esc while a background subagent keeps Claude busy leaves the message in Claude's bar with the box's note, rather than risk a Ctrl+C on a working Claude (D18).
 
