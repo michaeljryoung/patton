@@ -422,7 +422,7 @@ export class TabBar {
     // Idle, the button is only the icon (the strip's room is for tabs); the
     // full words stay in the accessible name and the tooltip.
     btn.textContent = '\u23f8';
-    const label = 'Pause all: type pause into every Claude session in every window, skipping any waiting on you';
+    const label = 'Pause all: type pause into every Claude session with something running, in every window, skipping any waiting on you';
     btn.setAttribute('aria-label', label);
     btn.title = label;
   }
