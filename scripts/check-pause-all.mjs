@@ -646,6 +646,9 @@ await wait(300);
   check('running: … it is named "state unclear", not counted as quiet, and the line starts "Nothing paused"',
     resultText(A) === 'Nothing paused; skipped 1: p1 (state unclear)', resultText(A));
 
+  // P4 and P4b stand in for work only the Stop hook sees: real Claude starts a turn when a
+  // background child finishes, so the "child done, no new turn" shape here is a model of the
+  // hook-only case, not a sequence a real session produces.
   // P4: the hook counted two tasks, 7501 shows one child, and it finishes: the verdict still stands.
   const p4 = await makePane(A);
   report(A, p4, ROOT('working')); report(A, p4, BG_CHILD); stopHook(A, p4, 2, 0); report(A, p4, ROOT('done'));
@@ -709,6 +712,65 @@ await wait(300);
   check('title path: ✳ with no Stop hook is not sent', !bytesByPty(A).has(p8.ptyId), bytesByPty(A).get(p8.ptyId));
   check('title path: … it is named unclear, not quiet', resultText(A) === 'Nothing paused; skipped 1: p8 (state unclear)', resultText(A));
   A.w.Date.now = realNow;
+}
+
+// ── 10c2. The Stop verdict survives a turn that ends without one (Esc, API error) ──
+{
+  // pauseVerdict is replaced only by the next Stop verdict and cleared only when Claude leaves
+  // the pane. Some turns end with no Stop verdict: an Esc (root goes idle), an API error (a
+  // separate StopFailure hook). A `/loop` timer the 7501 children don't show still runs after
+  // them, and Pause must reach it (a shut lid once overheated the Mac).
+  const named = (id, p) => { setTabs(A, [tab(id, [p])]); clearWrites(); };
+  const sentTo = (p) => bytesByPty(A).get(p.ptyId) === 'pause\r';
+  const QUIET = 'Nothing running to pause; 1 quiet Claude session left alone';
+  // A turn that ends with a Stop verdict crons=1 and no child.
+  const loopPane = async () => {
+    const p = await makePane(A);
+    report(A, p, ROOT('working')); stopHook(A, p, 0, 1); report(A, p, ROOT('done'));
+    return p;
+  };
+
+  // E1: a new turn is interrupted: the root goes idle, no Stop. The loop still runs: sent.
+  const e1 = await loopPane();
+  report(A, e1, ROOT('working')); report(A, e1, ROOT('idle'));
+  named('e1', e1);
+  await press(A);
+  check('verdict-less end: crons=1 verdict, then a turn that ends idle with no Stop (Esc): sent', sentTo(e1), [bytesByPty(A).get(e1.ptyId), resultText(A)]);
+
+  // E2: the same, but the turn ends in an error: running and unclear, so named, not sent.
+  const e2 = await loopPane();
+  report(A, e2, ROOT('working')); report(A, e2, ROOT('error'));
+  named('e2', e2);
+  await press(A);
+  check('verdict-less end: … a turn that ends in an error is not sent', !bytesByPty(A).has(e2.ptyId), bytesByPty(A).get(e2.ptyId));
+  check('verdict-less end: … it is named "state unclear", not quiet', resultText(A) === 'Nothing paused; skipped 1: e2 (state unclear)', resultText(A));
+
+  // E3: after the Esc case, a later turn ends with a 0 / 0 Stop: the loop is gone, quiet.
+  report(A, e1, ROOT('working')); stopHook(A, e1, 0, 0); report(A, e1, ROOT('done'));
+  named('e1', e1);
+  await press(A);
+  check('verdict-less end: … a later turn with a 0 / 0 Stop leaves it quiet', !bytesByPty(A).has(e1.ptyId) && resultText(A) === QUIET, [bytesByPty(A).get(e1.ptyId), resultText(A)]);
+
+  // E4: Claude leaves (state=clear) and a new Claude in the same shell reports a turn: the old
+  // verdict went with the old session.
+  const e4 = await loopPane();
+  report(A, e4, 'state=clear');
+  report(A, e4, ROOT('working')); report(A, e4, ROOT('idle'));
+  named('e4', e4);
+  await press(A);
+  check('Claude left: after state=clear, a new session that ends idle after a turn is quiet', !bytesByPty(A).has(e4.ptyId) && resultText(A) === QUIET, [bytesByPty(A).get(e4.ptyId), resultText(A)]);
+
+  // E5: title path. A work verdict, then a new turn (◐), then ✳ with no Stop. What the code does:
+  // the verdict is kept, so the pane counts as running, but a title-path pane that stopped with no
+  // Stop hook since its last turn is 'unclear' (a dialog looks like that), checked before running.
+  // So not sent, and named: the same reason as the plain ✳-with-no-Stop case (P8), never quiet.
+  const e5 = await makePane(A);
+  titleStop(A, e5, 0, 1); await wait(TITLE_SETTLE_MS);
+  title(e5, '◐ Working'); title(e5, '✳ Claude Code'); await wait(TITLE_SETTLE_MS);
+  named('e5', e5);
+  await press(A);
+  check('title path: crons=1 verdict, a new turn, then ✳ with no Stop is not sent', !bytesByPty(A).has(e5.ptyId), bytesByPty(A).get(e5.ptyId));
+  check('title path: … it is named "state unclear", not quiet', resultText(A) === 'Nothing paused; skipped 1: e5 (state unclear)', resultText(A));
 }
 
 // ── 10d. The summary's first words and the quiet clause ──

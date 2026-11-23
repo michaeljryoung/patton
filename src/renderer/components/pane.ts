@@ -263,12 +263,21 @@ export class Pane {
   // Known and left: a verdict landing after the dot was raised only re-parks
   // within the TTL; the hook preceded the done in all 206 logged verdicts.
   private hookVerdict: HookVerdict | null = null;
-  // The last Stop hook verdict of this turn, for Pause all only (pauseInput).
-  // The dot drops hookVerdict when the working children drain and pendingVerdict
-  // after 40 s, but a `/loop` timer or a background job 7501's children don't
-  // show keeps running, and Pause must still reach it. Set by every
-  // handleHookStop, on both paths; cleared when a new turn starts, when a later
-  // verdict replaces it, and when Claude leaves the pane (newClaudeSession).
+  // The last Stop hook verdict, for Pause all only (pauseInput). The dot drops
+  // hookVerdict when the working children drain and pendingVerdict after 40 s,
+  // but a `/loop` timer or a background job 7501's children don't show keeps
+  // running, and Pause must still reach it. Set by every handleHookStop, on
+  // both paths, and replaced only by the next Stop verdict, whatever it says
+  // (a 0 / 0 verdict clears the work). Cleared only when Claude leaves the
+  // pane or the shell is respawned (newClaudeSession). Deliberately NOT cleared
+  // when a turn starts: some turns end with no Stop verdict (an Esc interrupt,
+  // where the root goes idle; an API error, where Claude Code runs a separate
+  // StopFailure hook), so a wake turn after a crons=1 verdict that is
+  // interrupted would otherwise forget a `/loop` that is still scheduled, and
+  // Pause would skip the pane as quiet on a shut lid. Erring toward sending is
+  // the point: a stale verdict at worst types one extra `pause` into a chat
+  // after an interrupted turn, a lost one leaves a loop running (23 Nov 2026:
+  // 30 verdict-less turn ends after a work verdict in the real log).
   private pauseVerdict: ParkedInfo | null = null;
   // The turn ended (Stop hook) while 7501 still says the root works with
   // working children: Claude Code 2.1.321 does that for as long as a subagent
@@ -656,9 +665,6 @@ export class Pane {
     }
     if (this.claudeWorking) return;
     this.claudeWorking = true;
-    // Title path: a new turn. (On 7501 the root's change to working says it,
-    // in applyProgramStatus; startWork also follows the signal there.)
-    if (!this.statusReporting) this.pauseVerdict = null;
     this.stopSeenSinceWork = false;
     this.clearCheckpointDone('new turn');
     this.notifyCheckpoint();
@@ -734,10 +740,6 @@ export class Pane {
     const rootState = root?.state ?? null;
     if (rootState === 'done' && this.lastRootState !== 'done') this.rootDoneAtMs = Date.now();
     else if (rootState !== 'done') this.rootDoneAtMs = null;
-    // A root going to working from anything else is a new turn: the last
-    // verdict was the old turn's (verdictAfterRootChange's rule, kept apart
-    // because the dot may have dropped hookVerdict already).
-    if (rootState === 'working' && this.lastRootState !== 'working') this.pauseVerdict = null;
     const kept = verdictAfterRootChange(this.hookVerdict, this.lastRootState, rootState);
     if (kept.cleared) {
       rlog('info', '[DOT] Hook verdict cleared: new turn', { pane: this.id, tasks: this.hookVerdict?.tasks, crons: this.hookVerdict?.crons });
@@ -747,9 +749,9 @@ export class Pane {
     const workingChildren = working.length;
     if (this.turnEnded && !turnEndedAfterChange(true, this.lastRootState, rootState, this.lastWorkingChildren, workingChildren)) {
       this.turnEnded = false;
-      // The verdict belonged to the turn that ended; a new one has begun (or
-      // the root left working, and 7501 decides that turn end itself).
-      if (rootState === 'working') this.pauseVerdict = null;
+      // The dot's verdict belonged to the turn that ended; a new one has begun
+      // (or the root left working, and 7501 decides that turn end itself).
+      // pauseVerdict stays: see its comment.
       if (rootState === 'working' && this.hookVerdict) {
         rlog('info', '[DOT] Hook verdict cleared: new turn', { pane: this.id, tasks: this.hookVerdict.tasks, crons: this.hookVerdict.crons, via: 'children' });
         this.hookVerdict = null;
@@ -1410,8 +1412,9 @@ export class Pane {
       // Title path: the Stop verdict parks the pane only once the ✳ has
       // settled (1.5 s); Pause all doesn't wait, the work runs now.
       || verdictWork(this.pendingVerdict)
-      // The turn's last Stop verdict, kept past the dot's drain and the 40 s
-      // TTL: a timer or a job the 7501 children don't show still runs.
+      // The last Stop verdict, kept past the dot's drain, the 40 s TTL and any
+      // later turn that ended without one: a timer or a job the 7501 children
+      // don't show still runs.
       || verdictWork(this.pauseVerdict);
     return {
       live: this.ptyId !== null && !this.ptyExited,
@@ -2914,8 +2917,7 @@ export class Pane {
       pane: this.id, tasks: this.hookVerdict?.tasks, crons: this.hookVerdict?.crons, via,
     });
     this.hookVerdict = null;
-    this.pauseVerdict = null;
-    this.applyProgramStatus();
+    this.applyProgramStatus(); // pauseVerdict stays: see its comment
   }
 
   /** The user sent a message from this pane. Claude Code may take it into a turn

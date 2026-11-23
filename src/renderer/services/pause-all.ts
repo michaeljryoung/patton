@@ -12,8 +12,9 @@
  *   2026: "it should only do stuff where claude is working not pointlessly
  *   post to quiet chats"): `PauseInput.running` (Pane.pauseInput), true while
  *   the root or a child record works, the title path works, the pane is
- *   parked, or the turn's last Stop hook verdict counted tasks or timers (kept
- *   until the next turn, past the dot's drain and TTL). Nothing running (done,
+ *   parked, or the last Stop hook verdict counted tasks or timers (kept until
+ *   the next Stop verdict replaces it, past the dot's drain, its TTL and any
+ *   later turn that ended with no verdict: an Esc, an API error). Nothing running (done,
  *   idle, or stopped on an error): skip ('quiet'), counted, not named.
  * - Claude at its prompt with its background work running: send.
  * - Claude mid-turn with no background task blocked: send. Claude Code queues
