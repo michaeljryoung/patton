@@ -773,6 +773,27 @@ await wait(300);
   check('title path: … it is named "state unclear", not quiet', resultText(A) === 'Nothing paused; skipped 1: e5 (state unclear)', resultText(A));
 }
 
+// ── 10c3. A retitle under a live Claude keeps the Stop verdict (title path) ──
+{
+  // Another program retitling the terminal (`vim`) arrives as a glyph-less title, which the title
+  // path reads as Claude leaving (newClaudeSession). That used to clear pauseVerdict, so once the
+  // ✳ came back Pause skipped a pane running a `/loop` (crons=1) as quiet. The verdict now goes only
+  // at a 7501 clear and in claudeGone. What the code gives after the retitle: SENT ("pause\r"):
+  // the retitle is no new turn, so the kept crons=1 verdict still counts the pane as running.
+  // On this path the pane's `parked` record also says running, so the press alone cannot tell a
+  // kept verdict from a cleared one (a mutation that clears it passed the press assertions);
+  // the kept verdict itself is asserted on the pane (the field Pause reads once `parked` is gone).
+  const p = await makePane(A);
+  titleStop(A, p, 0, 1); await wait(TITLE_SETTLE_MS);
+  title(p, 'vim');
+  title(p, '✳ Claude Code'); await wait(TITLE_SETTLE_MS);
+  check('title path: a glyph-less retitle and the ✳ back keep the Stop verdict (tasks=0 crons=1)', p['pauseVerdict']?.tasks === 0 && p['pauseVerdict']?.crons === 1, p['pauseVerdict']);
+  setTabs(A, [tab('retitled', [p])]); clearWrites();
+  await press(A);
+  check('title path: crons=1 verdict, a glyph-less retitle, then ✳ again is not skipped as quiet', !/quiet/.test(resultText(A) ?? ''), resultText(A));
+  check('title path: … it is sent "pause\\r" (the kept verdict still says running)', bytesByPty(A).get(p.ptyId) === 'pause\r', [bytesByPty(A).get(p.ptyId), resultText(A)]);
+}
+
 // ── 10d. The summary's first words and the quiet clause ──
 {
   const REASONS = ['waiting', 'menu', 'quiet', 'fresh', 'draft', 'stashed', 'unclear', 'held', 'held-restoring', 'held-typed', 'held-stashed', 'held-typed-stashed', 'bar-text', 'not-claude', 'no-shell'];

@@ -1312,7 +1312,9 @@ export class TabManager {
           cwd: pane.getCwd(),
           tabTitle: tab.title,
           hasCustomTitle: tab.hasCustomTitle,
-          paneTitle: pane.shownTitle,
+          // A shell at its prompt gives '' (not "Terminal"), so the palette
+          // tells two idle shells of a split apart by their folders.
+          paneTitle: !pane.isClaudePane && pane.shownTitle === SHELL_TITLE ? '' : pane.shownTitle,
           state,
           awaitingSince,
         });

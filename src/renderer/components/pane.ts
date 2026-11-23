@@ -266,8 +266,10 @@ export class Pane {
   // but a `/loop` timer or a background job 7501's children don't show keeps
   // running, and Pause must still reach it. Set by every handleHookStop, on
   // both paths, and replaced only by the next Stop verdict, whatever it says
-  // (a 0 / 0 verdict clears the work). Cleared only when Claude leaves the
-  // pane or the shell is respawned (newClaudeSession). Deliberately NOT cleared
+  // (a 0 / 0 verdict clears the work). Cleared only when Claude really leaves:
+  // a 7501 clear, or the shell's prompt back or a respawn (claudeGone); not by
+  // a glyph-less title on the title path, which another program retitling the
+  // terminal under a live Claude also sends. Deliberately NOT cleared
   // when a turn starts: some turns end with no Stop verdict (an Esc interrupt,
   // where the root goes idle; an API error, where Claude Code runs a separate
   // StopFailure hook), so a wake turn after a crons=1 verdict that is
@@ -868,6 +870,8 @@ export class Pane {
     // (RIS) alone doesn't end the session.
     const claudeLeft = reason !== 'reset' && this.claudeActive;
     if (claudeLeft) this.newClaudeSession();
+    // Claude has really left: its Stop verdict no longer says anything (Pause all).
+    if (claudeLeft) this.pauseVerdict = null;
     rlog('info', '[7501] state', { pane: this.id, root: 'clear', kind: null, children: 0, reason });
     this.claudeWorking = false;
     this.claudeActive = false;
@@ -1384,7 +1388,6 @@ export class Pane {
 
   /** The Claude session here may have changed: restart its clock. */
   private newClaudeSession(): void {
-    this.pauseVerdict = null;
     this.claudeSessionAtMs = Date.now();
     this.ackedCheckpointAt = null;
     this.heldLoggedCheckpointAt = null;
@@ -1596,6 +1599,10 @@ export class Pane {
     const claudeLeft = this.claudeActive;
     if (claudeLeft) this.newClaudeSession();
     this.claudeActive = false;
+    // The shell's prompt is back (or a new shell): no Claude, so no verdict.
+    // Only here and at a 7501 clear: a glyph-less title on the title path
+    // (another program retitling under a live Claude) must not lose it.
+    this.pauseVerdict = null;
     this.stopSeenSinceWork = false;
     this.notifyCheckpoint();
     this.syncComposeFirst(reason);

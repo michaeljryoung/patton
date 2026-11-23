@@ -75,6 +75,7 @@ export { ProjectBoards, decideBoard, claudeCommandFor } from './services/project
 export { isUserInput } from './services/startup-command';
 export { wakeCommandOf } from './services/board-wake';
 export { COVERED_TAB_TITLE } from './components/tab';
+export { sessionName } from './services/sessions';
 `;
 
 async function bundle(root) {
@@ -229,7 +230,7 @@ async function main() {
     else info(...args);
   };
 
-  const { TabManager, ProjectBoards, decideBoard, claudeCommandFor, isUserInput, COVERED_TAB_TITLE, wakeCommandOf } = (await import(out)).default ?? (await import(out));
+  const { TabManager, ProjectBoards, decideBoard, claudeCommandFor, isUserInput, COVERED_TAB_TITLE, wakeCommandOf, sessionName } = (await import(out)).default ?? (await import(out));
 
   // --- decideBoard, the rule on its own ---
   check('rule: shows when the setting is absent (on by default)', decideBoard({}, payload(true)).show === true);
@@ -381,7 +382,7 @@ async function main() {
     rt.focusedPane['claudeGone']('shell-prompt');
     check('shell tabs: Claude quits: the tab reads "Terminal" at once (no manual refresh), not the project or Claude\'s last topic', !rt.runsClaude && reads('Terminal'), shown());
     const session = tm2.listSessions().find((s) => s.paneId === rt.focusedPane.id);
-    check('shell tabs: ...the palette lists the shell as "Terminal", not Claude\'s last topic', session?.paneTitle === 'Terminal' && session?.state === 'shell', session && { paneTitle: session.paneTitle, state: session.state });
+    check('shell tabs: ...the palette lists the shell with no pane title (its tab reads "Terminal"), not Claude\'s last topic', session?.paneTitle === '' && session?.state === 'shell', session && { paneTitle: session.paneTitle, state: session.state });
     const card = tm2['describeTab'](rt.id);
     check('shell tabs: ...the hover card heads it "Terminal" and still names the project and folder', card?.[0]?.title === 'Terminal' && /AI-Brain/.test(card?.[0]?.place ?? ''), card?.[0]);
     rt.focusedPane.title = 'Terminal'; // a fresh shell's own title
@@ -748,6 +749,32 @@ async function main() {
       doc.querySelectorAll('.pane-drag-overlay').forEach((o) => o.remove());
       check('review overlay: dragging a pane Claude left shows "Terminal", not Claude\'s topic', shownInOverlay === 'Terminal', shownInOverlay);
       await tm2.closeById(tab.id);
+    }
+
+    // Palette rows of a split of idle shells (23 Nov): paneTitle is '' for a shell showing the
+    // default "Terminal", so sessionName names each pane after its folder, not "Terminal" twice.
+    {
+      const resolveBeforeSplit = w.patton.projects.resolve;
+      w.patton.projects.resolve = async () => null;
+      const tab = await tm2.createTab('/tmp/alpha');
+      tm2.switchToId(tab.id);
+      const first = tab.focusedPane;
+      const second = await split(tab);
+      first['currentCwd'] = '/tmp/alpha';
+      second['currentCwd'] = '/tmp/beta';
+      const rows = tm2.listSessions().filter((s) => s.tabId === tab.id);
+      const byCwd = (cwd) => rows.find((s) => s.cwd === cwd);
+      check('palette split: two plain shells give two rows', rows.length === 2 && !!byCwd('/tmp/alpha') && !!byCwd('/tmp/beta'), rows.map((s) => [s.cwd, s.paneTitle]));
+      check('palette split: the shells\' pane titles are empty, not "Terminal"', rows.every((s) => s.paneTitle === ''), rows.map((s) => s.paneTitle));
+      check('palette split: sessionName reads alpha and beta, not "Terminal" twice', !!byCwd('/tmp/alpha') && !!byCwd('/tmp/beta') && sessionName(byCwd('/tmp/alpha')) === 'alpha' && sessionName(byCwd('/tmp/beta')) === 'beta', rows.map(sessionName));
+      // A Claude pane keeps its topic.
+      emit(second.ptyId, '\x1b]7501;state=idle:app=claude-code\x07');
+      emit(second.ptyId, '\x1b]0;Fix the palette\x07');
+      await until(() => second.isClaudePane && second.title === 'Fix the palette');
+      const rows2 = tm2.listSessions().filter((s) => s.tabId === tab.id);
+      check('palette split: a Claude pane\'s paneTitle is still its topic', rows2.find((s) => s.paneId === second.id)?.paneTitle === 'Fix the palette' && rows2.find((s) => s.paneId === first.id)?.paneTitle === '', rows2.map((s) => s.paneTitle));
+      await tm2.closeById(tab.id);
+      w.patton.projects.resolve = resolveBeforeSplit;
     }
 
     // Tab.namedForProject and the split-tab menu (D1, D2): the menu acts on the project that names the tab.
