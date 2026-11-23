@@ -1,8 +1,10 @@
 // Headless check of the tab strip's "Pause all" button (10 Nov 2026). Michael
 // types `pause` into each Claude session before shutting the laptop (a Claude
 // Code hook then suspends the jobs it started) and resumes each tab by hand;
-// the button types `pause` into every Claude pane in every window, and every
-// press pauses again (no Resume all, no "Pause remaining", no mode broadcast).
+// the button types `pause` into every Claude pane in every window that has
+// something running (23 Nov: "only do stuff where claude is working not
+// pointlessly post to quiet chats"), and every press pauses again (no Resume
+// all, no "Pause remaining", no mode broadcast).
 // Drives the REAL TabManager + TabBar in two jsdom windows, the REAL
 // PauseAllCoordinator (main/pause-all.ts) standing in for main's IPC between
 // them, main's REAL UnsentInputTracker (main/unsent-input.ts) behind
@@ -14,15 +16,19 @@
 // keystrokes as terminal data, so the bytes checked are the bytes the app writes.
 // Covers: the button is the strip's last child, with no checkpoint clock in the
 // strip (it lives in the session bar, docs/session-bar.md D7), and its label never
-// changes; a second press pauses the same panes again; pause sends `pause\r` to done-after-a-turn, working and title-path
-// stopped panes and skips blocked (permission, question, a blocked child),
-// error, fresh idle, a `/model` menu, a title path typed into since the stop,
-// plain shells and exited shells; a draft gets `\x13pause\r` (one Ctrl+S); a
+// changes; a second press pauses the same panes again; pause sends `pause\r` to working panes and
+// to panes parked (stopped with a background task, agent or timer going: 7501 child
+// records, or the title path's Stop-hook verdict once the ✳ has settled) and skips
+// quiet panes (done, idle or error with nothing running: counted in the summary,
+// never named, never given a Ctrl+S), blocked (permission, question, a blocked child),
+// a parked session that has only ever reported idle, a `/model` menu, a title path
+// typed into since the stop, plain shells and exited shells; a draft gets `\x13pause\r` (one Ctrl+S); a
 // draft erased by Backspace gets a plain send; a user Ctrl+S skips the pane;
 // a rebound stash key skips draft panes; a draft Patton stashed is skipped
 // until the user submits; the session bar's checkpoint button stashes a
 // draft the same way; the summary names skipped tabs and splits at-the-prompt
-// from queued, and counts a word the gate held (Claude started asking) as held. Main side: a window closed mid-press, a send that throws, a
+// from queued, counts quiet sessions without naming them, and counts a word the gate
+// held (Claude started asking) as held. Main side: a window closed mid-press, a send that throws, a
 // late report, a second press, and an untrusted report.
 // Run: JSDOM_DIR=<a folder whose node_modules has jsdom> node scripts/check-pause-all.mjs
 //   jsdom is not a project dependency: install it in a scratch folder.
@@ -205,12 +211,21 @@ async function makePane(win) {
 const view = (p) => p.terminalView;
 const report = (win, p, body) => view(p).__emit('onProgramStatus', win.PA.parseProgramStatus(body));
 const title = (p, t) => view(p).__emit('onTitleChange', t);
-const stopHook = (win, p) => view(p).__emit('onPattonState', win.PA.parsePattonOsc('patton;stop;tasks=0;crons=0'));
+const stopHook = (win, p, tasks = 0, crons = 0) => view(p).__emit('onPattonState', win.PA.parsePattonOsc(`patton;stop;tasks=${tasks};crons=${crons}`));
 const type = (p, data) => view(p).__emit('onTerminalData', data);
 const exitShell = (win, p) => { for (const cb of win.exitCbs) cb(p.ptyId); };
 const ROOT = (state, extra = '') => `state=${state}:app=claude-code${extra}`;
 // A Claude session that has had a turn and is back at its prompt.
+// Nothing running: Pause all leaves it alone ('quiet').
 const doneAfterTurn = (win, p) => { report(win, p, ROOT('working')); report(win, p, ROOT('done')); };
+// A turn that ended with a background task still working: 7501 ranks it `parked`.
+const BG_CHILD = 'state=working:id=bg1:app=claude-code';
+const parkedAfterTurn = (win, p) => { doneAfterTurn(win, p); report(win, p, BG_CHILD); };
+// Title path (no 7501): a turn, then the Stop hook's verdict, then ✳. The verdict is
+// applied once the ✳ has held CLAUDE_STOP_SETTLE_MS (1.5 s): tasks + crons > 0 parks the
+// pane, 0 / 0 leaves it quiet. Callers wait TITLE_SETTLE_MS before the press.
+const titleStop = (win, p, tasks, crons = 0) => { title(p, '◐ Working'); stopHook(win, p, tasks, crons); title(p, '✳ Claude Code'); };
+const TITLE_SETTLE_MS = 1700;
 
 const setTabs = (win, tabs) => {
   win.tm.tabs = tabs;
@@ -257,35 +272,46 @@ await wait(5);
 
 // ── 2. Pause: who gets the word ──
 const a = {};
-for (const k of ['done', 'work', 'perm', 'quest', 'err', 'fresh', 'menu', 'child', 'draft', 'bs', 'userStash', 'shell', 'dead', 'titleDone', 'titleStale', 'close']) {
+const KEYS2 = ['done', 'work', 'perm', 'quest', 'err', 'fresh', 'menu', 'child', 'draft', 'bs', 'userStash', 'shell', 'dead', 'titleDone', 'titleStale', 'close',
+  'qDone', 'qIdle', 'qFresh', 'qTitle', 'qDraft'];
+for (const k of KEYS2) {
   a[k] = await makePane(A);
 }
 const b = { done: await makePane(B) };
 
-doneAfterTurn(A, a.done);
+// Every pane below that should get the word, or a skip reason other than 'quiet', has something running.
+parkedAfterTurn(A, a.done);
 report(A, a.work, ROOT('working'));
-report(A, a.perm, ROOT('working')); report(A, a.perm, ROOT('blocked', ':kind=permission'));
-report(A, a.quest, ROOT('working')); report(A, a.quest, ROOT('blocked', ':kind=question'));
+report(A, a.perm, ROOT('working')); report(A, a.perm, BG_CHILD); report(A, a.perm, ROOT('blocked', ':kind=permission'));
+report(A, a.quest, ROOT('working')); report(A, a.quest, BG_CHILD); report(A, a.quest, ROOT('blocked', ':kind=question'));
 report(A, a.err, ROOT('working')); report(A, a.err, ROOT('error'));
-report(A, a.fresh, ROOT('idle'));
-doneAfterTurn(A, a.menu);
+report(A, a.fresh, ROOT('idle')); report(A, a.fresh, BG_CHILD); // idle, never a turn, but a task going
+parkedAfterTurn(A, a.menu);
 report(A, a.child, ROOT('working')); report(A, a.child, 'state=blocked:id=t1:kind=permission:app=claude-code');
-doneAfterTurn(A, a.draft);
-doneAfterTurn(A, a.bs);
-doneAfterTurn(A, a.userStash);
+parkedAfterTurn(A, a.draft);
+parkedAfterTurn(A, a.bs);
+parkedAfterTurn(A, a.userStash);
 title(a.shell, 'zsh');
-doneAfterTurn(A, a.dead);
-for (const k of ['titleDone', 'titleStale']) { title(a[k], '◐ Working'); stopHook(A, a[k]); title(a[k], '✳ Claude Code'); }
-doneAfterTurn(A, a.close);
-doneAfterTurn(B, b.done);
-await wait(5); // keystrokes come after the reports and the Stop hook
+parkedAfterTurn(A, a.dead);
+titleStop(A, a.titleDone, 1);
+titleStop(A, a.titleStale, 1);
+parkedAfterTurn(A, a.close);
+parkedAfterTurn(B, b.done);
+// Quiet: nothing running.
+doneAfterTurn(A, a.qDone);
+report(A, a.qIdle, ROOT('working')); report(A, a.qIdle, ROOT('idle')); // interrupted: idle after a turn
+report(A, a.qFresh, ROOT('idle')); // never had a turn
+titleStop(A, a.qTitle, 0); // title path, Stop hook says tasks=0 crons=0
+doneAfterTurn(A, a.qDraft);
+await wait(TITLE_SETTLE_MS); // the ✳ settles and the verdicts apply; keystrokes come after the reports and the Stop hook
 type(a.menu, '/model'); type(a.menu, '\r');
 type(a.draft, 'hello');
 type(a.bs, 'ab'); type(a.bs, '\x7f'); type(a.bs, '\x7f');
 type(a.userStash, 'abc'); type(a.userStash, '\x13'); type(a.userStash, 'def');
+type(a.qDraft, 'unsent words');
 exitShell(A, a.dead);
 type(a.titleStale, 'x'); type(a.titleStale, '\x7f');
-const order = ['done', 'work', 'perm', 'quest', 'err', 'fresh', 'menu', 'child', 'draft', 'bs', 'userStash', 'shell', 'dead', 'titleDone', 'titleStale', 'close'];
+const order = KEYS2;
 setTabs(A, order.map((k) => tab(k, [a[k]])));
 setTabs(B, [tab('b-done', [b.done])]);
 clearWrites();
@@ -300,15 +326,17 @@ await wait(300);
   check('pause: draft pane gets exactly one Ctrl+S', (wa.get(a.draft.ptyId) ?? '').split('\x13').length === 2);
   const draftWrites = A.writes.filter(([id]) => id === a.draft.ptyId).map(([, d]) => d);
   check('pause: draft pane writes are Ctrl+S, then the word, then Enter', JSON.stringify(draftWrites) === JSON.stringify(['\x13', 'pause', '\r']), draftWrites);
-  for (const k of ['perm', 'quest', 'err', 'fresh', 'menu', 'child', 'userStash', 'shell', 'dead', 'titleStale']) {
+  for (const k of ['perm', 'quest', 'err', 'fresh', 'menu', 'child', 'userStash', 'shell', 'dead', 'titleStale', 'qDone', 'qIdle', 'qFresh', 'qTitle', 'qDraft']) {
     check(`pause: ${k} pane gets nothing`, !wa.has(a[k].ptyId), wa.get(a[k].ptyId));
   }
   check('pause: no Ctrl+S anywhere but the draft pane', A.writes.filter(([id, d]) => d.includes('\x13') && id !== a.draft.ptyId).length === 0);
   check('pause: other window\'s pane gets "pause\\r"', bytesByPty(B).get(b.done.ptyId) === 'pause\r', bytesByPty(B).get(b.done.ptyId));
   check('pause: nothing else written anywhere', wa.size === 6 && B.writes.length === 2, [[...wa.keys()], B.writes]);
   const text = resultText(A);
-  check('pause: summary splits at-the-prompt from queued and names skipped tabs',
-    text === 'Paused 7 Claude sessions (6 at the prompt, 1 queued behind a running turn); skipped 8: perm (waiting on you), quest (waiting on you), err (state unclear), 5 more', text);
+  check('pause: summary splits at-the-prompt from queued, counts quiet sessions and names the other skipped tabs',
+    text === 'Paused 7 Claude sessions (6 at the prompt, 1 queued behind a running turn); 6 Claude sessions with nothing running left alone; skipped 7: perm (waiting on you), quest (waiting on you), fresh (new session), 4 more', text);
+  check('pause: quiet sessions are counted in the summary and never named',
+    /; 6 Claude sessions with nothing running left alone;/.test(text) && !/\b(err|qDone|qIdle|qFresh|qTitle|qDraft)\b/.test(text) && !/nothing running\)/.test(text), text);
   check('pause: after a press that sent, neither window\'s button turns to Resume all',
     btnOf(B).textContent === '⏸' && resultText(B) === null && !btnOf(B).classList.contains('resume') && !btnOf(A).classList.contains('resume'), [btnOf(A).textContent, btnOf(B).textContent, resultText(B)]);
   check('pause: main\'s run requests carry nothing but the request id (no action to flip)',
@@ -316,7 +344,10 @@ await wait(300);
   const log = A.logs.find((l) => l.includes('[PAUSE-ALL] run'));
   const reasonOf = (k) => `"pane":"${a[k].id}","reason":"`;
   const why = (k) => { const i = log?.indexOf(reasonOf(k)) ?? -1; return i < 0 ? null : log.slice(i + reasonOf(k).length).split('"')[0]; };
-  const expected = { perm: 'waiting', quest: 'waiting', child: 'waiting', err: 'unclear', fresh: 'fresh', menu: 'menu', userStash: 'stashed', shell: 'not-claude', dead: 'no-shell', titleStale: 'unclear' };
+  const expected = {
+    perm: 'waiting', quest: 'waiting', child: 'waiting', fresh: 'fresh', menu: 'menu', userStash: 'stashed', shell: 'not-claude', dead: 'no-shell', titleStale: 'unclear',
+    err: 'quiet', qDone: 'quiet', qIdle: 'quiet', qFresh: 'quiet', qTitle: 'quiet', qDraft: 'quiet',
+  };
   for (const [k, r] of Object.entries(expected)) check(`pause: rlog gives ${k} the reason ${r}`, why(k) === r, why(k));
   check('pause: rlog carries no typed text', !A.logs.some((l) => l.includes('PAUSE-ALL') && /hello|abcdef|\/model/.test(l)));
   check('pause: press summary logged by main', mainLogs.some(([m, d]) => m === '[PAUSE-ALL] press' && d.answered === 2 && d.sent === 7), mainLogs.map(([m]) => m));
@@ -361,7 +392,7 @@ await wait(300);
 {
   const p = await makePane(A);
   const q = await makePane(A);
-  doneAfterTurn(A, p); doneAfterTurn(A, q);
+  parkedAfterTurn(A, p); parkedAfterTurn(A, q);
   await wait(3);
   type(p, 'note');
   setTabs(A, [tab('p', [p]), tab('q', [q])]);
@@ -370,7 +401,7 @@ await wait(300);
   await press(A);
   check('stash cycle: draft pane paused with Ctrl+S', bytesByPty(A).get(p.ptyId) === '\x13pause\r', bytesByPty(A).get(p.ptyId));
   // Claude quits and a new one starts in q (same shell).
-  report(A, q, 'state=clear'); report(A, q, ROOT('working')); report(A, q, ROOT('done'));
+  report(A, q, 'state=clear'); report(A, q, ROOT('working')); report(A, q, ROOT('done')); report(A, q, BG_CHILD);
   // The user sends the restored draft, then starts another.
   type(p, '\r'); type(p, 'next');
   clearWrites();
@@ -384,7 +415,7 @@ await wait(300);
   keybindings = KEYS_REBOUND;
   const d = await makePane(A);
   const c = await makePane(A);
-  doneAfterTurn(A, d); doneAfterTurn(A, c);
+  parkedAfterTurn(A, d); parkedAfterTurn(A, c);
   type(d, 'half a thought');
   setTabs(A, [tab('rb-draft', [d]), tab('rb-clean', [c])]);
   clearWrites();
@@ -402,6 +433,24 @@ await wait(300);
   const f = await makePane(A);
   title(s, 'zsh');
   report(A, f, ROOT('idle'));
+  setTabs(A, [tab('sh', [s])]);
+  clearWrites();
+  await press(A);
+  check('nothing ready: a plain shell alone, no writes and no Claude session found', A.writes.length === 0 && B.writes.length === 0 && resultText(A) === 'Nothing paused; no Claude session found', resultText(A));
+  // An idle session that never had a turn and has nothing running is quiet.
+  setTabs(A, [tab('sh', [s]), tab('new', [f])]);
+  clearWrites();
+  await press(A);
+  check('nothing running: no writes', A.writes.length === 0 && B.writes.length === 0);
+  check('nothing running: says so, counting the quiet session without naming it', resultText(A) === 'Nothing running to pause; 1 Claude session with nothing running left alone', resultText(A));
+  const g = await makePane(A);
+  doneAfterTurn(A, g);
+  setTabs(A, [tab('sh', [s]), tab('new', [f]), tab('quiet2', [g])]);
+  clearWrites();
+  await press(A);
+  check('nothing running: several quiet sessions are counted, plural', resultText(A) === 'Nothing running to pause; 2 Claude sessions with nothing running left alone', resultText(A));
+  // The same idle session with a background task going is the 'fresh' skip, named.
+  report(A, f, BG_CHILD);
   setTabs(A, [tab('sh', [s]), tab('new', [f])]);
   clearWrites();
   await press(A);
@@ -490,7 +539,7 @@ await wait(300);
 
   // Pause all, with a draft: asked during the stash's wait.
   const p1 = await makePane(A);
-  doneAfterTurn(A, p1);
+  parkedAfterTurn(A, p1);
   type(p1, 'another draft');
   setTabs(A, [tab('gate3', [p1])]);
   setTabs(B, []);
@@ -503,7 +552,7 @@ await wait(300);
 
   // Pause all, no draft: asked between `pause` and its Enter.
   const p2 = await makePane(A);
-  doneAfterTurn(A, p2);
+  parkedAfterTurn(A, p2);
   setTabs(A, [tab('gate4', [p2])]);
   clearWrites();
   askOn(A, p2, 'pause');
@@ -517,18 +566,54 @@ await wait(300);
 // ── 10. Title path: a stale stop flag is cleared by user input, restored by the next Stop hook ──
 {
   const p = await makePane(A);
-  title(p, '◐ Working'); stopHook(A, p); title(p, '✳ Claude Code');
-  await wait(3);
+  titleStop(A, p, 1);
+  await wait(TITLE_SETTLE_MS);
   type(p, 'y'); type(p, '\x7f');
   setTabs(A, [tab('tp', [p])]);
   clearWrites();
   await press(A);
   check('title path: typed since the stop is skipped as unclear', !bytesByPty(A).has(p.ptyId) && resultText(A)?.includes('tp (state unclear)'), resultText(A));
   await wait(3);
-  title(p, '◐ Working'); stopHook(A, p); title(p, '✳ Claude Code');
+  titleStop(A, p, 1);
+  await wait(TITLE_SETTLE_MS);
   clearWrites();
   await press(A);
   check('title path: after a new Stop hook it gets "pause\\r"', bytesByPty(A).get(p.ptyId) === 'pause\r', bytesByPty(A).get(p.ptyId));
+  // Before the ✳ has settled the verdict is not applied yet: nothing is known to run.
+  titleStop(A, p, 1);
+  clearWrites();
+  await press(A);
+  check('title path: a Stop verdict not yet settled (✳ held under 1.5 s) leaves the pane quiet', !bytesByPty(A).has(p.ptyId) && /^Nothing running to pause; 1 Claude session with nothing running/.test(resultText(A) ?? ''), [bytesByPty(A).get(p.ptyId), resultText(A)]);
+}
+
+// ── 10b. What counts as running: a timer, a working root, a subagent ──
+{
+  const tTimer = await makePane(A); // title path, stopped with only a timer left (tasks=0 crons=1)
+  titleStop(A, tTimer, 0, 1);
+  const tWork = await makePane(A); // title path, mid-turn
+  title(tWork, '◐ Working');
+  const tQuiet = await makePane(A); // title path, stopped, tasks=0 crons=0
+  titleStop(A, tQuiet, 0, 0);
+  const rTimer = await makePane(A); // 7501, done, and the Stop hook says a timer is left
+  doneAfterTurn(A, rTimer);
+  stopHook(A, rTimer, 0, 1);
+  const rSub = await makePane(A); // 7501, root still working after the turn ended because a subagent runs
+  report(A, rSub, ROOT('working')); report(A, rSub, BG_CHILD);
+  await wait(TITLE_SETTLE_MS);
+  setTabs(A, [tab('t-timer', [tTimer]), tab('t-work', [tWork]), tab('t-quiet', [tQuiet]), tab('r-timer', [rTimer]), tab('r-sub', [rSub])]);
+  clearWrites();
+  await press(A);
+  const wa = bytesByPty(A);
+  check('running: title path stopped with only a timer left gets "pause\\r"', wa.get(tTimer.ptyId) === 'pause\r', wa.get(tTimer.ptyId));
+  check('running: title path mid-turn gets "pause\\r"', wa.get(tWork.ptyId) === 'pause\r', wa.get(tWork.ptyId));
+  check('running: title path stopped with tasks=0 crons=0 gets nothing', !wa.has(tQuiet.ptyId), wa.get(tQuiet.ptyId));
+  check('running: 7501 done with only a timer left (Stop hook crons=1) gets "pause\\r"', wa.get(rTimer.ptyId) === 'pause\r', wa.get(rTimer.ptyId));
+  check('running: 7501 root still working with a subagent running gets "pause\\r"', wa.get(rSub.ptyId) === 'pause\r', wa.get(rSub.ptyId));
+  check('running: nothing else written', wa.size === 4 && B.writes.length === 0, [...wa.keys()]);
+  check('running: summary counts the two at the prompt, the two queued and the quiet one', resultText(A) === 'Paused 4 Claude sessions (2 at the prompt, 2 queued behind a running turn); 1 Claude session with nothing running left alone', resultText(A));
+  // `turnEnded` (a Stop over a working root, the ring) needs main's transcript feed attached; the
+  // check has none, so that route is not driven here. Such a pane reads `parked` or `working`
+  // either way, and both get the word.
 }
 
 // ── 11. Stash-key verdicts on keybindings.json text ──
