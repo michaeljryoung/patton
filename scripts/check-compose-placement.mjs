@@ -1547,6 +1547,60 @@ const newPane = async () => {
     check('9.14h a box send queued behind Patton\'s line: its Esc arms the watch',
       ofTag('restore watch').length === 1, { w: ofTag('restore watch'), s: strings() });
     p.dispose();
+
+    // i. A box send queued behind a Patton line that stashed a draft: Claude
+    //    Code puts the stash back into its bar after that line's Enter (at
+    //    D18's measured restore timing, 70 ms), so the box send, typed then,
+    //    would be joined onto the draft. It waits for the draft, then treats
+    //    it as text Patton didn't send: never typed after it.
+    const stashThenSend = async (p, { restoreAt = 70, rows = ['my draft'], working = true, also } = {}) => {
+      await drawBar(p, ['my draft']);
+      writes.length = 0; logs.length = 0;
+      const g = p.typePauseWord({ stash: true });
+      await frames(); // Ctrl+S went
+      await drawBar(p, ['']); // Claude set the draft aside
+      await sendFromBox(p, S1); // queued behind the word
+      if (also) await also(p);
+      advance(150); await frames(); // the word written
+      advance(10); await frames(); // its Enter
+      if (working) state(p, 'working');
+      if (restoreAt !== null) { advance(restoreAt); await drawBar(p, rows); }
+      for (let i = 0; i < 4; i++) { advance(10); await frames(); }
+      if (restoreAt === null) { for (let i = 0; i < 12; i++) { advance(100); await frames(); } }
+      return g;
+    };
+    p = await newPane();
+    res2 = await stashThenSend(p);
+    check('9.14i a box send queued behind a stashed Patton line, the draft back while Claude works: nothing of the send typed',
+      strings().join('|') === '\x13|pause|\r' && res2 === null, { s: strings(), res2 });
+    check('9.14i ...the send is back in the box and the note says Claude\'s bar has text',
+      p.editorInput.getValue() === S1 && noteShown(p), { v: p.editorInput.getValue(), note: noteShown(p) });
+    p.dispose();
+    p = await newPane();
+    await stashThenSend(p, { working: false });
+    check('9.14i the draft back on one row, Claude not yet working: pulled into the box before the send, Ctrl+C',
+      strings().join('|') === '\x13|pause|\r|\x03' && p.editorInput.getValue() === `my draft\n${S1}` && !noteShown(p),
+      { s: strings(), v: p.editorInput.getValue() });
+    p.dispose();
+    p = await newPane();
+    await stashThenSend(p, { working: false, rows: ['my draft over', 'two rows'] });
+    check('9.14i the draft back over two rows: not pulled in, the send in the box, the note shows',
+      strings().join('|') === '\x13|pause|\r' && p.editorInput.getValue() === S1 && noteShown(p),
+      { s: strings(), v: p.editorInput.getValue() });
+    p.dispose();
+    // Two box sends queued in the same wait: both held, in queue order after the draft.
+    p = await newPane();
+    await stashThenSend(p, { working: false, also: (q) => sendFromBox(q, 'Second one.') });
+    check('9.14i two box sends queued in the wait: neither typed, both in the box after the draft, in order',
+      strings().join('|') === '\x13|pause|\r|\x03' && p.editorInput.getValue() === `my draft\n${S1}\nSecond one.`,
+      { s: strings(), v: p.editorInput.getValue() });
+    p.dispose();
+    p = await newPane();
+    await stashThenSend(p, { restoreAt: null });
+    check('9.14i no draft comes back within the wait: the send goes, after it',
+      strings().join('|') === `\x13|pause|\r|${S1}|\r` && ofTag('stash wait')[0]?.back === false,
+      { s: strings(), wait: ofTag('stash wait') });
+    p.dispose();
   }
 }
 

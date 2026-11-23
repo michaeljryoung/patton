@@ -480,6 +480,17 @@ export class Pane {
   // Patton wrote Ctrl+S (a stash) here and no line was submitted since:
   // Claude Code holds that draft, and a second Ctrl+S would overwrite it.
   private pattonStashOpen = false;
+  // D18: a Patton line that stashed a draft has had its Enter: Claude Code
+  // puts the draft back into its bar after that submit, so a box send queued
+  // behind it waits for the draft (or the deadline) before typing anything.
+  // `writeSeq`: the terminal's writes up to the Enter (a reading from before
+  // it is stale); `line`: what Patton typed (still on a stale bar).
+  private stashBack: { deadline: number; writeSeq: number; line: string } | null = null;
+  // Box sends queued up to this place when the draft came back are held too
+  // (typed next, they would join it); what came back to the box, in queue
+  // order and after the draft, so each later one goes after the last.
+  private stashBackHeldSeq = 0;
+  private stashReturned: string | null = null;
   // D18: the watch wrote its clear keys, so what Claude's bar still shows (the
   // message, now in the box) is going; no draft until the bar reads empty.
   private restoreClearPending = false;
@@ -1173,6 +1184,13 @@ export class Pane {
   private static readonly RESTORING_NOW = 'Your last message is being put back into the box';
   private static readonly STASH_HELD = 'A draft is already set aside in Claude';
   private static readonly BAR_KEPT = 'Claude\'s input still has text Patton couldn\'t take back into the box';
+  private static readonly STASH_BACK = 'Claude put a stashed draft back into its input';
+  /** How long a box send queued behind a stashed Patton line waits for
+   *  Claude Code to put the draft back. The stash's own restore is
+   *  unmeasured; D18's probes put Claude's restore after an Esc at 60-80 ms,
+   *  and its restore after a submit doesn't happen in every case (S47). */
+  private static readonly STASH_BACK_WAIT_MS = 1_000;
+  private static readonly STASH_BACK_POLL_MS = 20;
 
   /** Why Ctrl+S may not go now, else null: D18 is putting the box's message
    *  back (the stash would take it), the watch left text in Claude's bar (its
@@ -2277,8 +2295,18 @@ export class Pane {
         if (!held || typed === true || this.disposed || sent.trim() === '') return;
         if (this.lastBoxSend?.seq === boxSeq) this.lastBoxSend = null;
         const existing = this.editorInput.getValue();
-        this.editorInput.setValue(existing.trim() === '' ? sent : `${sent}\n${existing}`);
-        rlog('info', '[COMPOSE] send returned to the box', { pane: this.id, why: 'blocked' });
+        const lead = held === Pane.STASH_BACK ? this.stashReturned : null;
+        if (lead && existing.startsWith(lead)) {
+          // After what the same stash's wait already gave back: queue order.
+          this.stashReturned = `${lead}\n${sent}`;
+          this.editorInput.setValue(`${this.stashReturned}${existing.slice(lead.length)}`);
+        } else {
+          this.editorInput.setValue(existing.trim() === '' ? sent : `${sent}\n${existing}`);
+          if (held === Pane.STASH_BACK) this.stashReturned = sent;
+        }
+        rlog('info', '[COMPOSE] send returned to the box', {
+          pane: this.id, why: held === Pane.STASH_BACK ? 'stash-back' : 'blocked',
+        });
       },
     });
     boxSeq = this.submitSeq;
@@ -2367,6 +2395,27 @@ export class Pane {
     const closed = 'The session closed before the message was sent.';
     this.submitQueue = this.submitQueue.then(() => new Promise<void>((resolve) => {
       if (this.ptyId === null) { opts.onSettled?.(closed); resolve(); return; }
+      // D18: the box's send queued behind a Patton line that stashed a draft
+      // waits for Claude Code to put that draft back; typed before it, the
+      // send would be joined onto it. Back, it is text Patton didn't send:
+      // the send returns to the box and the draft follows the D18 rule.
+      if (opts.own === true && seq <= this.stashBackHeldSeq) {
+        rlog('info', '[COMPOSE] submit held at write', { pane: this.id, why: Pane.STASH_BACK });
+        opts.onSettled?.(Pane.STASH_BACK, false, false);
+        resolve();
+        return;
+      }
+      if (opts.own === true && this.stashBack !== null) {
+        this.awaitStashBack(Date.now(), (back) => {
+          if (back === null) { submitLine(resolve); return; }
+          this.stashBackHeldSeq = this.submitSeq;
+          this.stashReturned = null;
+          opts.onSettled?.(Pane.STASH_BACK, false, false);
+          this.takeStashBack(back);
+          resolve();
+        });
+        return;
+      }
       if (opts.stashFirst) {
         // The stash goes through the gate too (Gotcha S56), and never while
         // D18 puts the box's message back (it would stash that message),
@@ -2463,6 +2512,9 @@ export class Pane {
       own();
       if (writeOrigin) window.patton.pty.write(this.ptyId, '\r', writeOrigin);
       else window.patton.pty.write(this.ptyId, '\r');
+      if (stashed) {
+        this.stashBack = { deadline: Date.now() + Pane.STASH_BACK_WAIT_MS, writeSeq: this.composeWriteSeq, line: command };
+      }
       broadcast?.('\r');
       opts.onEnterSent?.();
       opts.onSettled?.(null);
@@ -3892,6 +3944,58 @@ export class Pane {
     rlog('info', '[COMPOSE] restored', {
       pane: this.id, chars: plan.text.length, source: plan.source, ...(overAgents ? { rootWorking: true } : {}),
     });
+  }
+
+  /** D18: wait until Claude Code has put back the draft a Patton line
+   *  stashed (its bar reads text, on a write since that line's Enter, and not
+   *  the line itself), or the wait's deadline. `done(null)`: nothing came
+   *  back, the send may go; else the bar's reading. */
+  private awaitStashBack(startedAt: number, done: (back: Extract<ReturnType<typeof readClaudeBarInput>, { kind: 'text' }> | null) => void): void {
+    const wait = this.stashBack;
+    if (wait === null || this.disposed || this.ptyId === null || Date.now() > wait.deadline) {
+      if (wait !== null) {
+        this.stashBack = null;
+        rlog('info', '[COMPOSE] stash wait', { pane: this.id, waitedMs: Date.now() - startedAt, back: false });
+      }
+      done(null);
+      return;
+    }
+    if (this.composeWriteSeq > wait.writeSeq) {
+      const input = readClaudeBarInput(this.terminalView.terminal.buffer.active);
+      const flat = (t: string): string => t.replace(/\s/g, '');
+      if (input.kind === 'text' && flat(input.rows.join('')) !== flat(wait.line)) {
+        this.stashBack = null;
+        rlog('info', '[COMPOSE] stash wait', { pane: this.id, waitedMs: Date.now() - startedAt, back: true });
+        done(input);
+        return;
+      }
+    }
+    setTimeout(() => this.awaitStashBack(startedAt, done), Pane.STASH_BACK_POLL_MS);
+  }
+
+  /** D18 for the draft Claude put back from Patton's stash, text Patton
+   *  didn't send: pulled into the box, before the send that came back there,
+   *  only when it reads whole (one row, no placeholders) and Claude neither
+   *  works nor asks (Ctrl+C then only empties its bar); else Claude's bar
+   *  keeps it and the note says so. Never anything typed after it. */
+  private takeStashBack(back: Extract<ReturnType<typeof readClaudeBarInput>, { kind: 'text' }>): void {
+    if (this.ptyId === null || this.disposed) return;
+    const plan = planEscRestore('', back);
+    if ('skip' in plan || this.claudeWorking || this.claudeAsksNow()) {
+      this.setBarTextNote(true);
+      rlog('info', '[COMPOSE] restore skipped', {
+        pane: this.id, reason: 'skip' in plan ? plan.skip : this.claudeAsksNow() ? 'blocked' : 'still-working', source: 'stash',
+      });
+      return;
+    }
+    window.patton.pty.write(this.ptyId, plan.keys, 'patton');
+    this.restoreClearPending = true;
+    this.noteOwnTyping();
+    rlog('info', '[COMPOSE] bar cleared', { pane: this.id, keys: describeClearKeys(plan.keys) });
+    const existing = this.editorInput.getValue();
+    this.editorInput.setValue(existing.trim() === '' ? plan.text : `${plan.text}\n${existing}`);
+    this.stashReturned = this.stashReturned ? `${plan.text}\n${this.stashReturned}` : plan.text;
+    rlog('info', '[COMPOSE] restored', { pane: this.id, chars: plan.text.length, source: 'stash' });
   }
 
   /** D18's note in the box: Claude's bar holds text that goes first. */
