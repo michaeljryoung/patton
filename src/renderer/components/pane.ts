@@ -1376,10 +1376,15 @@ export class Pane {
    *  (services/pause-all.ts pauseSkipReason), given main's tracker state. */
   pauseInput(input: UnsentInputState | null): PauseInput {
     const facts = this.inputFacts(input);
+    // Title path: a Stop verdict with work behind it parks the pane only once
+    // the ✳ has settled (1.5 s). Pause all doesn't wait: the work runs now.
+    const pending = this.pendingVerdict;
+    const activity = this.currentActivity();
+    const pendingWork = pending !== null && (pending.tasks > 0 || pending.crons > 0);
     return {
       live: this.ptyId !== null && !this.ptyExited,
       claude: this.claudeActive,
-      activity: this.currentActivity(),
+      activity: activity === 'waiting' && pendingWork ? 'parked' : activity,
       source: this.statusReporting ? '7501' : 'title',
       root: this.statusReporting ? this.programStatus.root?.state ?? null : null,
       working: this.claudeWorking,

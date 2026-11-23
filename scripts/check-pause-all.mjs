@@ -579,11 +579,17 @@ await wait(300);
   clearWrites();
   await press(A);
   check('title path: after a new Stop hook it gets "pause\\r"', bytesByPty(A).get(p.ptyId) === 'pause\r', bytesByPty(A).get(p.ptyId));
-  // Before the ✳ has settled the verdict is not applied yet: nothing is known to run.
+  // Before the ✳ has settled the verdict is only stored, but it already says
+  // work is running: Pause all counts it (the dot still waits out the settle).
   titleStop(A, p, 1);
   clearWrites();
   await press(A);
-  check('title path: a Stop verdict not yet settled (✳ held under 1.5 s) leaves the pane quiet', !bytesByPty(A).has(p.ptyId) && /^Nothing running to pause; 1 Claude session with nothing running/.test(resultText(A) ?? ''), [bytesByPty(A).get(p.ptyId), resultText(A)]);
+  check('title path: a Stop verdict with work, not yet settled (✳ held under 1.5 s), still gets "pause\\r"', bytesByPty(A).get(p.ptyId) === 'pause\r', [bytesByPty(A).get(p.ptyId), resultText(A)]);
+  await wait(TITLE_SETTLE_MS);
+  titleStop(A, p, 0, 0);
+  clearWrites();
+  await press(A);
+  check('title path: a Stop verdict with nothing running, not yet settled, leaves the pane quiet', !bytesByPty(A).has(p.ptyId) && /^Nothing running to pause; 1 Claude session with nothing running/.test(resultText(A) ?? ''), [bytesByPty(A).get(p.ptyId), resultText(A)]);
 }
 
 // ── 10b. What counts as running: a timer, a working root, a subagent ──
