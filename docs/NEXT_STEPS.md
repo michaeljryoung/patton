@@ -133,6 +133,12 @@ Last updated: 2026-11-22 (Session 60, v1.34.0 to v1.36.0 released, not installed
 
 CLAUDE.md's `## Next Steps` section points here; this is the canonical list. Items leave only via `[x] DONE — Session N`, `[~] SUPERSEDED — <pointer>`, or `[-] DROPPED: <reason>`. Marked items linger 10 checkpoints, then sweep to `docs/session-archive.md`.
 
+### 2026-11-23 — release waiting for his OK (S61)
+
+`integrate/s61` (`b989d65`, on origin as a branch) holds everything he asked for on 22 Nov after v1.37.0, each change built, reviewed by a fresh agent and fixed: the Word-document review tab, group shades B, clean copy, the D18 Esc restore, the turn-end ring while a subagent runs, the long-draft fixes, the bookmark open dot removed, checkpoint and Pause all gated on `blocked`. Full suite 54/54, packaged review-tab check 76 ok. Preview page for his OK: https://claude.ai/code/artifact/ee7b5553-4a3f-4f2a-ac33-189f8f22c6b7.
+- On his OK: `git merge --ff-only integrate/s61` on main (no post-commit), push (a minor release), check the cask against the DMG, remove the worktree.
+- Then install the new tag with Patton quit, and go through each change with him live (nothing since v1.33.0 has been seen in his app). Known trade-off: an Esc while a background subagent keeps Claude busy now leaves the message in Claude's bar with the box's note, rather than risk a Ctrl+C on a working Claude.
+
 ### 2026-11-22 — before the install (S61): his picks are in, v1.36.1 released
 
 He asked to try things before they ship ("you didn't even test the notification charm with me"). On the try-out page https://claude.ai/code/artifact/f74647ea-0491-4524-b765-4046100061bf (the sounds from `notification-sound.ts`, the fill shades) he picked "low marimba" and "typing: B". Released as v1.36.1 (`173d0df`, run 45048755479 green, cask `4ab997c4…` equals the DMG's digest): the marimba is the default (`DEFAULTS.NOTIFICATION_SOUND_NAME`), Settings names it Low marimba, the typing box has `--compose-fill` (#fefbea light, #1f1d14 dark). Full suite 45/45 before release.
