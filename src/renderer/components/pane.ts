@@ -207,17 +207,15 @@ export class Pane {
   // running in this pane, so image pastes go to it as Ctrl+V (it reads the
   // clipboard itself) instead of as a file path.
   private claudeActive = false;
-  /** The last title that arrived while Claude ran here (or carried its glyph),
-   *  so `shownTitle` can tell it from the shell's own once Claude has left:
-   *  the pane's `title` itself is never rewritten when Claude leaves. */
-  private claudeTitle: string | null = null;
-  /** The title when the shell last showed its prompt (OSC 133): one that
-   *  differs when Claude starts was set after it, so Claude may have set it
-   *  before its first report (`noteClaudeStarted`). */
-  private titleAtPrompt: string | null = null;
-  /** The shell has shown a prompt since Claude last started: a title that
-   *  arrives now, with Claude not running, is the shell's or a program's own. */
-  private promptSinceClaude = false;
+  /** A title has arrived since the shell's last OSC 133 prompt (or since the
+   *  pane began, where the shell sends none): the command running now set it.
+   *  `shownTitle` reads "Terminal" once the prompt returns without one. */
+  private titleSincePrompt = false;
+  /** The current title (`title`) was Claude's: it arrived while Claude was
+   *  active, carried its glyph, or was set before Claude's first report
+   *  (Claude Code sets a start-up title ahead of it). Only the title that is
+   *  current counts: the next one to arrive replaces the verdict. */
+  private titleSetWhileClaude = false;
   /** What the session bar shows for this pane (docs/session-bar.md D3–D6). */
   readonly sessionBarModel = new SessionBarModel();
   /** The pty main's transcript feed follows for this pane, null when none. */
@@ -1365,15 +1363,23 @@ export class Pane {
    *  `wake` command's, never Claude's. */
   private noteClaudeStarted(): void {
     this.claudeSessionAtMs = Date.now();
-    this.promptSinceClaude = false;
-    this.claudeTitle = this.title && this.title !== this.titleAtPrompt && this.title !== WAKE_TITLE ? this.title : null;
+    // The title that came since the last prompt may be Claude's start-up one,
+    // set before its first report; it can't be told from a shell's, so it
+    // stays hidden (a title the shell sets next shows again).
+    if (this.titleSincePrompt && this.title !== WAKE_TITLE) this.titleSetWhileClaude = true;
   }
 
   /** The title as the tab, the hover card and the palette show it, whatever
    *  Claude left behind (`paneShownTitle`; Michael, 23 Nov 2026: a terminal
    *  tab "should name terminal not the thing prompt is about"). */
   get shownTitle(): string {
-    return paneShownTitle(this.title, this.claudeActive, this.claudeTitle);
+    return paneShownTitle({
+      title: this.title,
+      runsClaude: this.claudeActive,
+      shellIntegrated: this.shellIntegrated,
+      titleSincePrompt: this.titleSincePrompt,
+      titleSetWhileClaude: this.titleSetWhileClaude,
+    });
   }
 
   /** The Claude session here may have changed: restart its clock. */
@@ -1972,8 +1978,8 @@ export class Pane {
     // The old shell's window title is stale for the new one (and a WAKE title
     // would keep the yellow flag): back to the default until it sets its own.
     this.title = SHELL_TITLE;
-    this.claudeTitle = null;
-    this.titleAtPrompt = this.title;
+    this.titleSincePrompt = false;
+    this.titleSetWhileClaude = false;
     this.callbacks.onTitleChange(this);
     this.trackAutoFlag(SHELL_TITLE);
     return { oldId, newId };
@@ -2116,11 +2122,11 @@ export class Pane {
       this.terminalView.onTitleChange((title) => {
         if (title) {
           this.title = title;
-          if (this.claudeActive || hasClaudeGlyph(title)) {
-            if (title !== WAKE_TITLE) this.claudeTitle = title;
-          } else if (this.promptSinceClaude) {
-            this.claudeTitle = null; // the shell's own, after its prompt
-          }
+          // Whose title this is, decided from the state as it stands (the
+          // title path's trackClaudeState runs after this): with Claude's own
+          // reports its being active says so; without them only its glyph does.
+          this.titleSincePrompt = true;
+          this.titleSetWhileClaude = this.statusReporting ? this.claudeActive : hasClaudeGlyph(title);
           // Tab title first, so a "needs you" alert names the tab as it is now.
           this.callbacks.onTitleChange(this);
           this.trackAutoFlag(title);
@@ -2334,9 +2340,12 @@ export class Pane {
         // more — even if it quit mid-work and left a ◐ title behind. Without
         // this, the next `claude` launch's first ✳ would read as a stop.
         if (state === 'prompt') {
-          this.titleAtPrompt = this.title;
-          this.promptSinceClaude = true;
+          // The command that set the title has ended: the tab may read
+          // "Terminal" now, and no title arrives to tell it so.
+          const shownBefore = this.shownTitle;
+          this.titleSincePrompt = false;
           this.claudeGone('shell-prompt');
+          if (this.shownTitle !== shownBefore) this.callbacks.onTitleChange(this);
         }
       }),
     );
@@ -4248,9 +4257,10 @@ export class Pane {
 
   setProcessName(name: string): void {
     this.title = name || SHELL_TITLE;
-    // A name given from outside (Reopen Closed) is the shell's baseline, not
-    // a title Claude set.
-    this.titleAtPrompt = this.title;
+    // A name given from outside (Reopen Closed) is a program's title, not one
+    // Claude set; the shell's first prompt retires it.
+    this.titleSincePrompt = true;
+    this.titleSetWhileClaude = false;
     this.callbacks.onTitleChange(this);
   }
 
@@ -4368,7 +4378,7 @@ export class Pane {
       // Create a floating overlay to indicate dragging
       overlay = document.createElement('div');
       overlay.className = 'pane-drag-overlay';
-      overlay.textContent = this.title;
+      overlay.textContent = this.shownTitle;
       overlay.style.left = `${e.clientX - 40}px`;
       overlay.style.top = `${e.clientY - 16}px`;
       document.body.appendChild(overlay);

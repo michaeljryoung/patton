@@ -435,7 +435,7 @@ export class TabManager {
    *  the automatic one.
    *  The tabs update when main broadcasts the change back. */
   renameProject(id: string, name: string): void {
-    const project = this.tabs.find(t => t.id === id)?.project;
+    const project = this.tabs.find(t => t.id === id)?.menuProject;
     if (!project) return;
     window.patton.projects.setName(projectNameKey(project), name).catch(console.error);
   }
@@ -1575,7 +1575,7 @@ export class TabManager {
         title: t.title,
         displayTitle: t.displayTitle,
         autoTitle: t.autoTitle,
-        project: t.project ? projectRenameFields(t.project) : null,
+        project: t.menuProject ? projectRenameFields(t.menuProject) : null,
         namedForProject: t.namedForProject,
         active: t.id === this.activeTab?.id,
         awaitingInput: t.awaitingInput,
