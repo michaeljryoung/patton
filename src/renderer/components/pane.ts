@@ -11,6 +11,7 @@ import { createOsc8LinkHandler } from '../services/osc8-links';
 import { rlog } from '../services/renderer-logger';
 import { WAKE_TITLE } from '../services/board-wake';
 import { hasClaudeGlyph } from '../services/sessions';
+import { paneShownTitle, SHELL_TITLE } from '../services/tab-name';
 import { announce } from '../services/announcer';
 import { stripPasteControls } from '../services/paste-sanitize';
 import { dropTarget, dropText, isFileDrag } from '../services/file-drop';
@@ -206,12 +207,17 @@ export class Pane {
   // running in this pane, so image pastes go to it as Ctrl+V (it reads the
   // clipboard itself) instead of as a file path.
   private claudeActive = false;
-  /** When the title last changed, and when Claude last started here: a title
-   *  set since Claude started (less CLAUDE_TITLE_LEAD_MS, for a title Claude
-   *  sets before its first report) is Claude's (dropClaudeTitle). */
-  private titleSetAtMs = 0;
-  private claudeStartedAtMs = 0;
-  private static readonly CLAUDE_TITLE_LEAD_MS = 2000;
+  /** The last title that arrived while Claude ran here (or carried its glyph),
+   *  so `shownTitle` can tell it from the shell's own once Claude has left:
+   *  the pane's `title` itself is never rewritten when Claude leaves. */
+  private claudeTitle: string | null = null;
+  /** The title when the shell last showed its prompt (OSC 133): one that
+   *  differs when Claude starts was set after it, so Claude may have set it
+   *  before its first report (`noteClaudeStarted`). */
+  private titleAtPrompt: string | null = null;
+  /** The shell has shown a prompt since Claude last started: a title that
+   *  arrives now, with Claude not running, is the shell's or a program's own. */
+  private promptSinceClaude = false;
   /** What the session bar shows for this pane (docs/session-bar.md D3–D6). */
   readonly sessionBarModel = new SessionBarModel();
   /** The pty main's transcript feed follows for this pane, null when none. */
@@ -609,7 +615,7 @@ export class Pane {
     // integration off, never sends the OSC 133 prompt that would clear this).
     const active = Pane.CLAUDE_WORKING.test(title) || Pane.CLAUDE_STOPPED.test(title);
     if (this.claudeActive && !active) this.newClaudeSession();
-    if (!this.claudeActive && active) this.claudeSessionAtMs = this.claudeStartedAtMs = Date.now();
+    if (!this.claudeActive && active) this.noteClaudeStarted();
     this.claudeActive = active;
     this.syncComposeFirst('title');
     try {
@@ -768,7 +774,7 @@ export class Pane {
     // Ctrl+V, compose-first, /checkpoint); another program's still drive the
     // dot and ring below.
     if (this.claudeActive && !isClaude) this.newClaudeSession();
-    if (!this.claudeActive && isClaude) this.claudeSessionAtMs = this.claudeStartedAtMs = Date.now();
+    if (!this.claudeActive && isClaude) this.noteClaudeStarted();
     this.claudeActive = isClaude;
     if (isClaude) this.feedWatch.claudeReport();
     this.claudeBlocked = rootState === 'blocked';
@@ -850,7 +856,6 @@ export class Pane {
     rlog('info', '[7501] state', { pane: this.id, root: 'clear', kind: null, children: 0, reason });
     this.claudeWorking = false;
     this.claudeActive = false;
-    if (claudeLeft) this.dropClaudeTitle();
     this.cancelClaudeStop();
     this.setParked(null);
     this.syncComposeFirst('7501-clear');
@@ -1336,21 +1341,21 @@ export class Pane {
     };
   }
 
-  /** Claude has left the pane (7501 `clear`, or the shell's prompt back). A
-   *  title it set would go on naming the shell after Claude's last topic (on
-   *  the 7501 path its titles carry no glyph to tell them apart), so the pane
-   *  goes back to "Terminal"; a title set before Claude started is the
-   *  shell's own and stays (Michael, 23 Nov 2026: a terminal tab "should name
-   *  terminal not the thing prompt is about"). */
-  private dropClaudeTitle(): void {
-    if (this.title === 'Terminal') return;
-    // A ✳/◐ title is Claude's whenever it came; any other, only if set since Claude started.
-    if (!hasClaudeGlyph(this.title) && this.titleSetAtMs < this.claudeStartedAtMs - Pane.CLAUDE_TITLE_LEAD_MS) return;
-    rlog('info', '[TABNAME] Claude left: title back to Terminal', { pane: this.id });
-    this.title = 'Terminal';
-    this.titleSetAtMs = Date.now();
-    this.callbacks.onTitleChange(this);
-    this.trackAutoFlag('Terminal');
+  /** Claude has started in this pane (its first report, or a glyph title).
+   *  The title it set before that report (Claude Code sets one at start-up) is
+   *  its own if it came after the shell's last prompt. A WAKE title is the
+   *  `wake` command's, never Claude's. */
+  private noteClaudeStarted(): void {
+    this.claudeSessionAtMs = Date.now();
+    this.promptSinceClaude = false;
+    this.claudeTitle = this.title && this.title !== this.titleAtPrompt && this.title !== WAKE_TITLE ? this.title : null;
+  }
+
+  /** The title as the tab, the hover card and the palette show it, whatever
+   *  Claude left behind (`paneShownTitle`; Michael, 23 Nov 2026: a terminal
+   *  tab "should name terminal not the thing prompt is about"). */
+  get shownTitle(): string {
+    return paneShownTitle(this.title, this.claudeActive, this.claudeTitle);
   }
 
   /** The Claude session here may have changed: restart its clock. */
@@ -1555,8 +1560,6 @@ export class Pane {
     const claudeLeft = this.claudeActive;
     if (claudeLeft) this.newClaudeSession();
     this.claudeActive = false;
-    // A respawn names the new shell "Terminal" itself.
-    if (claudeLeft && reason === 'shell-prompt') this.dropClaudeTitle();
     this.stopSeenSinceWork = false;
     this.notifyCheckpoint();
     this.syncComposeFirst(reason);
@@ -1938,10 +1941,11 @@ export class Pane {
     this.callbacks.onCwdChange?.(this);
     // The old shell's window title is stale for the new one (and a WAKE title
     // would keep the yellow flag): back to the default until it sets its own.
-    this.title = 'Terminal';
-    this.titleSetAtMs = Date.now();
+    this.title = SHELL_TITLE;
+    this.claudeTitle = null;
+    this.titleAtPrompt = this.title;
     this.callbacks.onTitleChange(this);
-    this.trackAutoFlag('Terminal');
+    this.trackAutoFlag(SHELL_TITLE);
     return { oldId, newId };
   }
 
@@ -2082,7 +2086,11 @@ export class Pane {
       this.terminalView.onTitleChange((title) => {
         if (title) {
           this.title = title;
-          this.titleSetAtMs = Date.now();
+          if (this.claudeActive || hasClaudeGlyph(title)) {
+            if (title !== WAKE_TITLE) this.claudeTitle = title;
+          } else if (this.promptSinceClaude) {
+            this.claudeTitle = null; // the shell's own, after its prompt
+          }
           // Tab title first, so a "needs you" alert names the tab as it is now.
           this.callbacks.onTitleChange(this);
           this.trackAutoFlag(title);
@@ -2295,7 +2303,11 @@ export class Pane {
         // The shell is back at its prompt, so Claude isn't running here any
         // more — even if it quit mid-work and left a ◐ title behind. Without
         // this, the next `claude` launch's first ✳ would read as a stop.
-        if (state === 'prompt') this.claudeGone('shell-prompt');
+        if (state === 'prompt') {
+          this.titleAtPrompt = this.title;
+          this.promptSinceClaude = true;
+          this.claudeGone('shell-prompt');
+        }
       }),
     );
 
@@ -4205,8 +4217,10 @@ export class Pane {
   }
 
   setProcessName(name: string): void {
-    this.title = name || 'Terminal';
-    this.titleSetAtMs = Date.now();
+    this.title = name || SHELL_TITLE;
+    // A name given from outside (Reopen Closed) is the shell's baseline, not
+    // a title Claude set.
+    this.titleAtPrompt = this.title;
     this.callbacks.onTitleChange(this);
   }
 

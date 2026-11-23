@@ -406,7 +406,7 @@ async function main() {
     rt.focusedPane['trackClaudeState']('✳ Claude Code');
     check('shell tabs: Claude starting renames the tab to the project by itself', reads('AI-Brain'), shown());
     rt.focusedPane['claudeGone']('shell-prompt');
-    check('shell tabs: (title path) Claude quits, its ✳ title is dropped from the pane itself', rt.focusedPane.title === 'Terminal' && reads('Terminal'), { pane: rt.focusedPane.title, ...shown() });
+    check('shell tabs: (title path) Claude quits: its ✳ title reads "Terminal" (the pane\'s own title is not rewritten)', rt.focusedPane.shownTitle === 'Terminal' && rt.focusedPane.title === '✳ Claude Code' && reads('Terminal'), { pane: rt.focusedPane.title, shown: rt.focusedPane.shownTitle, ...shown() });
 
     // The 7501 path, as Claude Code 2.1 runs in Patton: its reports through the
     // real terminal, and titles with no glyph to mark them as Claude's.
@@ -414,13 +414,14 @@ async function main() {
     const pane = rt.focusedPane;
     emit(pty, '\x1b]0;my shell\x07'); // the shell's own title, before Claude starts
     await until(() => pane.title === 'my shell');
-    pane['titleSetAtMs'] -= 5000;
+    emit(pty, '\x1b]133;D;0\x07\x1b]133;A\x07'); // the prompt that follows the shell's title
+    await tick(20);
     emit(pty, '\x1b]7501;state=idle:app=claude-code\x07');
     await until(() => pane.isClaudePane);
     check('shell tabs: (7501) Claude reporting in a project folder: the project names the tab', pane.isClaudePane && reads('AI-Brain'), shown());
     emit(pty, '\x1b]7501;state=clear\x07');
     await until(() => !pane.isClaudePane);
-    check('shell tabs: (7501) Claude quits: a title from before Claude started stays (the shell\'s own)', pane.title === 'my shell' && reads('my shell'), { pane: pane.title, ...shown() });
+    check('shell tabs: (7501) Claude quits: a title from before Claude started stays (the shell\'s own)', pane.shownTitle === 'my shell' && reads('my shell'), { pane: pane.shownTitle, ...shown() });
     emit(pty, '\x1b]7501;state=idle:app=claude-code\x07');
     emit(pty, '\x1b]0;Fix the tab names\x07'); // Claude's topic, no glyph
     await until(() => pane.isClaudePane && pane.title === 'Fix the tab names');
@@ -429,7 +430,7 @@ async function main() {
     check('shell tabs: (7501) ...the palette still shows Claude\'s topic while it runs', sessionsWhile?.paneTitle === 'Fix the tab names', sessionsWhile?.paneTitle);
     emit(pty, '\x1b]7501;state=clear\x07');
     await until(() => !pane.isClaudePane);
-    check('shell tabs: (7501) Claude quits: its glyph-less topic is dropped, the tab reads "Terminal"', pane.title === 'Terminal' && reads('Terminal'), { pane: pane.title, ...shown() });
+    check('shell tabs: (7501) Claude quits: its glyph-less topic reads "Terminal" (the pane\'s own title is not rewritten)', pane.shownTitle === 'Terminal' && pane.title === 'Fix the tab names' && reads('Terminal'), { pane: pane.shownTitle, title: pane.title, ...shown() });
     emit(pty, '\x1b]0;htop\x07');
     await until(() => pane.title === 'htop');
     check('shell tabs: (7501) a program run after Claude names the tab with its own title', reads('htop'), shown());
@@ -441,6 +442,190 @@ async function main() {
     check('shell tabs: a closed Claude pane is kept for Reopen Closed as "Terminal", not Claude\'s topic', tm2['closedPanes'].at(-1)?.title === 'Terminal', tm2['closedPanes'].at(-1)?.title);
     tm2['closedPanes'].pop();
     w.patton.projects.resolve = resolveWas;
+  }
+
+  // --- shell tabs, review of f9dc19d: split tabs, closing panes, what Claude leaves behind ---
+  // Claude's title is remembered (Pane.claudeTitle) and `shownTitle` hides it
+  // once Claude has left; the pane's own `title` is never rewritten.
+  {
+    const projResolve = async () => ({ root: '/tmp/ai-brain', defaultName: 'AI-Brain' });
+    const resolveWas2 = w.patton.projects.resolve;
+    w.patton.projects.resolve = projResolve;
+    const PROMPT = '\x1b]133;D;0\x07\x1b]133;A\x07';
+    const stripText = (tab) => tm2Bar.querySelector('.tab-bar-tab[data-tab-id="' + tab.id + '"] .tab-bar-tab-title')?.textContent;
+    const newTab = async () => {
+      const tab = await tm2.createTab('/tmp/ai-brain');
+      tm2.switchToId(tab.id);
+      tab['lookUpProject']();
+      await tick(5);
+      return tab;
+    };
+    const claude7501 = async (pane, topic) => {
+      emit(pane.ptyId, '\x1b]7501;state=idle:app=claude-code\x07');
+      if (topic) emit(pane.ptyId, '\x1b]0;' + topic + '\x07');
+      await until(() => pane.isClaudePane && (!topic || pane.title === topic));
+    };
+    const split = async (tab) => {
+      tm2.splitVertical();
+      await until(() => tab.panes.length === 2);
+      await tick(20);
+      return tab.focusedPane;
+    };
+
+    // P1: closing a pane that is not focused and runs Claude renames the tab.
+    {
+      const tab = await newTab();
+      const A = tab.focusedPane;
+      A.title = '✳ Fix x'; A['trackClaudeState']('✳ Fix x');
+      const B = await split(tab);
+      check('review P1: Claude in the unfocused pane A names the split tab after the project', B !== A && tab.title === 'AI-Brain' && stripText(tab) === 'AI-Brain', { t: tab.title });
+      tab.closePane(A);
+      await tick(20);
+      check('review P1: closing that Claude pane (not the focused one) puts "Terminal" on the tab', tab.title === 'Terminal' && stripText(tab) === 'Terminal' && !tab.runsClaude, { t: tab.title, s: stripText(tab) });
+      await tm2.closeById(tab.id);
+    }
+
+    // P13: Claude quits in the unfocused pane A.
+    {
+      const tab = await newTab();
+      const A = tab.focusedPane;
+      await claude7501(A, 'Fix the tab names');
+      await split(tab);
+      emit(A.ptyId, '\x1b]7501;state=clear\x07');
+      await until(() => !A.isClaudePane);
+      await tick(20);
+      check('review P13: Claude quits in the unfocused pane: the tab reads "Terminal"', tab.title === 'Terminal' && stripText(tab) === 'Terminal', { t: tab.title, s: stripText(tab) });
+      await tm2.closeById(tab.id);
+    }
+
+    // P6: a split tab is named for the project of the pane Claude runs in.
+    {
+      const tab = await newTab();
+      const A = tab.focusedPane;
+      A.title = '✳ Fix x'; A['trackClaudeState']('✳ Fix x');
+      const B = await split(tab);
+      w.patton.projects.resolve = async () => ({ root: '/tmp/other', defaultName: 'Other' });
+      tab['lookUpProject'](B);
+      await tick(5);
+      check('review P6: focused shell B in project Other, Claude in A: the tab reads the Claude pane\'s project', tab.title === 'AI-Brain' && stripText(tab) === 'AI-Brain', { t: tab.title, s: stripText(tab) });
+      // The Claude pane's own folder moves to another project while it is not focused.
+      w.patton.projects.resolve = async () => ({ root: '/tmp/third', defaultName: 'Third' });
+      tab['lookUpProject'](A);
+      await tick(5);
+      check('review P6: an unfocused Claude pane\'s project changing renames the tab', tab.title === 'Third' && stripText(tab) === 'Third', { t: tab.title, s: stripText(tab) });
+      w.patton.projects.resolve = projResolve;
+      await tm2.closeById(tab.id);
+    }
+
+    // P2: RIS while Claude runs (7501): never Claude's topic.
+    {
+      const tab = await newTab();
+      const pane = tab.focusedPane;
+      await claude7501(pane, 'Fix the tab names');
+      check('review P2 pre: Claude reporting, the tab reads the project', tab.title === 'AI-Brain', tab.title);
+      emit(pane.ptyId, '\x1bc');
+      await tick(60);
+      check('review P2: after RIS (Claude not known to run) the tab does not read Claude\'s topic', tab.title === 'Terminal' && pane.shownTitle === 'Terminal', { t: tab.title, shown: pane.shownTitle });
+      emit(pane.ptyId, '\x1b]7501;state=idle:app=claude-code\x07');
+      await tick(60);
+      check('review P2: the next report names the tab for the project again', tab.title === 'AI-Brain', tab.title);
+      await tm2.closeById(tab.id);
+    }
+
+    // P3: Claude killed with no clear; the shell sets its own title, then its prompt shows.
+    {
+      const tab = await newTab();
+      const pane = tab.focusedPane;
+      await claude7501(pane, 'Fix the tab names');
+      emit(pane.ptyId, '\x1b]0;mike@host: ~/code\x07');
+      await until(() => pane.title === 'mike@host: ~/code');
+      emit(pane.ptyId, PROMPT);
+      await tick(60);
+      check('review P3: Claude\'s topic is not shown after a kill', pane.shownTitle !== 'Fix the tab names' && tab.title !== 'AI-Brain', { shown: pane.shownTitle, t: tab.title });
+      emit(pane.ptyId, '\x1b]0;mike@host: ~/code\x07'); // the shell's next title (every prompt)
+      await tick(40);
+      check('review P3: ...and the shell\'s own title shows as soon as it sets it after its prompt', pane.shownTitle === 'mike@host: ~/code' && tab.title === 'mike@host: ~/code', { shown: pane.shownTitle, t: tab.title });
+      await tm2.closeById(tab.id);
+    }
+
+    // P4: a late Claude title after its clear.
+    {
+      const tab = await newTab();
+      const pane = tab.focusedPane;
+      await claude7501(pane, 'Fix the tab names');
+      emit(pane.ptyId, '\x1b]7501;state=clear\x07');
+      await until(() => !pane.isClaudePane);
+      emit(pane.ptyId, '\x1b]0;Fix the tab names\x07'); // repeated after the clear
+      await tick(40);
+      emit(pane.ptyId, PROMPT);
+      await tick(60);
+      check('review P4: a Claude title arriving after the clear still reads "Terminal"', pane.shownTitle === 'Terminal' && tab.title === 'Terminal' && pane.title === 'Fix the tab names', { shown: pane.shownTitle, t: tab.title });
+      await tm2.closeById(tab.id);
+    }
+
+    // P5: Claude's start-up title, a slow first report (more than the old 2 s lead).
+    {
+      const tab = await newTab();
+      const pane = tab.focusedPane;
+      emit(pane.ptyId, '\x1b]0;mike@host: ~\x07' + PROMPT);
+      await tick(20);
+      emit(pane.ptyId, '\x1b]0;Claude Code\x07');
+      await until(() => pane.title === 'Claude Code');
+      await tick(2500);
+      await claude7501(pane);
+      emit(pane.ptyId, '\x1b]7501;state=clear\x07');
+      await until(() => !pane.isClaudePane);
+      check('review P5: a start-up title set 2.5 s before the first report reads "Terminal" on exit', pane.shownTitle === 'Terminal' && tab.title === 'Terminal', { shown: pane.shownTitle, t: tab.title });
+      await tm2.closeById(tab.id);
+    }
+
+    // The shell's own title from before Claude started survives the exit (a prompt came after it).
+    {
+      const tab = await newTab();
+      const pane = tab.focusedPane;
+      emit(pane.ptyId, '\x1b]0;mike@host: ~\x07' + PROMPT);
+      await tick(20);
+      await claude7501(pane, 'Fix the tab names');
+      emit(pane.ptyId, '\x1b]7501;state=clear\x07');
+      await until(() => !pane.isClaudePane);
+      emit(pane.ptyId, '\x1b]0;mike@host: ~\x07' + PROMPT);
+      await tick(40);
+      check('review: the shell\'s own title set after Claude left is shown', pane.shownTitle === 'mike@host: ~' && tab.title === 'mike@host: ~', { shown: pane.shownTitle, t: tab.title });
+      await tm2.closeById(tab.id);
+    }
+
+    // WAKE: the title stays on the pane, and the flag follows it.
+    {
+      const tab = await newTab();
+      const pane = tab.focusedPane;
+      emit(pane.ptyId, '\x1b]0;WAKE\x07');
+      await until(() => pane.title === 'WAKE');
+      check('review WAKE: shown whole, found by findWakePane, tab flagged yellow', pane.shownTitle === 'WAKE' && tab.autoFlag === 'yellow' && tm2.getTabs().some((t) => t.panes.some((p) => p.title === 'WAKE')), { shown: pane.shownTitle, flag: tab.autoFlag });
+      emit(pane.ptyId, '\x1b]0;htop\x07');
+      await until(() => pane.title === 'htop');
+      check('review WAKE: another title drops the flag', tab.autoFlag === null, tab.autoFlag);
+      await tm2.closeById(tab.id);
+    }
+
+    // P8: the right-click menu on a plain shell in a project folder.
+    {
+      const tab = await newTab();
+      const menuLabels = () => {
+        const el = tm2Bar.querySelector('.tab-bar-tab[data-tab-id="' + tab.id + '"]');
+        el.dispatchEvent(new w.MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }));
+        const labels = [...doc.querySelectorAll('.context-menu-item')].map((n) => n.textContent.replace(/\s+/g, ' ').trim());
+        doc.querySelectorAll('.context-menu-overlay').forEach((o) => o.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })));
+        return labels;
+      };
+      let labels = menuLabels();
+      check('review P8: a plain shell tab in a project folder offers "Rename Tab…" and the project\'s default name', tab.title === 'Terminal' && !tab.namedForProject && labels.includes('Rename Tab…') && labels.includes('Set Default Tab Name for Project…'), labels);
+      tab.focusedPane.title = '✳ Fix x'; tab.focusedPane['trackClaudeState']('✳ Fix x');
+      await tick(5);
+      labels = menuLabels();
+      check('review P8: while Claude runs and the project names the tab, only the project\'s default name is offered', tab.namedForProject && !labels.includes('Rename Tab…') && labels.includes('Set Default Tab Name for Project…'), labels);
+      await tm2.closeById(tab.id);
+    }
+    w.patton.projects.resolve = resolveWas2;
   }
 
   // --- last tab is never discarded ---
