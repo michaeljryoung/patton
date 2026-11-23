@@ -252,7 +252,7 @@ export class BookmarksPanel {
    *  the "+" menu and the tab right-click menu. */
   async addProjectFromTab(tab: Tab | null): Promise<void> {
     if (!tab) return;
-    const project = tab.project;
+    const project = tab.menuProject;
     const path = project?.root ?? tab.focusedPane.getCwd();
     if (!path) {
       announce("This tab's folder isn't known yet — try again in a moment", 'assertive');
@@ -810,7 +810,7 @@ export class BookmarksPanel {
     const openMenu = (e?: MouseEvent) => {
       const viaKeyboard = !e || e.detail === 0; // Enter/Space on the button fires a click with detail 0
       const tab = this.host.getActiveTab();
-      const hasProject = !!tab?.project;
+      const hasProject = !!tab?.menuProject;
       const rect = this.addButton.getBoundingClientRect();
       this.contextMenu.show(rect.left, rect.bottom + 2, [
         {

@@ -488,6 +488,13 @@ export class Tab {
     return claudePane ? this.paneProject(claudePane) : null;
   }
 
+  /** The project the tab's right-click menu acts on (its default name, its
+   *  bookmark): the one the tab is named after while Claude runs in it, else
+   *  the focused pane's. On a split tab these can differ. */
+  get menuProject(): ProjectInfo | null {
+    return this.namingProject ?? this._project;
+  }
+
   /** The tab's name comes from its project (its own, or the user's default
    *  for it), not from a title or a name he typed: the tab bar offers "Rename
    *  Tab…" on every other tab. */

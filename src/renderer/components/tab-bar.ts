@@ -56,7 +56,9 @@ interface TabHeaderInfo {
   displayTitle?: string;
   /** What the tab shows without a name of its own — the rename box's placeholder. */
   autoTitle?: string;
-  /** The tab's project, if it is in one: its current and automatic names. */
+  /** The project the menu acts on, if there is one: the one the tab is named
+   *  after while Claude runs in it (`Tab.menuProject`), else the focused
+   *  pane's. Its current and automatic names. */
   project?: { name: string; defaultName: string } | null;
   /** The name on the tab comes from its project (Claude runs in it, and no
    *  name was typed): such a tab is renamed through the project's default

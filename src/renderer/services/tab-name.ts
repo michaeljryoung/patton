@@ -4,19 +4,38 @@ import { hasClaudeGlyph, stripClaudeGlyph } from './sessions';
  *  a title of its own: a plain shell. */
 export const SHELL_TITLE = 'Terminal';
 
+/** What `paneShownTitle` needs to know about a pane. */
+export interface ShownTitleInput {
+  /** The pane's window title as the program set it (never rewritten). */
+  title: string;
+  /** Claude Code runs in this pane. */
+  runsClaude: boolean;
+  /** The shell reports its prompts (OSC 133). */
+  shellIntegrated: boolean;
+  /** A title arrived since the shell's last prompt: the command running now
+   *  (or the shell, before its prompt) set it. */
+  titleSincePrompt: boolean;
+  /** The current title arrived while Claude ran (or carries its glyph, or was
+   *  set before Claude's first report): it is Claude's, not a program's. */
+  titleSetWhileClaude: boolean;
+}
+
 /**
- * A pane's title as the tab, its hover card and the palette show it. Where
- * Claude Code runs: its title without the state glyph. Anywhere else: the
- * title the program set (`wake`'s WAKE), else "Terminal". A title Claude left
- * behind when it quit reads "Terminal" too: one that still carries its glyph,
- * or is the last title that arrived while it ran (`claudeTitle`; Michael, 23
+ * A pane's title as the tab, its hover card, the drag overlay and the palette
+ * show it. Where Claude Code runs: its title without the state glyph.
+ * Anywhere else: the title of the command running now (`wake`'s WAKE), else
+ * "Terminal". It reads "Terminal" when the title is empty or carries Claude's
+ * glyph, when the command that set it has ended (the shell has shown a prompt
+ * since, and no title arrived after it), or when Claude set it (Michael, 23
  * Nov 2026, of a shell tab named after its project: "it should name terminal
  * not the thing prompt is about").
  */
-export function paneShownTitle(title: string, runsClaude: boolean, claudeTitle: string | null = null): string {
-  if (runsClaude) return stripClaudeGlyph(title);
-  if (!title.trim() || hasClaudeGlyph(title) || title === claudeTitle) return SHELL_TITLE;
-  return title;
+export function paneShownTitle(i: ShownTitleInput): string {
+  if (i.runsClaude) return stripClaudeGlyph(i.title);
+  if (!i.title.trim() || hasClaudeGlyph(i.title)) return SHELL_TITLE;
+  if (i.shellIntegrated && !i.titleSincePrompt) return SHELL_TITLE;
+  if (i.titleSetWhileClaude) return SHELL_TITLE;
+  return i.title;
 }
 
 /** How long a tab's automatic name may be, the "…" included (Michael, 12 Nov:
