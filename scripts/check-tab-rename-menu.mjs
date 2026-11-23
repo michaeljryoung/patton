@@ -50,7 +50,8 @@ const bar = new w.TB.TabBar(doc.getElementById('bar'), {
 });
 const tabs = [
   { id: 'plain', title: 'Repeated permission prompts', displayTitle: 'Repeated permi…', autoTitle: 'Repeated permission prompts', active: true },
-  { id: 'proj', title: 'patton', autoTitle: 'patton', project: { name: 'patton', defaultName: 'patton' }, active: false },
+  { id: 'proj', title: 'patton', autoTitle: 'patton', project: { name: 'patton', defaultName: 'patton' }, namedForProject: true, active: false },
+  { id: 'shellproj', title: 'Terminal', autoTitle: 'Terminal', project: { name: 'patton', defaultName: 'patton' }, namedForProject: false, active: false },
   { id: 'third', title: 'third', active: false },
 ];
 bar.update(tabs);
@@ -70,6 +71,11 @@ check('a tab outside any project has "Rename Tab…" in its menu', labels(items)
 closeMenu();
 items = openMenu('proj');
 check('a project\'s tab has no "Rename Tab…"', !labels(items).some((l) => l.startsWith('Rename Tab')), labels(items));
+check('...and keeps "Set Default Tab Name for Project…"', labels(items).includes('Set Default Tab Name for Project…'), labels(items));
+closeMenu();
+// a plain shell in a project folder reads "Terminal": the tab's name isn't the project's
+items = openMenu('shellproj');
+check('a shell tab in a project folder (not named for it) has "Rename Tab…"', labels(items).includes('Rename Tab…'), labels(items));
 check('...and keeps "Set Default Tab Name for Project…"', labels(items).includes('Set Default Tab Name for Project…'), labels(items));
 closeMenu();
 

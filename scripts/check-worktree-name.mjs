@@ -335,7 +335,7 @@ const src = (p) => readFileSync(join(repo, p), 'utf8');
 const tm = src('src/renderer/services/tab-manager.ts');
 check('tab-manager files a rename under projectNameKey(project)', /projects\.setName\(projectNameKey\(project\), name\)/.test(tm));
 check('tab-manager feeds the palette and the bar through project-names', /worktree: project \? projectDisplay\(project\)\.worktree : null/.test(tm) && /project: t\.project \? projectRenameFields\(t\.project\) : null/.test(tm));
-check('tab.ts writes the strip title through projectStripTitle (no copy of the rule)', /projectStripTitle\(this\._project\)/.test(src('src/renderer/components/tab.ts')) && !/worktreeShortName/.test(src('src/renderer/components/tab.ts')));
+check('tab.ts writes the strip title through projectStripTitle (no copy of the rule)', /projectStripTitle\(project\)/.test(src('src/renderer/components/tab.ts')) && !/worktreeShortName/.test(src('src/renderer/components/tab.ts')));
 check('tab-manager has no second copy of the rule (no project.worktree / defaultName reads)', !/project\??\.worktree\b/.test(tm) && !/\.defaultName/.test(tm));
 check('tab.ts takes its title from project-names, not its own formatting', /projectTitle \} from '\.\.\/services\/project-names'/.test(src('src/renderer/components/tab.ts')) && !/formatProjectTitle/.test(src('src/renderer/components/tab.ts')));
 const ipc = src('src/main/ipc-handlers.ts');

@@ -4,7 +4,7 @@ import { SearchOverlay } from './search-overlay';
 import { HistoryManager } from '../services/history-manager';
 import { projectStripTitle, projectTitle } from '../services/project-names';
 import { rlog } from '../services/renderer-logger';
-import { paneShownTitle, shortTabName } from '../services/tab-name';
+import { shortTabName } from '../services/tab-name';
 import {
   splitPane as splitPaneInTree,
   closePane as closePaneInTree,
@@ -433,6 +433,7 @@ export class Tab {
       // reports its folder once its first poll lands.
       this._paneProjects.delete(pane);
       if (pane === this._focusedPane) this.setProject(null);
+      else this.refreshTitle();
       return;
     }
     window.patton.projects.resolve(cwd)
@@ -441,7 +442,7 @@ export class Tab {
         const before = this._paneProjects.get(pane);
         this._paneProjects.set(pane, project);
         if (pane === this._focusedPane) this.setProject(project);
-        else if (!sameProject(before ?? null, project)) this.onTitleChanged?.();
+        else if (!sameProject(before ?? null, project) && !this.refreshTitle()) this.onTitleChanged?.();
       })
       // Main couldn't check (rate limit, bad path): keep the current name
       // rather than treating it as "not in a project", and try once more.
@@ -476,14 +477,33 @@ export class Tab {
     return this._panes.some((p) => p.isClaudePane);
   }
 
+  /** The project that names this tab: that of the focused pane if Claude runs
+   *  in it, else of the first pane Claude runs in, else none (a split tab
+   *  whose focused shell sits in another project is still named for the
+   *  project Claude works in). */
+  private get namingProject(): ProjectInfo | null {
+    const focused = this._focusedPane;
+    if (focused.isClaudePane) return this.paneProject(focused);
+    const claudePane = this._panes.find((p) => p.isClaudePane);
+    return claudePane ? this.paneProject(claudePane) : null;
+  }
+
+  /** The tab's name comes from its project (its own, or the user's default
+   *  for it), not from a title or a name he typed: the tab bar offers "Rename
+   *  Tab…" on every other tab. */
+  get namedForProject(): boolean {
+    return !this._customTitle && !this._cover && this.namingProject !== null;
+  }
+
   /** What the tab is called when the user hasn't named it: its project's name
    *  while Claude runs in it, else the title the program in the focused pane
-   *  set ("Terminal" for a plain shell, `paneShownTitle`). */
+   *  set ("Terminal" for a plain shell, `Pane.shownTitle`). */
   get autoTitle(): string {
     if (this._cover) return this._cover.title || COVERED_TAB_TITLE;
-    if (this._project && this.runsClaude) return projectTitle(this._project);
+    const project = this.namingProject;
+    if (project) return projectTitle(project);
     const pane = this._focusedPane;
-    return pane.isClaudePane ? pane.title : paneShownTitle(pane.title, false);
+    return pane.isClaudePane ? pane.title : pane.shownTitle;
   }
 
   /** What the tab strip writes on the tab. A name the user typed, a project's
@@ -495,7 +515,8 @@ export class Tab {
    *  dialogs; the hover card shows the project's name and the folder's path. */
   get displayTitle(): string {
     if (this._customTitle || this._cover) return this.title;
-    if (this._project && this.runsClaude) return projectStripTitle(this._project);
+    const project = this.namingProject;
+    if (project) return projectStripTitle(project);
     return shortTabName(this.title);
   }
 
@@ -656,6 +677,9 @@ export class Tab {
     if (wasClosingFocused) {
       requestAnimationFrame(() => this._focusedPane.focus());
     }
+    // The closed pane may have been the only one running Claude (or the one
+    // naming the tab), even when it wasn't the focused one.
+    this.refreshTitle();
     this.onTitleChanged?.(); // the bookmarks sidebar counts panes
   }
 

@@ -58,6 +58,10 @@ interface TabHeaderInfo {
   autoTitle?: string;
   /** The tab's project, if it is in one: its current and automatic names. */
   project?: { name: string; defaultName: string } | null;
+  /** The name on the tab comes from its project (Claude runs in it, and no
+   *  name was typed): such a tab is renamed through the project's default
+   *  name, not "Rename Tab…". */
+  namedForProject?: boolean;
   active: boolean;
   awaitingInput?: boolean;
   /** A /checkpoint finished in this tab and it hasn't been selected since. */
@@ -651,9 +655,11 @@ export class TabBar {
           // --- end bookmarks ---
           // Double-click renames a tab too, but the menu is the way in from the
           // keyboard, and Michael: "should be a rename option on tabs that arent
-          // projects when right click". A project's tabs are named for the
-          // project (the entry below), so they get no entry of their own.
-          ...(!project ? [
+          // projects when right click". A tab named for its project (Claude
+          // runs in it; the entry below renames that) gets no entry of its
+          // own; a plain shell in a project folder does, as its name is
+          // "Terminal" or its program's title.
+          ...(!tab.namedForProject ? [
             { separator: true as const },
             {
               label: 'Rename Tab…',

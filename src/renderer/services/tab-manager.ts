@@ -13,7 +13,7 @@ import { hoverBlocks, type HoverBlock, type HoverPaneInput } from './tab-hover';
 import type { SessionState, SessionTabState, RendererMode, TabFlag, WindowCloseInfo, ConfirmRequest, PauseAllReport } from '../../shared/types';
 import { runPause, emptyReport, pauseSummary, type PauseTarget } from './pause-all';
 import { orderSessions, sessionNeedsYou, type SessionInfo, type SessionStatus } from './sessions';
-import { paneShownTitle } from './tab-name';
+import { SHELL_TITLE } from './tab-name';
 import type { ITheme } from '@xterm/xterm';
 import { SessionBar, type SessionBarTarget } from '../components/session-bar';
 import type { LinkRow } from './session-bar-model';
@@ -1312,7 +1312,7 @@ export class TabManager {
           cwd: pane.getCwd(),
           tabTitle: tab.title,
           hasCustomTitle: tab.hasCustomTitle,
-          paneTitle: paneShownTitle(pane.title, pane.isClaudePane),
+          paneTitle: pane.shownTitle,
           state,
           awaitingSince,
         });
@@ -1520,7 +1520,7 @@ export class TabManager {
       cwd: pane.getCwd() || '',
       scrollback,
       // A title Claude set names Claude's topic, not the shell that reopens.
-      title: pane.isClaudePane ? 'Terminal' : (pane.title || 'Terminal'),
+      title: pane.isClaudePane ? SHELL_TITLE : pane.shownTitle,
     };
     this.closedPanes.push(state);
     if (this.closedPanes.length > TabManager.MAX_CLOSED) {
@@ -1542,7 +1542,7 @@ export class TabManager {
         `\x1b[2m${state.scrollback.replace(/\n/g, '\r\n')}\x1b[0m\r\n`
       );
     }
-    if (state.title && state.title !== 'Terminal') {
+    if (state.title && state.title !== SHELL_TITLE) {
       // The closed pane's last program title, at the program title's usual
       // rank: a project's name still wins, and the next title the program
       // sets replaces it — rather than pinning it as a user-chosen name.
@@ -1576,6 +1576,7 @@ export class TabManager {
         displayTitle: t.displayTitle,
         autoTitle: t.autoTitle,
         project: t.project ? projectRenameFields(t.project) : null,
+        namedForProject: t.namedForProject,
         active: t.id === this.activeTab?.id,
         awaitingInput: t.awaitingInput,
         checkpointDone: t.checkpointDone,
@@ -1695,7 +1696,7 @@ export class TabManager {
         // Without the ◐/◑/✳ glyph: the card shows the name, and a spinner
         // flip then leaves its text (and so its DOM) unchanged. A shell's
         // reads "Terminal", not a title Claude left when it quit.
-        title: paneShownTitle(pane.title, pane.isClaudePane),
+        title: pane.shownTitle,
         cwd: pane.getCwd(),
         project: focused ? project : null,
         claude: {
