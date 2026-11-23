@@ -1365,6 +1365,188 @@ const newPane = async () => {
     check('9.14b text on Claude\'s bar the tracker calls clean: Ctrl+S first, then the comments, sent',
       strings().join('|') === '\x13|paste:Comment one\nComment two|\r' && res === null, { s: strings().map((d) => JSON.stringify(d).slice(0, 30)), res });
     p.dispose();
+
+    // c. The review's major: the watch is on and Claude has put the message
+    //    back in its bar (its root still working), so the bar reads as a
+    //    draft and Pause all asks for a stash. The Ctrl+S goes through the
+    //    gate too: nothing is stashed, and the watch takes the message back.
+    p = await sent(S1);
+    await escInBox(p);
+    await drawBar(p, [S1]);
+    writes.length = 0; logs.length = 0;
+    let g2 = p.typePauseWord({ stash: true });
+    await frames();
+    advance(150);
+    await frames();
+    state(p, 'idle');
+    await frames();
+    let res2 = await g2;
+    check('9.14c Pause all with a stash during the watch, the message back in Claude\'s bar: no Ctrl+S, only the restore\'s Ctrl+C',
+      strings().join('|') === '\x03', strings());
+    check('9.14c ...the message is in the box, the word held for the restore',
+      p.editorInput.getValue() === S1 && res2 === 'held-restoring', { v: p.editorInput.getValue(), res2 });
+    p.dispose();
+
+    // d. /checkpoint during the watch (Claude idle, the bar not yet back): nothing typed.
+    p = await sent(S1);
+    await escInBox(p);
+    state(p, 'idle');
+    writes.length = 0; logs.length = 0;
+    res2 = await p.runCheckpoint();
+    advance(200);
+    await frames();
+    check('9.14d /checkpoint during the restore watch: nothing typed, and it says why',
+      strings().length === 0 && /being put back/.test(res2 ?? ''), { s: strings(), res2 });
+    p.dispose();
+
+    // e. The watch ended with text left in Claude's bar (the note shows):
+    //    that text is never stashed; the checkpoint, the comments and Pause
+    //    all are held, saying so.
+    p = await sent(S1);
+    await escInBox(p);
+    await drawBar(p, ['something else he', 'typed over two rows']);
+    state(p, 'idle');
+    await frames();
+    const noteBefore = noteShown(p);
+    await write(term(p), '\x1b[?2004h');
+    writes.length = 0; logs.length = 0;
+    const gC = p.runCheckpoint();
+    const gR = p.pasteReviewComments('Comment one');
+    g2 = p.typePauseWord({ stash: true });
+    for (let i = 0; i < 6; i++) { await frames(); advance(200); }
+    await frames();
+    res2 = await gC;
+    const resC = await gR;
+    const resP = await g2;
+    check('9.14e text left in Claude\'s bar with the note: no Ctrl+S, nothing typed by any of the three',
+      noteBefore && strings().length === 0, { noteBefore, s: strings() });
+    check('9.14e ...each says the text is still in Claude\'s input',
+      /send or clear it/.test(res2 ?? '') && /send or clear it/i.test(resC ?? '') && resP === 'bar-text', { res2, resC, resP });
+    p.dispose();
+
+    // f. Held at the Enter after a stash (Claude started asking): the word is
+    //    left in Claude's bar and the draft set aside, and the answer says
+    //    both; a second stash while Patton's is held is never sent (it
+    //    would overwrite his draft with the word).
+    p = await newPane();
+    await drawBar(p, ['my draft']);
+    writes.length = 0; logs.length = 0;
+    g2 = p.typePauseWord({ stash: true });
+    await frames();
+    advance(150);
+    await frames();
+    state(p, 'blocked', 'permission');
+    advance(10);
+    await frames();
+    res2 = await g2;
+    check('9.14f held at the Enter after a stash: Ctrl+S and pause, no Enter; held-typed-stashed',
+      strings().join('|') === '\x13|pause' && res2 === 'held-typed-stashed', { s: strings(), res2 });
+    state(p, 'idle');
+    writes.length = 0;
+    g2 = p.typePauseWord({ stash: true });
+    await frames();
+    advance(200);
+    await frames();
+    res2 = await g2;
+    check('9.14f ...a second stash while Patton\'s first is held: no Ctrl+S, nothing typed, held as stashed',
+      strings().length === 0 && res2 === 'stashed', { s: strings(), res2 });
+    p.dispose();
+    // The checkpoint held at the Enter after its stash says both too.
+    p = await newPane();
+    await drawBar(p, ['my draft']);
+    writes.length = 0; logs.length = 0;
+    g2 = p.runCheckpoint();
+    await frames();
+    advance(150);
+    await frames();
+    state(p, 'blocked', 'permission');
+    advance(10);
+    await frames();
+    res2 = await g2;
+    check('9.14f /checkpoint held at the Enter after its stash: it says /checkpoint is in the input and the draft is set aside',
+      strings().join('|') === '\x13|/checkpoint' && /in its input, not sent/.test(res2 ?? '') && /set aside/.test(res2 ?? ''),
+      { s: strings(), res2 });
+    p.dispose();
+
+    // g. An Esc during each of the other senders (the box's send's turn
+    //    running, a draft on Claude's bar): the watch arms in the stash's
+    //    wait, so the line is held at the write, and the answer says the
+    //    draft is set aside.
+    p = await sent(S1);
+    await write(term(p), '\x1b[?2004h');
+    await drawBar(p, ['my draft']);
+    writes.length = 0; logs.length = 0;
+    g2 = p.pasteReviewComments('Comment one');
+    await frames();
+    await escInTerminal(p);
+    advance(150);
+    await frames();
+    res2 = await g2;
+    check('9.14g an Esc in the comments\' stash wait: only Ctrl+S and the Esc went', strings().join('|') === '\x13|\x1b', strings());
+    check('9.14g ...the comments say the draft is set aside, and Ctrl+S brings it back',
+      /set aside/.test(res2 ?? '') && /Ctrl\+S/.test(res2 ?? ''), res2);
+    p.dispose();
+    p = await sent(S1);
+    await drawBar(p, ['my draft']);
+    writes.length = 0; logs.length = 0;
+    g2 = p.typePauseWord({ stash: true });
+    await frames();
+    await escInBox(p);
+    advance(150);
+    await frames();
+    res2 = await g2;
+    check('9.14g an Esc in Pause all\'s stash wait: only Ctrl+S and the Esc; held-stashed',
+      strings().join('|') === '\x13|\x1b' && res2 === 'held-stashed', { s: strings(), res2 });
+    p.dispose();
+    // The checkpoint: a send from the box Claude hasn't reported working for
+    // yet (root idle, within 2 s), then /checkpoint with a draft on the bar.
+    p = await newPane();
+    await drawBar(p, ['']);
+    await sendFromBox(p, S1);
+    advance(10);
+    await drawBar(p, ['my draft']);
+    writes.length = 0; logs.length = 0;
+    g2 = p.runCheckpoint();
+    await frames();
+    await escInTerminal(p);
+    advance(150);
+    await frames();
+    res2 = await g2;
+    check('9.14g an Esc in the checkpoint\'s stash wait: only Ctrl+S and the Esc, and it says the draft is set aside',
+      strings().join('|') === '\x13|\x1b' && /set aside/.test(res2 ?? ''), { s: strings(), res2 });
+    p.dispose();
+    // Pause all's word written, the Esc before its Enter: held at the Enter.
+    p = await sent(S1);
+    writes.length = 0; logs.length = 0;
+    g2 = p.typePauseWord({ stash: false });
+    await frames();
+    await escInBox(p);
+    advance(10);
+    await frames();
+    res2 = await g2;
+    check('9.14g an Esc between pause and its Enter: no Enter, held-typed (the word is left in Claude\'s bar)',
+      strings().join('|') === 'pause|\x1b' && res2 === 'held-typed', { s: strings(), res2 });
+    p.dispose();
+
+    // h. A box send queued behind a Patton line keeps its own record: the
+    //    Patton line's Enter ends only sends queued before it.
+    p = await newPane();
+    await drawBar(p, ['']);
+    writes.length = 0; logs.length = 0;
+    g2 = p.typePauseWord({ stash: false });
+    await sendFromBox(p, S1);
+    advance(10);
+    await frames();
+    advance(10);
+    await frames();
+    await g2;
+    state(p, 'working');
+    advance(500);
+    logs.length = 0;
+    await escInBox(p);
+    check('9.14h a box send queued behind Patton\'s line: its Esc arms the watch',
+      ofTag('restore watch').length === 1, { w: ofTag('restore watch'), s: strings() });
+    p.dispose();
   }
 }
 

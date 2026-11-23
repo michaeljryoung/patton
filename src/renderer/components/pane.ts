@@ -28,7 +28,7 @@ import {
 } from '../services/turn-end';
 
 import type { ITheme } from '@xterm/xterm';
-import type { TabFlag, UnsentInputState } from '../../shared/types';
+import type { PauseHeldReason, TabFlag, UnsentInputState } from '../../shared/types';
 import type { PauseInput } from '../services/pause-all';
 import {
   COMPOSE_ASIDE_HINT, COMPOSE_ASIDE_HOLD_MS, COMPOSE_ASIDE_LABEL, COMPOSE_SEND_HELD_LABEL, COMPOSE_SEND_HELD_MS,
@@ -472,7 +472,17 @@ export class Pane {
   // `started`: Claude's 7501 root has been `working` or `blocked` since the
   // send; once it then reports `idle`, `done` or `error` the turn is over and
   // the send is forgotten (an Esc then is not stopping it).
-  private lastBoxSend: { text: string; atMs: number; chips: { dataUrl: string; label: string }[]; started: boolean } | null = null;
+  // `seq`: its place in the submit queue, so a Patton line queued ahead of
+  // it doesn't end it at its own Enter.
+  private lastBoxSend: { text: string; atMs: number; chips: { dataUrl: string; label: string }[]; started: boolean; seq: number } | null = null;
+  // Each queueSubmit's place in the queue (lastBoxSend.seq).
+  private submitSeq = 0;
+  // Patton wrote Ctrl+S (a stash) here and no line was submitted since:
+  // Claude Code holds that draft, and a second Ctrl+S would overwrite it.
+  private pattonStashOpen = false;
+  // D18: the watch wrote its clear keys, so what Claude's bar still shows (the
+  // message, now in the box) is going; no draft until the bar reads empty.
+  private restoreClearPending = false;
   private escRestore: { send: { text: string; chips: { dataUrl: string; label: string }[] }; deadline: number; timer: ReturnType<typeof setTimeout> } | null = null;
   // D18: shown in the box when Claude's bar holds text Patton couldn't take
   // in whole: it goes before the box's text on the next send.
@@ -1120,23 +1130,29 @@ export class Pane {
     // Gated at the write and at the Enter on the live 7501 `blocked` fact
     // (Gotcha S56): Claude may start asking during the stash's wait or between
     // the word and its Enter, and an Enter then would answer its question.
-    const outcome = await new Promise<{ held: string | null; typed: boolean }>((resolve) => {
+    const outcome = await new Promise<{ held: string | null; typed: boolean; stashed: boolean }>((resolve) => {
       this.queueSubmit('/checkpoint', false, {
         stashFirst: facts.draft, origin: 'patton',
         gate: () => this.asksNowRefusal(),
-        onSettled: (held, typed) => resolve({ held, typed: typed === true }),
+        onSettled: (held, typed, stashed) => resolve({ held, typed: typed === true, stashed: stashed === true }),
       });
     });
     if (outcome.held) {
-      rlog('info', '[CKPT] run held', { pane: this.id, at: outcome.typed ? 'enter' : 'write' });
+      rlog('info', '[CKPT] run held', { pane: this.id, at: outcome.typed ? 'enter' : 'write', stashed: outcome.stashed });
+      const left = Pane.heldLeftovers('/checkpoint', outcome.typed, outcome.stashed);
+      if (outcome.held === Pane.BAR_KEPT) return 'Checkpoint: Claude\'s input still has text (your last message, or what you typed there): send or clear it, then try again';
+      if (outcome.held === Pane.STASH_HELD) return 'Checkpoint: a draft is already set aside in Claude, so /checkpoint was not sent';
       if (outcome.held === Pane.RESTORING_NOW) {
-        return outcome.typed
-          ? 'Checkpoint: an Esc stopped Claude: /checkpoint is in its input, not sent'
+        return outcome.typed || outcome.stashed
+          ? `Checkpoint: an Esc stopped Claude, so /checkpoint was not sent.${left}`
           : 'Checkpoint: your last message is being put back into the box, try again in a moment';
       }
-      return outcome.typed
-        ? 'Checkpoint: Claude started asking you something: /checkpoint is in its input, not sent'
-        : 'Checkpoint: Claude started asking you something, so /checkpoint was not sent';
+      if (outcome.held === Pane.ASKS_NOW) {
+        return outcome.typed || outcome.stashed
+          ? `Checkpoint: Claude started asking you something, so /checkpoint was not sent.${left}`
+          : 'Checkpoint: Claude started asking you something, so /checkpoint was not sent';
+      }
+      return `Checkpoint: ${outcome.held}${left}`;
     }
     return null;
   }
@@ -1155,6 +1171,30 @@ export class Pane {
 
   private static readonly ASKS_NOW = 'Claude is asking you something';
   private static readonly RESTORING_NOW = 'Your last message is being put back into the box';
+  private static readonly STASH_HELD = 'A draft is already set aside in Claude';
+  private static readonly BAR_KEPT = 'Claude\'s input still has text Patton couldn\'t take back into the box';
+
+  /** Why Ctrl+S may not go now, else null: D18 is putting the box's message
+   *  back (the stash would take it), the watch left text in Claude's bar (its
+   *  note shows: the message, or what he typed there, never hidden in a
+   *  stash), or Patton's own stash is still held (a second overwrites it). */
+  private stashRefusal(): string | null {
+    if (this.escRestore !== null) return Pane.RESTORING_NOW;
+    if (this.barTextNote && !this.barTextNote.hidden) return Pane.BAR_KEPT;
+    if (this.pattonStashOpen) return Pane.STASH_HELD;
+    return null;
+  }
+
+  /** What a held line of Patton's left behind, said plainly: the word typed
+   *  in Claude's input (an Enter held), the draft in Claude's stash, or both. */
+  private static heldLeftovers(word: string, typed: boolean, stashed: boolean): string {
+    if (typed && stashed) {
+      return ` ${word} is in its input, not sent, and your draft is set aside: clear the input, then Ctrl+S there brings the draft back.`;
+    }
+    if (typed) return ` ${word} is in its input, not sent.`;
+    if (stashed) return ' Your draft is set aside: Ctrl+S in Claude\'s input brings it back.';
+    return '';
+  }
 
   /** Why the review tab's comments can't be pasted into this pane now, on
    *  the live facts (never a debounced copy: Gotcha S56), else null. */
@@ -1202,19 +1242,27 @@ export class Pane {
     // Resolves once the Enter went (null) or was held: at the write, or at the
     // Enter itself when Claude started asking in between (the pasted text then
     // sits in Claude's input, unsent).
-    const outcome = await new Promise<{ held: string | null; typed: boolean }>((resolve) => {
+    const outcome = await new Promise<{ held: string | null; typed: boolean; stashed: boolean }>((resolve) => {
       this.queueSubmit(message, false, {
         stashFirst: facts.draft, origin: 'patton', paste: true,
         gate: () => this.reviewPasteRefusal(),
-        onSettled: (held, typed) => resolve({ held, typed: typed === true }),
+        onSettled: (held, typed, stashed) => resolve({ held, typed: typed === true, stashed: stashed === true }),
       });
     });
     if (outcome.held) {
-      rlog('info', '[REVIEW] comments held', { pane: this.id, at: outcome.typed ? 'enter' : 'write' });
-      if (!outcome.typed) return outcome.held;
+      rlog('info', '[REVIEW] comments held', { pane: this.id, at: outcome.typed ? 'enter' : 'write', stashed: outcome.stashed });
+      const set = outcome.stashed ? ' Your draft there is set aside: Ctrl+S in Claude\'s input brings it back' : '';
+      if (outcome.held === Pane.BAR_KEPT) {
+        return 'Claude\'s input still has text (your last message, or what you typed there). Send or clear it, then send the comments again.';
+      }
+      if (outcome.held === Pane.STASH_HELD) {
+        return 'A draft is already set aside in Claude. Send or clear what is in its input, then send the comments again.';
+      }
+      if (!outcome.typed) return outcome.stashed ? `${outcome.held}${set}.` : outcome.held;
+      const clear = outcome.stashed ? `${set}, once its input is cleared.` : '';
       return this.escRestore !== null
-        ? 'An Esc stopped Claude before the comments were sent: they are in Claude\'s input, not sent. Press Return in that session to send them.'
-        : 'Claude started asking you something before the comments were sent: they are in Claude\'s input, not sent. Answer it there, then press Return in that session.';
+        ? `An Esc stopped Claude before the comments were sent: they are in Claude's input, not sent. Press Return in that session to send them.${clear}`
+        : `Claude started asking you something before the comments were sent: they are in Claude's input, not sent. Answer it there, then press Return in that session.${clear}`;
     }
     rlog('info', '[REVIEW] comments sent', { pane: this.id, chars: message.length, stash: facts.draft });
     return null;
@@ -1248,8 +1296,9 @@ export class Pane {
       // into the pty, so text Claude put back in its own bar (an Esc after a
       // send) reads clean there. Patton's line would be joined onto it: the
       // bar on screen counts too, and the draft is stashed first.
-      draft: input.dirty || this.barShowsText(),
-      stashed: (input.userStashAt > 0 && input.userStashAt >= this.claudeSessionAtMs) || input.pattonStashAt > 0,
+      draft: input.dirty || (!this.restoreClearPending && this.barShowsText()),
+      stashed: (input.userStashAt > 0 && input.userStashAt >= this.claudeSessionAtMs) || input.pattonStashAt > 0
+        || this.pattonStashOpen,
       menu: input.slashSubmitAt > 0 && input.slashSubmitAt >= this.lastSignalAtMs,
       stopSeen: this.stopSeenSinceWork && input.lastInputAt < this.stopSeenAtMs,
     };
@@ -1299,18 +1348,28 @@ export class Pane {
    *  decided this pane may take it. With `stash`, Ctrl+S first moves a draft
    *  out of the way; Claude Code restores it after the submit by itself, so
    *  no second Ctrl+S is sent (it would stash the restored draft again). */
-  typePauseWord(opts: { stash: boolean }): Promise<string | null> {
-    // Gated at the write and at the Enter on the live 7501 `blocked` fact, as
-    // the checkpoint is: the press decided on facts read before the stash wait.
-    // Resolves null once the Enter went, else why it was held, so the run
-    // counts a held word as held, not sent.
+  typePauseWord(opts: { stash: boolean }): Promise<PauseHeldReason | null> {
+    // Gated at the stash, the write and the Enter on the live 7501 `blocked`
+    // fact and D18's watch, as the checkpoint is: the press decided on facts
+    // read before the stash wait. Resolves null once the Enter went, else
+    // the summary's reason it was held: what it left (the word in Claude's
+    // input, the draft in its stash) said plainly.
     return new Promise((resolve) => {
       this.queueSubmit('pause', false, {
         stashFirst: opts.stash, scroll: false, origin: 'patton',
         gate: () => this.asksNowRefusal(),
-        onSettled: (held, typed) => {
-          if (held) rlog('info', '[PAUSE-ALL] pause held', { pane: this.id, at: typed === true ? 'enter' : 'write' });
-          resolve(held);
+        onSettled: (held, typed, stashed) => {
+          if (!held) { resolve(null); return; }
+          const at = typed === true ? 'enter' : 'write';
+          const reason: PauseHeldReason = held === Pane.BAR_KEPT ? 'bar-text'
+            : held === Pane.STASH_HELD ? 'stashed'
+            : typed === true && stashed === true ? 'held-typed-stashed'
+            : typed === true ? 'held-typed'
+            : stashed === true ? 'held-stashed'
+            : held === Pane.RESTORING_NOW ? 'held-restoring'
+            : 'held';
+          rlog('info', '[PAUSE-ALL] pause held', { pane: this.id, at, reason });
+          resolve(reason);
         },
       });
     });
@@ -2210,23 +2269,25 @@ export class Pane {
     // comments paste) Claude may have started asking. Held at the write, the
     // text comes back to the box; held at the Enter, it stays in Claude's bar.
     const sent = command;
+    let boxSeq = 0;
     command = this.queueSubmit(command, true, {
       own: true, ...(menu ? { onEnterSent: () => this.noteComposeMenuSent() } : {}),
       gate: () => (this.composeFirstEngaged && this.claudeAsksNow() ? Pane.ASKS_NOW : null),
       onSettled: (held, typed) => {
         if (!held || typed === true || this.disposed || sent.trim() === '') return;
-        if (this.lastBoxSend?.text === sent) this.lastBoxSend = null;
+        if (this.lastBoxSend?.seq === boxSeq) this.lastBoxSend = null;
         const existing = this.editorInput.getValue();
         this.editorInput.setValue(existing.trim() === '' ? sent : `${sent}\n${existing}`);
         rlog('info', '[COMPOSE] send returned to the box', { pane: this.id, why: 'blocked' });
       },
     });
+    boxSeq = this.submitSeq;
     if (command.trim()) {
       this.historyManager.add(command);
     }
     // Sent while a turn runs (queued): that turn is the one an Esc stops.
     const started = this.statusReporting && (this.claudeWorking || this.claudeBlocked);
-    this.lastBoxSend = this.composeFirstEngaged && command.trim() !== '' ? { text: command, atMs: Date.now(), chips, started } : null;
+    this.lastBoxSend = this.composeFirstEngaged && command.trim() !== '' ? { text: command, atMs: Date.now(), chips, started, seq: boxSeq } : null;
     this.historyManager.resetCursor();
     return true;
   }
@@ -2275,8 +2336,9 @@ export class Pane {
       stashFirst?: boolean; scroll?: boolean; origin?: 'patton'; onEnterSent?: () => void; own?: boolean; paste?: boolean;
       gate?: () => string | null;
       /** How it ended: null once the Enter went, else why it was held;
-       *  `typed` when the text was written and only the Enter was held. */
-      onSettled?: (held: string | null, typed?: boolean) => void;
+       *  `typed` when the text was written and only the Enter was held;
+       *  `stashed` when Ctrl+S went first (the draft is in Claude's stash). */
+      onSettled?: (held: string | null, typed?: boolean, stashed?: boolean) => void;
     } = {},
   ): string {
     // Broadcast mode: also write to all other panes in the tab
@@ -2300,13 +2362,29 @@ export class Pane {
     // Each submit writes text then Enter with a small gap, and the next submit waits for the previous.
     const origin = opts.origin;
     const own = opts.own === true ? () => this.noteOwnTyping() : () => {};
+    const seq = ++this.submitSeq;
+    let stashed = false;
+    const closed = 'The session closed before the message was sent.';
     this.submitQueue = this.submitQueue.then(() => new Promise<void>((resolve) => {
-      if (this.ptyId === null) { opts.onSettled?.('The session closed before the message was sent.'); resolve(); return; }
+      if (this.ptyId === null) { opts.onSettled?.(closed); resolve(); return; }
       if (opts.stashFirst) {
+        // The stash goes through the gate too (Gotcha S56), and never while
+        // D18 puts the box's message back (it would stash that message),
+        // over text the watch left in Claude's bar, or over a stash Patton
+        // already holds here (a second Ctrl+S overwrites the first).
+        const held = opts.gate?.() || this.stashRefusal();
+        if (held) {
+          rlog('info', '[COMPOSE] submit held at stash', { pane: this.id, why: held });
+          opts.onSettled?.(held, false, false);
+          resolve();
+          return;
+        }
         own();
         window.patton.pty.write(this.ptyId, '\x13', origin);
+        this.pattonStashOpen = true;
+        stashed = true;
         setTimeout(() => {
-          if (this.ptyId === null) { opts.onSettled?.('The session closed before the message was sent.'); resolve(); return; }
+          if (this.ptyId === null) { opts.onSettled?.(closed, false, stashed); resolve(); return; }
           submitLine(resolve);
         }, Pane.STASH_SETTLE_MS);
         return;
@@ -2314,13 +2392,13 @@ export class Pane {
       submitLine(resolve);
     }));
     const submitLine = (resolve: () => void): void => {
-      if (this.ptyId === null) { opts.onSettled?.('The session closed before the message was sent.'); resolve(); return; }
+      if (this.ptyId === null) { opts.onSettled?.(closed, false, stashed); resolve(); return; }
       // `gate`: asked again the moment the text is written (after a stash's
       // wait, or a queued submit ahead of it), on the live facts.
       const held = opts.gate?.();
       if (held) {
-        rlog('info', '[COMPOSE] submit held at write', { pane: this.id, why: held });
-        opts.onSettled?.(held);
+        rlog('info', '[COMPOSE] submit held at write', { pane: this.id, why: held, ...(stashed ? { stashed: true } : {}) });
+        opts.onSettled?.(held, false, stashed);
         resolve();
         return;
       }
@@ -2359,11 +2437,11 @@ export class Pane {
     // started asking between the text and the Enter, and an Enter then would
     // answer its question. The text stays in Claude's input; nothing is sent.
     const sendEnter = (writeOrigin: 'patton' | undefined): void => {
-      if (this.ptyId === null) { opts.onSettled?.('The session closed before the message was sent.'); return; }
+      if (this.ptyId === null) { opts.onSettled?.(closed, true, stashed); return; }
       const held = opts.gate?.();
       if (held) {
-        rlog('info', '[COMPOSE] enter held', { pane: this.id, why: held });
-        opts.onSettled?.(held, true);
+        rlog('info', '[COMPOSE] enter held', { pane: this.id, why: held, ...(stashed ? { stashed: true } : {}) });
+        opts.onSettled?.(held, true, stashed);
         return;
       }
       // The turn starts with the Enter, so a held Enter leaves the ring as it
@@ -2377,8 +2455,11 @@ export class Pane {
         this.noteBarSend('compose');
       }
       // D18: a line Patton typed (comments, checkpoint, pause) is a send of
-      // its own: an Esc from here stops its turn, not the box's last send.
-      if (origin === 'patton') this.lastBoxSend = null;
+      // its own: an Esc from here stops its turn, not that of a box send
+      // queued before it (one queued after it keeps its record).
+      if (origin === 'patton' && this.lastBoxSend !== null && this.lastBoxSend.seq < seq) this.lastBoxSend = null;
+      // Claude Code puts a stash back after a submit: none is held now.
+      this.pattonStashOpen = false;
       own();
       if (writeOrigin) window.patton.pty.write(this.ptyId, '\r', writeOrigin);
       else window.patton.pty.write(this.ptyId, '\r');
@@ -2627,6 +2708,7 @@ export class Pane {
    *  question that Enter answers the dialog and the image is still in the draft,
    *  so the chips stay. */
   noteEnterSent(): void {
+    this.pattonStashOpen = false; // Claude Code puts a stash back after a submit
     if (this.claudeBlocked) return;
     this.clearPasteChipsOnSend('enter');
     // An Enter on his own text in Claude's bar sends it; an empty bar's or a
@@ -3020,6 +3102,7 @@ export class Pane {
         this.composeWriteSeq++;
         this.scheduleBarReading();
         this.checkEscRestore();
+        this.checkRestoreClear();
         this.checkBarTextNote();
       }),
       term.onScroll(() => this.scheduleBarReading()),
@@ -3795,6 +3878,7 @@ export class Pane {
     }
     this.endEscRestore(null);
     window.patton.pty.write(this.ptyId, plan.keys, 'patton');
+    this.restoreClearPending = true;
     this.noteOwnTyping();
     rlog('info', '[COMPOSE] bar cleared', { pane: this.id, keys: describeClearKeys(plan.keys) });
     const existing = this.editorInput.getValue();
@@ -3815,6 +3899,12 @@ export class Pane {
     if (!this.barTextNote || this.barTextNote.hidden === !show) return;
     this.barTextNote.hidden = !show;
     this.editorInput.refreshSize();
+  }
+
+  /** The restore's clear is done once Claude's bar no longer reads as text. */
+  private checkRestoreClear(): void {
+    if (!this.restoreClearPending) return;
+    if (readClaudeBarInput(this.terminalView.terminal.buffer.active).kind !== 'text') this.restoreClearPending = false;
   }
 
   /** The note goes once Claude's bar reads empty. */

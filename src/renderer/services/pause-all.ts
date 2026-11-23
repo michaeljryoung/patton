@@ -26,7 +26,7 @@
  * held ('stashed'): Ctrl+S would then overwrite or pop it.
  */
 import {
-  PAUSE_NAMED_MAX, PAUSE_SKIP_REASONS,
+  PAUSE_HELD_REASONS, PAUSE_NAMED_MAX, PAUSE_SKIP_REASONS,
   type PauseAllOutcome, type PauseAllReport, type PauseSkipName, type PauseSkipReason,
   type StashKeyVerdict,
 } from '../../shared/types';
@@ -69,7 +69,8 @@ export interface PauseTarget {
   readonly title: string;
   readonly input: PauseInput;
   /** Type `pause` and Enter; with `stash`, Ctrl+S first. Resolves null once
-   *  the Enter went, else why it was held (Claude started asking). */
+   *  the Enter went, else why it was held (a held reason; any other text
+   *  counts as 'held'). */
   send(stash: boolean): Promise<string | null>;
 }
 
@@ -139,13 +140,18 @@ export async function runPause(panes: PauseTarget[], key: StashKeyVerdict, settl
   if (timer) clearTimeout(timer);
   going.forEach(({ pane }, i) => {
     const result = results[i];
-    if (typeof result === 'string') { skip(pane, 'held'); return; }
+    if (typeof result === 'string') { skip(pane, heldReason(result)); return; }
     if (result === UNSETTLED) out.unsettled.push(pane.id);
     out.sent.push(pane.id);
     out.report.sent += 1;
     if (isQueued(pane.input)) out.report.queued += 1;
   });
   return out;
+}
+
+/** A held word's reason as the pane gave it; anything else is plain 'held'. */
+function heldReason(result: string): PauseSkipReason {
+  return (PAUSE_HELD_REASONS as readonly string[]).includes(result) ? result as PauseSkipReason : 'held';
 }
 
 /** Named in the summary: Claude panes left unpaused, not plain shells. */
@@ -162,6 +168,11 @@ export const PAUSE_SKIP_WORDS: Record<PauseSkipReason, string> = {
   stashed: 'a draft is set aside here',
   unclear: 'state unclear',
   held: 'Claude asked something as it went: not sent',
+  'held-restoring': 'its last message was coming back into the box: not sent',
+  'held-typed': 'not sent: "pause" is left in its input',
+  'held-stashed': 'not sent: its draft is set aside (Ctrl+S there brings it back)',
+  'held-typed-stashed': 'not sent: "pause" is left in its input and its draft set aside (clear the input, then Ctrl+S)',
+  'bar-text': 'its input still has text: not sent',
   'not-claude': 'not Claude',
   'no-shell': 'shell exited',
 };

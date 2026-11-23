@@ -543,13 +543,29 @@ export type StashKeyVerdict = { ok: true } | { ok: false; why: string };
  *    was submitted since): Ctrl+S would overwrite or pop it.
  *  - 'unclear': Claude's state can't rule out a dialog (title path, or 7501 error).
  *  - 'held': chosen for the word, but Claude started asking before it went
- *    (held at the write or at the Enter), so it was not sent.
+ *    (held at the stash or the write), so it was not sent.
+ *  - 'held-restoring': the same, held because D18 was putting the pane's
+ *    last message back into the box (docs/compose-box.md).
+ *  - 'held-typed': held at the Enter: `pause` is left in Claude's input.
+ *  - 'held-stashed': held after its Ctrl+S: the draft is in Claude's stash.
+ *  - 'held-typed-stashed': both.
+ *  - 'bar-text': D18's watch left text in Claude's bar, never stashed.
  *  - 'not-claude', 'no-shell'. */
+export type PauseHeldReason =
+  | 'held' | 'held-restoring' | 'held-typed' | 'held-stashed' | 'held-typed-stashed' | 'bar-text' | 'stashed';
+
 export type PauseSkipReason =
-  | 'waiting' | 'menu' | 'fresh' | 'draft' | 'stashed' | 'unclear' | 'held' | 'not-claude' | 'no-shell';
+  | 'waiting' | 'menu' | 'fresh' | 'draft' | 'stashed' | 'unclear' | 'held' | 'held-restoring' | 'held-typed'
+  | 'held-stashed' | 'held-typed-stashed' | 'bar-text' | 'not-claude' | 'no-shell';
 
 export const PAUSE_SKIP_REASONS: readonly PauseSkipReason[] = [
-  'waiting', 'menu', 'fresh', 'draft', 'stashed', 'unclear', 'held', 'not-claude', 'no-shell',
+  'waiting', 'menu', 'fresh', 'draft', 'stashed', 'unclear', 'held', 'held-restoring', 'held-typed',
+  'held-stashed', 'held-typed-stashed', 'bar-text', 'not-claude', 'no-shell',
+];
+
+/** The reasons a word chosen for a pane can come back held with. */
+export const PAUSE_HELD_REASONS: readonly PauseHeldReason[] = [
+  'held', 'held-restoring', 'held-typed', 'held-stashed', 'held-typed-stashed', 'bar-text', 'stashed',
 ];
 
 /** A skipped pane named for the summary: its tab's title and why. */
