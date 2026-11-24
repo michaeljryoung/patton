@@ -917,3 +917,22 @@ _Earlier entries archived → `docs/session-archive.md` (latest trim 2026-11-22,
 ## Decisions (S61 trim 2026-11-23)
 
 - **2026-11-22 (S60) — The session bar reads the session's own transcript; no second hook.** Claude Code's 7501 carries agents but never shells, monitors or loops, and the Stop hook only speaks at turn end, so main maps a pane to its Claude process (`~/.claude/sessions/<pid>.json`) and follows its transcript (`src/main/session-*.ts`, `transcript-*.ts`); the Stop hook's `tl`/`cl` lists reconcile at each Stop, and a cut list ends nothing. The PostToolUse hook he agreed to was not needed. Office files (.docx/.xlsx/.pptx) open from links; macro-enabled ones are only revealed. All in `docs/session-bar.md`.
+
+## Session Log (S62 trim 2026-11-24)
+
+### 2026-11-20 (Session 58 — v1.32.0 one typing bar: the box over Claude Code's own bar; released not installed)
+- Michael on v1.31.0 (screenshots): "I think the OK button is now in the wrong place", "we now have two typing bars, which just doesn't look very good". Claude Code v2.1.321 has no setting, environment switch or terminal capability that hides its bar (read in the binary); a pty capture replayed through xterm showed it parks the cursor on its `❯` line between `─` rules after every redraw (22 of 26 bursts mid-turn, the rest mid-redraw). Sketch A–D (https://claude.ai/code/artifact/8bf5f5bc-0dab-4cab-afa2-cd9219a9f1a8, `docs/mocks/one-typing-bar.html`); he chose A ("ok"). Design D8–D14 and the part-2 nodes in `docs/compose-box.md`; recorded screens in `scripts/fixtures/claude-bar-screens.json`.
+- Mid-build: "when i paste an image into the text bar it only appears above, have we sorted this": not sorted, and as built a pasted `[Image #2]` would have sent the box under; he chose thumbnails "Left of the text" (D14). "Are we going to have the option to toggle this off anyway?": the `composeOverBar` setting.
+- Builders: `dbcb1e2` reader, `b24a8bf` placement and setting, `4b82876` hidden aside, Okay? in the box, sends that don't move it, `addcde0` Type here, `d8a0a22` images, `5924108` fit padding (found by `check-compose-over.cjs`, a real-layout check by an agent that didn't build: 327 ok, 231 fail on the base). Three fresh reviews: 0, 0 and 1 major (the 400 ms counted from the last match, so after a still screen one mid-redraw chunk moved the box at once), fixed in `e8baa66`, `dc204e2` with assertions failing before. `npm run check` 33/33.
+- Pushed `18de10e`; run 44757794817 green, v1.32.0, cask `906e8a04…` matches the DMG. Not installed: /Applications 1.31.0, untouched all session. About 1% of his week.
+- After the checkpoint, Michael: "lets remove the okay button, its annoying me and looks odd - can we actually make it a claude command /ok where it gives chat status, checks shells, monitors and reports ... needs to be lean". `07dd5f5` removes it (975 lines, its check deleted, four checks assert none exists); v1.33.0, cask `516e7a08…` matches the DMG. `/ok` is `central-claude-md/commands/ok.md` (`2775fd2`, linked into `~/.claude/commands/`): cheap checks of the session's shells, agents, monitors and CI, an answer-first report, no new work; smoke-tested headless.
+
+_Earlier entries archived → `docs/session-archive.md` (latest trim 2026-11-23, S61)._
+
+## Decisions (S62 trim 2026-11-24)
+
+- **2026-11-22 (S61) — The review tab lays out with LibreOffice and draws with pdf.js; Send to Drive uses the Drive API with his personal gcloud login.** Electron's built-in PDF viewer hides selections from Patton; margin notes shrank pages to 75%, so comments live in a side panel with highlights. R1–R10 and the threat model are in `docs/review-tab.md`.
+
+## Gotchas (S62 trim 2026-11-24)
+
+- **rclone's `gdrive:` remote on this Mac is the Lindus Drive, read-only** (S61). Anything for his personal Drive goes through the Drive API with `gcloud auth print-access-token --account michaeljryoung@gmail.com`; confirm the account with a read-only `about` call first.
