@@ -1015,8 +1015,8 @@ await section(async () => {
     const d = tabEl('D');
     const dLeft = [...d.parentElement.children].indexOf(d) * 100;
     d.dispatchEvent(ev('dragover', dLeft + 20));
-    check('strip: over D\'s near half the cue is a line before D in the group\'s line colour, and the chip is marked',
-      d.classList.contains('drop-before') && d.style.getPropertyValue('--drop-line') === 'var(--group1-line)' && chip(tm, g).classList.contains('drag-over'), { cls: d.className, line: d.style.getPropertyValue('--drop-line') });
+    check('strip: over D\'s near half the cue is a --focus line before D, and the chip is marked',
+      d.classList.contains('drop-before') && d.style.getPropertyValue('--drop-line') === 'var(--focus)' && chip(tm, g).classList.contains('drag-over'), { cls: d.className, line: d.style.getPropertyValue('--drop-line') });
     d.dispatchEvent(ev('drop', dLeft + 20));
     check('strip: dropped there, E joins the group at its end', order(tm) === 'A B C E D' && groups(tm)[0].tabs === 'B C E', { order: order(tm), groups: groups(tm) });
     check('strip: no cue is left after the drop', !tm.bar.querySelector('.drop-before, .drop-after, .drag-over'));

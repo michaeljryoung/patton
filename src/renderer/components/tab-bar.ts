@@ -1111,8 +1111,8 @@ export class TabBar {
     const el = this.tabElement(over.id);
     if (!el) return;
     el.classList.add(over.half === 'left' ? 'drop-before' : 'drop-after');
-    const shade = placement.group !== null ? this.shadeOfGroup.get(placement.group) : undefined;
-    el.style.setProperty('--drop-line', shade ? `var(--group${shade}-line)` : 'var(--ink)');
+    // --focus (the chip's own drop mark, 3:1 or better on every group fill) for a line that joins a group, ink for one that does not.
+    el.style.setProperty('--drop-line', placement.group !== null ? 'var(--focus)' : 'var(--ink)');
   }
 
   /** Every drop cue off: slot lines, chip marks, the end line. */

@@ -612,22 +612,22 @@ await section('10b. Drop slots and their cue', 30, async () => {
     clear();
     startDrag('a');
     over('b', 'left');
-    check('his case, the cue: over b\'s near half (Games\' right edge) a line before b in Games\' line colour, Games\' chip marked', cue() === 'b:before:var(--group1-line) | g1', cue());
+    check('his case, the cue: over b\'s near half (Games\' right edge) a line before b in --focus, Games\' chip marked', cue() === 'b:before:var(--focus) | g1', cue());
     over('b', 'right');
     check('b\'s far half: a line after b in ink, no chip (the slot before g2\'s chip is outside g2)', cue() === 'b:after:var(--ink) | -', cue());
     over('g1b', 'right');
-    check('Games\' last tab, right half: a line after it in Games\' colour, its chip marked', cue() === 'g1b:after:var(--group1-line) | g1', cue());
+    check('Games\' last tab, right half: a line after it in Games\' colour, its chip marked', cue() === 'g1b:after:var(--focus) | g1', cue());
     over('g1a', 'left');
-    check('Games\' first tab, left half: inside Games, before it', cue() === 'g1a:before:var(--group1-line) | g1', cue());
+    check('Games\' first tab, left half: inside Games, before it', cue() === 'g1a:before:var(--focus) | g1', cue());
     over('g2a', 'left');
-    check('the second group\'s first tab, left half: its own shade (group2), its chip; the earlier cue gone', cue() === 'g2a:before:var(--group2-line) | g2', cue());
+    check('the second group\'s first tab, left half: its own shade (group2), its chip; the earlier cue gone', cue() === 'g2a:before:var(--focus) | g2', cue());
     over('a', 'right');
     check('over the dragged tab itself: no cue', cue() === '- | -', cue());
     chip('g2').dispatchEvent(ev('dragover', 250));
     check('over a chip: that chip marked, no slot line', cue() === '- | g2', cue());
     over('b', 'left');
     tabEl('b').dispatchEvent(ev('dragleave', 220, tabEl('g2a')));
-    check('leaving one tab for another keeps the cue (the next dragover redraws it)', cue() === 'b:before:var(--group1-line) | g1', cue());
+    check('leaving one tab for another keeps the cue (the next dragover redraws it)', cue() === 'b:before:var(--focus) | g1', cue());
     tabEl('b').dispatchEvent(ev('dragleave', 220, doc.body));
     check('leaving the strip clears every cue', cue() === '- | -', cue());
     over('b', 'left');
@@ -667,9 +667,9 @@ await section('10b. Drop slots and their cue', 30, async () => {
     draw(baseTabs().filter((t) => t.id !== 'b'));
     startDrag('a');
     over('g1b', 'right');
-    check('two adjacent groups: the first\'s last tab, right half (before the second\'s chip): joins the first', cue() === 'g1b:after:var(--group1-line) | g1', cue());
+    check('two adjacent groups: the first\'s last tab, right half (before the second\'s chip): joins the first', cue() === 'g1b:after:var(--focus) | g1', cue());
     over('g2a', 'left');
-    check('...the second\'s first tab, left half: joins the second', cue() === 'g2a:before:var(--group2-line) | g2', cue());
+    check('...the second\'s first tab, left half: joins the second', cue() === 'g2a:before:var(--focus) | g2', cue());
     tabEl('a').querySelector('.tab-bar-tab-grip').dispatchEvent(ev('dragend'));
 
     // A selection: a (the tab you're on) and g2b, ⌘-clicked, dropped together at Games' right edge.
@@ -680,7 +680,7 @@ await section('10b. Drop slots and their cue', 30, async () => {
     clear();
     startDrag('g2b');
     over('b', 'left');
-    check('a selection over b\'s near half: Games\' colour and chip', cue() === 'b:before:var(--group1-line) | g1', cue());
+    check('a selection over b\'s near half: Games\' colour and chip', cue() === 'b:before:var(--focus) | g1', cue());
     dropOn('b', 'left');
     check('...dropped: onDropTabs([a, g2b], b left)', JSON.stringify(callsOf('dropTabs').at(-1)) === JSON.stringify(['dropTabs', ['a', 'g2b'], { kind: 'tab', id: 'b', half: 'left' }]), calls);
     check('...both join Games at its end, in strip order, g2 still one run', order() === 'g1a@g1 g1b@g1 a@g1 g2b@g1 b g2a@g2 g2c@g2', order());
@@ -838,7 +838,7 @@ await section('12. The folded chip\'s list stays inside the window\'s right edge
   // The colour var the drop line takes in each rule that draws it.
   const dropVar = (sel) => tabsCss.replace(/\/\*[\s\S]*?\*\//g, '').match(new RegExp(`${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{[^}]*inset 2px 0 0 var\\(--([a-z-]+)\\)`))?.[1];
   // The chip's drop line (a drop on it, or a slot that joins its group) and the slot line between
-  // tabs (24 Nov 2026): --drop-line, which tab-bar.ts sets to the joining group's --groupN-line, else ink.
+  // tabs (24 Nov 2026): --drop-line, which tab-bar.ts sets to --focus when the slot joins a group, else ink.
   const drops = { chip: dropVar('.tab-bar-group-chip.drag-over') };
   const slotLine = /\.tab-bar-tab\.drop-before::after,\s*\.tab-bar-tab\.drop-after::after\s*\{[^}]*background:\s*var\(--drop-line, var\(--ink\)\)/.test(tabsCss.replace(/\/\*[\s\S]*?\*\//g, ''));
   check('shades: the chip\'s drop line names a colour token, and the slot line is --drop-line falling back to ink', !!drops.chip && slotLine, { drops, slotLine });
@@ -865,7 +865,7 @@ await section('12. The folded chip\'s list stays inside the window\'s right edge
         if (what.startsWith('chip')) rows.drop.push([`${tag} drop line --${drops.chip}`, +ratio(T(drops.chip), fill).toFixed(2)]);
         else {
           rows.drop.push([`${tag} slot line --ink`, +ratio(ink, fill).toFixed(2)]);
-          rows.join.push([`${tag} joining slot line --group${i + 1}-line`, +ratio(L, fill).toFixed(2)]);
+          rows.join.push([`${tag} joining slot line --focus`, +ratio(T('focus'), fill).toFixed(2)]);
         }
       }
     });
@@ -875,9 +875,7 @@ await section('12. The folded chip\'s list stays inside the window\'s right edge
     check(`shades: ${mode}, secondary text (the chips' --muted mix, an inactive tab's --muted title) reaches 4.5:1 (lowest ${low(rows.secondary)})`, under(rows.secondary, 4.5).length === 0, under(rows.secondary, 4.5));
     check(`shades: ${mode}, status dots, flags and the parked ring reach 3:1 on every fill, counting a dot's edge as its outline (lowest ${low(rows.status)})`, under(rows.status, 3).length === 0, under(rows.status, 3).slice(0, 6));
     check(`shades: ${mode}, the chip's drop line and the ink slot line reach 3:1 on every fill (lowest ${low(rows.drop)})`, rows.drop.length > 0 && under(rows.drop, 3).length === 0, under(rows.drop, 3));
-    // Not a bar: the joining slot line is the group's own pale line colour (as briefed), so a join is
-    // also shown by the chip's --focus line above, which passes.
-    console.log(`info  shades: ${mode}, a joining slot line in its group's line colour on that group's fills: lowest ${low(rows.join)}:1`);
+    check(`shades: ${mode}, the joining slot line (--focus) reaches 3:1 on every group's tab fills (lowest ${low(rows.join)})`, rows.join.length > 0 && under(rows.join, 3).length === 0, under(rows.join, 3));
   }
 }
 

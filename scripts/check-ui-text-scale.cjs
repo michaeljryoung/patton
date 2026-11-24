@@ -24,7 +24,7 @@
 //  - the selected tab sits on the terminal's ground with a 3 px ink bar under it, and
 //    a flagged or plain tab has neither (light scheme only: the hidden window's);
 //  - tab groups: at x1, x1.1 and x1.5 an open group's chip sits left of its first tab at the strip's height, its
-//    label whole (60 characters stop at 140px x scale), a 2 px top line in the group's shade on chip and member tabs (the selected one keeps its
+//    label whole (60 characters stop at 140px x scale), the drop slot line (2 px, the tab's height, --focus joining / --ink not), a 2 px top line in the group's shade on chip and member tabs (the selected one keeps its
 //    3 px bar); shades (22 Nov): three groups three fills, a fourth repeats the first, an ungrouped tab between stays plain, the selected member keeps --bg; the chip never grows; a folded chip fits name, count and indicator and the other tabs widen (light only);
 //  - the collapsed bookmarks rail's mark is centred on the header row it stood in;
 //  - every text box taller than its text grew with the text (a fixed height shows up as no growth);
@@ -1248,10 +1248,16 @@ async function pageRun(BIG) {
     const other = getComputedStyle(tabEl(id));
     check(`unselected tab ${id} has neither the ground nor the bar`, other.backgroundColor !== bgColour && other.boxShadow === 'none', { background: other.backgroundColor, boxShadow: other.boxShadow });
   }
-  tabEl('t1').classList.add('drag-over');
+  // The slot line (24 Nov 2026) is a ::after on the tab, so the tab's own box-shadow (its bar) is untouched:
+  // 2 px wide, the tab's full height, straddling its edge, in --ink here (a drop that joins no group).
+  tabEl('t1').classList.add('drop-after');
+  tabEl('t1').style.setProperty('--drop-line', 'var(--ink)');
   const dragged = getComputedStyle(tabEl('t1')).boxShadow;
-  check('dragging over the selected tab keeps its bar beside the drop line', dragged.includes(bar) && dragged.split('inset').length - 1 === 2, { boxShadow: dragged });
-  tabEl('t1').classList.remove('drag-over');
+  const lineStyle = getComputedStyle(tabEl('t1'), '::after');
+  check('dragging over the selected tab keeps its bar, and the slot line is a 2 px ink line on its right edge', dragged === bar && lineStyle.width === '2px'
+    && lineStyle.right === '-1px' && lineStyle.backgroundColor === inkColour && Math.abs(parseFloat(lineStyle.height) - tabEl('t1').getBoundingClientRect().height) < 0.5, { boxShadow: dragged, width: lineStyle.width, right: lineStyle.right, height: lineStyle.height, bg: lineStyle.backgroundColor });
+  tabEl('t1').classList.remove('drop-after');
+  tabEl('t1').style.removeProperty('--drop-line');
 
   // --- tab groups (19 Nov 2026, the approved "ink" look): the chip beside its tabs, at x1, x1.1
   // and x1.5, light scheme (the hidden window's; it has no dark emulation). An open group's chip
@@ -1291,6 +1297,18 @@ async function pageRun(BIG) {
       const members = ['g1', 'g2'].map((id) => strip.querySelector(`.tab-bar-tab[data-tab-id="${id}"]`));
       const cr = chip ? chip.getBoundingClientRect() : { left: 0, right: 0, height: 0 };
       const firstR = members[0].getBoundingClientRect();
+      // The slot line on a member tab's left edge and a plain tab's right edge, at this scale: 2 px, the tab's full height, straddling
+      // the edge, in --focus when it joins a group and --ink when it does not (24 Nov 2026).
+      for (const [el, cls, side, varName] of [[members[0], 'drop-before', 'left', '--focus'], [strip.querySelector('.tab-bar-tab[data-tab-id="p1"]'), 'drop-after', 'right', '--ink']]) {
+        el.classList.add(cls);
+        el.style.setProperty('--drop-line', `var(${varName})`);
+        await frame();
+        const ls = getComputedStyle(el, '::after');
+        check(`${tag}: the ${cls} slot line on ${el.dataset.tabId} is 2 px wide, the tab's full height, straddles its ${side} edge, and is ${varName}`,
+          ls.width === '2px' && ls[side] === '-1px' && Math.abs(parseFloat(ls.height) - el.getBoundingClientRect().height) < 0.5 && ls.backgroundColor === colourOf(varName), { width: ls.width, edge: ls[side], height: ls.height, tabH: el.getBoundingClientRect().height, bg: ls.backgroundColor, want: colourOf(varName) });
+        el.classList.remove(cls);
+        el.style.removeProperty('--drop-line');
+      }
       const nameEl = chip && chip.querySelector('.tab-bar-group-name');
       const place = { chipRight: +cr.right.toFixed(1), firstLeft: +firstR.left.toFixed(1), chipH: +cr.height.toFixed(1), stripH, tabH: +firstR.height.toFixed(1), next: chip && chip.nextElementSibling && chip.nextElementSibling.dataset.tabId };
       check(`${tag}: an open group's chip sits immediately left of its first tab (no gap), at the strip's height`,
@@ -1454,17 +1472,21 @@ async function pageRun(BIG) {
         ['selected title hovered', ratioOf(hoverState.selected.labelColor, hoverState.selected.bg), 4.5],
       ];
       check(`group shades (${mode}): painted lettering reaches 4.5:1 on its painted fill (tab, chip, folded chip's count, hovered, selected) (lowest ${Math.min(...painted.map((r) => r[1]))})`, painted.every((r) => r[1] >= r[2]), painted);
-      // The drop line, painted: each of the chip, a grouped tab and the selected grouped tab forced into drag-over.
+      // The drop cues, painted: the chip's own line (.drag-over, a drop on it or a slot that joins its group), and the 2 px slot line
+      // (::after, --focus when it joins) on a grouped tab and on the selected grouped tab, each 3:1 on its own fill.
       const dropLine = (el) => { const m = getComputedStyle(el).boxShadow.match(/(rgba?\([^)]*\)) 2px 0px 0px 0px inset/); return m ? m[1] : null; };
+      const slotLine = (el) => getComputedStyle(el, '::after').backgroundColor;
       const dropRows = [];
       for (const [what, el, fill] of [['chip', chipFor('gS2'), chipBg[1]], ['tab', tabOf('s4'), tabBg.s4], ['selected tab', tabOf('s3'), bgNow]]) {
-        el.classList.add('drag-over');
+        if (what === 'chip') el.classList.add('drag-over');
+        else { el.classList.add('drop-before'); el.style.setProperty('--drop-line', 'var(--focus)'); }
         await frame();
-        const c = dropLine(el);
+        const c = what === 'chip' ? dropLine(el) : slotLine(el);
         dropRows.push([what, c, c ? ratioOf(c, fill) : 0]);
-        el.classList.remove('drag-over');
+        if (what === 'chip') el.classList.remove('drag-over');
+        else { el.classList.remove('drop-before'); el.style.removeProperty('--drop-line'); }
       }
-      check(`group shades (${mode}): the painted 2px drop line on a chip, a grouped tab and the selected grouped tab reaches 3:1 on its fill (lowest ${Math.min(...dropRows.map((r) => r[2]))})`, dropRows.every((r) => r[1] && r[2] >= 3), dropRows);
+      check(`group shades (${mode}): the painted drop cues (the chip's 2px line; the --focus slot line on a grouped tab and on the selected one) reach 3:1 on their fills (lowest ${Math.min(...dropRows.map((r) => r[2]))})`, dropRows.every((r) => r[1] && r[2] >= 3), dropRows);
       await setScheme('light');
       await frame();
     }

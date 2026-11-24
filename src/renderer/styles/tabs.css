@@ -182,9 +182,9 @@
 /* Where a dragged tab will land (24 Nov 2026, Chrome-like slots, docs/tab-groups.md):
    a 2 px line, the tab's full height, at the edge of the tab under the pointer
    (drop-before: its left edge; drop-after: its right edge), straddling the
-   hairline between tabs. tab-bar.ts sets --drop-line to the joining group's
-   --groupN-line, or --ink when the drop joins no group (and marks the joining
-   group's chip .drag-over). A pseudo-element, so no box-shadow of the tab (its
+   hairline between tabs. tab-bar.ts sets --drop-line to --focus when the drop
+   joins a group (the group's own line colour was only 1.5:1 on its fill in light), or
+   --ink when it joins none (and marks the joining group's chip .drag-over). A pseudo-element, so no box-shadow of the tab (its
    ink bar, its group's top line, a selection outline) is touched. */
 .tab-bar-tab.drop-before::after,
 .tab-bar-tab.drop-after::after {
