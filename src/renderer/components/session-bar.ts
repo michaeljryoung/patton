@@ -140,7 +140,8 @@ export class SessionBar {
     openBtn.addEventListener('click', () => this.setMinimizedByButton(false));
     this.stripRunning = el('span', 'sb-n sb-n-running', '0');
     this.stripRunning.setAttribute('role', 'img');
-    this.stripFailures = el('span', 'sb-n sb-n-failures', '0');
+    this.stripFailures = el('span', 'sb-n sb-n-failures', '');
+    this.stripFailures.hidden = true;
     this.stripFailures.setAttribute('role', 'img');
     this.stripCkpt = el('button', 'sb-btn sb-icon sb-strip-ckpt', '✓');
     this.stripCkpt.type = 'button';
@@ -348,7 +349,10 @@ export class SessionBar {
     this.stripRunning.setAttribute('aria-label', `${view.liveCount} running`);
     this.stripRunning.title = `${view.liveCount} running`;
     const f = view.failures.length;
-    this.stripFailures.textContent = String(f);
+    // No failures: no box, so the strip's one number is plainly the running count.
+    // Failures: "!N" in the failure colour, never mistaken for it.
+    this.stripFailures.hidden = f === 0;
+    this.stripFailures.textContent = f > 0 ? `!${f}` : '';
     this.stripFailures.classList.toggle('some', f > 0);
     const fl = `${f} failure${f === 1 ? '' : 's'}`;
     this.stripFailures.setAttribute('aria-label', fl);
@@ -382,7 +386,7 @@ export class SessionBar {
         list.append(el('li', 'sb-empty', 'Nothing in the background'));
       }
       for (const r of view.running) {
-        const what = el(r.kind === 'Shell' ? 'code' : 'span', 'sb-what', r.description);
+        const what = el('span', 'sb-what', r.description);
         const when = r.ended ? (r.endLabel ?? 'done') : r.age;
         const li = this.item(r.kind, what, when, `${r.long ? 'long' : ''}${r.ended ? ' done' : ''}`.trim());
         li.title = r.tooltip;

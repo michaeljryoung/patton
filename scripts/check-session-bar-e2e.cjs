@@ -332,8 +332,8 @@ async function pageRun(cfg) {
   const strip = () => {
     const root = barRoot();
     if (!root || barState() !== 'strip') return null;
-    const leaves = Array.from(root.querySelectorAll('*')).filter((e) => e.children.length === 0 && visible(e) && /^\d+$/.test(norm(e.textContent)));
-    return { running: leaves[0] ? Number(norm(leaves[0].textContent)) : null, failures: leaves[1] ? Number(norm(leaves[1].textContent)) : null, failureEl: leaves[1] || null };
+    const leaves = Array.from(root.querySelectorAll('*')).filter((e) => e.children.length === 0 && visible(e) && /^!?\d+$/.test(norm(e.textContent)));
+    return { running: leaves[0] ? Number(norm(leaves[0].textContent)) : null, failures: leaves[1] ? Number(norm(leaves[1].textContent).replace(/^!/, '')) : 0, failureEl: leaves[1] || null };
   };
   const waitFor = async (pred, ms, step = 10) => {
     const t0 = performance.now();

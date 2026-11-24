@@ -197,13 +197,13 @@
 .sb-what {
   min-width: 0;
   overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-code.sb-what {
-  font-family: var(--font-mono);
-  font-size: calc(11.5px * var(--ui-scale));
+  /* Up to 3 lines, then an ellipsis; every row's text in the UI font. */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .sb-t {
@@ -311,10 +311,16 @@ code.sb-what {
 .sb-n {
   display: grid;
   place-items: center;
-  width: calc(18px * var(--ui-scale));
+  box-sizing: border-box;
+  min-width: calc(18px * var(--ui-scale));
+  padding: 0 2px;
   height: calc(18px * var(--ui-scale));
   border: 1px solid var(--sb-hairline);
   font-variant-numeric: tabular-nums;
+}
+
+.sb-n[hidden] {
+  display: none;
 }
 
 .sb-n-failures.some {

@@ -378,10 +378,24 @@ async function pageRun(SCALES) {
     // ---- 5. fed events
     {
       const id = `bt${String(S).replace('.', '')}`;
-      await feed(pane, { type: 'task-start', id, kind: 'shell', description: `npm run check ${S}`, command: `npm run check -- --scale ${S}`, at: Date.now() });
+      const LONG = `npm run check ${S} and then merge the results for the German subsidiaries into one register, checking every filing twice`;
+      await feed(pane, { type: 'task-start', id, kind: 'shell', description: LONG, command: `npm run check -- --scale ${S}`, at: Date.now() });
       let row = rowsIn('running').find((li) => li.dataset.id === id);
-      check(`${at} feed task-start: a Running row (Shell, its description)`, !!row && row.querySelector('.sb-kind')?.textContent === 'Shell' && row.querySelector('.sb-what')?.textContent === `npm run check ${S}` && !row.classList.contains('done'),
+      check(`${at} feed task-start: a Running row (Shell, its description)`, !!row && row.querySelector('.sb-kind')?.textContent === 'Shell' && row.querySelector('.sb-what')?.textContent === LONG && !row.classList.contains('done'),
         rowsIn('running').map((li) => li.textContent));
+      // A row's text: the UI font like every other row (not a code element), wrapped to at most 3 lines.
+      {
+        const w = row && row.querySelector('.sb-what');
+        const cs = w && getComputedStyle(w);
+        const lh = cs && parseFloat(cs.lineHeight);
+        const h = w && w.getBoundingClientRect().height;
+        check(`${at} a Shell row's text is not a code element, and is in the UI font`, !!w && w.tagName !== 'CODE' && cs.fontFamily === getComputedStyle(barEl()).fontFamily && !row.querySelector('code'), w && { tag: w.tagName, font: cs.fontFamily });
+        check(`${at} row text carries the 3-line clamp and wraps`, !!cs && (cs.webkitLineClamp === '3' || cs.lineClamp === '3') && cs.whiteSpace === 'normal', cs && { clamp: cs.webkitLineClamp, ws: cs.whiteSpace });
+        check(`${at} a long Shell row wraps to 3 lines, no more (1 px)`, !!lh && Math.abs(h - 3 * lh) <= 1, { h, lh });
+        const k = row && row.querySelector('.sb-kind').getBoundingClientRect();
+        const wr = w && w.getBoundingClientRect();
+        check(`${at} the kind label sits on the text's first line (its top within one line of the text's top)`, !!k && !!wr && Math.abs(k.top - wr.top) <= lh, { kindTop: k && k.top, textTop: wr && wr.top });
+      }
       const strip = barEl()?.querySelector('.sb-n-running');
       check(`${at} feed task-start: the Running count says 1`, !!row && barEl().querySelector('.sb-sec-running .sb-count')?.textContent === '1', strip && strip.textContent);
       await feed(pane, { type: 'task-end', id, status: 'completed', at: Date.now() });
@@ -402,10 +416,23 @@ async function pageRun(SCALES) {
       const fails = rowsIn('failures');
       check(`${at} a failed task-end: one Failures row`, fails.length === 1 && fails[0].classList.contains('fail'), fails.map((li) => li.textContent));
       const x = fails[0] && fails[0].querySelector('.sb-x');
+      const nf = () => barEl().querySelector('.sb-n-failures');
+      check(`${at} strip failures box: one failure shows "!1" in the failure colour, labelled "1 failure"`, !!nf() && !nf().hidden && nf().textContent === '!1' && nf().getAttribute('aria-label') === '1 failure' && nf().classList.contains('some'), nf() && nf().outerHTML);
       check(`${at} the Failures row has a × labelled Dismiss`, !!x && x.getAttribute('aria-label') === 'Dismiss', x && x.outerHTML);
       if (x) x.click();
       await frame();
       check(`${at} × removes the Failures row`, !!x && rowsIn('failures').length === 0 && !barEl().querySelector('.sb-sec-failures'), rowsIn('failures').map((li) => li.textContent));
+      check(`${at} strip failures box: no failures, the box is hidden and empty`, !!nf() && nf().hidden && nf().textContent === '', nf() && nf().outerHTML);
+      for (const n of [1, 2]) {
+        await feed(pane, { type: 'task-start', id: `${fid}-${n}`, kind: 'shell', description: `second ${n}`, at: Date.now() });
+        await feed(pane, { type: 'task-end', id: `${fid}-${n}`, status: 'failed', exitCode: 2, at: Date.now() });
+      }
+      check(`${at} strip failures box: two failures show "!2", labelled "2 failures"`, !!nf() && !nf().hidden && nf().textContent === '!2' && nf().getAttribute('aria-label') === '2 failures', nf() && nf().outerHTML);
+      for (let i = 0; i < 2; i++) {
+        barEl().querySelector('.sb-sec-failures .sb-x')?.click();
+        await frame();
+      }
+      check(`${at} strip failures box: hidden again once both are dismissed`, !!nf() && nf().hidden && rowsIn('failures').length === 0, nf() && nf().outerHTML);
 
       const url = `https://claude.ai/code/artifact/abcdef12-${Math.round(S * 10)}`;
       await feed(pane, { type: 'link', url, label: 'The plan', at: Date.now() });
