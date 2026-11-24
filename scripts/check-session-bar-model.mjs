@@ -197,6 +197,27 @@ if (process.env.TZ === 'Europe/London') {
   for (let i = 0; i < 15; i++) m.applyFeed({ type: 'task-end', id: `x${i}`, status: 'failed', exitCode: i, at: T0 + i }, T0 + 10 * MIN);
   v = m.view(T0 + 10 * MIN);
   check('at most 10 failures, the oldest dropped, newest first', v.failures.length === 10 && v.failures[0].text === 'exit 14: x14' && v.failures[9].text === 'exit 5: x5', v.failures.map((f) => f.text));
+  {
+    // A dismissed failure stays dismissed: dismiss all keeps failedTaskIds, so a replay adds no row.
+    const d = new M.SessionBarModel();
+    const fail = (id, at) => d.applyFeed({ type: 'task-end', id, status: 'failed', exitCode: 1, at }, at);
+    for (let i = 0; i < 12; i++) fail(`d${i}`, T0 + i); // d0 and d1 fall off the 10-row cap
+    d.applyFeed({ type: 'attached', sessionId: 'sess-1' }, T0);
+    d.applyProgramRecords(rec('error', null, 'API error 529'), [], T0 + MIN);
+    const listed = d.view(T0 + MIN).failures.length;
+    const gone = d.dismissAllFailures();
+    check('dismiss all (replay): setup listed 10 rows, the cap and the error row included', listed === 10 && gone === 10, { listed, gone });
+    for (let i = 0; i < 12; i++) fail(`d${i}`, T0 + 2 * MIN + i);
+    check('dismiss all (replay): the same ids again, the cap-dropped d0 and d1 included, add no row', d.view(T0 + 2 * MIN).failures.length === 0, d.view(T0 + 2 * MIN).failures);
+    d.applyFeed({ type: 'attached', sessionId: 'sess-1' }, T0 + 2 * MIN);
+    for (let i = 0; i < 12; i++) fail(`d${i}`, T0 + 3 * MIN + i);
+    check('dismiss all (replay): a re-attach of the same session, then the same ids, add no row', d.view(T0 + 3 * MIN).failures.length === 0);
+    d.applyFeed({ type: 'attached', sessionId: 'sess-2' }, T0 + 4 * MIN);
+    for (let i = 0; i < 12; i++) fail(`d${i}`, T0 + 4 * MIN + i);
+    check('dismiss all (replay): a new session attached, then the same ids, add no row', d.view(T0 + 4 * MIN).failures.length === 0);
+    d.applyProgramRecords(rec('error', null, 'API error 529'), [], T0 + 5 * MIN);
+    check('dismiss all (replay): a root still in error adds no row', d.view(T0 + 5 * MIN).failures.length === 0, d.view(T0 + 5 * MIN).failures);
+  }
 }
 
 // ── 5. Links ──
