@@ -212,7 +212,7 @@ h3 {{ margin: 0; font-size: 16px; font-weight: 600; display: flex; align-items: 
     <img class="art" src="{TODAY['big']}" width="128" height="128" alt="Today's Patton icon: a pen portrait of a general in a helmet">
     <div class="text">
       <span class="label">Today</span>
-      <p>A fine-line pen portrait on a plain white square. It has no rounded tile like other current Mac icons, and its thin lines fade at small sizes.</p>
+      <p>A fine-line pen portrait on a plain white square, which macOS 26 clips into its rounded tile. Its thin lines fade at small sizes.</p>
     </div>
     <div class="sizes">
       <figure><img src="{TODAY[64]}" width="64" height="64" alt=""><figcaption>64</figcaption></figure>
