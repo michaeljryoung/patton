@@ -150,6 +150,11 @@ Last updated: 2026-11-24 (Session 62, v1.39.0 released, not installed: a tab wit
 
 CLAUDE.md's `## Next Steps` section points here; this is the canonical list. Items leave only via `[x] DONE — Session N`, `[~] SUPERSEDED — <pointer>`, or `[-] DROPPED: <reason>`. Marked items linger 10 checkpoints, then sweep to `docs/session-archive.md`.
 
+### 2026-11-24 — the app icon (S63)
+
+His ask: "i dont really like the patton icon logo, can you suggest 10 alrtnative that look sleeker and more modern without losing reference". Today's icon is a fine-line pen portrait on a plain white square (`build/icon.icns`, from `0529d00`), with no rounded tile and thin lines at 16–64 px. Ten candidates drawn as SVG on the 824-in-1024 macOS tile, shown at full size, 64, 32 and 16 px and in a light and dark Dock: https://claude.ai/code/artifact/c144ceae-d458-4332-b7aa-8e765227fd4f (source `docs/mocks/icon-studies.html`, rebuilt by `docs/mocks/icon-studies/page.py`; drawings in `icons.py` there). Letters on the page: A Helmet, B Silhouette, C Under the brim, D Star cursor, E Window stars, F Three stars, G Stencil star, H Stencil P, I Dog tag, J Patton tank.
+- [ ] **His pick**, then the chosen drawing rendered to every size in `build/icon.iconset` and `build/icon.icns`, shipped with the walk-through's fixes in one install (his 24 Nov question was how to avoid another reinstall).
+
 ### 2026-11-24 — hand-off (S62): install v1.39.0 with Patton quit, then the walk-through
 
 For the session that runs the install, started in iTerm or Terminal.app with Patton quit, on his "install" (23 Nov: "ok make sure all done and ready for me to install tomorrow"). v1.39.0's tag is `276e1b0`, where the full verifier passed (lint, tsc, 54/54 checks, a no-install build); run 45275722462 green; cask 1.39.0 `dc2b68a9…` equals the DMG's digest. Every step below was run through the live off-limits guard on 24 Nov and is allowed.
