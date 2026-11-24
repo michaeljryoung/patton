@@ -137,16 +137,34 @@ export function parsePlanUsage(json: unknown, now: number): PlanUsage | null {
   return { liveId, accounts: shown };
 }
 
-/** Two shown logins with the same email local part would read alike: those (only
- *  those) are named `local@domain`. */
+function nameGroups(accounts: PlanUsageAccount[]): PlanUsageAccount[][] {
+  const groups = new Map<string, PlanUsageAccount[]>();
+  for (const a of accounts) {
+    const key = a.name.toLowerCase();
+    groups.set(key, [...(groups.get(key) ?? []), a]);
+  }
+  return [...groups.values()].filter((g) => g.length > 1);
+}
+
+/** Two shown logins that would read alike are told apart: first those with the same
+ *  email local part are named `local@domain`; any still alike (the same email twice,
+ *  two logins with no email and the same first 4 of id) get the first characters of
+ *  their ids, as many as it takes to differ. Only the clashing logins are renamed. */
 function disambiguateNames(accounts: PlanUsageAccount[]): void {
-  const count = new Map<string, number>();
-  for (const a of accounts) {
-    if (a.email) count.set(a.name.toLowerCase(), (count.get(a.name.toLowerCase()) ?? 0) + 1);
+  for (const group of nameGroups(accounts)) {
+    for (const a of group) if (a.email) a.name = a.email;
   }
-  for (const a of accounts) {
-    if (a.email && (count.get(a.name.toLowerCase()) ?? 0) > 1) a.name = a.email;
+  for (const group of nameGroups(accounts)) {
+    let n = 4;
+    while (n < 64 && new Set(group.map((a) => a.id.slice(0, n))).size < group.length) n++;
+    for (const a of group) a.name = a.email ? `${a.name} (${a.id.slice(0, n)})` : `Login ${a.id.slice(0, Math.max(n, 5))}`;
   }
+}
+
+/** A reading's identity: everything but the times the producer re-stamps on every
+ *  status line (`readAt`), so a log line or a re-draw is for a change that matters. */
+export function usageIdentity(usage: PlanUsage): string {
+  return JSON.stringify(usage, (key, value) => (key === 'readAt' ? undefined : value));
 }
 
 function windowAt(w: UsageWindow | null, now: number): UsageWindow | null {

@@ -17,9 +17,11 @@ export function planUsagePath(): string {
 }
 
 export interface PlanUsageStat {
-  /** `<mtimeMs>:<ctimeMs>:<ino>:<size>`, or 'none' when there is no file. Changes when the file is replaced. */
+  /** `<mtimeMs>:<ctimeMs>:<ino>:<size>`, 'none' when there is no file, '' when the stat failed. Changes when the file is replaced. */
   key: string;
   size: number;
+  /** The stat failed for a reason other than a missing file (permissions, I/O): no verdict on the file. */
+  failed?: boolean;
 }
 
 /** Why a file gave no data, for the log (never a path or the file's text). */
@@ -43,14 +45,17 @@ export async function statPlanUsage(path: string): Promise<PlanUsageStat> {
     const st = await fs.stat(path);
     if (!st.isFile()) return { key: 'none', size: 0 };
     return { key: `${st.mtimeMs}:${st.ctimeMs}:${st.ino}:${st.size}`, size: st.size };
-  } catch {
-    return { key: 'none', size: 0 };
+  } catch (err) {
+    // Only a missing file means "no data"; EACCES, EIO and the like say nothing about the file.
+    if ((err as { code?: unknown } | null)?.code === 'ENOENT') return { key: 'none', size: 0 };
+    return { key: '', size: 0, failed: true };
   }
 }
 
 /** Read and parse the file as it is now (`now` in epoch seconds). */
 export async function readPlanUsage(path: string, now: number): Promise<PlanUsageRead> {
   const st = await statPlanUsage(path);
+  if (st.failed) return { key: '', usage: EMPTY_PLAN_USAGE, problem: 'unreadable' };
   if (st.key === 'none') return { key: st.key, usage: EMPTY_PLAN_USAGE, problem: null };
   if (st.size > PLAN_USAGE_SIZE_CAP) return { key: st.key, usage: EMPTY_PLAN_USAGE, problem: 'too-large' };
   let text: string;

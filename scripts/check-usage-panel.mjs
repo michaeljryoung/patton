@@ -167,7 +167,19 @@ try {
       a3: { email: 'kim@one.com', last_live: 7 }, a4: { email: 'sam@one.com', last_live: 6 }, a5: { last_live: 5 },
     } });
     check('parser: equal email local parts show local@domain, only those',
-      twins.accounts.map((a) => a.name).join('|') === 'sam@one.com|Sam@two.org|kim|sam@one.com|Login a5', twins.accounts.map((a) => a.name));
+      twins.accounts.map((a) => a.name).join('|') === 'sam@one.com (a1)|Sam@two.org|kim|sam@one.com (a4)|Login a5', twins.accounts.map((a) => a.name));
+    // Finding 3: the same email twice, and no-email ids sharing their first 4 characters, still read apart.
+    const alike = P({ accounts: {
+      'ab12cd': { email: 'sam@one.com', last_live: 9 }, 'ab12ef': { email: 'sam@one.com', last_live: 8 },
+      'zz990001': { last_live: 7 }, 'zz990002': { last_live: 6 }, 'q': { email: 'sam@two.org', last_live: 5 },
+    } });
+    const alikeNames = alike.accounts.map((a) => a.name);
+    check('parser: the same email twice is told apart by the first 4 of id, more where those collide',
+      alikeNames[0] === 'sam@one.com (ab12c)' && alikeNames[1] === 'sam@one.com (ab12e)' && alikeNames[4] === 'sam@two.org', alikeNames);
+    check('parser: no-email logins sharing 4 id characters take as many as it takes',
+      alikeNames[2] === 'Login zz990001' && alikeNames[3] === 'Login zz990002' && new Set(alikeNames.map((n) => n.toLowerCase())).size === 5, alikeNames);
+    const sameFour = P({ accounts: { 'abcd1': { email: 'sam@one.com', last_live: 2 }, 'abcd2': { email: 'sam@one.com', last_live: 1 } } });
+    check('parser: two ids sharing only 4 characters get 5', sameFour.accounts.map((a) => a.name).join('|') === 'sam@one.com (abcd1)|sam@one.com (abcd2)', sameFour.accounts.map((a) => a.name));
     check('parser: distinct local parts stay short', u.accounts.map((a) => a.name).join('|') === 'michaeljrrushworth|third|Login aaaa|d');
     check('format: day and time', M.dayTime(at(28, 12)) === 'Sat 12:00' && M.clockTime(at(24, 9, 5)) === '09:05', [M.dayTime(at(28, 12)), M.clockTime(at(24, 9, 5))]);
   });
@@ -213,6 +225,33 @@ try {
     r = await M.readPlanUsage(file, NOW);
     check('reader: a bare NaN is not JSON and gives no key', r.problem === 'not-json' && r.key === '', r);
     check('reader: a folder at the path is no file', (await M.readPlanUsage(dir, NOW)).key === 'none');
+    // Finding 1: any stat error but a missing file is a failed read, never "no file".
+    if (process.getuid && process.getuid() !== 0) {
+      writeFileSync(file, JSON.stringify(fixture()));
+      chmodSync(dir, 0o000);
+      try {
+        const sf = await M.statPlanUsage(file);
+        const rf = await M.readPlanUsage(file, NOW);
+        check('reader: a stat that fails with EACCES is a failed stat, not "none"', sf.failed === true && sf.key !== 'none', sf);
+        check('reader: ... so the read is "unreadable", records no key and counts as failed',
+          rf.problem === 'unreadable' && rf.key === '' && M.isFailedRead(rf) && rf.usage.accounts.length === 0, rf);
+      } finally { chmodSync(dir, 0o755); }
+    } else console.log('skip reader: EACCES stat (running as root)');
+    // The ENOENT branch between the stat and the read: a file renamed away in between is "no data", not "unreadable".
+    const realRead = fsp.readFile;
+    writeFileSync(file, JSON.stringify(fixture()));
+    try {
+      fsp.readFile = async () => { throw Object.assign(new Error('gone'), { code: 'ENOENT' }); };
+      const gone = await M.readPlanUsage(file, NOW);
+      check('reader: a file gone between the stat and the read is no data (key none, no problem)', gone.key === 'none' && gone.problem === null && !M.isFailedRead(gone), gone);
+      fsp.readFile = async () => { throw Object.assign(new Error('io'), { code: 'EIO' }); };
+      const io = await M.readPlanUsage(file, NOW);
+      check('reader: any other read error is "unreadable"', io.problem === 'unreadable' && io.key === '', io);
+      // The second size check: the file grew between the stat (small) and the read.
+      fsp.readFile = async () => Buffer.alloc(M.PLAN_USAGE_SIZE_CAP + 1, 32);
+      const grew = await M.readPlanUsage(file, NOW);
+      check('reader: a file that grew past the cap after the stat is "too-large", not parsed', grew.problem === 'too-large' && grew.usage.accounts.length === 0, grew);
+    } finally { fsp.readFile = realRead; }
     const before = process.env.PATTON_PLAN_USAGE_FILE;
     process.env.PATTON_PLAN_USAGE_FILE = file;
     check('reader: PATTON_PLAN_USAGE_FILE overrides the path', M.planUsagePath() === file);
@@ -374,9 +413,11 @@ try {
     check('wiring: the poll stops on quit', /before-quit[\s\S]*stopPlanUsagePoll\(\)/.test(main));
     const ipc = read('src/main/plan-usage-ipc.ts');
     check('wiring: the get is rate-limited and answers null when refused', /getLimiter\.allow\(\)[\s\S]*?return null/.test(ipc));
-    check('wiring: a failed read neither records its key nor pushes', /isFailedRead\(read\)\) return;\s*readKey = read\.key/.test(ipc));
+    check('wiring: a failed read neither records its key nor pushes', /readKey = read\.key;\s*if \(isFailedRead\(read\)\) return;/.test(ipc));
     check('wiring: polled by stat every 10 s', ipc.includes('POLL_MS = 10 * 1000') && ipc.includes('setInterval'));
     const css = read('src/renderer/styles/main.css');
+    check('css: the hidden panel is display: none (its display: grid would otherwise show it)', /\.usage-panel\[hidden\]\s*{\s*display:\s*none;?\s*}/.test(css));
+    check('css: the panel keeps 4 px off the resize handle, as the bookmarks list does', /\.usage-panel\s*{[^}]*margin-right:\s*4px/.test(css) && /\.bookmarks-list\s*{[^}]*margin-right:\s*4px/.test(css));
     const rule = (sel) => { const i = css.indexOf(`${sel} {`); return i < 0 ? '' : css.slice(i, css.indexOf('}', i)); };
     check('css: the panel yields to the bookmarks (max-height 40%, scrolls) and uses the mock\'s 10 px sides',
       /max-height: 40%/.test(rule('.usage-panel')) && /overflow-y: auto/.test(rule('.usage-panel')) && /var\(--ui-scale\)\) 10px calc/.test(rule('.usage-panel')), rule('.usage-panel'));
@@ -465,6 +506,40 @@ try {
       await I.pollPlanUsageOnce();
       check('ipc: a rewrite with the same content is read but pushes and logs nothing', marks().reads === m.reads + 1 && marks().pushes === m.pushes && marks().logs === m.logs, [m, marks()]);
 
+      // Finding 2: the producer re-stamps read_at on every status line: a push so the clock moves, but no log.
+      const stamped = JSON.parse(JSON.stringify(next));
+      for (const acct of Object.values(stamped.accounts)) for (const k of ['seven_day', 'five_hour']) if (acct[k]) acct[k].read_at += 60;
+      replace(JSON.stringify(stamped));
+      m = marks();
+      const readLogs = () => logsMain.filter((l) => l[1] === '[USAGE] read').length;
+      const readLogsBefore = readLogs();
+      await I.pollPlanUsageOnce();
+      check('ipc: a rewrite that only moves read_at is pushed (the clock moves) but logs no "[USAGE] read"',
+        marks().pushes === m.pushes + 2 && readLogs() === readLogsBefore && marks().logs === m.logs, [m, marks()]);
+      stamped.accounts.aaaa1111.seven_day.used_percentage = 77;
+      replace(JSON.stringify(stamped));
+      await I.pollPlanUsageOnce();
+      check('ipc: a changed figure does log "[USAGE] read"', readLogs() === readLogsBefore + 1);
+
+      const unreadableWarns = () => logsMain.filter((l) => l[0] === 'warn' && l[1] === '[USAGE] no data' && l[2]?.reason === 'unreadable').length;
+      let warnsBefore = 0;
+      // Finding 1: the folder unreadable (EACCES on the stat) keeps the reading, never pushes an empty list, reads again.
+      if (process.getuid && process.getuid() !== 0) {
+        warnsBefore = unreadableWarns();
+        chmodSync(dir, 0o000);
+        m = marks();
+        try {
+          await I.pollPlanUsageOnce();
+          await I.pollPlanUsageOnce();
+          const got = await get();
+          check('ipc: an unreadable folder pushes nothing and keeps every login', marks().pushes === m.pushes && got.accounts.length === 4 && got.liveId === 'aaaa1111', [m, marks(), got.accounts.length]);
+          check('ipc: ... with one "unreadable" warning', unreadableWarns() === warnsBefore + 1, unreadableWarns() - warnsBefore);
+        } finally { chmodSync(dir, 0o755); }
+        m = marks();
+        await I.pollPlanUsageOnce();
+        check('ipc: the mended folder is read again (same content: no push, 4 logins)', marks().reads === m.reads + 1 && marks().pushes === m.pushes && (await get()).accounts.length === 4, [m, marks()]);
+      }
+
       // Unreadable (chmod 000): keeps the reading, reads again each poll, mended on chmod.
       if (process.getuid && process.getuid() !== 0) {
         chmodSync(file, 0o000);
@@ -476,7 +551,7 @@ try {
         const afterThree = marks();
         check('ipc: an unreadable file pushes nothing and the get still answers the last good reading', marks().pushes === m.pushes && (await get()).liveId === 'aaaa1111' && (await get()).accounts.length === 4);
         check('ipc: an unreadable file is tried again on every poll (its key is not remembered)', afterFirst.reads === m.reads + 1 && afterThree.reads === m.reads + 3, [m, afterFirst, afterThree]);
-        check('ipc: the "no data" warning is logged once for the unreadable file', logsMain.filter((l) => l[0] === 'warn' && l[1] === '[USAGE] no data' && l[2]?.reason === 'unreadable').length === 1, logsMain.filter((l) => l[0] === 'warn'));
+        check('ipc: the "no data" warning is logged once for the unreadable file (after the folder\'s one, which the mend reset)', unreadableWarns() === warnsBefore + 2, [warnsBefore, unreadableWarns()]);
         chmodSync(file, 0o644);
         m = marks();
         await I.pollPlanUsageOnce();
@@ -516,8 +591,25 @@ try {
       I.stopPlanUsagePoll();
       check('ipc: stop clears the poll timer once', timers.cleared.length === clearedBefore + 1 && timers.cleared.at(-1) === timers.handle, timers.cleared.length - clearedBefore);
 
-      // Rate limit, in a fresh module instance.
+      // Finding 1, from a cold start: the first poll finds the folder unreadable (its failed key is the initial one,
+      // so only the failed flag makes it read, warn and answer an empty list rather than skip the poll).
       writeFileSync(file, JSON.stringify(fixture()));
+      if (process.getuid && process.getuid() !== 0) {
+        const C = await loadFresh();
+        const warnsBeforeCold = unreadableWarns();
+        const pushesBeforeCold = pushes().length;
+        chmodSync(dir, 0o000);
+        try {
+          C.registerPlanUsageHandlers(); // starts its first poll at once
+          await C.pollPlanUsageOnce();
+          check('ipc: a cold start on an unreadable folder warns "unreadable" (the poll is not skipped as unchanged)', unreadableWarns() === warnsBeforeCold + 1, unreadableWarns() - warnsBeforeCold);
+        } finally { chmodSync(dir, 0o755); }
+        await C.pollPlanUsageOnce();
+        check('ipc: ... and once mended the file is read and pushed', pushes().length > pushesBeforeCold && (await stub.handlers.get(C.IPC.PLAN_USAGE_GET)()).accounts.length === 4);
+        C.stopPlanUsagePoll();
+      }
+
+      // Rate limit, in a fresh module instance.
       const R = await loadFresh();
       R.registerPlanUsageHandlers();
       await R.pollPlanUsageOnce();
@@ -534,6 +626,76 @@ try {
       fsp.readFile = realReadFile;
       if (before === undefined) delete process.env.PATTON_PLAN_USAGE_FILE; else process.env.PATTON_PLAN_USAGE_FILE = before;
     }
+  });
+
+  // ── (g) the second review's panel findings
+  await section('panel-review2', async () => {
+    const side = doc.getElementById('side');
+    const rail = doc.getElementById('rail');
+    let now = NOW;
+    const p = new w.UP.UsagePanel({ parent: side, before: side.querySelector('.bookmarks-resizer'), rail, railTitle: rail.title, now: () => now });
+    await sleep(10);
+    const sec = side.querySelector('section.usage-panel');
+    p.setUsage(M.parsePlanUsage(fixture(), NOW));
+
+    // Finding 2: a new read_at alone moves the clock, but rebuilds nothing when the drawn text is the same, and logs nothing.
+    const first = sec.querySelector('.usage-acct');
+    const stampedSame = fixture();
+    for (const acct of Object.values(stampedSame.accounts)) for (const k of ['seven_day', 'five_hour']) if (acct[k]) acct[k].read_at += 5; // same minute (20:23)
+    const logsN = panelLogs().length;
+    let mutations = 0;
+    const mo = new w.MutationObserver((list) => { mutations += list.length; });
+    mo.observe(side, { childList: true, subtree: true, attributes: true, characterData: true });
+    p.setUsage(M.parsePlanUsage(stampedSame, NOW));
+    await sleep(5);
+    check('review2: a read_at that changes no drawn text leaves the DOM alone (the same nodes, no mutation)', sec.querySelector('.usage-acct') === first && mutations === 0, mutations);
+    check('review2: ... and logs no "[USAGE] panel"', panelLogs().length === logsN);
+    const stampedMinute = fixture();
+    for (const acct of Object.values(stampedMinute.accounts)) for (const k of ['seven_day', 'five_hour']) if (acct[k]) acct[k].read_at += 120;
+    p.setUsage(M.parsePlanUsage(stampedMinute, NOW + 120));
+    check('review2: a read_at two minutes on moves the clock in the head, still without a log', sec.querySelector('.usage-time').textContent === '20:25' && panelLogs().length === logsN, [sec.querySelector('.usage-time').textContent, panelLogs().length - logsN]);
+    const moved = fixture();
+    moved.accounts.bbbb2222.seven_day.used_percentage = 50;
+    p.setUsage(M.parsePlanUsage(moved, NOW));
+    check('review2: a changed figure logs "[USAGE] panel" and redraws', panelLogs().length === logsN + 1 && sec.querySelectorAll('.usage-pct')[1].textContent === '50%');
+    mo.disconnect();
+
+    // Finding 6, lastDrawn: the minute's tick on an unchanged panel touches nothing.
+    now = NOW + 30;
+    const stable = sec.querySelector('.usage-acct');
+    const mo2 = new w.MutationObserver((list) => { mutations += list.length; });
+    mutations = 0;
+    mo2.observe(side, { childList: true, subtree: true, attributes: true, characterData: true });
+    p.render();
+    p.render();
+    await sleep(5);
+    mo2.disconnect();
+    check('review2: a re-draw that would draw the same leaves the nodes alone (lastDrawn)', sec.querySelector('.usage-acct') === stable && mutations === 0, mutations);
+
+    // Finding 4: a widened name is not repeated by the email in the detail.
+    const dup = M.parsePlanUsage({ live: { account: 'ab12cd' }, accounts: {
+      'ab12cd': { email: 'sam@one.com', plan: 'Ultra', last_live: 9, seven_day: win(10, at(28, 1)) },
+      'ab12ef': { email: 'sam@one.com', last_live: 8, seven_day: win(20, at(28, 1)) },
+      'solo': { email: 'kim@one.com', plan: 'Pro', last_live: 7, seven_day: win(30, at(28, 1)) },
+    } }, NOW);
+    p.setUsage(dup);
+    const bl = [...sec.querySelectorAll('.usage-acct')];
+    check('review2: two logins with one email read apart on screen', bl[0].querySelector('.usage-name').textContent !== bl[1].querySelector('.usage-name').textContent
+      && bl[0].querySelector('.usage-name').textContent === 'sam@one.com (ab12c)', bl.map((b) => b.querySelector('.usage-name').textContent));
+    check('review2: a name that holds the email does not repeat it in the detail', bl[0].title.startsWith('sam@one.com (ab12c) (live), Ultra: ') && !/sam@one\.com.*sam@one\.com/.test(bl[1].title.split(':')[0]), [bl[0].title, bl[1].title]);
+    check('review2: a short name still shows its email in the detail', bl[2].title.startsWith('kim, kim@one.com, Pro: '), bl[2].title);
+
+    // Finding 7: a login with no window reads "no recent reading", also when its week ended long ago.
+    const oldWeek = M.parsePlanUsage({ accounts: {
+      stale: { email: 'old@x.com', last_live: 5, seven_day: win(50, NOW - 40 * 86400, NOW - 41 * 86400) },
+      fresh: { email: 'new@x.com', last_live: 4 },
+    } }, NOW);
+    p.setUsage(oldWeek);
+    const ob = [...sec.querySelectorAll('.usage-acct')];
+    check('review2: a login whose week ended over 30 days ago reads "no recent reading"', ob[0].querySelector('.usage-reset').textContent === 'no recent reading' && ob[0].title.includes('no recent weekly reading'), [ob[0].querySelector('.usage-reset').textContent, ob[0].title]);
+    check('review2: a login with no week at all reads the same', ob[1].querySelector('.usage-reset').textContent === 'no recent reading');
+    check('review2: nobody says "reading yet" any more', !/reading yet/.test(sec.textContent + ob[0].title));
+    p.dispose();
   });
 
   // ── (f) the panel's timers and late answers
@@ -584,7 +746,7 @@ try {
       const sec2 = side.querySelector('section.usage-panel');
       const bw = [...sec2.querySelectorAll('.usage-acct')];
       check('timers: bad times show no window and never NaN or undefined',
-        bw.length === 2 && !/NaN|undefined|Invalid/.test(sec2.textContent + sec2.innerHTML + rail.title) && bw[0].querySelector('.usage-pct').textContent === '–' && bw[0].querySelector('.usage-reset').textContent === 'no reading yet' && !bw[0].querySelector('.usage-five'), sec2.textContent);
+        bw.length === 2 && !/NaN|undefined|Invalid/.test(sec2.textContent + sec2.innerHTML + rail.title) && bw[0].querySelector('.usage-pct').textContent === '–' && bw[0].querySelector('.usage-reset').textContent === 'no recent reading' && !bw[0].querySelector('.usage-five'), sec2.textContent);
       check('timers: "__proto__" as the live id marks nobody live', !sec2.querySelector('.usage-tag') && !sec2.querySelector('.usage-acct.live'));
       check('timers: a read_at before 2020 is not shown as a time', !/read /.test(bw[1].title) && !/read /.test(sec2.querySelector('.usage-head')?.textContent ?? ''), bw[1].title);
       p2.dispose();
@@ -625,6 +787,32 @@ try {
         retry.fn();
         await sleep(10);
         check('late: a retry that fires after dispose asks nothing', calls === 1 && cleared.includes(retry), calls);
+      }
+      // The pushed guard: a push that lands while the first answer is on its way wins over that older answer.
+      {
+        let resolveGet;
+        let pushCb = null;
+        w.patton.planUsage = { get: () => new Promise((r) => { resolveGet = r; }), onChanged: (cb) => { pushCb = cb; return () => {}; } };
+        const p6 = new w.UP.UsagePanel({ parent: side, before: side.querySelector('.bookmarks-resizer'), rail, railTitle: rail.title, now: () => NOW });
+        const newer = fixture();
+        newer.accounts['38e237e1'].seven_day.used_percentage = 71;
+        pushCb(M.parsePlanUsage(newer, NOW));
+        resolveGet(parsed); // the older reading (63%), answered after the push
+        await sleep(10);
+        check('pushed: a first answer that arrives after a push does not overwrite it', side.querySelector('.usage-acct .usage-pct').textContent === '71%', side.querySelector('.usage-acct .usage-pct')?.textContent);
+        p6.dispose();
+        // ... and a refused first answer's retry does not fire after a push.
+        let asks = 0;
+        let pushCb2 = null;
+        w.patton.planUsage = { get: async () => { asks++; return null; }, onChanged: (cb) => { pushCb2 = cb; return () => {}; } };
+        const p7 = new w.UP.UsagePanel({ parent: side, before: side.querySelector('.bookmarks-resizer'), rail, railTitle: rail.title, now: () => NOW });
+        await sleep(10);
+        const retry2 = timeouts.at(-1);
+        pushCb2(parsed);
+        retry2.fn();
+        await sleep(10);
+        check('pushed: the retry after a refused answer asks nothing once a push has come', asks === 1, asks);
+        p7.dispose();
       }
     } finally {
       w.setInterval = realSI; w.clearInterval = realCI; w.setTimeout = realST; w.clearTimeout = realCT;

@@ -8,7 +8,7 @@
  * The readings come from main (main/plan-usage-ipc.ts), which reads the file
  * Claude Code's status line writes. Every text is set through textContent.
  */
-import { EMPTY_PLAN_USAGE, planUsageAt, type PlanUsage, type PlanUsageAccount, type UsageWindow } from '../../shared/plan-usage';
+import { EMPTY_PLAN_USAGE, planUsageAt, usageIdentity, type PlanUsage, type PlanUsageAccount, type UsageWindow } from '../../shared/plan-usage';
 import type { PattonAPI } from '../../shared/types';
 import { rlog } from '../services/renderer-logger';
 import { clockTime, dayTime, newestRead, shownPct, usageLevel, weekLine } from '../services/usage-format';
@@ -49,10 +49,12 @@ function meter(className: string, pct: number): HTMLElement {
 
 /** The full detail of one login, for its tooltip and accessible name. */
 function detail(a: PlanUsageAccount): string {
-  const who = [a.name + (a.live ? ' (live)' : ''), a.email, a.plan].filter(Boolean).join(', ');
+  // The email is left out when the name already holds it (a widened name is the email).
+  const email = a.email && !a.name.toLowerCase().includes(a.email.toLowerCase()) ? a.email : null;
+  const who = [a.name + (a.live ? ' (live)' : ''), email, a.plan].filter(Boolean).join(', ');
   const parts: string[] = [];
   if (a.week) parts.push(`week ${shownPct(a.week.pct)}%, ${weekLine(a.week)}`);
-  else parts.push('no weekly reading yet');
+  else parts.push('no recent weekly reading');
   if (a.fiveHour && !a.fiveHour.passed) parts.push(`5-hour ${shownPct(a.fiveHour.pct)}%, resets ${clockTime(a.fiveHour.resetsAt)}`);
   const read = a.week?.readAt ?? a.fiveHour?.readAt ?? null;
   if (read !== null) parts.push(`read ${clockTime(read)}`);
@@ -67,8 +69,11 @@ export class UsagePanel {
   private now: () => number;
   private usage: PlanUsage = EMPTY_PLAN_USAGE;
   private lastContent = '';
-  /** What was last drawn, so the minute's re-draw leaves an unchanged panel alone. */
-  private lastDrawn = '';
+  /** The reading's identity (no read times) at the last log line. */
+  private lastIdentity = '';
+  /** The rendered strings last drawn (panel markup, rail markup, rail tooltip), so a re-draw that would
+   *  draw the same leaves the DOM alone (a hovered tooltip stays) and the minute's tick costs nothing. */
+  private lastDrawn: string | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   /** Set by dispose(): a late answer or timer then does nothing. */
@@ -123,7 +128,8 @@ export class UsagePanel {
     ask(false);
   }
 
-  /** A reading from main (or a check). Logs and re-draws only when its content changed. */
+  /** A reading from main (or a check). Re-draws when its content changed (render skips an identical
+   *  picture) and logs only when a login, its figures or the live one did, not for a new read time. */
   setUsage(usage: PlanUsage | null | undefined): void {
     if (this.disposed) return;
     const next = usage && Array.isArray(usage.accounts) ? usage : EMPTY_PLAN_USAGE;
@@ -131,27 +137,34 @@ export class UsagePanel {
     if (content === this.lastContent) return;
     this.lastContent = content;
     this.usage = next;
-    rlog('info', '[USAGE] panel', { accounts: next.accounts.length, live: next.liveId });
+    const identity = usageIdentity(next);
+    if (identity !== this.lastIdentity) {
+      this.lastIdentity = identity;
+      rlog('info', '[USAGE] panel', { accounts: next.accounts.length, live: next.liveId });
+    }
     this.render();
   }
 
   render(): void {
     if (this.disposed) return;
     const usage = planUsageAt(this.usage, this.now());
-    const drawn = JSON.stringify(usage);
+    // Build off-screen, compare what would be drawn with what is, and touch the live DOM only for a difference.
+    const panel = this.buildPanel(usage);
+    const bars = this.buildRail(usage);
+    const title = this.railTitleFor(usage);
+    const drawn = JSON.stringify([panel.innerHTML, bars.innerHTML, title]);
     if (drawn === this.lastDrawn) return;
     this.lastDrawn = drawn;
-    this.renderPanel(usage);
-    this.renderRail(usage);
+    this.el.hidden = usage.accounts.length === 0;
+    this.el.replaceChildren(...panel.childNodes);
+    this.railBars.hidden = usage.accounts.length === 0;
+    this.railBars.replaceChildren(...bars.childNodes);
+    this.rail.title = title;
   }
 
-  private renderPanel(usage: PlanUsage): void {
-    this.el.replaceChildren();
-    if (usage.accounts.length === 0) {
-      this.el.hidden = true;
-      return;
-    }
-    this.el.hidden = false;
+  private buildPanel(usage: PlanUsage): HTMLElement {
+    const out = el('div', '');
+    if (usage.accounts.length === 0) return out;
 
     const head = el('div', 'usage-head');
     head.appendChild(el('span', 'usage-title', 'Usage this week'));
@@ -161,9 +174,10 @@ export class UsagePanel {
       time.title = `Newest reading ${dayTime(newest)}`;
       head.appendChild(time);
     }
-    this.el.appendChild(head);
+    out.appendChild(head);
 
-    for (const a of usage.accounts) this.el.appendChild(this.block(a));
+    for (const a of usage.accounts) out.appendChild(this.block(a));
+    return out;
   }
 
   private block(a: PlanUsageAccount): HTMLElement {
@@ -185,7 +199,7 @@ export class UsagePanel {
 
     block.appendChild(meter('usage-meter', week ? week.pct : 0));
     // A later token figure goes before the reset here, as "<tokens> · resets …".
-    block.appendChild(el('div', 'usage-sub usage-reset', week ? weekLine(week) : 'no reading yet'));
+    block.appendChild(el('div', 'usage-sub usage-reset', week ? weekLine(week) : 'no recent reading'));
 
     const five: UsageWindow | null = a.fiveHour && !a.fiveHour.passed ? a.fiveHour : null;
     if (five) {
@@ -199,14 +213,8 @@ export class UsagePanel {
     return block;
   }
 
-  private renderRail(usage: PlanUsage): void {
-    this.railBars.replaceChildren();
-    if (usage.accounts.length === 0) {
-      this.railBars.hidden = true;
-      this.rail.title = this.railTitle;
-      return;
-    }
-    this.railBars.hidden = false;
+  private buildRail(usage: PlanUsage): HTMLElement {
+    const out = el('div', '');
     for (const a of usage.accounts.slice(0, RAIL_MAX_BARS)) {
       const pct = a.week ? a.week.pct : 0;
       const level = a.week ? usageLevel(pct) : '';
@@ -215,10 +223,15 @@ export class UsagePanel {
       const fill = el('i', '');
       fill.style.height = `${Math.min(100, Math.max(0, pct))}%`;
       bar.appendChild(fill);
-      this.railBars.appendChild(bar);
+      out.appendChild(bar);
     }
+    return out;
+  }
+
+  private railTitleFor(usage: PlanUsage): string {
+    if (usage.accounts.length === 0) return this.railTitle;
     const figures = usage.accounts.map((a) => `${a.name} ${a.week ? `${shownPct(a.week.pct)}%` : '–'}`).join(', ');
-    this.rail.title = `${this.railTitle} — ${figures}`;
+    return `${this.railTitle} — ${figures}`;
   }
 
   dispose(): void {

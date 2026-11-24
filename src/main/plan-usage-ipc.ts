@@ -7,7 +7,7 @@
  */
 import { BrowserWindow, ipcMain } from 'electron';
 import { IPC } from '../shared/constants';
-import { EMPTY_PLAN_USAGE, type PlanUsage } from '../shared/plan-usage';
+import { EMPTY_PLAN_USAGE, usageIdentity, type PlanUsage } from '../shared/plan-usage';
 import { isFailedRead, planUsagePath, readPlanUsage, statPlanUsage, type PlanUsageProblem } from './plan-usage-file';
 import { RateLimiter } from './rate-limiter';
 
@@ -18,6 +18,8 @@ let current: PlanUsage = EMPTY_PLAN_USAGE;
 /** The stat key of the file last read; '' before the first read. */
 let readKey = '';
 let lastContent = '';
+/** The reading without its read times: what the log line is about. */
+let lastIdentity = '';
 let lastProblem: PlanUsageProblem = null;
 let inFlight: Promise<void> | null = null;
 
@@ -25,25 +27,31 @@ function nowSeconds(): number {
   return Date.now() / 1000;
 }
 
-/** Re-read the file when its mtime or size changed; push and log only when its content did. */
+/** Re-read the file when its mtime or size changed; push when its content did (a new read time moves the panel's
+ *  clock), and log only when a login, its figures or the live one did (the producer rewrites read_at on every render). */
 async function refreshOnce(): Promise<void> {
   const path = planUsagePath();
   const st = await statPlanUsage(path);
-  if (st.key === readKey) return;
+  if (!st.failed && st.key === readKey) return;
   const read = await readPlanUsage(path, nowSeconds());
   if (read.problem !== lastProblem) {
     lastProblem = read.problem;
     if (read.problem) console.warn('[USAGE] no data', { reason: read.problem });
   }
   // A failed read (unreadable, half-written) keeps the last good reading and is
-  // tried again next poll: its key is not remembered, nothing is pushed.
-  if (isFailedRead(read)) return;
+  // tried again next poll: it leaves no key behind ('' replaces the good one, so
+  // a mend that leaves the file's stat as it was is still read), nothing is pushed.
   readKey = read.key;
+  if (isFailedRead(read)) return;
   const content = JSON.stringify(read.usage);
   if (content === lastContent) return;
   lastContent = content;
   current = read.usage;
-  console.info('[USAGE] read', { accounts: current.accounts.length, live: current.liveId });
+  const identity = usageIdentity(current);
+  if (identity !== lastIdentity) {
+    lastIdentity = identity;
+    console.info('[USAGE] read', { accounts: current.accounts.length, live: current.liveId });
+  }
   for (const win of BrowserWindow.getAllWindows()) {
     if (!win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send(IPC.PLAN_USAGE_CHANGED, current);
   }
