@@ -18,6 +18,7 @@ import type { PattonState } from './patton-osc';
 import type { ProgramRecord } from './program-status';
 import { shownText } from './shown-text';
 import { pageTitleOf } from './page-titles';
+import { pagesLabel, pagesLinkOf } from '../../shared/pages-url';
 import { nextCronFire } from './cron-next';
 import { checkpointTime } from './checkpoint-clock';
 
@@ -190,6 +191,7 @@ export function fileKey(path: string): string {
 }
 
 export function linkKindOfUrl(url: string): LinkKind {
+  if (pagesLinkOf(url)) return 'Page';
   let u: URL;
   try { u = new URL(url); } catch { return 'Link'; }
   const host = u.hostname.toLowerCase();
@@ -210,6 +212,8 @@ export function linkKindOfUrl(url: string): LinkKind {
 function defaultLinkLabel(kind: LinkKind, url: string | null, path: string | null): string {
   if (path) return path.split('/').pop() ?? path;
   if (url && kind === 'Page') {
+    const pages = pagesLinkOf(url);
+    if (pages) return pagesLabel(pages.slug);
     const id = url.replace(/[?#].*$/, '').split('/').filter(Boolean).pop() ?? '';
     return `Page ${id.slice(0, 8)}`;
   }

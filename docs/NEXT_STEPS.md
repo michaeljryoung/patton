@@ -144,6 +144,10 @@ Last updated: 2026-11-24 (Session 63: v1.39.0 and v1.40.0 installed and walked t
 
 CLAUDE.md's `## Next Steps` section points here; this is the canonical list. Items leave only via `[x] DONE — Session N`, `[~] SUPERSEDED — <pointer>`, or `[-] DROPPED: <reason>`. Marked items linger 10 checkpoints, then sweep to `docs/session-archive.md`.
 
+### 2026-11-24 — Pages links in the session bar
+
+- Shipped at his "1 yes": links to his Pages site (`https://mjy-pages.vercel.app/p/<slug>/`, where his pages go since 24 Nov) show in the session bar as Page rows, labelled with the markdown text or the slug in words (`src/shared/pages-url.ts`, D6). Installs with the next install, on his word with Patton quit.
+
 ### 2026-11-24 — S63: installs, his asks, what is left
 
 - Installed: v1.39.0 (06:41:59) and v1.40.0 (07:06:48) from their tags; then `37344b6` at 16:10:11 with v1.42.1's run queued (Info.plist 1.42.0+1). Map nodes `wake_compact`, `bar_rows_wrap`, `cpd_own_tasks`, `icon_p1`, `working_mark`, `tab_multiselect`, `s63_install` done with their evidence.

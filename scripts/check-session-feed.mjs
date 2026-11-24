@@ -193,6 +193,32 @@ try {
   same('a full-home Downloads path ends at its extension',
     extractLinks(`open ${HOME}/Downloads/report.xlsx, then`, HOME, 5),
     [{ type: 'link', path: `${HOME}/Downloads/report.xlsx`, label: 'report.xlsx', fallback: true, at: 5 }]);
+  // --- his Pages site (shared/pages-url.ts, D6): https only, the exact host, /p/<slug> or the root
+  same('a bare Pages URL is a link labelled with its slug in words',
+    extractLinks('Published: https://mjy-pages.vercel.app/p/patton-icon-studies/.', HOME, 5),
+    [{ type: 'link', url: 'https://mjy-pages.vercel.app/p/patton-icon-studies/', label: 'Patton icon studies', fallback: true, at: 5 }]);
+  same('a Pages URL in markdown keeps its text; without the slash it is the same address',
+    extractLinks('see [Icon studies, round 6](https://mjy-pages.vercel.app/p/patton-icon-studies) now', HOME, 5),
+    [{ type: 'link', url: 'https://mjy-pages.vercel.app/p/patton-icon-studies/', label: 'Icon studies, round 6', at: 5 }]);
+  same('the Pages site root is a link too',
+    extractLinks('Everything is at https://mjy-pages.vercel.app/ now', HOME, 5),
+    [{ type: 'link', url: 'https://mjy-pages.vercel.app/', label: 'Pages home', fallback: true, at: 5 }]);
+  same('no Pages link from another host, plain http, a deeper path, a query or a bad slug',
+    extractLinks(['https://mjy-pages.vercel.app.evil.com/p/x/', 'https://evil.com/mjy-pages.vercel.app/p/x/', 'http://mjy-pages.vercel.app/p/x/',
+      '[x](http://mjy-pages.vercel.app/p/x/)', 'https://mjy-pages.vercel.app/p/x/y', 'https://mjy-pages.vercel.app/p/x/?a=1',
+      'https://mjy-pages.vercel.app/p/Upper/', 'https://mjy-pages.vercel.app/api/state/x', 'https://user@mjy-pages.vercel.app/p/x/',
+      'https://mjy-pages.vercel.app:8443/p/x/', `https://mjy-pages.vercel.app/p/${'a'.repeat(81)}/`].join(' '), HOME, 5),
+    []);
+  {
+    const lines = [
+      { parentUuid: 'a', type: 'user', timestamp: '2026-11-22T10:00:00Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tu9', content: 'Published at https://mjy-pages.vercel.app/p/from-a-tool/' }] } },
+      { parentUuid: 'a', type: 'assistant', timestamp: '2026-11-22T10:00:01Z', message: { content: [{ type: 'tool_use', id: 'tu9', name: 'Bash', input: { command: 'echo https://mjy-pages.vercel.app/p/from-a-command/' } }] } },
+      { parentUuid: 'a', type: 'assistant', timestamp: '2026-11-22T10:00:02Z', message: { content: [{ type: 'text', text: 'It is at https://mjy-pages.vercel.app/p/from-claude/' }] } },
+    ];
+    const ev = new TranscriptParser({ home: HOME, now: () => 0 }).push(lines.map((l) => JSON.stringify(l)).join('\n') + '\n').filter((e) => e.type === 'link');
+    check('a Pages URL in a tool result or a tool call is not taken; in Claude\'s text it is',
+      ev.length === 1 && ev[0].url === 'https://mjy-pages.vercel.app/p/from-claude/' && ev[0].label === 'From claude', ev);
+  }
   same('two notices in one string, the first closed tag of each read',
     parseNotifications('<task-notification><task-id>t1</task-id><status>completed</status></task-notification> x <task-notification><task-id>t2</task-id><status>failed</status><summary>failed with exit code 3</summary></task-notification>', 7),
     [{ type: 'task-end', id: 't1', status: 'completed', at: 7 }, { type: 'task-end', id: 't2', status: 'failed', exitCode: 3, summary: 'failed with exit code 3', at: 7 }]);

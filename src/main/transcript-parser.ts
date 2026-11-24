@@ -41,6 +41,7 @@
  *   `onPublish` (page titles, main/page-titles.ts), never sent to the bar.
  */
 import { ARTIFACT_URL, completeArtifactIdOf } from '../shared/artifact-id';
+import { pagesLabel, pagesLinkOf } from '../shared/pages-url';
 import type { FeedTaskEndStatus, FeedTaskKind, SessionFeedEvent } from '../shared/session-feed';
 
 export const DESCRIPTION_MAX = 200;
@@ -126,14 +127,19 @@ const URL_PATTERNS: Array<{ re: RegExp; id: (m: RegExpMatchArray) => string }> =
 const FILE_EXT = /\.(?:docx|pdf|xlsx|pptx|csv|html|png)$/i;
 const TRAILING = /[.,;:!?'"`*_>\]})]+$/;
 
-function urlLink(raw: string): { url: string; id: string } | null {
+/** A URL Claude wrote, if it is one the bar takes, with the label it gets when
+ *  no markdown text names it. */
+function urlLink(raw: string): { url: string; label: string } | null {
   let url = raw.replace(TRAILING, '');
   if (url.length > URL_MAX) return null;
+  // His Pages site (shared/pages-url.ts): one form of the address, the slug in words.
+  const pages = pagesLinkOf(url);
+  if (pages) return { url: pages.url, label: pagesLabel(pages.slug) };
   for (const p of URL_PATTERNS) {
     const m = url.match(p.re);
     if (m) {
       url = cleanText(url, URL_MAX);
-      return { url, id: p.id(m) };
+      return { url, label: pageLabel(p.id(m)) };
     }
   }
   return null;
@@ -285,7 +291,7 @@ export function extractLinks(fullText: string, home: string, at: number): Sessio
     const label = cleanText(m.label.replace(/[`*_]/g, ''), LABEL_MAX);
     const u = urlLink(target);
     if (u) {
-      found.push({ pos: m.start, ev: { type: 'link', url: u.url, label: label || pageLabel(u.id), at, ...(label ? {} : { fallback: true as const }) } });
+      found.push({ pos: m.start, ev: { type: 'link', url: u.url, label: label || u.label, at, ...(label ? {} : { fallback: true as const }) } });
       taken.push([m.start, m.end]);
       continue;
     }
@@ -302,7 +308,7 @@ export function extractLinks(fullText: string, home: string, at: number): Sessio
     const start = m.index ?? 0;
     if (overlaps(start, start + m[0].length)) continue;
     const u = urlLink(m[0]);
-    if (u) found.push({ pos: start, ev: { type: 'link', url: u.url, label: pageLabel(u.id), at, fallback: true } });
+    if (u) found.push({ pos: start, ev: { type: 'link', url: u.url, label: u.label, at, fallback: true } });
   }
 
   // Bare paths under ~/Downloads.

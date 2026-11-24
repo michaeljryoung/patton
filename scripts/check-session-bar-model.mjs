@@ -226,6 +226,17 @@ if (process.env.TZ === 'Europe/London') {
   check('fileKey: Plan.docx = Plan v2.docx = plan-v3.docx = Plan (2).docx', new Set(['/Users/m/Downloads/Plan.docx', '~/Downloads/Plan v2.docx', '~/Downloads/plan-v3.docx', '~/Downloads/Plan (2).docx', '~/Downloads/Plan_v4.docx'].map(M.fileKey)).size === 1);
   check('fileKey keeps the extension', M.fileKey('~/Downloads/Plan.docx') !== M.fileKey('~/Downloads/Plan.pdf'));
   check('kinds: Page, Doc, Sheet, Drive, Release, PR', ['https://claude.ai/code/artifact/08d6e409', 'https://docs.google.com/document/d/1/edit', 'https://docs.google.com/spreadsheets/d/1', 'https://drive.google.com/file/d/1', 'https://github.com/a/b/releases/tag/v1', 'https://github.com/a/b/pull/12'].map(M.linkKindOfUrl).join() === 'Page,Doc,Sheet,Drive,Release,PR');
+  check('Pages kinds: a page and the root are Page; another host, http or a deeper path are not', [
+    'https://mjy-pages.vercel.app/p/patton-icon-studies/', 'https://mjy-pages.vercel.app/p/a-b', 'https://mjy-pages.vercel.app/',
+    'https://mjy-pages.vercel.app.evil.com/p/x/', 'http://mjy-pages.vercel.app/p/x/', 'https://mjy-pages.vercel.app/p/x/y',
+  ].map(M.linkKindOfUrl).join() === 'Page,Page,Page,Link,Link,Link');
+  check('a Pages link without a label: the slug in words; with one, that label', (() => {
+    const k = new M.SessionBarModel();
+    k.applyFeed({ type: 'link', url: 'https://mjy-pages.vercel.app/p/patton-icon-studies/', label: '', at: T0 }, T0);
+    k.applyFeed({ type: 'link', url: 'https://mjy-pages.vercel.app/p/leaving-lindus/', label: 'Leaving Lindus plan', at: T0 + MIN }, T0 + MIN);
+    const l = k.view(T0 + MIN).links;
+    return l.length === 2 && l[0].label === 'Leaving Lindus plan' && l[1].label === 'Patton icon studies' && l.every((x) => x.kind === 'Page');
+  })());
   const m = new M.SessionBarModel();
   const page = 'https://claude.ai/code/artifact/08d6e409-4c7d';
   let n = m.applyFeed({ type: 'link', url: page, label: 'Patton Session Bar', at: T0 }, T0);
