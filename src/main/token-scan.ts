@@ -1,0 +1,220 @@
+/**
+ * Counts the tokens of Claude Code's API requests from its transcripts
+ * (`~/.claude/projects/**\/*.jsonl`, subagents' files included). Runs inside
+ * the token worker (main/token-scan-worker.ts), never on main's thread: a
+ * first scan can read gigabytes. No Electron here, so the check runs it under
+ * plain Node.
+ *
+ * A request is an `"type":"assistant"` line with `message.usage`; Claude Code
+ * writes the same message several times (once per content block), so one
+ * request is one (`message.id`, `requestId`) pair, and a repeat with more
+ * tokens raises it to the larger figure. Its tokens are input + cache writes +
+ * cache reads + output; its time is the line's ISO `timestamp`.
+ *
+ * Incremental: each file's inode and byte offset are kept, so a later scan
+ * reads only what was appended; a file that shrank or was replaced is read
+ * from the start again (requests already counted are not counted twice), and
+ * a partial last line is left for the next scan. Memory is bounded by the
+ * floor: files modified before it are not read, requests before it are dropped.
+ */
+import { promises as fs } from 'node:fs';
+import { join } from 'node:path';
+import type { TokenRequest } from '../shared/token-credit';
+
+/** Read this much of a file at a time. */
+const CHUNK_BYTES = 4 * 1024 * 1024;
+/** A line longer than this is skipped unread (no assistant line with usage comes near it). */
+export const LINE_CAP_BYTES = 32 * 1024 * 1024;
+/** A file whose mtime is this close before the floor is still read (clock and write slack). */
+const MTIME_SLACK_S = 120;
+/** The projects tree is two or three levels deep (project / session / subagents); never walk deeper than this. */
+const MAX_DEPTH = 6;
+const NEWLINE = 0x0a;
+const ASSISTANT_MARK = Buffer.from('"type":"assistant"');
+const USAGE_MARK = Buffer.from('"usage"');
+const USAGE_FIELDS = ['input_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens', 'output_tokens'] as const;
+
+export interface ScanStats {
+  /** Transcripts modified since the floor. */
+  files: number;
+  /** Of those, the ones with new bytes read this scan. */
+  filesRead: number;
+  bytes: number;
+  /** Requests held after the scan. */
+  requests: number;
+  /** Files that could not be read this scan (gone mid-scan, no permission). */
+  skipped: number;
+}
+
+interface FileState {
+  ino: number;
+  /** Bytes consumed: everything before this ends in a newline. */
+  offset: number;
+}
+
+interface ParsedRequest {
+  key: string;
+  t: number;
+  n: number;
+}
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+/** One transcript line as a request, or null when it is not an assistant line with usage, an id and a time. */
+export function requestFromLine(text: string): ParsedRequest | null {
+  let o: unknown;
+  try {
+    o = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (!isRecord(o) || o.type !== 'assistant') return null;
+  const m = o.message;
+  if (!isRecord(m) || !isRecord(m.usage)) return null;
+  const id = typeof m.id === 'string' && m.id ? m.id : null;
+  if (!id) return null;
+  const requestId = typeof o.requestId === 'string' ? o.requestId : '';
+  const t = typeof o.timestamp === 'string' ? Date.parse(o.timestamp) / 1000 : NaN;
+  if (!Number.isFinite(t)) return null;
+  let n = 0;
+  for (const field of USAGE_FIELDS) {
+    const v = m.usage[field];
+    if (typeof v === 'number' && Number.isFinite(v) && v > 0) n += v;
+  }
+  return { key: `${id}\u0000${requestId}`, t, n };
+}
+
+export class TokenScanner {
+  private files = new Map<string, FileState>();
+  private held = new Map<string, TokenRequest>();
+  private floor = -Infinity;
+
+  /** The requests held (each once), for crediting. */
+  requests(): Iterable<TokenRequest> {
+    return this.held.values();
+  }
+
+  /** Read what is new under `root` since the last scan. `floor` (epoch seconds): files modified
+   *  before it are not read and requests before it are dropped; a floor earlier than the last
+   *  one starts over, since what was skipped may now count. */
+  async scan(root: string, floor: number): Promise<ScanStats> {
+    if (floor < this.floor) {
+      this.files.clear();
+      this.held.clear();
+    }
+    this.floor = floor;
+    for (const [key, r] of this.held) if (r.t < floor) this.held.delete(key);
+
+    const stats: ScanStats = { files: 0, filesRead: 0, bytes: 0, requests: 0, skipped: 0 };
+    const paths = await listTranscripts(root);
+    const seen = new Set<string>();
+    for (const path of paths) {
+      let st;
+      try {
+        st = await fs.stat(path);
+      } catch {
+        stats.skipped++;
+        continue;
+      }
+      if (!st.isFile() || st.mtimeMs / 1000 < floor - MTIME_SLACK_S) continue;
+      seen.add(path);
+      stats.files++;
+      let state = this.files.get(path);
+      if (!state || state.ino !== st.ino || st.size < state.offset) {
+        state = { ino: st.ino, offset: 0 };
+        this.files.set(path, state);
+      }
+      if (st.size <= state.offset) continue;
+      try {
+        stats.bytes += await this.readNew(path, state, st.size);
+        stats.filesRead++;
+      } catch {
+        stats.skipped++;
+      }
+    }
+    for (const path of this.files.keys()) if (!seen.has(path)) this.files.delete(path);
+    stats.requests = this.held.size;
+    return stats;
+  }
+
+  /** Read `path` from its offset up to `size`, taking every complete line; returns the bytes read. */
+  private async readNew(path: string, state: FileState, size: number): Promise<number> {
+    const fh = await fs.open(path, 'r');
+    let read = 0;
+    try {
+      let pos = state.offset;
+      /** Bytes of a line begun in an earlier chunk. */
+      let carry: Buffer | null = null;
+      /** Inside a line past the cap: its bytes are dropped up to its newline. */
+      let skipping = false;
+      while (pos < size) {
+        const want = Math.min(CHUNK_BYTES, size - pos);
+        const buf = Buffer.allocUnsafe(want);
+        const { bytesRead } = await fh.read(buf, 0, want, pos);
+        if (bytesRead === 0) break;
+        pos += bytesRead;
+        read += bytesRead;
+        const chunk = buf.subarray(0, bytesRead);
+        const data: Buffer = carry ? Buffer.concat([carry, chunk]) : chunk;
+        const dataStart = pos - data.length;
+        let start = 0;
+        let nl = data.indexOf(NEWLINE, start);
+        while (nl !== -1) {
+          if (!skipping) this.takeLine(data.subarray(start, nl));
+          skipping = false;
+          start = nl + 1;
+          nl = data.indexOf(NEWLINE, start);
+        }
+        // Consumed up to the last newline; with none in this chunk, the offset stays at the open line's start.
+        if (start > 0) state.offset = dataStart + start;
+        if (skipping || data.length - start > LINE_CAP_BYTES) {
+          // A line past the cap: drop what is held and skip to its newline.
+          skipping = true;
+          carry = null;
+        } else {
+          carry = start < data.length ? Buffer.from(data.subarray(start)) : null;
+        }
+      }
+      // A partial last line (no newline yet) stays unconsumed: the next scan reads it whole.
+    } finally {
+      await fh.close();
+    }
+    return read;
+  }
+
+  private takeLine(line: Buffer): void {
+    if (line.indexOf(ASSISTANT_MARK) === -1 || line.indexOf(USAGE_MARK) === -1) return;
+    const r = requestFromLine(line.toString('utf8'));
+    if (!r || r.t < this.floor) return;
+    const had = this.held.get(r.key);
+    if (!had) this.held.set(r.key, { t: r.t, n: r.n });
+    else if (r.n > had.n) had.n = r.n;
+  }
+}
+
+/** Every `.jsonl` file under `root` (not following links). A missing root is an empty list; an
+ *  unreadable root throws, so the scan reports it; an unreadable folder below it is passed over. */
+export async function listTranscripts(root: string): Promise<string[]> {
+  const out: string[] = [];
+  const walk = async (dir: string, depth: number): Promise<void> => {
+    let entries;
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true });
+    } catch (err) {
+      if (depth === 0 && (err as { code?: unknown } | null)?.code !== 'ENOENT') throw err;
+      return;
+    }
+    for (const e of entries) {
+      const path = join(dir, e.name);
+      if (e.isDirectory()) {
+        if (depth < MAX_DEPTH) await walk(path, depth + 1);
+      } else if (e.isFile() && e.name.endsWith('.jsonl')) {
+        out.push(path);
+      }
+    }
+  };
+  await walk(root, 0);
+  return out;
+}

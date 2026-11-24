@@ -3,7 +3,8 @@
  * Pure: no DOM, no window, so the check runs it under plain Node. Times are
  * epoch seconds, shown in local time, 24 h.
  */
-import type { PlanUsage, UsageWindow } from '../../shared/plan-usage';
+import type { PlanUsage, UsageWindow, WeekTokens } from '../../shared/plan-usage';
+import { weekEstimate } from '../../shared/token-credit';
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -53,4 +54,49 @@ export function newestRead(usage: PlanUsage): number | null {
     }
   }
   return newest;
+}
+
+/** A token count, short: "640", "412k", "412M", "2.9 bn" (1 bn and up, one decimal). */
+export function formatTokens(n: number): string {
+  const v = Math.max(0, n);
+  if (v < 1000) return String(Math.round(v));
+  if (v < 999_500) return `${Math.round(v / 1e3)}k`;
+  if (v < 999_500_000) return `${Math.round(v / 1e6)}M`;
+  return `${(v / 1e9).toFixed(1)} bn`;
+}
+
+/** The count with thousands separators: "2,912,345,678". */
+export function exactTokens(n: number): string {
+  return Math.round(Math.max(0, n)).toLocaleString('en-GB');
+}
+
+/** The count that belongs on this week's line, or null: none on a passed week or one counted for another week. */
+export function shownTokens(w: UsageWindow | null, t: WeekTokens | null | undefined): WeekTokens | null {
+  if (!w || w.passed || !t || t.resetsAt !== w.resetsAt || !Number.isFinite(t.tokens)) return null;
+  return t;
+}
+
+/** The token part of the week's line: "2.9 bn of ~4.6 bn", "1.2 bn" with no estimate, "≥ 412M since Tue 20:22" when partial. */
+export function tokenLine(t: WeekTokens, pct: number): string {
+  if (!t.complete) return `≥ ${formatTokens(t.tokens)}${t.since !== null ? ` since ${dayTime(t.since)}` : ''}`;
+  const estimate = weekEstimate(t, pct, shownPct(pct));
+  return estimate === null ? formatTokens(t.tokens) : `${formatTokens(t.tokens)} of ~${formatTokens(estimate)}`;
+}
+
+/** The week's whole sub line: "<tokens> · resets Sat 12:00", or the reset alone with no count. */
+export function weekSubLine(w: UsageWindow, t: WeekTokens | null | undefined): string {
+  const shown = shownTokens(w, t);
+  return shown ? `${tokenLine(shown, w.pct)} · ${weekLine(w)}` : weekLine(w);
+}
+
+/** The count in full, for the tooltip and accessible name. */
+export function tokenDetail(t: WeekTokens, pct: number): string {
+  const exact = `${exactTokens(t.tokens)} tokens`;
+  if (!t.complete) {
+    const since = t.since !== null ? ` since ${dayTime(t.since)}, when the record of which login was live began` : '';
+    return `at least ${exact} Claude Code recorded on this login${since}, cached re-reads included`;
+  }
+  const estimate = weekEstimate(t, pct, shownPct(pct));
+  const of = estimate === null ? '' : ` (a whole week ~${exactTokens(estimate)}, from the percent)`;
+  return `${exact} Claude Code recorded on this login since the week began, cached re-reads included${of}`;
 }

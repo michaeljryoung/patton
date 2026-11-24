@@ -72,7 +72,12 @@ class FakeWindow extends Emitter {
       session: { webRequest: { onHeadersReceived() {} } },
       setWindowOpenHandler() {},
       isDestroyed: () => this.destroyed,
-      send: (ch, payload) => { if (this.destroyed) throw new Error('Object has been destroyed'); this.trace.push(`send:${ch}`); this.sent.push({ ch, payload }); },
+      send: (ch, payload) => {
+        if (this.destroyed) throw new Error('Object has been destroyed');
+        // The usage panel's push comes on its own clock (its first file read is async): not part of any close sequence.
+        if (ch === 'plan-usage:changed') return;
+        this.trace.push(`send:${ch}`); this.sent.push({ ch, payload });
+      },
     });
     this.webContents = wc;
     windows.push(this);
@@ -179,6 +184,7 @@ const bundle = await build({
       export { closePreconfirmations, CLOSE_PRECONFIRM_TTL_MS } from './src/main/close-preconfirm';
       export { IPC } from './src/shared/constants';
       export { guardBeforeQuit, isQuitConfirmed } from './src/main/quit-guard';
+      export { setTokenWorkerScript } from './src/main/plan-usage-ipc';
     `,
     resolveDir: repo,
     loader: 'ts',
@@ -198,6 +204,9 @@ const bundleText = bundle.outputFiles[0].text;
 const instantiate = () => {
   const m = { exports: {} };
   new Function('module', 'exports', '__dirname', 'require', bundleText)(m, m.exports, join(repo, '.vite', 'build'), (createRequire)(join(repo, 'noop.js')));
+  // No token scan of this Mac's transcripts in a close-guard check: its late push or a missing
+  // worker's warning would land in the window traces and warning lists checked here.
+  m.exports.setTokenWorkerScript(null);
   return m.exports;
 };
 let { createWindow, registerIpcHandlers, closePreconfirmations, CLOSE_PRECONFIRM_TTL_MS, IPC, guardBeforeQuit, isQuitConfirmed } = instantiate();

@@ -7,7 +7,7 @@
 import { promises as fs } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { EMPTY_PLAN_USAGE, parsePlanUsage, type PlanUsage } from '../shared/plan-usage';
+import { EMPTY_PLAN_USAGE, parsePlanUsage, parseSwitches, type LoginSwitch, type PlanUsage } from '../shared/plan-usage';
 
 export const PLAN_USAGE_SIZE_CAP = 256 * 1024;
 
@@ -31,6 +31,8 @@ export interface PlanUsageRead {
   /** The stat key to remember as read; '' after a failed read, so the next poll reads again. */
   key: string;
   usage: PlanUsage;
+  /** The file's login timeline, oldest first (empty unless the read gave usage). */
+  switches: LoginSwitch[];
   problem: PlanUsageProblem;
 }
 
@@ -55,26 +57,26 @@ export async function statPlanUsage(path: string): Promise<PlanUsageStat> {
 /** Read and parse the file as it is now (`now` in epoch seconds). */
 export async function readPlanUsage(path: string, now: number): Promise<PlanUsageRead> {
   const st = await statPlanUsage(path);
-  if (st.failed) return { key: '', usage: EMPTY_PLAN_USAGE, problem: 'unreadable' };
-  if (st.key === 'none') return { key: st.key, usage: EMPTY_PLAN_USAGE, problem: null };
-  if (st.size > PLAN_USAGE_SIZE_CAP) return { key: st.key, usage: EMPTY_PLAN_USAGE, problem: 'too-large' };
+  if (st.failed) return { key: '', usage: EMPTY_PLAN_USAGE, switches: [], problem: 'unreadable' };
+  if (st.key === 'none') return { key: st.key, usage: EMPTY_PLAN_USAGE, switches: [], problem: null };
+  if (st.size > PLAN_USAGE_SIZE_CAP) return { key: st.key, usage: EMPTY_PLAN_USAGE, switches: [], problem: 'too-large' };
   let text: string;
   try {
     const buf = await fs.readFile(path);
     // Replaced between the stat and the read: the next poll sees the new key.
-    if (buf.length > PLAN_USAGE_SIZE_CAP) return { key: st.key, usage: EMPTY_PLAN_USAGE, problem: 'too-large' };
+    if (buf.length > PLAN_USAGE_SIZE_CAP) return { key: st.key, usage: EMPTY_PLAN_USAGE, switches: [], problem: 'too-large' };
     text = buf.toString('utf8');
   } catch (err) {
     // Gone between the stat and the read (a rename in flight): no data this time.
-    if ((err as { code?: unknown } | null)?.code === 'ENOENT') return { key: 'none', usage: EMPTY_PLAN_USAGE, problem: null };
-    return { key: '', usage: EMPTY_PLAN_USAGE, problem: 'unreadable' };
+    if ((err as { code?: unknown } | null)?.code === 'ENOENT') return { key: 'none', usage: EMPTY_PLAN_USAGE, switches: [], problem: null };
+    return { key: '', usage: EMPTY_PLAN_USAGE, switches: [], problem: 'unreadable' };
   }
   let json: unknown;
   try {
     json = JSON.parse(text);
   } catch {
-    return { key: '', usage: EMPTY_PLAN_USAGE, problem: 'not-json' };
+    return { key: '', usage: EMPTY_PLAN_USAGE, switches: [], problem: 'not-json' };
   }
   const usage = parsePlanUsage(json, now);
-  return usage ? { key: st.key, usage, problem: null } : { key: st.key, usage: EMPTY_PLAN_USAGE, problem: 'wrong-shape' };
+  return usage ? { key: st.key, usage, switches: parseSwitches(json, now), problem: null } : { key: st.key, usage: EMPTY_PLAN_USAGE, switches: [], problem: 'wrong-shape' };
 }

@@ -1,6 +1,7 @@
 // Check of the usage panel (24 Nov 2026, Michael: every Claude login he has
 // used, bottom left, with its usage and reset time; layout U1 from
-// docs/mocks/usage-panel.html, percent and reset only, no token figure).
+// docs/mocks/usage-panel.html; the week's token count is drawn in section
+// panel-tokens here, and counted and credited in check-usage-tokens.mjs).
 // (a) the pure parser of ~/.claude/plan-usage/accounts.json
 //     (src/shared/plan-usage.ts) on missing, garbage and bad input, null and
 //     absent windows, a passed window, ordering, name fallback, the 12 cap;
@@ -375,6 +376,57 @@ try {
     check('panel: no logins again hides it and clears the rail', sec.hidden && rail.querySelector('.usage-rail').hidden && rail.title === 'Show bookmarks (⌃⌘B)');
     p.dispose();
     check('dispose: panel and rail bars removed', !side.querySelector('.usage-panel') && !rail.querySelector('.usage-rail'));
+  });
+
+  // The week's token count (main/token-scan.ts): drawn before the reset, in full in the tooltip.
+  await section('panel-tokens', async () => {
+    answers = [M.EMPTY_PLAN_USAGE];
+    const side = doc.getElementById('side');
+    const rail = doc.getElementById('rail');
+    let now = NOW;
+    const p = new w.UP.UsagePanel({ parent: side, before: side.querySelector('.bookmarks-resizer'), rail, railTitle: rail.title, now: () => now });
+    await sleep(20);
+    const sec = side.querySelector('section.usage-panel');
+    const withTokens = (tokensFor) => {
+      const u = JSON.parse(JSON.stringify(parsed));
+      for (const a of u.accounts) a.weekTokens = tokensFor(a) ?? null;
+      return u;
+    };
+    const live = (u) => u.accounts.find((a) => a.id === '38e237e1');
+    const tue = at(24, 20, 22);
+    const u1 = withTokens((a) => a.id === '38e237e1' ? { tokens: 2_912_345_678, complete: true, since: null, resetsAt: a.week.resetsAt }
+      : a.id === 'bbbb2222' ? { tokens: 412_345_678, complete: false, since: tue, resetsAt: a.week.resetsAt }
+      : a.id === 'cccc3333' ? { tokens: 5, complete: true, since: null, resetsAt: a.week.resetsAt } : null);
+    p.setUsage(u1);
+    const block = (id) => sec.querySelector(`.usage-acct[data-account="${id}"]`);
+    const sub = (id) => block(id)?.querySelector('.usage-reset')?.textContent;
+    check('tokens: a complete count with its estimate before the reset', sub('38e237e1') === '2.9 bn of ~4.6 bn · resets Sat 12:00', sub('38e237e1'));
+    check('tokens: a partial count, "≥ … since"', sub('bbbb2222') === '≥ 412M since Tue 20:22 · resets Mon 09:00', sub('bbbb2222'));
+    check('tokens: a login with no count keeps the reset alone', sub('aaaa1111') === 'back Sat 08:00', sub('aaaa1111'));
+    check('tokens: a passed week shows no count', sub('cccc3333') === 'reset Tue 08:00', sub('cccc3333'));
+    const title = block('38e237e1').title;
+    check('tokens: the tooltip and accessible name give the exact count and how it was counted',
+      title.includes('2,912,345,678 tokens Claude Code recorded on this login since the week began, cached re-reads included') && block('38e237e1').getAttribute('aria-label') === title, title);
+    check('tokens: a partial tooltip says "at least" and since when', block('bbbb2222').title.includes('at least 412,345,678 tokens') && block('bbbb2222').title.includes('since Tue 20:22'), block('bbbb2222').title);
+
+    // A new count re-draws; the same count does not touch the DOM.
+    const before = sec.querySelector('.usage-acct');
+    p.setUsage(JSON.parse(JSON.stringify(u1)));
+    check('tokens: the same counts leave the DOM alone', sec.querySelector('.usage-acct') === before);
+    const u2 = JSON.parse(JSON.stringify(u1));
+    live(u2).weekTokens.tokens = 3_012_345_678;
+    p.setUsage(u2);
+    check('tokens: a new count re-draws', sub('38e237e1') === '3.0 bn of ~4.8 bn · resets Sat 12:00', sub('38e237e1'));
+    const u3 = JSON.parse(JSON.stringify(u2));
+    live(u3).weekTokens.resetsAt -= 7 * 86400;
+    p.setUsage(u3);
+    check('tokens: a count for another week is not shown', sub('38e237e1') === 'resets Sat 12:00', sub('38e237e1'));
+    p.setUsage(u2);
+    now = at(28, 12, 1); // the live login's week resets
+    p.render();
+    check('tokens: once the week passes on the clock, its count goes', sub('38e237e1') === 'reset Sat 12:00', sub('38e237e1'));
+    check('tokens: usageIdentity leaves token counts out (they have their own log line)', M.usageIdentity(u1) === M.usageIdentity(u2) && M.usageIdentity(u1) === M.usageIdentity(parsed));
+    p.dispose();
   });
 
   // Mounted by the real BookmarksPanel: a refused first answer is asked again; a push re-draws.

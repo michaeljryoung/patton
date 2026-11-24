@@ -31,7 +31,26 @@ export interface PlanUsageAccount {
   lastLive: number | null;
   week: UsageWindow | null;
   fiveHour: UsageWindow | null;
+  /** Tokens Claude Code recorded on this login in its current week (main/token-scan.ts), or null:
+   *  none counted yet, no week, or a count for another week than `week`. Never set by the parser. */
+  weekTokens: WeekTokens | null;
 }
+
+/** The token count of one login's current week, counted from Claude Code's transcripts and
+ *  credited by the producer's `switches` timeline (shared/token-credit.ts). */
+export interface WeekTokens {
+  /** input + cache writes + cache reads + output, one per API request. */
+  tokens: number;
+  /** The timeline covers the whole week (its first switch at or before the week's start). */
+  complete: boolean;
+  /** When partial: the first switch's time, from which the count runs (epoch seconds); else null. */
+  since: number | null;
+  /** The week this count is for (its reset), so a count is never shown against another week. */
+  resetsAt: number;
+}
+
+/** One entry of the file's `switches`: from `at` (epoch seconds), `account` was the live login. */
+export type LoginSwitch = readonly [at: number, account: string];
 
 export interface PlanUsage {
   /** The live login's id, or null. */
@@ -43,7 +62,7 @@ export interface PlanUsage {
 export const MAX_ACCOUNTS = 12;
 export const EMPTY_PLAN_USAGE: PlanUsage = { liveId: null, accounts: [] };
 
-const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+export const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const MAX_EMAIL = 254;
 const MAX_PLAN = 40;
 const DAY_S = 24 * 60 * 60;
@@ -121,6 +140,7 @@ export function parsePlanUsage(json: unknown, now: number): PlanUsage | null {
       lastLive,
       week: parseWindow(a.seven_day, now),
       fiveHour: parseWindow(a.five_hour, now),
+      weekTokens: null,
     });
   }
 
@@ -135,6 +155,26 @@ export function parsePlanUsage(json: unknown, now: number): PlanUsage | null {
   const shown = accounts.slice(0, MAX_ACCOUNTS);
   disambiguateNames(shown);
   return { liveId, accounts: shown };
+}
+
+/** At most this many switches are kept (the producer keeps 500). */
+export const MAX_SWITCHES = 2000;
+
+/** The file's `switches` timeline, oldest first: entries that are not `[epoch seconds, login id]`
+ *  with a plausible time are dropped. An empty list when there is none. */
+export function parseSwitches(json: unknown, now: number): LoginSwitch[] {
+  if (!isRecord(json) || !Array.isArray(json.switches)) return [];
+  const out: LoginSwitch[] = [];
+  for (const entry of json.switches) {
+    if (!Array.isArray(entry) || entry.length < 2) continue;
+    const at = finite(entry[0]);
+    const account = entry[1];
+    if (at === null || at < READ_FLOOR_S || at > now + READ_AHEAD_S) continue;
+    if (typeof account !== 'string' || !ID_RE.test(account)) continue;
+    out.push([at, account]);
+  }
+  out.sort((x, y) => x[0] - y[0]);
+  return out.length > MAX_SWITCHES ? out.slice(out.length - MAX_SWITCHES) : out;
 }
 
 function nameGroups(accounts: PlanUsageAccount[]): PlanUsageAccount[][] {
@@ -162,9 +202,12 @@ function disambiguateNames(accounts: PlanUsageAccount[]): void {
 }
 
 /** A reading's identity: everything but the times the producer re-stamps on every
- *  status line (`readAt`), so a log line or a re-draw is for a change that matters. */
+ *  status line (`readAt`) and the token counts (which move every minute while Claude
+ *  works and have their own `[USAGE] tokens` line), so the `[USAGE] read` and
+ *  `[USAGE] panel` log lines are for a change of a login, its percent or the live one.
+ *  Re-draws follow the full content and the drawn strings, tokens included. */
 export function usageIdentity(usage: PlanUsage): string {
-  return JSON.stringify(usage, (key, value) => (key === 'readAt' ? undefined : value));
+  return JSON.stringify(usage, (key, value) => (key === 'readAt' || key === 'weekTokens' ? undefined : value));
 }
 
 function windowAt(w: UsageWindow | null, now: number): UsageWindow | null {

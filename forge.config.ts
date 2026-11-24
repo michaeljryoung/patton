@@ -160,6 +160,13 @@ const config: ForgeConfig = {
           target: 'main',
         },
         {
+          // The usage panel's token counter, run as a worker thread beside main
+          // (src/main/token-scan-host.ts loads .vite/build/token-scan-worker.cjs).
+          entry: 'src/main/token-scan-worker.ts',
+          config: 'vite.main.config.ts',
+          target: 'main',
+        },
+        {
           entry: 'src/preload/preload.ts',
           config: 'vite.preload.config.ts',
           target: 'preload',

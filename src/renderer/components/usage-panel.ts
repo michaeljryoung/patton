@@ -2,7 +2,8 @@
  * The usage panel at the foot of the bookmarks sidebar (layout U1, picked on
  * docs/mocks/usage-panel.html): every Claude login Michael has used, live one
  * first, each with its week's percent, a meter and its reset time, and a
- * 5-hour line where that login has a live 5-hour window. With the sidebar
+ * 5-hour line where that login has a live 5-hour window, and the tokens
+ * Claude Code recorded on it this week before the reset time. With the sidebar
  * hidden, the rail shows one small bar per login and the figures in its tooltip.
  *
  * The readings come from main (main/plan-usage-ipc.ts), which reads the file
@@ -11,7 +12,7 @@
 import { EMPTY_PLAN_USAGE, planUsageAt, usageIdentity, type PlanUsage, type PlanUsageAccount, type UsageWindow } from '../../shared/plan-usage';
 import type { PattonAPI } from '../../shared/types';
 import { rlog } from '../services/renderer-logger';
-import { clockTime, dayTime, newestRead, shownPct, usageLevel, weekLine } from '../services/usage-format';
+import { clockTime, dayTime, newestRead, shownPct, shownTokens, tokenDetail, usageLevel, weekLine, weekSubLine } from '../services/usage-format';
 
 /** If main's first answer is null (rate-limited), ask once more after this (ms). */
 const RETRY_DELAY_MS = 2000;
@@ -55,6 +56,8 @@ function detail(a: PlanUsageAccount): string {
   const parts: string[] = [];
   if (a.week) parts.push(`week ${shownPct(a.week.pct)}%, ${weekLine(a.week)}`);
   else parts.push('no recent weekly reading');
+  const tokens = shownTokens(a.week, a.weekTokens);
+  if (a.week && tokens) parts.push(tokenDetail(tokens, a.week.pct));
   if (a.fiveHour && !a.fiveHour.passed) parts.push(`5-hour ${shownPct(a.fiveHour.pct)}%, resets ${clockTime(a.fiveHour.resetsAt)}`);
   const read = a.week?.readAt ?? a.fiveHour?.readAt ?? null;
   if (read !== null) parts.push(`read ${clockTime(read)}`);
@@ -198,8 +201,8 @@ export class UsagePanel {
     block.appendChild(top);
 
     block.appendChild(meter('usage-meter', week ? week.pct : 0));
-    // A later token figure goes before the reset here, as "<tokens> · resets …".
-    block.appendChild(el('div', 'usage-sub usage-reset', week ? weekLine(week) : 'no recent reading'));
+    // The week's token count, where there is one, goes before the reset: "<tokens> · resets …".
+    block.appendChild(el('div', 'usage-sub usage-reset', week ? weekSubLine(week, a.weekTokens) : 'no recent reading'));
 
     const five: UsageWindow | null = a.fiveHour && !a.fiveHour.passed ? a.fiveHour : null;
     if (five) {
