@@ -368,7 +368,8 @@ export class SessionBarModel {
           const what = run ? run.description : shownText(event.id, 40);
           const tail = typeof event.exitCode === 'number' && Number.isFinite(event.exitCode) ? `exit ${event.exitCode}` : status;
           const summary = isStr(event.summary) && event.summary ? shownText(event.summary, TEXT_MAX) : '';
-          const text = `${what}: ${tail}`;
+          // The reason first: a long description is clamped in the row, never the reason.
+          const text = `${tail}: ${what}`;
           this.addFailure(kind, text, summary ? `${text} · ${summary}` : text, at);
           notes.push({ note: 'failure', kind });
         }

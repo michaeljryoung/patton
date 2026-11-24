@@ -333,7 +333,9 @@ async function pageRun(cfg) {
     const root = barRoot();
     if (!root || barState() !== 'strip') return null;
     const leaves = Array.from(root.querySelectorAll('*')).filter((e) => e.children.length === 0 && visible(e) && /^!?\d+$/.test(norm(e.textContent)));
-    return { running: leaves[0] ? Number(norm(leaves[0].textContent)) : null, failures: leaves[1] ? Number(norm(leaves[1].textContent).replace(/^!/, '')) : 0, failureEl: leaves[1] || null };
+    // The failures box exists only above 0 and says "!N"; no second number leaf means no box.
+    const ft = leaves[1] ? norm(leaves[1].textContent) : null;
+    return { running: leaves[0] ? Number(norm(leaves[0].textContent)) : null, failures: ft && /^!\d+$/.test(ft) ? Number(ft.slice(1)) : (ft ? NaN : 0), failureText: ft, failureEl: leaves[1] || null };
   };
   const waitFor = async (pred, ms, step = 10) => {
     const t0 = performance.now();
@@ -514,7 +516,7 @@ async function pageRun(cfg) {
     const sAfter = strip();
     openBtn().click(); await sleep(400);
     check(n(3, 'the minimized strip counts the failure (red above 0) and drops it once the x has been pressed'),
-      sFold && sFold.failures === 1 && redOk && !!failGone && sAfter && sAfter.failures === 0, { foldedStrip: sFold && { r: sFold.running, f: sFold.failures }, red: redOk, rowGoneAfterX: !!failGone, afterX: sAfter && { r: sAfter.running, f: sAfter.failures } });
+      sFold && sFold.failures === 1 && sFold.failureText === '!1' && redOk && !!failGone && sAfter && sAfter.failures === 0 && sAfter.failureEl === null, { foldedStrip: sFold && { r: sFold.running, f: sFold.failures, text: sFold.failureText }, red: redOk, rowGoneAfterX: !!failGone, afterX: sAfter && { r: sAfter.running, f: sAfter.failures } });
 
     // ---- 6: fold and restore (measured on the bar's own width and the terminal's columns)
     const root = barRoot();
