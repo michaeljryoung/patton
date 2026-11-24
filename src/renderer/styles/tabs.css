@@ -120,6 +120,29 @@
   min-width: calc(60px + 8px * (var(--ui-scale) - 1));
 }
 
+/* The tab wake runs in (a pane titled exactly WAKE; tab-bar.ts adds the class
+   and takes it off when wake ends). Michael, 24 Nov: "always just this size even
+   if other tabs open". It is as wide as its own content and stays so: it takes
+   no share of the strip's spare room and never shrinks with many tabs open,
+   grouped or not; the other tabs share what is left as above. Its label is
+   capped at 150 px a step of Interface Text Size (the 15-character rule keeps
+   15 "W" at about 153 px; longer names get an ellipsis), so a long typed name
+   can't make it wide. The hover close button is laid over the tab's right end
+   and exists only while more than one tab is open, so both sides carry the same
+   padding, always: room for the button (12 + 7.8 x scale px, the floor's sum
+   above, plus 2 px clear) so the label's end never hides under it, and the dot
+   and label sit centred. Padding that depended on the button would make a lone
+   wake tab narrower and jump when a second tab opened. */
+.tab-bar-tab.wake-compact {
+  flex: 0 0 auto;
+  padding-left: calc(14px + 8px * var(--ui-scale));
+  padding-right: calc(14px + 8px * var(--ui-scale));
+}
+
+.tab-bar-tab.wake-compact .tab-bar-tab-title {
+  max-width: calc(150px * var(--ui-scale));
+}
+
 .tab-bar-tab + .tab-bar-tab {
   border-left: 1px solid var(--hairline);
 }
