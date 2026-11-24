@@ -80,6 +80,25 @@ ROUND3 = [
     ("n4", "N4", "A2 in digits", "Your A2 as it is, with faint falling digits worked into the helmet's surface."),
 ]
 
+# Round 4: "the hat still looks like a bowler hat, can we maybe take the original image we had of patton then
+# do matrix style, like n1 but more subtle so see more backgroun nos" (24 Nov). Rendered by portrait_rain.py.
+ROUND4 = [
+    ("p1", "P1", "Portrait in green", "The original portrait drawn in bright digits, with falling digits behind it across the whole tile."),
+    ("p2", "P2", "Quieter portrait", "P1 with the portrait dimmer and the falling digits stronger."),
+    ("p3", "P3", "Portrait in amber", "P1 in amber, the colour of Patton's typing box."),
+]
+# Each rendered icon is embedded once, as a symbol holding the image, and reused by <use> at every size.
+for k, _, _, _ in ROUND4:
+    data = base64.b64encode(open(f"{REPO}/docs/mocks/icon-studies/round4/{k}-512.png", "rb").read()).decode()
+    icons.symbols[k] = f'<image href="data:image/png;base64,{data}" x="0" y="0" width="1024" height="1024"/>'
+
+round4 = []
+for key, label, name, desc in ROUND4:
+    round4.append(
+        f'<article class="variant" aria-labelledby="h-{key}">{use(key, 150, "big")}'
+        f'<div class="meta"><h3 id="h-{key}"><span class="letter wide">{label}</span>{name}</h3><p>{desc}</p>'
+        f'{sizes_row(lambda px, k=key: use(k, px))}</div></article>')
+
 round2 = []
 for sym, label, name, desc in ROUND2:
     round2.append(
@@ -189,6 +208,7 @@ figcaption {{ font-size: 11px; color: var(--muted); font-variant-numeric: tabula
 
 .round2 {{ display: grid; gap: 16px; }}
 .variants {{ display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }}
+.variants.three {{ grid-template-columns: repeat(3, minmax(0, 1fr)); }}
 .variants.four {{ grid-template-columns: repeat(4, minmax(0, 1fr)); }}
 .variant {{ display: grid; grid-template-rows: auto 1fr; gap: 12px; background: var(--surface); border: 1px solid var(--line);
   border-radius: 14px; padding: 16px; }}
@@ -204,7 +224,7 @@ h3 {{ margin: 0; font-size: 16px; font-weight: 600; display: flex; align-items: 
 
 @media (max-width: 860px) {{
   .grid {{ grid-template-columns: minmax(0, 1fr); }}
-  .variants, .variants.four {{ grid-template-columns: minmax(0, 1fr); }}
+  .variants, .variants.four, .variants.three {{ grid-template-columns: minmax(0, 1fr); }}
   .variant {{ grid-template-columns: 120px minmax(0, 1fr); grid-template-rows: none; align-items: start; }}
   .variant .big {{ width: 120px; height: 120px; }}
 }}
@@ -220,6 +240,16 @@ h3 {{ margin: 0; font-size: 16px; font-weight: 600; display: flex; align-items: 
     <h1>Ten icons for Patton</h1>
     <p class="dek">Ten directions for a sleeker icon that keeps the reference to the general: his helmet, his three stars, his name, and the tank named after him. Each sits on the rounded tile that current Mac apps use, shown full size and at 64, 32 and 16 pixels, three of the sizes Patton's icon file carries.</p>
   </header>
+
+  <section class="round2" aria-labelledby="r4-head">
+    <div class="section-head">
+      <h2 id="r4-head">Round 4 · The portrait in falling digits</h2>
+      <p>You said A2 still looks like a bowler hat. This round goes back to the original portrait and draws it in digits, like N1 but quieter, so more of the falling numbers behind it show.</p>
+    </div>
+    <div class="variants three">{"".join(round4)}</div>
+    {dock("light", [("a2", "A2", "A2")] + [(k, name, label) for k, label, name, _ in ROUND4])}
+    {dock("dark", [("a2", "A2", "A2")] + [(k, name, label) for k, label, name, _ in ROUND4])}
+  </section>
 
   <section class="round2" aria-labelledby="r3-head">
     <div class="section-head">
@@ -268,7 +298,7 @@ h3 {{ margin: 0; font-size: 16px; font-weight: 600; display: flex; align-items: 
   </section>
 
   <section class="reply" aria-label="How to choose">
-    <p><strong>Reply with N1 to N4</strong> to swap one in, or keep A2.</p>
+    <p><strong>Reply with P1, P2 or P3</strong> (or any earlier letter) to swap it in, or keep A2.</p>
     <p>A pick goes into the release that carries the Stop hook fix and the compact wake tab, so it arrives in the same install.</p>
   </section>
 </div>
