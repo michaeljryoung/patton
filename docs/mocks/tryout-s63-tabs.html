@@ -1,0 +1,1283 @@
+<title>Patton Tab Try-out</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta charset="utf-8">
+<style>
+/* ---------- The page itself ---------- */
+:root { --pg-bg:#f1f2f4; --pg-card:#ffffff; --pg-ink:#16181d; --pg-muted:#5b6270; --pg-line:#d9dce2; --pg-accent:#2f6bff; color-scheme: light; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --pg-bg:#0c0d0f; --pg-card:#16181b; --pg-ink:#e3e7ee; --pg-muted:#98a0ad; --pg-line:#2c3036; --pg-accent:#7aa2ff; color-scheme: dark; } }
+:root[data-theme="dark"] { --pg-bg:#0c0d0f; --pg-card:#16181b; --pg-ink:#e3e7ee; --pg-muted:#98a0ad; --pg-line:#2c3036; --pg-accent:#7aa2ff; color-scheme: dark; }
+body { margin:0; background:var(--pg-bg); color:var(--pg-ink); font:15px/1.5 system-ui,-apple-system,"Helvetica Neue",sans-serif;
+  padding-block:32px 56px; padding-left:max(16px, env(safe-area-inset-left, 0px)); padding-right:max(16px, env(safe-area-inset-right, 0px)); }
+.wrap { max-width:1180px; margin:0 auto; display:grid; gap:40px; }
+h1 { margin:0; font-size:26px; font-weight:650; }
+h2 { margin:0 0 4px; font-size:19px; font-weight:650; }
+h3 { margin:0; font-size:15px; font-weight:650; }
+p { margin:0; }
+.lede { color:var(--pg-muted); max-width:78ch; }
+section { display:grid; gap:14px; }
+.cand { background:var(--pg-card); border:1px solid var(--pg-line); border-radius:10px; padding:14px; display:grid; gap:10px; }
+.cand .say { color:var(--pg-muted); }
+.strips { overflow-x:auto; display:grid; gap:8px; }
+.strip-row { min-width:860px; display:grid; gap:3px; }
+.strip-tag { font-size:12px; color:var(--pg-muted); }
+.pt-frame { border:1px solid var(--pg-line); }
+.controls { display:flex; flex-wrap:wrap; gap:10px 22px; align-items:center; }
+.seg { display:inline-flex; align-items:center; gap:6px; }
+.seg > span { font-size:13px; color:var(--pg-muted); }
+.seg button, .plain-btn { font:inherit; font-size:13px; color:var(--pg-ink); background:var(--pg-card); border:1px solid var(--pg-line); padding:4px 11px; border-radius:6px; cursor:pointer; }
+.seg button[aria-pressed="true"] { background:var(--pg-ink); color:var(--pg-card); border-color:var(--pg-ink); }
+.seg button:focus-visible, .plain-btn:focus-visible { outline:2px solid var(--pg-accent); outline-offset:2px; }
+#try-msg { min-height:1.5em; font-size:14px; }
+.help { color:var(--pg-muted); font-size:14px; display:grid; gap:4px; max-width:86ch; }
+.help b { color:var(--pg-ink); font-weight:600; }
+
+/* Patton's own rules, copied from src/renderer/styles/main.css (tokens, context menu) and tabs.css (whole); :root is .pt here */
+.pt {
+  --ink: #0b0d12;
+  --bg: #ffffff;
+  --surface: #f4f5f7;
+  --surface-hover: #eceef2;
+  --muted: #596170;
+  --grey: #e3e6ec;
+  --grey-hover: #d5d9e1; 
+  --group1-tab: #edf3fc; --group1-chip: #d9e6f8; --group1-line: #8fb0e3;
+  --group2-tab: #ecf6f0; --group2-chip: #d4ecdf; --group2-line: #86c3a2;
+  --group3-tab: #fcf5e6; --group3-chip: #f4e3bf; --group3-line: #e0bd6e;
+  --thumb: #848b97;
+  --hairline: var(--ink);
+  --focus: #2f6bff;
+  --error-text: #c41d33;
+  --scrim: rgba(11, 13, 18, 0.32);
+  --green: #12b886;
+  --amber: #f5a524;
+  --red: #ff4d5e;
+  --blue: #2f6bff;
+  --accent: var(--blue);
+  --inverse-bg: var(--ink);
+  --inverse-fg: var(--bg);
+  --broadcast: var(--amber);
+  --prompt-ready: var(--green);
+  --prompt-ready-glow: rgba(18, 184, 134, 0.4);
+  --parked: var(--muted);
+  --status-ckpt: var(--red);
+  --flag-green: var(--green);
+  --flag-yellow: var(--amber);
+  --flag-red: var(--red);
+  --dot-edge: #747579;
+  --amber-text: #925d07;
+  --compose-aside-ink: var(--muted);
+  --compose-aside-rule: var(--grey);
+  --compose-aside-hint: var(--muted);
+  --compose-fill: #fefbea;
+  --sb-bg: var(--bg);
+  --sb-ink: var(--ink);
+  --sb-muted: var(--muted);
+  --sb-hairline: var(--hairline);
+  --sb-rule: var(--grey);
+  --sb-hover: var(--surface-hover);
+  --sb-focus: var(--focus);
+  --sb-long: var(--accent);
+  --sb-fail: var(--error-text);
+  --sb-link: var(--accent);
+  --sb-due: var(--amber-text);
+  --font-mono: 'SF Mono', 'Menlo', 'Monaco', 'Courier New', monospace;
+  --font-ui: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --ui-scale: 1;
+  --ui: calc(12px * var(--ui-scale));
+  --row: calc(28px * var(--ui-scale));
+  --head: calc(10.5px * var(--ui-scale));
+  --head-ls: 0.06em;
+  --title: calc(11px * var(--ui-scale));
+  --title-ls: 0.08em;
+  --tabh: calc(28px * var(--ui-scale));
+  color-scheme: light;
+}
+.pt.pt-dark {
+    --ink: #dbe3ee;
+    --bg: #111214;
+    --surface: #17191d;
+    --surface-hover: #1f2228;
+    --muted: #8b95a5;
+    --grey: #2a2f37;
+    --grey-hover: #353b45;
+    --group1-tab: #18202b; --group1-chip: #22304a; --group1-line: #3f5c8f;
+    --group2-tab: #17231d; --group2-chip: #213a2d; --group2-line: #3f7558;
+    --group3-tab: #261f12; --group3-chip: #3b2f17; --group3-line: #7a6127;
+    --thumb: #636c7a;
+    --focus: #7aa2ff;
+    --error-text: #ff7a87;
+    --scrim: rgba(0, 0, 0, 0.55);
+    --dot-edge: transparent;
+    --hairline: color-mix(in srgb, var(--ink) 45%, var(--bg));
+    --amber-text: var(--amber);
+    --compose-fill: #1f1d14; 
+    --sb-long: var(--focus);
+    --sb-link: var(--focus);
+    color-scheme: dark;
+  }
+.pt, .pt * { margin: 0; padding: 0; box-sizing: border-box; }
+.pt { font-family: var(--font-ui); font-size: var(--ui); line-height: 1.3; background: var(--bg); color: var(--ink); }
+.context-menu-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: none;
+}
+.context-menu-overlay.visible {
+  display: block;
+}
+.context-menu {
+  position: absolute;
+  background: var(--bg);
+  border: 1px solid var(--hairline);
+  border-radius: 0;
+  min-width: 180px;
+  padding: 4px 0;
+  overflow: hidden;
+  font-family: var(--font-ui);
+}
+.context-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: calc(24px * var(--ui-scale));
+  padding: 4px 12px;
+  font-size: var(--ui);
+  color: var(--ink);
+  cursor: pointer;
+  transition: background 0.08s;
+}
+.context-menu-item:hover,
+.context-menu-item.focused {
+  background: var(--inverse-bg);
+  color: var(--inverse-fg);
+  outline: none;
+}
+.context-menu-item.disabled,
+.context-menu-item.disabled:hover {
+  background: transparent;
+  color: var(--muted);
+  cursor: default;
+}
+.context-menu-shortcut {
+  font-size: calc(11px * var(--ui-scale));
+  color: var(--muted);
+  margin-left: 24px;
+}
+.context-menu-item:hover .context-menu-shortcut,
+.context-menu-item.focused .context-menu-shortcut {
+  color: inherit;
+  opacity: 0.75;
+}
+.context-menu-separator {
+  height: 1px;
+  background: var(--hairline);
+  margin: 4px 0;
+}
+.tab-bar {
+  display: flex;
+  align-items: stretch;
+  height: var(--tabh);
+  flex-shrink: 0;
+  background: var(--surface);
+  border-bottom: 1px solid var(--hairline);
+  -webkit-app-region: drag;
+  padding-left: 78px; 
+  user-select: none;
+  font-family: var(--font-ui);
+}
+.tab-bar-settings {
+  background: none;
+  border: none;
+  border-left: 1px solid var(--hairline);
+  border-right: 1px solid var(--hairline);
+  border-radius: 0;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0 12px;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.12s, background 0.12s;
+  -webkit-app-region: no-drag;
+}
+.tab-bar-settings:hover {
+  color: var(--ink);
+  background: var(--surface-hover);
+}
+.tab-bar-settings svg {
+  width: 14px;
+  height: 14px;
+  display: block;
+  flex-shrink: 0;
+}
+.tab-bar-settings:focus-visible,
+.tab-bar-new:focus-visible,
+.tab-bar-pause-all:focus-visible,
+.tab-bar-group-chip:focus-visible,
+.tab-bar-tab:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+.tab-bar-tabs {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  height: 100%;
+  align-items: stretch;
+  -webkit-app-region: no-drag;
+}
+.tab-bar-tabs::-webkit-scrollbar {
+  display: none;
+}
+.tab-bar-tab {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 12px;
+  height: 100%;
+  flex: 1 1 auto;
+  justify-content: safe center;
+  min-width: calc(44px + 8px * (var(--ui-scale) - 1));
+  background: transparent;
+  --tab-bg: var(--surface);
+  cursor: pointer;
+  font-size: calc(var(--ui) - 1px * var(--ui-scale));
+  color: var(--muted);
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s, opacity 0.15s;
+  -webkit-app-region: no-drag;
+  border-radius: 0;
+  position: relative;
+}
+.tab-bar-tab.has-flag-and-ckpt {
+  min-width: calc(60px + 8px * (var(--ui-scale) - 1));
+}
+.tab-bar-tab.wake-compact {
+  flex: 0 0 auto;
+  padding-left: calc(14px + 8px * var(--ui-scale));
+  padding-right: calc(14px + 8px * var(--ui-scale));
+}
+.tab-bar-tab.wake-compact .tab-bar-tab-title {
+  max-width: calc(150px * var(--ui-scale));
+}
+.tab-bar-tab + .tab-bar-tab {
+  border-left: 1px solid var(--hairline);
+}
+.tab-bar-tab:hover {
+  --tab-bg: var(--surface-hover);
+  background: var(--surface-hover);
+  color: var(--ink);
+}
+.tab-bar-tab.active {
+  --tab-bg: var(--bg);
+  color: var(--ink);
+  font-weight: 700;
+  background: var(--bg);
+  box-shadow: inset 0 -3px 0 var(--ink);
+}
+.tab-bar-tab.active .tab-bar-tab-close {
+  box-shadow: inset 0 -3px 0 var(--ink);
+}
+.tab-bar-tab.dragging {
+  opacity: 0.4;
+}
+.tab-bar-tab.drag-over {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.tab-bar-tab.active.drag-over {
+  box-shadow: inset 2px 0 0 var(--accent), inset 0 -3px 0 var(--ink);
+}
+.group-shade-1 { --g-tab: var(--group1-tab); --g-chip: var(--group1-chip); --g-line: var(--group1-line); }
+.group-shade-2 { --g-tab: var(--group2-tab); --g-chip: var(--group2-chip); --g-line: var(--group2-line); }
+.group-shade-3 { --g-tab: var(--group3-tab); --g-chip: var(--group3-chip); --g-line: var(--group3-line); }
+.tab-bar-group-chip {
+  --chip-muted: color-mix(in srgb, var(--ink) 50%, var(--muted));
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: calc(6px * var(--ui-scale));
+  height: 100%;
+  box-sizing: border-box;
+  padding: 0 11px 0 9px;
+  background: var(--g-chip, var(--grey));
+  color: var(--ink);
+  box-shadow: inset 0 2px 0 var(--g-line, var(--ink));
+  font-family: var(--font-ui);
+  font-size: calc(10.5px * var(--ui-scale));
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: pointer;
+  border-radius: 0;
+  position: relative;
+  transition: background 0.15s;
+  -webkit-app-region: no-drag;
+}
+.tab-bar-group-chip:hover {
+  background: color-mix(in srgb, var(--g-line) 25%, var(--g-chip, var(--grey-hover)));
+}
+.tab-bar-group-chip:not([class*="group-shade-"]):hover {
+  background: var(--grey-hover);
+}
+.tab-bar-tab + .tab-bar-group-chip,
+.tab-bar-group-chip + .tab-bar-group-chip,
+.tab-bar-group-chip + .tab-bar-tab {
+  border-left: 1px solid var(--hairline);
+}
+.tab-bar-group-chevron {
+  font-size: calc(8px * var(--ui-scale));
+  font-weight: 400;
+  color: var(--chip-muted);
+  letter-spacing: 0;
+}
+.tab-bar-group-name {
+  min-width: 0;
+  max-width: calc(140px * var(--ui-scale));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.25;
+}
+.tab-bar-group-name.unnamed {
+  color: var(--chip-muted);
+}
+.tab-bar-group-count {
+  font-weight: 400;
+  color: var(--chip-muted);
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+}
+.tab-bar-group-chip.drag-over {
+  box-shadow: inset 0 2px 0 var(--g-line, var(--ink)), inset 2px 0 0 var(--focus);
+}
+.tab-bar-group-chip .tab-bar-tab-rename {
+  flex: 0 0 auto;
+  width: calc(140px * var(--ui-scale));
+  min-width: 0;
+  font-size: calc(10.5px * var(--ui-scale));
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  line-height: 1.25;
+  padding: 2px 4px;
+}
+.tab-bar-group-chip .tab-bar-tab-rename::placeholder {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+}
+.tab-bar-tab.in-group {
+  --tab-bg: var(--g-tab);
+  background: var(--g-tab);
+  box-shadow: inset 0 2px 0 var(--g-line);
+}
+.tab-bar-tab.in-group:hover {
+  --tab-bg: color-mix(in srgb, var(--g-line) 18%, var(--g-tab));
+  background: var(--tab-bg);
+}
+.tab-bar-tab.in-group.active {
+  --tab-bg: var(--bg);
+  background: var(--bg);
+  box-shadow: inset 0 2px 0 var(--g-line), inset 0 -3px 0 var(--ink);
+}
+.tab-bar-tab.in-group .tab-bar-tab-close {
+  box-shadow: inset 0 2px 0 var(--g-line);
+}
+.tab-bar-tab.in-group.active .tab-bar-tab-close {
+  box-shadow: inset 0 2px 0 var(--g-line), inset 0 -3px 0 var(--ink);
+}
+.tab-bar-tab.in-group.drag-over {
+  box-shadow: inset 0 2px 0 var(--g-line), inset 2px 0 0 var(--focus);
+}
+.tab-bar-tab.in-group.active.drag-over {
+  box-shadow: inset 0 2px 0 var(--g-line), inset 2px 0 0 var(--focus), inset 0 -3px 0 var(--ink);
+}
+.tab-bar-group-list {
+  position: fixed;
+  z-index: 500; 
+  min-width: calc(220px * var(--ui-scale));
+  max-width: min(calc(360px * var(--ui-scale)), calc(100vw - 16px));
+  box-sizing: border-box;
+  padding: 4px 0;
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--hairline);
+  font-family: var(--font-ui);
+  font-size: var(--ui);
+  -webkit-app-region: no-drag;
+}
+.tab-bar-group-list-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 12px;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  line-height: 1.3;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.tab-bar-group-list-row:hover {
+  background: var(--surface-hover);
+}
+.tab-bar-group-list-nodot {
+  width: 9px;
+  flex-shrink: 0;
+}
+.tab-bar-group-list-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tab-bar-tab-grip {
+  cursor: grab;
+  color: var(--muted);
+  font-size: calc(10px * var(--ui-scale));
+  line-height: 1;
+  opacity: 0;
+  transition: opacity 0.12s;
+  padding: 2px 0;
+  position: absolute;
+  left: -3px;
+  top: 50%;
+  transform: translateY(-50%);
+  border: solid transparent;
+  border-width: 6px 0 6px 4px;
+  background-clip: padding-box;
+  -webkit-app-region: no-drag;
+  pointer-events: none;
+}
+.tab-bar-tab:hover .tab-bar-tab-grip {
+  opacity: 0.5;
+  pointer-events: auto;
+}
+.tab-bar-tab .tab-bar-tab-grip:hover {
+  opacity: 1;
+  cursor: grab;
+}
+.tab-bar-tab-title {
+  flex: 0 1 auto;
+  max-width: 196px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: auto;
+}
+.tab-bar-tab-title::after {
+  content: attr(data-title);
+  display: block;
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+  font-weight: 700;
+}
+.tab-bar-tab-indicator {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--prompt-ready);
+  box-shadow: 0 0 0 1px var(--dot-edge), 0 0 6px var(--prompt-ready);
+  flex-shrink: 0;
+  align-self: center;
+  animation: tab-indicator-pulse 1.8s ease-in-out infinite;
+}
+@keyframes tab-indicator-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.5; }
+}
+.tab-bar-tab-indicator.checkpoint-done {
+  background: var(--status-ckpt);
+  box-shadow: 0 0 0 1px var(--dot-edge), 0 0 6px var(--status-ckpt);
+}
+.tab-bar-tab-indicator.flag-green,
+.tab-bar-tab-indicator.flag-yellow,
+.tab-bar-tab-indicator.flag-red {
+  border-radius: 0;
+  animation: none;
+  box-shadow: 0 0 0 1px var(--dot-edge);
+}
+.tab-bar-tab-indicator.flag-green {
+  background: var(--flag-green);
+}
+.tab-bar-tab-indicator.flag-yellow {
+  background: var(--flag-yellow);
+}
+.tab-bar-tab-indicator.flag-red {
+  background: var(--flag-red);
+}
+.tab-bar-tab-indicator.parked {
+  background: transparent;
+  border: 2px solid var(--parked);
+  box-shadow: none;
+  animation: none;
+}
+.tab-bar-tab-rename {
+  flex: 1;
+  min-width: 40px;
+  max-width: 100%;
+  background: var(--bg);
+  color: var(--ink);
+  border: 1px solid var(--focus);
+  border-radius: 0;
+  font-size: calc(var(--ui) - 1px * var(--ui-scale));
+  font-weight: 400;
+  font-family: var(--font-ui);
+  padding: 1px 4px;
+  outline: none;
+}
+.tab-bar-tab-rename::placeholder {
+  color: var(--muted);
+}
+.tab-bar-tab-close {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  background: var(--tab-bg);
+  font-family: var(--font-ui);
+  font-size: calc(13px * var(--ui-scale));
+  font-weight: 400;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0 6px;
+  border: none;
+  margin: 0;
+  line-height: 1;
+  border-radius: 0;
+  transition: background 0.12s, color 0.12s;
+  -webkit-app-region: no-drag;
+  opacity: 0;
+  pointer-events: none;
+}
+.tab-bar-tab:hover .tab-bar-tab-close,
+.tab-bar-tab-close:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+.tab-bar-tab:has(.tab-bar-tab-rename) .tab-bar-tab-close {
+  opacity: 0;
+  pointer-events: none;
+}
+.tab-bar-tab-close:hover {
+  background: var(--grey);
+  color: var(--ink);
+}
+.tab-bar-tab-close:focus-visible {
+  outline-offset: -2px;
+}
+.tab-bar-new {
+  background: none;
+  border: none;
+  border-left: 1px solid var(--hairline);
+  border-radius: 0;
+  font-family: var(--font-ui);
+  font-size: calc(14px * var(--ui-scale));
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0 12px;
+  height: 100%;
+  transition: color 0.12s, background 0.12s;
+  -webkit-app-region: no-drag;
+}
+.tab-bar-new:hover {
+  color: var(--ink);
+  background: var(--surface-hover);
+}
+.tab-bar-drag-space {
+  flex: 0 0 auto;
+  box-sizing: content-box;
+  height: 100%;
+  border-left: 1px solid transparent; 
+  padding: 0 12px;
+  font-family: var(--font-ui);
+  font-size: calc(14px * var(--ui-scale));
+  cursor: default;
+  -webkit-app-region: no-drag;
+}
+.tab-bar-drag-space::before {
+  content: '+';
+  visibility: hidden;
+}
+.tab-bar-pause-all {
+  background: none;
+  border: none;
+  border-left: 1px solid var(--hairline);
+  border-radius: 0;
+  font-family: var(--font-ui);
+  font-size: var(--ui);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0 10px;
+  height: 100%;
+  flex-shrink: 0;
+  transition: color 0.12s, background 0.12s;
+  -webkit-app-region: no-drag;
+}
+.tab-bar-pause-all:hover {
+  color: var(--ink);
+  background: var(--surface-hover);
+}
+.tab-bar-pause-all {
+  font-size: calc(14px * var(--ui-scale));
+  padding: 0 12px;
+}
+.tab-bar {
+  position: relative;
+}
+.tab-bar-pause-result {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 500; 
+  width: max-content;
+  max-width: min(calc(420px * var(--ui-scale)), calc(100vw - 16px));
+  box-sizing: border-box;
+  margin-top: 2px;
+  padding: 6px 10px;
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--hairline);
+  font-family: var(--font-ui);
+  font-size: var(--ui);
+  line-height: 1.4;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+  -webkit-app-region: no-drag;
+}
+.tab-bar-pause-result[hidden] {
+  display: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .pt *,
+  .pt *::before,
+  .pt *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ---------- Additions for this try-out (not in Patton yet) ---------- */
+.pt { --sel: var(--accent); }
+.pt.pt-dark { --sel: var(--focus); }
+.pt-menu-host { display: contents; }
+.pt-lights { position:absolute; left:14px; top:50%; transform:translateY(-50%); display:flex; gap:8px; pointer-events:none; }
+.pt-lights i { width:12px; height:12px; border-radius:50%; background:var(--grey); box-shadow:inset 0 0 0 1px var(--hairline); opacity:.6; }
+.pt-term { height:30px; padding:0 12px; display:flex; align-items:center; font-family:var(--font-mono); font-size:12px; color:var(--muted); background:var(--bg); }
+.pt .tab-bar-tabs { position: relative; }
+
+/* Busy mark: shares the dot's slot, shown only when no other mark is. */
+.pt .tab-bar-tab-indicator.busy { background:transparent; box-shadow:none; animation:none; border:0; }
+.pt .tab-bar-tab-indicator.busy i { display:none; }
+/* W1: a small still dot in the strip's muted ink */
+.pt[data-w="w1"] .tab-bar-tab-indicator.busy { width:5px; height:5px; margin:0 2px; background:var(--muted); }
+/* W2: a thin arc turning about once every 1.6 s */
+.pt[data-w="w2"] .tab-bar-tab-indicator.busy { width:9px; height:9px; border:1.5px solid transparent; border-top-color:var(--muted); border-right-color:var(--muted); animation:pt-spin 1.6s linear infinite; }
+@keyframes pt-spin { to { transform: rotate(360deg); } }
+/* W3: three small dots that brighten in turn */
+.pt[data-w="w3"] .tab-bar-tab-indicator.busy { width:11px; height:9px; border-radius:0; display:flex; align-items:center; gap:1px; }
+.pt[data-w="w3"] .tab-bar-tab-indicator.busy i { display:block; width:3px; height:3px; border-radius:50%; background:var(--muted); opacity:.3; animation:pt-bright 1.2s ease-in-out infinite; }
+.pt[data-w="w3"] .tab-bar-tab-indicator.busy i:nth-child(2) { animation-delay:.4s; }
+.pt[data-w="w3"] .tab-bar-tab-indicator.busy i:nth-child(3) { animation-delay:.8s; }
+@keyframes pt-bright { 0%, 60%, 100% { opacity:.3; } 25% { opacity:1; } }
+@media (prefers-reduced-motion: reduce) {
+  .pt[data-w="w2"] .tab-bar-tab-indicator.busy { animation:none; }
+  .pt[data-w="w3"] .tab-bar-tab-indicator.busy i { animation:none; opacity:.65; }
+}
+
+/* Selected tabs that aren't the one you're on (.multi). The tab you're on keeps its look. */
+.pt .tab-bar-tab.multi { --sel-base: var(--surface); --tab-bg: color-mix(in srgb, var(--sel) 12%, var(--sel-base)); background: var(--tab-bg); color: var(--ink); }
+.pt.pt-dark .tab-bar-tab.multi { --tab-bg: color-mix(in srgb, var(--sel) 20%, var(--sel-base)); }
+.pt .tab-bar-tab.multi.in-group { --sel-base: var(--g-tab); }
+.pt .tab-bar-tab.multi:hover { --tab-bg: color-mix(in srgb, var(--sel) 20%, var(--sel-base)); }
+.pt.pt-dark .tab-bar-tab.multi:hover { --tab-bg: color-mix(in srgb, var(--sel) 28%, var(--sel-base)); }
+.pt .tab-multi-check { display:none; }
+/* S1: tint and a thin outline */
+.pt[data-s="s1"] .tab-bar-tab.multi { box-shadow: inset 0 0 0 1px var(--sel); }
+.pt[data-s="s1"] .tab-bar-tab.multi.in-group { box-shadow: inset 0 2px 0 var(--g-line), inset 0 0 0 1px var(--sel); }
+/* S2: tint and a 2 px line along the top (over a group's own line) */
+.pt[data-s="s2"] .tab-bar-tab.multi,
+.pt[data-s="s2"] .tab-bar-tab.multi.in-group,
+.pt[data-s="s2"] .tab-bar-tab.multi.in-group .tab-bar-tab-close { box-shadow: inset 0 2px 0 var(--sel); }
+/* S3: tint and a check mark before the label */
+.pt[data-s="s3"] .tab-bar-tab.multi .tab-multi-check { display:inline; color:var(--sel); font-weight:700; flex-shrink:0; }
+/* A drop line still shows on a selected tab */
+.pt .tab-bar-tab.multi.drag-over { box-shadow: inset 2px 0 0 var(--accent); }
+.pt-drag-badge { position:fixed; z-index:3000; pointer-events:none; padding:2px 7px; font:600 11px var(--font-ui); background:var(--inverse-bg); color:var(--inverse-fg); }
+.pt .tab-bar-tabs.drag-over-end { box-shadow: inset -2px 0 0 var(--accent); }
+</style>
+
+<div class="wrap">
+  <header style="display:grid;gap:6px">
+    <h1>Two tab-strip changes to pick from</h1>
+    <p class="lede">Drawn with Patton's own tab-strip styles, in its light and dark looks. Nothing here is built yet: pick one mark for a working Claude tab and one look for selected tabs, then try them together at the bottom.</p>
+  </header>
+
+  <section id="s1">
+    <h2>A mark for a busy Claude tab</h2>
+    <p class="lede">Today a tab where Claude is mid-turn shows nothing, so it looks like a plain shell. In every strip below only the mark on <b>ai-brain</b> (Claude working) changes. The rest: betterterm is the tab you're on, house has a hollow ring (waiting on its own background work), presents has the green dot (needs you), voice is flagged yellow, Terminal is a plain shell.</p>
+    <div id="w-cands"></div>
+  </section>
+
+  <section id="s2">
+    <h2>How selected tabs look</h2>
+    <p class="lede">Selected tabs are the ones a ⌘-click or ⇧-click picks out so you can move, group or flag them together. The tab you're on keeps its look and counts as one of them. In each strip betterterm is the tab you're on and three more are selected: ai-brain, outreach (in the Research group) and voice.</p>
+    <div id="s-cands"></div>
+  </section>
+
+  <section id="s3">
+    <h2>Try it</h2>
+    <div class="help">
+      <span><b>Click</b> a tab to go to it (that clears any selection). <b>⌘-click</b> adds a tab to the selection or takes it out. <b>⇧-click</b> selects every tab from the last one you clicked to this one.</span>
+      <span><b>Esc</b>, or a click on the empty part of the strip, clears. <b>Right-click</b> a selected tab for what you can do to all of them. <b>Drag</b> a selected tab and the whole selection moves with it, in its order.</span>
+      <span>Here you can drag from anywhere on a tab; in Patton it would be the small handle that shows when you point at a tab. Closing and folding groups are off.</span>
+    </div>
+    <div class="controls">
+      <div class="seg" role="group" aria-label="Selected look"><span>Selected look</span><button data-set="s" data-v="s1">S1</button><button data-set="s" data-v="s2">S2</button><button data-set="s" data-v="s3">S3</button></div>
+      <div class="seg" role="group" aria-label="Busy mark"><span>Busy mark</span><button data-set="w" data-v="w1">W1</button><button data-set="w" data-v="w2">W2</button><button data-set="w" data-v="w3">W3</button></div>
+      <div class="seg" role="group" aria-label="Strip look"><span>Strip</span><button data-set="tone" data-v="light">Light</button><button data-set="tone" data-v="dark">Dark</button></div>
+      <button class="plain-btn" id="try-reset" type="button">Start over</button>
+    </div>
+    <div class="strips"><div class="strip-row" id="try-host"></div></div>
+    <p id="try-msg" role="status" aria-live="polite"></p>
+  </section>
+</div>
+
+<script>
+(function () {
+  'use strict';
+  const SETTINGS_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>';
+  const GROUP_SHADES = 3;
+
+  function h(tag, cls, attrs) {
+    const el = document.createElement(tag);
+    if (cls) el.className = cls;
+    if (attrs) for (const k in attrs) el.setAttribute(k, attrs[k]);
+    return el;
+  }
+
+  // Markup as tab-bar.ts builds it (tabs, chips, dots), plus the try-out's busy mark,
+  // selected-tab class and check mark.
+  // tab: {id,title,groupId,flag,needs,ckpt,parked,busy}; st: {tabs,groups,active,sel:Set}
+  function buildStrip(st, opts) {
+    const pt = h('div', 'pt pt-frame' + (opts.dark ? ' pt-dark' : ''));
+    pt.dataset.w = opts.w; pt.dataset.s = opts.s;
+    const bar = h('div', 'tab-bar', { role: 'toolbar', 'aria-label': 'Tab bar' });
+    const lights = h('span', 'pt-lights', { 'aria-hidden': 'true' });
+    lights.innerHTML = '<i></i><i></i><i></i>';
+    bar.appendChild(lights);
+    const settings = h('button', 'tab-bar-settings', { 'aria-label': 'Settings', tabindex: '-1', type: 'button' });
+    settings.innerHTML = SETTINGS_SVG;
+    bar.appendChild(settings);
+    const tabsEl = h('div', 'tab-bar-tabs', { role: 'tablist', 'aria-multiselectable': 'true' });
+    bar.appendChild(tabsEl);
+    const groupById = new Map(st.groups.map((g) => [g.id, g]));
+    const shadeOf = new Map();
+    for (const tab of st.tabs) {
+      const group = tab.groupId ? groupById.get(tab.groupId) : undefined;
+      if (group && !shadeOf.has(group.id)) {
+        shadeOf.set(group.id, (shadeOf.size % GROUP_SHADES) + 1);
+        const members = st.tabs.filter((t) => t.groupId === group.id);
+        const chip = h('div', 'tab-bar-group-chip group-shade-' + shadeOf.get(group.id), { role: 'button', tabindex: '-1', 'aria-expanded': 'true' });
+        chip.dataset.groupId = group.id;
+        chip.setAttribute('aria-label', (group.name || 'Unnamed') + ' group, ' + members.length + ' tabs');
+        const chev = h('span', 'tab-bar-group-chevron', { 'aria-hidden': 'true' }); chev.textContent = '▾';
+        const name = h('span', 'tab-bar-group-name' + (group.name ? '' : ' unnamed'));
+        name.textContent = group.name || (members.length + (members.length === 1 ? ' tab' : ' tabs'));
+        chip.append(chev, name);
+        tabsEl.appendChild(chip);
+      }
+      const active = tab.id === st.active;
+      const multi = !active && st.sel.has(tab.id);
+      const el = h('div', 'tab-bar-tab' + (active ? ' active' : '') + (group ? ' in-group group-shade-' + shadeOf.get(group.id) : '') + (multi ? ' multi' : ''));
+      el.dataset.tabId = tab.id;
+      if (group) el.dataset.groupId = group.id;
+      el.setAttribute('role', 'tab');
+      el.setAttribute('aria-selected', active || multi ? 'true' : 'false');
+      el.setAttribute('tabindex', active ? '0' : '-1');
+      if (st.tabs.length > 1) {
+        const grip = h('span', 'tab-bar-tab-grip'); grip.textContent = '⡇';
+        el.appendChild(grip);
+      }
+      const needsYou = tab.needs && !active;
+      const ckpt = tab.ckpt && !active;
+      const shownFlag = tab.flag || null;
+      const states = [];
+      if (shownFlag) {
+        el.appendChild(h('span', 'tab-bar-tab-indicator flag-' + shownFlag, { role: 'img', 'aria-label': 'Flagged ' + shownFlag }));
+        states.push('flagged ' + shownFlag);
+      }
+      if (ckpt) {
+        if (shownFlag) el.classList.add('has-flag-and-ckpt');
+        el.appendChild(h('span', 'tab-bar-tab-indicator checkpoint-done', { role: 'img', 'aria-label': 'Checkpoint finished' }));
+        states.unshift('checkpoint finished');
+      } else if (!shownFlag && needsYou) {
+        el.appendChild(h('span', 'tab-bar-tab-indicator', { role: 'img', 'aria-label': 'Awaiting input' }));
+        states.push('waiting for you');
+      } else if (!shownFlag && tab.parked) {
+        el.appendChild(h('span', 'tab-bar-tab-indicator parked', { role: 'img', 'aria-label': 'Waiting on its own background work' }));
+        states.push('waiting on its own background work');
+      } else if (!shownFlag && tab.busy) {
+        const b = h('span', 'tab-bar-tab-indicator busy', { role: 'img', 'aria-label': 'Claude is working' });
+        b.innerHTML = '<i></i><i></i><i></i>';
+        el.appendChild(b);
+        states.push('Claude is working');
+      }
+      if (multi) {
+        const c = h('span', 'tab-multi-check', { 'aria-hidden': 'true' }); c.textContent = '✓';
+        el.appendChild(c);
+      }
+      el.setAttribute('aria-label', tab.title + (states.length ? ', ' + states.join(', ') : '') + (multi ? ', selected' : '') + (group ? ', in ' + (group.name ? group.name + ' group' : 'unnamed group') : ''));
+      el.title = el.getAttribute('aria-label');
+      const title = h('span', 'tab-bar-tab-title'); title.textContent = tab.title; title.dataset.title = tab.title;
+      el.appendChild(title);
+      if (st.tabs.length > 1) {
+        const close = h('button', 'tab-bar-tab-close', { 'aria-label': 'Close ' + tab.title, tabindex: '-1', type: 'button' });
+        close.textContent = '×';
+        el.appendChild(close);
+      }
+      tabsEl.appendChild(el);
+    }
+    const plus = h('button', 'tab-bar-new', { 'aria-label': 'New Tab', tabindex: '-1', type: 'button' }); plus.textContent = '+';
+    const space = h('div', 'tab-bar-drag-space', { 'aria-hidden': 'true' });
+    const pause = h('button', 'tab-bar-pause-all', { 'aria-label': 'Pause all', tabindex: '-1', type: 'button' }); pause.textContent = '⏸';
+    bar.append(plus, space, pause);
+    pt.appendChild(bar);
+    const term = h('div', 'pt-term', { 'aria-hidden': 'true' }); term.textContent = opts.term || '~/Projects/betterterm';
+    pt.appendChild(term);
+    return pt;
+  }
+
+  function stripRow(st, opts, tag) {
+    const row = h('div', 'strip-row');
+    const t = h('span', 'strip-tag'); t.textContent = tag;
+    row.append(t, buildStrip(st, opts));
+    return row;
+  }
+
+  function candidate(host, id, heading, say, st, opts) {
+    const card = h('div', 'cand'); card.id = 'cand-' + id.toLowerCase();
+    const hd = h('h3'); hd.textContent = id + ' · ' + heading;
+    const p = h('p', 'say'); p.textContent = say;
+    const strips = h('div', 'strips');
+    strips.append(stripRow(st, Object.assign({}, opts, { dark: false }), 'Light'), stripRow(st, Object.assign({}, opts, { dark: true }), 'Dark'));
+    card.append(hd, p, strips);
+    host.appendChild(card);
+    host.style.display = 'grid'; host.style.gap = '14px';
+  }
+
+  // --- Section 1: busy mark candidates ---
+  const s1 = {
+    tabs: [
+      { id: 'a', title: 'betterterm' },
+      { id: 'b', title: 'ai-brain', busy: true },
+      { id: 'c', title: 'house', parked: true },
+      { id: 'd', title: 'presents', needs: true },
+      { id: 'e', title: 'voice', flag: 'yellow' },
+      { id: 'f', title: 'Terminal' },
+    ], groups: [], active: 'a', sel: new Set(['a']),
+  };
+  const W = [
+    ['W1', 'Still dot', 'A small grey dot that never moves: the quietest of the three.'],
+    ['W2', 'Turning arc', 'A thin grey arc that turns slowly, about once every 1.6 seconds; it stands still if your Mac is set to reduce motion.'],
+    ['W3', 'Three dots', 'Three tiny grey dots that light up one after another; they stand still if your Mac is set to reduce motion.'],
+  ];
+  const wHost = document.getElementById('w-cands');
+  for (const [id, head, say] of W) candidate(wHost, id, head, say, s1, { w: id.toLowerCase(), s: 's1' });
+
+  // --- Section 2: selected-tab looks ---
+  const s2 = {
+    tabs: [
+      { id: 'a', title: 'betterterm' },
+      { id: 'b', title: 'ai-brain' },
+      { id: 'c', title: 'outreach', groupId: 'g1' },
+      { id: 'd', title: 'lindus', groupId: 'g1' },
+      { id: 'e', title: 'Terminal' },
+      { id: 'f', title: 'voice', flag: 'green' },
+      { id: 'g', title: 'house', parked: true },
+    ], groups: [{ id: 'g1', name: 'Research' }], active: 'a', sel: new Set(['a', 'b', 'c', 'f']),
+  };
+  const S = [
+    ['S1', 'Tint and outline', 'A light blue tint with a thin blue outline all round.'],
+    ['S2', 'Tint and top line', 'A light blue tint with a blue line along the top; on a tab in a group it covers the group’s coloured line.'],
+    ['S3', 'Tint and tick', 'A light blue tint with a blue tick before the name.'],
+  ];
+  const sHost = document.getElementById('s-cands');
+  for (const [id, head, say] of S) candidate(sHost, id, head, say, s2, { w: 'w1', s: id.toLowerCase() });
+
+  // ---------------- Section 3: the interactive strip ----------------
+  function freshState() {
+    return {
+      tabs: [
+        { id: 't1', title: 'betterterm', busy: true },
+        { id: 't2', title: 'ai-brain', groupId: 'g1', needs: true },
+        { id: 't3', title: 'outreach', groupId: 'g1', flag: 'green' },
+        { id: 't4', title: 'Terminal' },
+        { id: 't5', title: 'presents', parked: true },
+        { id: 't6', title: 'voice', flag: 'yellow' },
+        { id: 't7', title: 'house', busy: true },
+        { id: 't8', title: 'forecasting', ckpt: true },
+        { id: 't9', title: 'Terminal' },
+        { id: 't10', title: 'rimworld' },
+      ],
+      groups: [{ id: 'g1', name: 'Research' }],
+      active: 't1', sel: new Set(['t1']), anchor: 't1',
+    };
+  }
+  let st = freshState();
+  let groupSeq = 1;
+  const view = { s: 's1', w: 'w1', tone: 'light' };
+  try {
+    const saved = JSON.parse(localStorage.getItem('patton-tab-tryout') || 'null');
+    if (saved && typeof saved === 'object') {
+      if (/^s[123]$/.test(saved.s)) view.s = saved.s;
+      if (/^w[123]$/.test(saved.w)) view.w = saved.w;
+    }
+  } catch (e) { /* storage blocked: defaults stand */ }
+  const pageDark = document.documentElement.dataset.theme === 'dark'
+    || (document.documentElement.dataset.theme !== 'light' && window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches);
+  view.tone = pageDark ? 'dark' : 'light';
+
+  const host = document.getElementById('try-host');
+  const msgEl = document.getElementById('try-msg');
+  let renaming = false;
+  function say(t) { msgEl.textContent = t; }
+  const plural = (n, word) => n + ' ' + word + (n === 1 ? '' : 's');
+  const Plural = (n, word) => n + ' ' + word.charAt(0).toUpperCase() + word.slice(1) + (n === 1 ? '' : 's');
+  const tabById = (id) => st.tabs.find((t) => t.id === id);
+  const groupById = (id) => st.groups.find((g) => g.id === id);
+  const groupName = (g) => g.name || 'Unnamed Group';
+  const selInOrder = () => st.tabs.filter((t) => st.sel.has(t.id));
+
+  function render() {
+    if (renaming) return;
+    host.innerHTML = '';
+    const pt = buildStrip(st, { w: view.w, s: view.s, dark: view.tone === 'dark', term: '~/Projects/betterterm' });
+    pt.id = 'try-strip';
+    host.appendChild(pt);
+    for (const b of document.querySelectorAll('.seg button')) b.setAttribute('aria-pressed', String(view[b.dataset.set] === b.dataset.v));
+  }
+  function saveView() { try { localStorage.setItem('patton-tab-tryout', JSON.stringify({ s: view.s, w: view.w })); } catch (e) { /* ignore */ } }
+
+  // Every group one unbroken run (tab-groups.ts repairRuns): stragglers follow the first run.
+  function repairRuns() {
+    const out = [];
+    const placed = new Set();
+    for (const t of st.tabs) {
+      if (placed.has(t)) continue;
+      if (!t.groupId) { out.push(t); placed.add(t); continue; }
+      for (const m of st.tabs) if (m.groupId === t.groupId && !placed.has(m)) { out.push(m); placed.add(m); }
+    }
+    st.tabs = out;
+    st.groups = st.groups.filter((g) => st.tabs.some((t) => t.groupId === g.id));
+  }
+  function lastIndexOfGroup(list, gid) { let i = -1; list.forEach((t, k) => { if (t.groupId === gid) i = k; }); return i; }
+
+  function clearSelection(why) {
+    const had = st.sel.size > 1;
+    st.sel = new Set([st.active]); st.anchor = st.active;
+    render();
+    if (had) say(why || 'Selection cleared.');
+  }
+
+  function clickTab(id, e) {
+    const add = e.metaKey || e.ctrlKey;
+    if (e.shiftKey) {
+      const order = st.tabs.map((t) => t.id);
+      let a = order.indexOf(st.anchor); const b = order.indexOf(id);
+      if (a < 0) a = order.indexOf(st.active);
+      const [lo, hi] = a < b ? [a, b] : [b, a];
+      st.sel = new Set(order.slice(lo, hi + 1)); st.sel.add(st.active);
+      render(); say(plural(st.sel.size, 'tab') + ' selected.');
+      return;
+    }
+    if (add) {
+      if (id === st.active) { say('The tab you’re on always stays in the selection.'); return; }
+      if (st.sel.has(id)) st.sel.delete(id); else st.sel.add(id);
+      st.anchor = id;
+      render(); say(plural(st.sel.size, 'tab') + ' selected.');
+      return;
+    }
+    const t = tabById(id);
+    st.active = id; st.sel = new Set([id]); st.anchor = id;
+    t.needs = false; t.ckpt = false;
+    render(); say('You’re on ' + t.title + '.');
+  }
+
+  // --- Group and flag actions on a set of tabs ---
+  function addToNewGroup(ids) {
+    const moving = st.tabs.filter((t) => ids.includes(t.id));
+    const firstIdx = st.tabs.indexOf(moving[0]);
+    const rest = st.tabs.filter((t) => !ids.includes(t.id));
+    let at = st.tabs.slice(0, firstIdx).filter((t) => !ids.includes(t.id)).length;
+    // Never inside another group's run: step past its end.
+    const prev = rest[at - 1], next = rest[at];
+    if (prev && next && prev.groupId && prev.groupId === next.groupId) at = lastIndexOfGroup(rest, prev.groupId) + 1;
+    const gid = 'n' + (++groupSeq);
+    st.groups.push({ id: gid, name: '' });
+    for (const t of moving) t.groupId = gid;
+    rest.splice(at, 0, ...moving);
+    st.tabs = rest; repairRuns(); render();
+    say(plural(moving.length, 'tab') + ' added to a new group. Type its name and press Return.');
+    startRename({ kind: 'group', id: gid });
+  }
+  function addToGroup(ids, gid) {
+    const moving = st.tabs.filter((t) => ids.includes(t.id) && t.groupId !== gid);
+    const rest = st.tabs.filter((t) => !moving.includes(t));
+    const at = lastIndexOfGroup(rest, gid) + 1;
+    for (const t of moving) t.groupId = gid;
+    rest.splice(at, 0, ...moving);
+    st.tabs = rest; repairRuns(); render();
+    say(plural(moving.length, 'tab') + ' added to group ' + groupName(groupById(gid) || { name: '' }) + '.');
+  }
+  function removeFromGroups(ids) {
+    let n = 0;
+    const gids = [...new Set(st.tabs.filter((t) => ids.includes(t.id) && t.groupId).map((t) => t.groupId))];
+    for (const gid of gids) {
+      const leaving = st.tabs.filter((t) => ids.includes(t.id) && t.groupId === gid);
+      const staying = st.tabs.filter((t) => t.groupId === gid && !leaving.includes(t));
+      n += leaving.length;
+      if (staying.length === 0) { for (const t of leaving) t.groupId = undefined; continue; }
+      const rest = st.tabs.filter((t) => !leaving.includes(t));
+      const at = lastIndexOfGroup(rest, gid) + 1;
+      for (const t of leaving) t.groupId = undefined;
+      rest.splice(at, 0, ...leaving);
+      st.tabs = rest;
+    }
+    repairRuns(); render();
+    say(plural(n, 'tab') + ' taken out of ' + (gids.length === 1 ? 'their group' : 'their groups') + '.');
+  }
+  function flagTabs(ids, flag) {
+    for (const t of st.tabs) if (ids.includes(t.id)) t.flag = flag;
+    render();
+    say(flag ? plural(ids.length, 'tab') + ' flagged ' + flag + '.' : 'Flag cleared on ' + plural(ids.length, 'tab') + '.');
+  }
+
+  // --- Moving a set of tabs (a drag) ---
+  // Like today's single-tab drop (TabManager.reorder): onto a tab to the right it lands
+  // after it, to the left before it, and takes that tab's group (or leaves its own).
+  function moveTo(ids, target) {
+    const moving = st.tabs.filter((t) => ids.includes(t.id));
+    if (target.kind === 'chip') { addToGroup(ids, target.id); say(plural(moving.length, 'tab') + ' moved into group ' + groupName(groupById(target.id) || { name: '' }) + '.'); return; }
+    const before = moving.map((t) => t.groupId || null);
+    const rest = st.tabs.filter((t) => !moving.includes(t));
+    let at; let gid;
+    if (target.kind === 'end') { at = rest.length; gid = undefined; }
+    else {
+      const tgt = tabById(target.id);
+      const rightward = st.tabs.indexOf(tgt) > st.tabs.indexOf(moving[0]);
+      at = rest.indexOf(tgt) + (rightward ? 1 : 0);
+      gid = tgt.groupId;
+    }
+    for (const t of moving) t.groupId = gid;
+    rest.splice(at, 0, ...moving);
+    st.tabs = rest; repairRuns(); render();
+    const changed = moving.filter((t, i) => (t.groupId || null) !== before[i]).length;
+    let note = '';
+    if (changed && gid) note = ', ' + plural(changed, 'tab') + ' joined ' + groupName(groupById(gid) || { name: '' });
+    else if (changed) note = ', ' + plural(changed, 'tab') + ' left ' + (changed === 1 ? 'its group' : 'their groups');
+    say(plural(moving.length, 'tab') + ' moved' + note + '.');
+  }
+
+  // --- Rename (tab or group), an input in place of the name as in Patton ---
+  function startRename(what) {
+    const strip = document.getElementById('try-strip');
+    const sel = what.kind === 'tab' ? '.tab-bar-tab[data-tab-id="' + what.id + '"] .tab-bar-tab-title' : '.tab-bar-group-chip[data-group-id="' + what.id + '"] .tab-bar-group-name';
+    const span = strip && strip.querySelector(sel);
+    if (!span) return;
+    const obj = what.kind === 'tab' ? tabById(what.id) : groupById(what.id);
+    const input = h('input', 'tab-bar-tab-rename', { 'aria-label': what.kind === 'tab' ? 'Tab name' : 'Group name', maxlength: '60' });
+    input.value = what.kind === 'tab' ? obj.title : obj.name;
+    if (what.kind === 'group') input.placeholder = 'Name this group';
+    span.replaceWith(input);
+    renaming = true;
+    input.focus(); input.select();
+    let done = false;
+    const finish = (commit) => {
+      if (done) return; done = true; renaming = false;
+      const v = input.value.trim();
+      if (commit) {
+        if (what.kind === 'tab' && v) { obj.title = v; say('Renamed this one tab to ' + v + '.'); }
+        if (what.kind === 'group') { obj.name = v; if (v) say('Group named ' + v + '.'); }
+      }
+      render();
+    };
+    input.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') finish(true);
+      else if (e.key === 'Escape') finish(false);
+    });
+    input.addEventListener('blur', () => finish(true));
+    input.addEventListener('mousedown', (e) => e.stopPropagation());
+  }
+
+  // --- Context menu, Patton's own markup and styles ---
+  let menuHost = null;
+  function closeMenu() { if (menuHost) { menuHost.remove(); menuHost = null; } }
+  function openMenu(x, y, items, returnFocus) {
+    closeMenu();
+    menuHost = h('div', 'pt pt-menu-host' + (view.tone === 'dark' ? ' pt-dark' : ''));
+    const overlay = h('div', 'context-menu-overlay visible');
+    const menu = h('div', 'context-menu', { role: 'menu' });
+    const els = [];
+    for (const it of items) {
+      if (it.separator) { menu.appendChild(h('div', 'context-menu-separator', { role: 'separator' })); continue; }
+      const el = h('div', 'context-menu-item', { role: 'menuitem', tabindex: '-1' });
+      const l = h('span'); l.textContent = it.label; el.appendChild(l);
+      if (it.note) { const n = h('span', 'context-menu-shortcut'); n.textContent = it.note; el.appendChild(n); }
+      el.addEventListener('click', (e) => { e.stopPropagation(); closeMenu(); it.action(); });
+      el.addEventListener('mouseenter', () => { els.forEach((o) => o.classList.remove('focused')); });
+      menu.appendChild(el); els.push(el);
+    }
+    overlay.appendChild(menu);
+    overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) { closeMenu(); } });
+    overlay.addEventListener('contextmenu', (e) => { e.preventDefault(); closeMenu(); });
+    let fi = -1;
+    const focusAt = (i) => { els.forEach((o) => o.classList.remove('focused')); fi = (i + els.length) % els.length; els[fi].classList.add('focused'); els[fi].focus(); };
+    overlay.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowDown') { e.preventDefault(); focusAt(fi + 1); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); focusAt(fi - 1); }
+      else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (fi >= 0) els[fi].click(); }
+      else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeMenu(); if (returnFocus) returnFocus.focus(); }
+    });
+    menuHost.appendChild(overlay);
+    document.body.appendChild(menuHost);
+    const r = menu.getBoundingClientRect();
+    menu.style.left = Math.max(4, Math.min(x, innerWidth - r.width - 4)) + 'px';
+    menu.style.top = Math.max(4, Math.min(y, innerHeight - r.height - 4)) + 'px';
+    focusAt(0);
+  }
+
+  function menuFor(id) {
+    const tab = tabById(id);
+    const many = st.sel.has(id) && st.sel.size > 1;
+    const ids = many ? selInOrder().map((t) => t.id) : [id];
+    const N = ids.length;
+    const items = [];
+    const T = (n) => n === 1 ? 'Tab' : 'Tabs';
+    items.push({ label: many ? 'Add ' + N + ' ' + T(N) + ' to New Group' : 'Add Tab to New Group', action: () => addToNewGroup(ids) });
+    for (const g of st.groups) {
+      const notIn = st.tabs.filter((t) => ids.includes(t.id) && t.groupId !== g.id).length;
+      if (notIn === 0) continue;
+      items.push({ label: many ? 'Add ' + notIn + ' ' + T(notIn) + ' to ' + groupName(g) : 'Add to ' + groupName(g), action: () => addToGroup(ids, g.id) });
+    }
+    const inAny = st.tabs.filter((t) => ids.includes(t.id) && t.groupId).length;
+    if (inAny) items.push({ label: many ? 'Remove ' + inAny + ' ' + T(inAny) + ' from Group' : 'Remove from Group', action: () => removeFromGroups(ids) });
+    items.push({ separator: true });
+    const flags = [['green', 'Green'], ['yellow', 'Yellow'], ['red', 'Red']];
+    for (const [f, L] of flags) {
+      const all = ids.every((i) => tabById(i).flag === f);
+      items.push({ label: (all ? '✓ ' : '') + (many ? 'Flag ' + N + ' Tabs: ' + L : L), action: () => flagTabs(ids, all && !many ? null : f) });
+    }
+    items.push({ label: many ? 'Flag ' + N + ' Tabs: None' : 'Clear Flag', action: () => flagTabs(ids, null) });
+    items.push({ separator: true });
+    items.push({ label: 'Rename Tab…', note: many ? 'this tab only' : '', action: () => startRename({ kind: 'tab', id: tab.id }) });
+    return items;
+  }
+
+  // --- Pointer handling: click, ⌘/⇧-click, drag ---
+  let press = null;  // {id, x, y, mods, moved, ids, badge}
+  host.addEventListener('mousedown', (e) => {
+    if (renaming) return;
+    if (e.button !== 0) return;
+    const t = e.target;
+    if (t.closest('.tab-bar-tab-close')) { e.preventDefault(); say('Closing is off in this try-out.'); return; }
+    const chip = t.closest('.tab-bar-group-chip');
+    if (chip) { e.preventDefault(); say('Folding a group is off in this try-out.'); return; }
+    const tabEl = t.closest('.tab-bar-tab');
+    if (!tabEl) {
+      if (t.closest('.tab-bar-tabs') || t.closest('.tab-bar-drag-space')) clearSelection();
+      return;
+    }
+    e.preventDefault();
+    const id = tabEl.dataset.tabId;
+    press = { id, x: e.clientX, y: e.clientY, mods: { metaKey: e.metaKey, ctrlKey: e.ctrlKey, shiftKey: e.shiftKey }, moved: false };
+  });
+  function dropTargetAt(x, y) {
+    const el = document.elementFromPoint(x, y);
+    const strip = document.getElementById('try-strip');
+    if (!el || !strip || !strip.contains(el)) return null;
+    const chip = el.closest('.tab-bar-group-chip');
+    if (chip) return { kind: 'chip', id: chip.dataset.groupId, el: chip };
+    const tabEl = el.closest('.tab-bar-tab');
+    if (tabEl) {
+      if (press.ids.includes(tabEl.dataset.tabId)) return null;
+      return { kind: 'tab', id: tabEl.dataset.tabId, el: tabEl };
+    }
+    if (el.closest('.tab-bar-tabs') || el.closest('.tab-bar-new') || el.closest('.tab-bar-drag-space')) return { kind: 'end', el: strip.querySelector('.tab-bar-tabs') };
+    return null;
+  }
+  document.addEventListener('mousemove', (e) => {
+    if (!press) return;
+    if (!press.moved && Math.hypot(e.clientX - press.x, e.clientY - press.y) < 5) return;
+    const strip = document.getElementById('try-strip');
+    if (!press.moved) {
+      press.moved = true;
+      press.ids = st.sel.has(press.id) && st.sel.size > 1 ? selInOrder().map((t) => t.id) : [press.id];
+      for (const id of press.ids) { const el = strip.querySelector('.tab-bar-tab[data-tab-id="' + id + '"]'); if (el) el.classList.add('dragging'); }
+      press.badge = h('div', 'pt-drag-badge'); press.badge.textContent = plural(press.ids.length, 'tab');
+      const badgeHost = h('div', 'pt pt-menu-host' + (view.tone === 'dark' ? ' pt-dark' : ''));
+      badgeHost.appendChild(press.badge); document.body.appendChild(badgeHost); press.badgeHost = badgeHost;
+    }
+    press.badge.style.left = (e.clientX + 12) + 'px'; press.badge.style.top = (e.clientY + 14) + 'px';
+    strip.querySelectorAll('.drag-over').forEach((el) => el.classList.remove('drag-over'));
+    strip.querySelectorAll('.drag-over-end').forEach((el) => el.classList.remove('drag-over-end'));
+    const tgt = dropTargetAt(e.clientX, e.clientY);
+    if (tgt) tgt.el.classList.add(tgt.kind === 'end' ? 'drag-over-end' : 'drag-over');
+  });
+  document.addEventListener('mouseup', (e) => {
+    if (!press) return;
+    const p = press; press = null;
+    if (!p.moved) { clickTab(p.id, p.mods); return; }
+    if (p.badgeHost) p.badgeHost.remove();
+    press = p; const tgt = dropTargetAt(e.clientX, e.clientY); press = null;
+    if (!tgt) { render(); say('Dropped back where they were.'); return; }
+    moveTo(p.ids, tgt);
+  });
+  host.addEventListener('contextmenu', (e) => {
+    const tabEl = e.target.closest('.tab-bar-tab');
+    if (!tabEl || renaming) return;
+    e.preventDefault();
+    openMenu(e.clientX, e.clientY, menuFor(tabEl.dataset.tabId), tabEl);
+  });
+  host.addEventListener('keydown', (e) => {
+    const tabEl = e.target.closest && e.target.closest('.tab-bar-tab');
+    if (!tabEl) return;
+    if (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) {
+      e.preventDefault();
+      const r = tabEl.getBoundingClientRect();
+      openMenu(r.left + 8, r.bottom, menuFor(tabEl.dataset.tabId), tabEl);
+    }
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !menuHost && !renaming) clearSelection();
+  });
+
+  for (const b of document.querySelectorAll('.seg button')) {
+    b.type = 'button';
+    b.addEventListener('click', () => { view[b.dataset.set] = b.dataset.v; saveView(); render(); });
+  }
+  document.getElementById('try-reset').addEventListener('click', () => { st = freshState(); groupSeq = 1; render(); say('Back to the start.'); });
+
+  // Read-only view of the try-out's state, for checking it from a script.
+  window.__tryState = () => ({
+    order: st.tabs.map((t) => t.title + (t.groupId ? '@' + (groupById(t.groupId) || {}).name : '') + (t.flag ? '#' + t.flag : '')),
+    ids: st.tabs.map((t) => t.id), sel: [...st.sel], active: st.active, groups: st.groups.map((g) => g.name), msg: msgEl.textContent,
+  });
+  render();
+})();
+</script>
