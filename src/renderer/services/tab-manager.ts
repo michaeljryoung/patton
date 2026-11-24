@@ -143,6 +143,7 @@ export class TabManager {
       onRemoveTabsFromGroups: (tabIds) => this.removeTabsFromGroups(tabIds),
       onSetTabsFlag: (tabIds, flag) => this.setTabsFlag(tabIds, flag),
       onMoveTabs: (tabIds, toId) => this.moveTabsTo(tabIds, toId),
+      onMoveTabsToEnd: (tabIds) => this.moveTabsToEnd(tabIds),
       // --- Bookmarks ---
       onBookmarkProject: (id) => {
         const tab = this.tabs.find(t => t.id === id);
@@ -473,6 +474,7 @@ export class TabManager {
       else this.groupOfTab.set(moved.id, targetGroup);
       rlog('info', '[GROUP] tab moved between groups', { tabId: moved.id, from: fromGroup, to: targetGroup, by: 'reorder' });
     }
+    this.unfoldForActive(targetGroup, [moved]);
     this.updateTabBar();
   }
 
@@ -713,7 +715,7 @@ export class TabManager {
   addTabToNewGroup(tabId: string): string | null {
     const tab = this.tabs.find((t) => t.id === tabId);
     if (!tab) return null;
-    if (this.groups.size >= MAX_GROUPS) {
+    if (this.groups.size - this.groupsEmptiedBy([tab]) >= MAX_GROUPS) {
       announce(`A window holds at most ${MAX_GROUPS} groups.`);
       return null;
     }
@@ -767,6 +769,25 @@ export class TabManager {
     return this.tabs.filter((t) => want.has(t.id));
   }
 
+  /** The tab you're on never hides in a folded group: moved into one (a drop
+   *  target hidden by a fold, never one the strip offers), that group unfolds,
+   *  as Add to Group does. */
+  private unfoldForActive(groupId: string | null, moved: readonly Tab[]): void {
+    const group = groupId !== null ? this.groups.get(groupId) : undefined;
+    if (group?.folded && this.activeTab && moved.includes(this.activeTab)) this.unfoldGroup(group, 'add');
+  }
+
+  /** How many groups would have no tabs left if these tabs all left them. */
+  private groupsEmptiedBy(moving: readonly Tab[]): number {
+    const leaving = new Set(moving);
+    let emptied = 0;
+    for (const groupId of this.groups.keys()) {
+      const members = this.groupMembers(groupId);
+      if (members.length > 0 && members.every((t) => leaving.has(t))) emptied++;
+    }
+    return emptied;
+  }
+
   private static tabsWord(n: number): string {
     return `${n} ${n === 1 ? 'tab' : 'tabs'}`;
   }
@@ -777,7 +798,9 @@ export class TabManager {
   addTabsToNewGroup(ids: readonly string[]): string | null {
     const moving = this.tabsInOrder(ids);
     if (moving.length === 0) return null;
-    if (this.groups.size >= MAX_GROUPS) {
+    // At the limit, a selection holding the whole of a group still makes one:
+    // that group empties, so the count doesn't grow.
+    if (this.groups.size - this.groupsEmptiedBy(moving) >= MAX_GROUPS) {
       announce(`A window holds at most ${MAX_GROUPS} groups.`);
       return null;
     }
@@ -858,7 +881,27 @@ export class TabManager {
     this.setTabOrder(moveBlockTo(this.tabs, moving, target, this.groupOf));
     rlog('info', '[TAB] moved together', { count: moving.length, to: toId });
     if (changed > 0) rlog('info', '[GROUP] tabs moved between groups', { count: changed, to, by: 'drag' });
+    this.unfoldForActive(to, moving);
     announce(`${TabManager.tabsWord(moving.length)} moved`);
+    this.updateTabBar();
+  }
+
+  /** Tabs dropped on the strip's empty end, the + button or the drag space
+   *  (one tab or a selection): to the end of the strip, in their order, out of
+   *  any group; a group they empty goes. Nothing happens when they are already
+   *  there, ungrouped. */
+  moveTabsToEnd(ids: readonly string[]): void {
+    const moving = this.tabsInOrder(ids);
+    if (moving.length === 0) return;
+    const rest = this.tabs.filter((t) => !moving.includes(t));
+    const order = [...rest, ...moving];
+    const changed = moving.filter((t) => this.groupOf(t) !== null).length;
+    if (changed === 0 && order.every((t, i) => t === this.tabs[i])) return;
+    for (const tab of moving) this.groupOfTab.delete(tab.id);
+    this.setTabOrder(order);
+    rlog('info', '[TAB] moved together', { count: moving.length, to: 'end' });
+    if (changed > 0) rlog('info', '[GROUP] tabs moved between groups', { count: changed, to: null, by: 'drag' });
+    announce(moving.length === 1 ? `${moving[0].title} moved to the end` : `${TabManager.tabsWord(moving.length)} moved to the end`);
     this.updateTabBar();
   }
 

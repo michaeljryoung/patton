@@ -371,8 +371,8 @@ await section('6. Tab menu: group entries', 13, async () => {
 await section('7. Chip menu', 9, async () => {
   draw();
   items = openChipMenu('g1');
-  check('open chip menu: Rename Group…, Fold Group, New Tab in Group, Ungroup, Close Group…',
-    JSON.stringify(labels(items)) === JSON.stringify(['Rename Group…', 'Fold Group', 'New Tab in Group', 'Ungroup', 'Close Group…']), labels(items));
+  check('open chip menu: Rename Group…, Fold Group, New Tab in Group, Select Group\'s Tabs (D2), Ungroup, Close Group…',
+    JSON.stringify(labels(items)) === JSON.stringify(['Rename Group…', 'Fold Group', 'New Tab in Group', 'Select Group\'s Tabs', 'Ungroup', 'Close Group…']), labels(items));
   check('...with a separator between New Tab in Group and Ungroup', !!doc.querySelector('.context-menu-separator, [role="separator"]'));
   closeMenu();
   fold('g1');

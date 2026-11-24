@@ -102,8 +102,8 @@ await section(async () => {
   clickTab(tm, 'D', { meta: true });
   check('⌘-click adds a tab without opening it', activeName(tm) === 'B' && selected(tm) === 'B D', { active: activeName(tm), sel: selected(tm) });
   check('the added tab is drawn .multi, the active tab is not', multiShown(tm) === 'D' && !tabEl(tm, 'B').classList.contains('multi'), multiShown(tm));
-  check('a selected tab reads aria-selected true and ", selected" in its label',
-    tabEl(tm, 'D').getAttribute('aria-selected') === 'true' && tabEl(tm, 'D').getAttribute('aria-label').includes(', selected') && tabEl(tm, 'C').getAttribute('aria-selected') === 'false',
+  check('a selected tab reads aria-selected true, and its label doesn\'t repeat it',
+    tabEl(tm, 'D').getAttribute('aria-selected') === 'true' && !tabEl(tm, 'D').getAttribute('aria-label').includes('selected') && tabEl(tm, 'C').getAttribute('aria-selected') === 'false',
     tabEl(tm, 'D').getAttribute('aria-label'));
   check('[TAB] selection logged with the count, active included', selLogs(mark).length === 1 && selLogs(mark)[0].data?.count === 2, selLogs(mark));
   mark = logs.length;
@@ -191,8 +191,8 @@ await section(async () => {
     order(tm) === 'A B C@Research D@Research E F G@Other' && selected(tm) === 'B C D E' && activeName(tm) === 'B', { order: order(tm), sel: selected(tm) });
   const labels = tabMenu(tm, 'D').map(labelOf);
   const want = ['Add 4 Tabs to New Group', 'Add 2 Tabs to Research', 'Add 4 Tabs to Other', 'Remove 2 Tabs from Group',
-    'Flag 4 Tabs: Green', 'Flag 4 Tabs: Yellow', 'Flag 4 Tabs: Red', 'Flag 4 Tabs: None', 'Rename Tab…'];
-  check('menu on a selected tab: the page\'s labels, in its order', JSON.stringify(labels) === JSON.stringify(want), labels);
+    'Flag 4 Tabs: Green', 'Flag 4 Tabs: Yellow', 'Flag 4 Tabs: Red', 'Flag 4 Tabs: None', 'Remove Tab from Selection', 'Rename Tab…'];
+  check('menu on a selected tab: the page\'s labels, in its order, with Remove Tab from Selection', JSON.stringify(labels) === JSON.stringify(want), labels);
   const rename = menuItemsNow().find((i) => labelOf(i) === 'Rename Tab…');
   check('Rename Tab… carries the note "this tab only"', rename?.querySelector('.context-menu-shortcut')?.textContent === 'this tab only');
   check('no single-tab entries (Move Left, Bookmark) on the selection menu', !labels.includes('Move Left') && !labels.some((l) => l.startsWith('Bookmark')));
@@ -443,6 +443,248 @@ await section(async () => {
     if (!sameItems || !G.runsAreSound(out, gOf(m))) bad++;
   }
   check(`property: ${cases} random block moves keep every item and every run whole`, bad === 0 && cases > 1000, { bad, cases });
+});
+
+// ── 9. Review fixes (S63): a drop on the strip's end, Ctrl-click, the rename rule,
+//       selection from the menu, the group limit ──
+const dragFrom = (tm, name) => { const dt = makeDt(); tabEl(tm, name).querySelector('.tab-bar-tab-grip').dispatchEvent(dragEv('dragstart', dt)); return dt; };
+const endDrag = (tm, name, dt) => tabEl(tm, name)?.querySelector('.tab-bar-tab-grip')?.dispatchEvent(dragEv('dragend', dt));
+const stripEl = (tm) => tm.bar.querySelector('.tab-bar-tabs');
+await section(async () => {
+  // A selection dropped on the empty strip: to the end, ungrouped, its emptied group gone.
+  const { tm, research } = await fourSpanningGroup();
+  let mark = logs.length;
+  const dt = dragFrom(tm, 'C');
+  stripEl(tm).dispatchEvent(dragEv('dragover', dt));
+  check('end drop: a drag over the empty strip draws the end line', stripEl(tm).classList.contains('drag-over-end'));
+  tabEl(tm, 'F').dispatchEvent(dragEv('dragover', dt));
+  check('…over a tab, the end line goes and the tab\'s line shows', !stripEl(tm).classList.contains('drag-over-end') && tabEl(tm, 'F').classList.contains('drag-over'));
+  stripEl(tm).dispatchEvent(dragEv('dragover', dt));
+  stripEl(tm).dispatchEvent(dragEv('drop', dt));
+  check('a selection dropped on the empty strip goes to the end, in order, out of their groups', order(tm) === 'A F G@Other B C D E', order(tm));
+  check('…Research, emptied, is gone', !tm.getTabGroups().some((g) => g.id === research) && logs.slice(mark).some((l) => l.msg === '[GROUP] emptied'));
+  const end = logs.slice(mark).find((l) => l.msg === '[TAB] moved together');
+  check('…[TAB] moved together {count 4, to end} and the group change logged', end?.data?.count === 4 && end?.data?.to === 'end'
+    && logs.slice(mark).some((l) => l.msg === '[GROUP] tabs moved between groups' && l.data?.count === 2 && l.data?.to === null), end);
+  check('…the end line is cleared and the selection kept', !stripEl(tm).classList.contains('drag-over-end') && selected(tm) === 'B C D E', selected(tm));
+  runsSound(tm, 'end drop on strip', mark);
+  // Already at the end, ungrouped: nothing happens.
+  mark = logs.length;
+  const dt2 = dragFrom(tm, 'C');
+  tm.bar.querySelector('.tab-bar-new').dispatchEvent(dragEv('drop', dt2));
+  check('a drop at the end of tabs already there changes and logs nothing', order(tm) === 'A F G@Other B C D E' && !logs.slice(mark).some((l) => l.msg === '[TAB] moved together'), order(tm));
+});
+await section(async () => {
+  const { tm, other } = await fourSpanningGroup();
+  const mark = logs.length;
+  // A single grouped tab onto +: to the end, out of its group (Other, emptied, goes).
+  const dt = dragFrom(tm, 'G');
+  tm.bar.querySelector('.tab-bar-new').dispatchEvent(dragEv('dragover', dt));
+  check('a drag over + draws the end line on the strip', stripEl(tm).classList.contains('drag-over-end'));
+  tm.bar.querySelector('.tab-bar-new').dispatchEvent(dragEv('drop', dt));
+  check('one tab dropped on + goes to the end, ungrouped, its emptied group gone', order(tm) === 'A B C@Research D@Research E F G' && !tm.getTabGroups().some((g) => g.id === other), order(tm));
+  // One ungrouped tab onto the drag space.
+  const dt2 = dragFrom(tm, 'A');
+  tm.bar.querySelector('.tab-bar-drag-space').dispatchEvent(dragEv('drop', dt2));
+  check('one tab dropped on the drag space goes to the end', order(tm) === 'B C@Research D@Research E F G A', order(tm));
+  // A drop on a tab bubbles to the strip: moved once, by the tab's rule, not to the end too.
+  const dt3 = dragFrom(tm, 'A');
+  tabEl(tm, 'B').dispatchEvent(dragEv('drop', dt3));
+  check('a drop on a tab is the tab\'s alone (not also an end drop)', order(tm) === 'A B C@Research D@Research E F G', order(tm));
+  // A drop on the dragged tab itself (part of the drag) moves nothing.
+  clickTab(tm, 'E', { meta: true });
+  const dt4 = dragFrom(tm, 'E');
+  tabEl(tm, 'E').dispatchEvent(dragEv('drop', dt4));
+  check('a drop on a tab being dragged moves nothing (not an end drop)', order(tm) === 'A B C@Research D@Research E F G', order(tm));
+  endDrag(tm, 'E', dt4);
+  // From another window (tab ids repeat): ignored on the strip, + and the drag space.
+  const before = order(tm);
+  for (const el of [stripEl(tm), tm.bar.querySelector('.tab-bar-new'), tm.bar.querySelector('.tab-bar-drag-space')]) {
+    const dtFor = makeDt();
+    dtFor.setData('text/plain', idOf(tm, 'B'));
+    const over = dragEv('dragover', dtFor);
+    el.dispatchEvent(over);
+    el.dispatchEvent(dragEv('drop', dtFor));
+    if (over.defaultPrevented || stripEl(tm).classList.contains('drag-over-end')) check('a foreign drag is not taken as an end drop', false, el.className);
+  }
+  check('drags that began in another window move nothing at the end', order(tm) === before, order(tm));
+  runsSound(tm, 'single end drops', mark);
+  // dragend clears the end line.
+  const dt5 = dragFrom(tm, 'F');
+  stripEl(tm).dispatchEvent(dragEv('dragover', dt5));
+  endDrag(tm, 'F', dt5);
+  check('dragend clears the end line', !stripEl(tm).classList.contains('drag-over-end'));
+});
+await section(async () => {
+  // Ctrl-click on a Mac: a press (button 0, ctrlKey) and a contextmenu.
+  const { tm, research } = await fourSpanningGroup();
+  const ctrlClick = (el) => {
+    fire(el, 'mousedown', { ctrlKey: true });
+    el.dispatchEvent(new w.MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2, ctrlKey: true, clientX: 20, clientY: 20 }));
+    fire(doc, 'mouseup', { ctrlKey: true });
+  };
+  ctrlClick(tabEl(tm, 'D').querySelector('.tab-bar-tab-title'));
+  check('Ctrl-click on a selected tab: its menu opens, the selection and the tab you\'re on kept',
+    selected(tm) === 'B C D E' && activeName(tm) === 'B' && menuItemsNow().some((i) => labelOf(i) === 'Add 4 Tabs to New Group'), { sel: selected(tm), active: activeName(tm) });
+  closeMenus();
+  ctrlClick(tabEl(tm, 'F').querySelector('.tab-bar-tab-title'));
+  check('Ctrl-click on an unselected tab opens its menu, not the tab', activeName(tm) === 'B' && selected(tm) === 'B C D E' && menuItemsNow().some((i) => labelOf(i) === 'Move Left'));
+  closeMenus();
+  ctrlClick(chipEl(tm, research));
+  check('Ctrl-click on a chip opens its menu and doesn\'t fold the group',
+    tm.getTabGroups().find((g) => g.id === research)?.folded === false && menuItemsNow().some((i) => labelOf(i) === 'Rename Group…'));
+  closeMenus();
+  ctrlClick(stripEl(tm));
+  check('Ctrl-click on the empty strip doesn\'t clear the selection', selected(tm) === 'B C D E', selected(tm));
+  // ⌘-Ctrl stays a ⌘-click.
+  fire(tabEl(tm, 'F').querySelector('.tab-bar-tab-title'), 'mousedown', { ctrlKey: true, metaKey: true });
+  fire(doc, 'mouseup');
+  check('⌘-Ctrl-click still adds a tab', selected(tm) === 'B C D E F', selected(tm));
+});
+await section(async () => {
+  // A tab named for its project: no Rename Tab… on the selection menu, as on its own menu.
+  const { tm } = await fourSpanningGroup();
+  const tabD = tm.getTabs().find((t) => t.title === 'D');
+  Object.defineProperty(tabD, 'namedForProject', { get: () => true, configurable: true });
+  tm.updateTabBar();
+  const labels = tabMenu(tm, 'D').map(labelOf);
+  check('selection menu on a tab named for its project: no Rename Tab…', !labels.includes('Rename Tab…') && labels.includes('Remove Tab from Selection'), labels);
+  const onE = tabMenu(tm, 'E').map(labelOf);
+  check('…another selected tab keeps it', onE.includes('Rename Tab…'), onE);
+  closeMenus();
+  tm.tabBar.clearSelection();
+  const own = tabMenu(tm, 'D').map(labelOf);
+  check('…as its own single-tab menu (none there either)', !own.includes('Rename Tab…') && own.includes('Add Tab to Selection'), own);
+  closeMenus();
+});
+await section(async () => {
+  // Selection from the menu: Add / Remove Tab from Selection, Select Group's Tabs.
+  const { tm, research, other } = await fourSpanningGroup();
+  clickTab(tm, 'A');
+  const onActive = tabMenu(tm, 'A').map(labelOf);
+  check('the tab you\'re on offers no Add Tab to Selection (it always counts)', !onActive.includes('Add Tab to Selection'), onActive);
+  let mark = logs.length;
+  pick(tm, 'E', 'Add Tab to Selection');
+  check('Add Tab to Selection adds the tab, nothing opened', selected(tm) === 'A E' && activeName(tm) === 'A' && selLogs(mark).length === 1, selected(tm));
+  clickTab(tm, 'F', { shift: true });
+  check('…and is the ⇧ anchor, as a ⌘-click', selected(tm) === 'A E F', selected(tm));
+  pick(tm, 'F', 'Remove Tab from Selection');
+  check('Remove Tab from Selection takes it out', selected(tm) === 'A E' && multiShown(tm) === 'E', selected(tm));
+  const onSelActive = tabMenu(tm, 'A').map(labelOf);
+  check('the selection menu on the tab you\'re on has no Remove Tab from Selection', !onSelActive.includes('Remove Tab from Selection') && onSelActive.includes('Add 2 Tabs to New Group'), onSelActive);
+  closeMenus();
+  // Chip menu, opened from the keyboard (Shift+F10 on the focused chip).
+  mark = logs.length;
+  const chip = chipEl(tm, research);
+  chip.focus();
+  chip.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'F10', shiftKey: true, bubbles: true, cancelable: true }));
+  const item = menuItemsNow().find((i) => labelOf(i) === 'Select Group\'s Tabs');
+  check('Shift+F10 on a chip: its menu offers Select Group\'s Tabs', !!item, menuItemsNow().map(labelOf));
+  item?.dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+  check('Select Group\'s Tabs adds the group\'s tabs to the selection', selected(tm) === 'A C D E' && activeName(tm) === 'A' && selLogs(mark).length === 1, selected(tm));
+  // A folded group's entry is there but off.
+  tm.toggleGroupFolded(other, 'click');
+  closeMenus();
+  chipEl(tm, other).dispatchEvent(new w.MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2, clientX: 20, clientY: 20 }));
+  const off = menuItemsNow().find((i) => labelOf(i) === 'Select Group\'s Tabs');
+  check('…on a folded group it is shown disabled', !!off && (off.getAttribute('aria-disabled') === 'true' || off.classList.contains('disabled') || off.disabled === true), off?.outerHTML?.slice(0, 160));
+  closeMenus();
+});
+await section(async () => {
+  // At MAX_GROUPS, a selection that is a whole group still makes a new group (that one empties).
+  const names = Array.from({ length: G.MAX_GROUPS + 2 }, (_, i) => `T${i}`);
+  const tm = await makeWindow(names);
+  const ids = tm.getTabs().map((t) => t.id);
+  for (let i = 0; i < G.MAX_GROUPS; i++) tm.addTabToNewGroup(ids[i]);
+  check('set-up: the window holds MAX_GROUPS groups', tm.getTabGroups().length === G.MAX_GROUPS, tm.getTabGroups().length);
+  check('at the limit, a new group from an ungrouped tab is refused', tm.addTabsToNewGroup([ids[G.MAX_GROUPS]]) === null && tm.addTabToNewGroup(ids[G.MAX_GROUPS]) === null);
+  const mark = logs.length;
+  const made = tm.addTabsToNewGroup([ids[0], ids[G.MAX_GROUPS]]);
+  check('…but a selection holding a whole group makes one, the count unchanged', made !== null && tm.getTabGroups().length === G.MAX_GROUPS, tm.getTabGroups().length);
+  const single = tm.addTabToNewGroup(ids[1]);
+  check('…and so does one tab alone in its group (single-tab menu)', single !== null && tm.getTabGroups().length === G.MAX_GROUPS, tm.getTabGroups().length);
+  const g3 = tm.getTabGroups().find((g) => g.tabIds.includes(ids[3])).id;
+  tm.addTabToGroup(ids[G.MAX_GROUPS + 1], g3);
+  check('…a selection only partly a group is still refused', tm.addTabsToNewGroup([ids[3], ids[G.MAX_GROUPS]]) === null && tm.addTabToNewGroup(ids[3]) === null && tm.getTabGroups().length === G.MAX_GROUPS);
+  runsSound(tm, 'new group at the limit', mark);
+});
+
+// ── 10. TabBar-level cases the review's probes named ──
+await section(async () => {
+  // The tab you're on folded away: the selection goes with the move of the active tab.
+  const { tm, research } = await fourSpanningGroup();
+  clickTab(tm, 'C');
+  clickTab(tm, 'E', { meta: true });
+  clickTab(tm, 'A', { meta: true });
+  tm.toggleGroupFolded(research, 'click');
+  check('folding the group holding the tab you\'re on: a tab on the strip is opened, the selection is it alone',
+    !['C', 'D'].includes(activeName(tm)) && selected(tm) === activeName(tm) && multiShown(tm) === '', { active: activeName(tm), sel: selected(tm) });
+  check('…no hidden tab counts as selected', tm.tabBar.selectedIds().every((id) => !['C', 'D'].includes(nameOf(tm, id))));
+});
+await section(async () => {
+  // A strip rebuild between dragstart and drop (a title tick).
+  const { tm } = await fourSpanningGroup();
+  const mark = logs.length;
+  const dt = dragFrom(tm, 'C');
+  tm.renameTab(idOf(tm, 'F'), 'F2');
+  check('a rebuild mid-drag keeps the four carried tabs drawn dragging', tm.bar.querySelectorAll('.tab-bar-tab.dragging').length === 4);
+  tabEl(tm, 'G').dispatchEvent(dragEv('drop', dt));
+  check('…and the drop on the rebuilt strip still moves them all', order(tm) === 'A F2 G@Other B@Other C@Other D@Other E@Other', order(tm));
+  runsSound(tm, 'drop after rebuild', mark);
+  // One carried tab closed mid-drag: the rest move, no repair.
+  const t2 = (await fourSpanningGroup()).tm;
+  const m2 = logs.length;
+  const dt2 = dragFrom(t2, 'C');
+  await t2.closeById(idOf(t2, 'D'));
+  stripEl(t2).dispatchEvent(dragEv('drop', dt2));
+  check('a carried tab closed mid-drag: the others still move (to the end)', order(t2) === 'A F G@Other B C E', order(t2));
+  runsSound(t2, 'drop after a close', m2);
+  // A press after a drag whose dragend never came ends that drag.
+  const t3 = (await fourSpanningGroup()).tm;
+  dragFrom(t3, 'C');
+  t3.renameTab(idOf(t3, 'F'), 'F3'); // the grip is rebuilt; say its dragend is lost
+  fire(tabEl(t3, 'A').querySelector('.tab-bar-tab-title'), 'mousedown', { ctrlKey: true });
+  const dtFor = makeDt();
+  dtFor.setData('text/plain', idOf(t3, 'C'));
+  tabEl(t3, 'G').dispatchEvent(dragEv('drop', dtFor));
+  check('a stale drag ends at the next press: a later drop of the same id text moves nothing', order(t3) === 'A B C@Research D@Research E F3 G@Other', order(t3));
+  fire(doc, 'mouseup');
+});
+await section(async () => {
+  // Found by the seeded fuzz: the tab you're on moved onto a tab hidden in a folded group.
+  const { tm, research } = await fourSpanningGroup();
+  tm.toggleGroupFolded(research, 'click');
+  tm.reorder(idOf(tm, 'B'), idOf(tm, 'C'));
+  const g = tm.getTabGroups().find((x) => x.id === research);
+  check('reorder of the tab you\'re on into a folded group unfolds it (never hidden)', g?.folded === false && g.tabIds.includes(idOf(tm, 'B')), order(tm));
+  const t2 = (await fourSpanningGroup()).tm;
+  const r2 = t2.getTabGroups()[0].id;
+  t2.toggleGroupFolded(r2, 'click');
+  t2.moveTabsTo([idOf(t2, 'B'), idOf(t2, 'E')], idOf(t2, 'D'));
+  check('…and so does a selection holding it moved there', t2.getTabGroups().find((x) => x.id === r2)?.folded === false, order(t2));
+});
+await section(async () => {
+  // The ⇧ anchor follows its tab through a reorder.
+  const tm = await makeWindow(['A', 'B', 'C', 'D', 'E', 'F']);
+  clickTab(tm, 'B');
+  clickTab(tm, 'E', { meta: true }); // anchor E
+  tm.reorder(idOf(tm, 'E'), idOf(tm, 'A')); // E A B C D F
+  check('set-up: E moved to the front', order(tm) === 'E A B C D F', order(tm));
+  clickTab(tm, 'C', { shift: true });
+  check('⇧ after a reorder counts from the anchor where it is now', selected(tm) === 'E A B C' && activeName(tm) === 'B', selected(tm));
+});
+await section(async () => {
+  // Esc while the compose box has focus: it is for the box (or Claude), not the strip.
+  const tm = await makeWindow(['A', 'B', 'C']);
+  clickTab(tm, 'A');
+  clickTab(tm, 'C', { shift: true });
+  const box = doc.createElement('textarea');
+  box.className = 'editor-textarea';
+  doc.body.appendChild(box);
+  box.focus();
+  escKey(box);
+  check('Esc in the compose box keeps the selection', selected(tm) === 'A B C', selected(tm));
+  box.remove();
 });
 
 finish();
