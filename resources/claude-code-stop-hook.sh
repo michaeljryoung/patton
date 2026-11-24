@@ -44,7 +44,7 @@
 # finished" circle). From the transcript at `transcript_path` (JSONL, often
 # tens of MB, so only tail and perl touch the whole file and jq sees a few
 # dozen lines) the stop sequence gains
-#   …;tasks=N;crons=M;ctx=C;since=S[;cpt=T][;cpd=T]
+#   …;tasks=N;crons=M;ctx=C;since=S[;cpt=T][;cpd=T][;own=O]
 #   C  tokens of the session's latest request: input + cache read + cache
 #      write from the `message.usage` of the last line that has one (the
 #      method of ~/.claude/hooks/context-meter.py; an all-zero usage, which a
@@ -56,11 +56,74 @@
 #      baseline 0.
 #   T  the current checkpoint's start timestamp in Unix seconds (absent
 #      without one).
-#   cpd  the same T, sent only when this Stop has no background task in
-#      flight (tasks = 0; crons don't gate it, or a /loop session would never
-#      get it) or when Claude Code gave no task fields (tasks unknown): the
-#      checkpoint has finished. Patton raises the red circle on `cpd`, not
-#      `cpt`, because the first Stop after a start is not always its finish.
+#   cpd  the same T, sent only when no OWN TASK of the checkpoint is in
+#      flight (crons don't gate it, or a /loop session would never get it),
+#      or when Claude Code gave no task fields (tasks unknown): the checkpoint
+#      has finished. Patton raises the red circle on `cpd`, not `cpt`, because
+#      the first Stop after a start is not always its finish.
+#   O  how many of the running tasks are the checkpoint's own (below), and
+#   U  how many have no launch line found (undated, below); both hold `cpd`.
+#      Sent as `own=O;und=U` with `cpt` whenever tasks ran and every id was in
+#      hand, so main.log shows a `cpd` sent over older work (`tasks` minus
+#      O+U of them) and tells a finish held by the checkpoint's own work from
+#      one held only because the hook couldn't date a task (a dating gap to
+#      fix, such as a subagent's shell id never seen live).
+#   own task  a counted task (see `tasks`) launched in the checkpoint's window,
+#      which is two turns at most:
+#      - its own turn: from the start line to the first human prompt after it
+#        (task-notification turns before that prompt still count);
+#      - when RESCUED (its first landed commit step came after that prompt:
+#        an interrupted start finished on his "go on", or a question he
+#        answered mid-way), also the commit step's turn: from the last human
+#        prompt before that commit step to the first human prompt after it.
+#      Tasks launched in any other turn in between (his unrelated prompts
+#      before the rescue, a dev server started then) are not its own, nor are
+#      those after a later commit step (another round of notes, prompts later).
+#      Claude Code's Stop input gives each task only an id, type, status and
+#      description (2.1.321, Mzn: no start time), so it is dated by the line
+#      that launched it: the first non-sidechain line with a `toolUseResult`
+#      carrying the id under a launch key,
+#      `"backgroundTaskId":"<id>"` (a background Bash: run_in_background, or
+#      moved to the background after its timeout), `"agentId":"<id>"` (an
+#      async Agent) or `"taskId":"<id>"` (a Monitor). A mere mention (output
+#      text, TaskOutput's `task_id`, an exit code) dates nothing. An agent
+#      resumed by SendMessage (`resumedAgentId` / `revivedAgentId`) is dated
+#      by its latest resume (the resume's main line is the launch line). The ids
+#      are the ones Claude Code's registry gives the hook: read in 2.1.321's
+#      source, Mzn lists `taskRegistry.all()` as `id: r.id` with no owner
+#      filter, a shell's `backgroundTaskId` is kept only when it has the
+#      registry's local_bash id form (bU: "b" and 8 base-36 characters) and
+#      its output file is `<id>.output`, and shells a subagent launched sit
+#      in the same registry (tasks carry `agentId`; I0r filters on it). No
+#      live hook input with a subagent's shell has been captured, so an id
+#      that matches nothing still holds. A task a subagent launched has no
+#      launch line in the main transcript, only in `<transcript minus
+#      .jsonl>/subagents/agent-<agentId>.jsonl` (regular files only, read in
+#      name order), so it is dated by its launch line there (the earliest by
+#      timestamp if several files have one; a line with no timestamp sorts
+#      after every dated one), or, for an agent an agent re-engaged by
+#      SendMessage, by its latest resume line there, as in the main
+#      transcript: that line's timestamp against the window's bounds'
+#      timestamps, so a shell an agent launched in its first run is not moved
+#      into the window when the checkpoint resumes the agent. A shell such an
+#      agent launches after the human prompt that ends the window is not its
+#      own either, though the agent itself still is. Inside the window it
+#      counts only when the agent whose file holds that line worked for the
+#      checkpoint too: one of the agent's own starts (launch or resume) lies in
+#      the window and came from the checkpoint, in the main transcript by line
+#      or, for a nested agent, by its line's timestamp in an agent file that
+#      passes the same test (5 levels at most); an agent from before the
+#      checkpoint, still running, launches nothing of its own. When a line or
+#      a bound has no timestamp, or the bounds run out of order, only that
+#      chain decides. An UNDATED task (no launch line found, no chain to the
+#      main transcript, or an empty id) holds `cpd` as before;
+#      so does any failure, ids that don't add up to `tasks`, or a reading
+#      past 3 s (the hook's own limit is 10 s). The cost is one regex per
+#      tool-result line and a hash lookup, whatever the number of tasks
+#      (174 MB in about a quarter of a second). Why: until 24 Nov 2026 any
+#      task held it, so a monitor or build started before the /checkpoint
+#      held its red circle until it ended (main.log 20 Nov 20:51, released
+#      21 Nov 06:16).
 # A checkpoint START is the user line carrying
 # `<command-name>/checkpoint</command-name>` (a human prompt) or an assistant
 # `tool_use` of the Skill tool with skill "checkpoint" (the model invoked it).
@@ -80,7 +143,11 @@
 #                skill's commit script: `[dir/]checkpoint-commit.py` in a
 #                command's place (the start of the command or of a line, or
 #                after `;`, `&` or `|`; past any VAR=value prefixes), run
-#                directly or as `[dir/]python3 [-flags] [dir/]checkpoint-commit.py`.
+#                directly or as `[dir/]python3 [-flags] [dir/]checkpoint-commit.py`,
+#                with `--message` somewhere after it (the script requires it,
+#                so a `--help` or `-h` call is no commit step: it would
+#                otherwise fix a rescue's window at a turn that committed
+#                nothing; all 385 real run lines carried it, 24 Nov 2026).
 #                So `python3 ~/.claude/scripts/checkpoint-commit.py …` and
 #                `cd x; PATTON_NO_INSTALL=1 python3 /abs/checkpoint-commit.py`
 #                count, while a mention (quoted, in a comment, a path given to
@@ -100,9 +167,11 @@
 # (red for nothing; when it was resumed and finished, green). A landed commit
 # alone can't be the finish signal: several projects checkpoint without
 # checkpoint-commit.py (no git, a worktree's own commits, a no-op checkpoint).
+# A checkpoint still running a task it launched itself stays unfinished (no
+# `cpd`) until that task ends (see "own task").
 # A Stop input with neither task field gets no stop sequence (see Fail-open);
 # then the reading travels alone as
-#   {"terminalSequence":"\u001b]777;patton;ctx;ctx=C;since=S[;cpt=T][;cpd=T]\u0007"}
+#   {"terminalSequence":"\u001b]777;patton;ctx;ctx=C;since=S[;cpt=T][;cpd=T][;own=O]\u0007"}
 # so it never touches the dot or the parked ring. No readable transcript, or
 # no usage in it: the ctx fields are left out and the output is as before.
 #
@@ -211,8 +280,8 @@ usage_of() {
     ) catch empty' 2>/dev/null | tail -n 1
 }
 
-context_fields() { # transcript path, tasks in flight ("" = unknown) -> ";ctx=C;since=S[;cpt=T][;cpd=T]" or nothing
-  local t="$1" tasks="$2" ctx cp line ts range base since
+context_fields() { # transcript path, tasks in flight ("" = unknown), their ids -> ";ctx=C;since=S[;cpt=T][;cpd=T][;own=O]" or nothing
+  local t="$1" tasks="$2" ids="$3" ctx cp line ts rline own range base since
   [ -n "$PERL" ] || return 0
   # The last usage sits near the end; a tail that holds none (one huge tool
   # result) falls back to the whole file.
@@ -258,7 +327,7 @@ context_fields() { # transcript path, tasks in flight ("" = unknown) -> ";ctx=C;
               || index($_, q("content":"[Request interrupted by user)) >= 0)) {
         if ($g[-1]{i} < 4) { $g[-1]{i}++; push @{$g[-1]{o}}, "$.:$_" }
       } elsif (index($_, q(checkpoint-commit.py)) >= 0 && index($_, q("name":"Bash")) >= 0
-          && /(?:"command":"|[;&|]|\\n)(?:\s|\\[nrt])*(?:[A-Za-z_]\w*=\S*(?:\s|\\[nrt])+)*(?:(?:\S*\/)?python[0-9.]*(?:\s|\\[nrt])+(?:-\S+(?:\s|\\[nrt])+)*)?(?:\S*\/)?checkpoint-commit\.py/) {
+          && /(?:"command":"|[;&|]|\\n)(?:\s|\\[nrt])*(?:[A-Za-z_]\w*=\S*(?:\s|\\[nrt])+)*(?:(?:\S*\/)?python[0-9.]*(?:\s|\\[nrt])+(?:-\S+(?:\s|\\[nrt])+)*)?(?:\S*\/)?checkpoint-commit\.py.*?--message/) {
         if ($g[-1]{c} < 4) {
           $g[-1]{c}++; push @{$g[-1]{o}}, "$.:$_";
           $g[-1]{ids}{$1} = 1 while /"id":"([^"\\]+)"/g;
@@ -269,7 +338,7 @@ context_fields() { # transcript path, tasks in flight ("" = unknown) -> ";ctx=C;
     def commit_ids($o):
       $o.message.content[]? | select(.type? == "tool_use" and .name? == "Bash"
         and ((.input.command? // "") | strings
-             | test("(^|[;&|\\n])\\s*([A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*((\\S*/)?python[0-9.]*\\s+(-\\S+\\s+)*)?(\\S*/)?checkpoint-commit\\.py")))
+             | test("(^|[;&|\\n])\\s*([A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*((\\S*/)?python[0-9.]*\\s+(-\\S+\\s+)*)?(\\S*/)?checkpoint-commit\\.py[\\s\\S]*--message")))
       | .id | strings;
     def kind($o):
       if ($o.isMeta == true) or ($o.isSidechain == true) then null
@@ -298,19 +367,24 @@ context_fields() { # transcript path, tasks in flight ("" = unknown) -> ";ctx=C;
                      elif $k == "result" then [$o.message.content[] | select(.type? == "tool_result" and .is_error != true) | .tool_use_id | strings]
                      else [] end)})
       as $x ([];
-        if $x.k == "start" then . + [{n: $x.n, ts: $x.ts, cut: false, commit: false, ended: false, pend: []}]
+        # The line of the commit step this result answers (none when it answers none).
+        ([.[-1].pend[]? | . as $p | select(any($x.ids[]; . == $p.id)) | .n] | .[0]) as $cs
+        | if $x.k == "start" then . + [{n: $x.n, ts: $x.ts, cut: false, commit: false, ended: false, pend: []}]
         elif length == 0 then .
         elif $x.k == "human" then .[-1].ended = true
         elif $x.k == "interrupt" then (if .[-1].commit or .[-1].ended then . else .[-1].cut = true end)
-        elif $x.k == "commit" then .[-1].pend += $x.ids
+        elif $x.k == "commit" then .[-1].pend += [$x.ids[] | {id: ., n: $x.n}]
         # A commit step counts once its own result has come back without an error.
-        elif (.[-1].pend as $p | any($x.ids[]; . as $id | any($p[]; . == $id))) then .[-1].commit = true | .[-1].cut = false
+        # The FIRST such step (its line) is kept: when it landed after a human prompt
+        # (a rescue), its turn is part of the own-task window; later commit steps
+        # (another round of notes, prompts later) widen nothing.
+        elif $cs != null then .[-1].commit = true | .[-1].cut = false | .[-1].cs //= $cs
         else . end)
-    | map(select(.cut | not)) | last // empty | .n + " " + .ts' 2>/dev/null)
+    | map(select(.cut | not)) | last // empty | .n + " " + .ts + " " + (.cs // "")' 2>/dev/null)
 
   base=0; ts=""
-  if [[ "$cp" =~ ^([0-9]+)\ ([0-9]*)$ ]]; then
-    line=${BASH_REMATCH[1]}; ts=${BASH_REMATCH[2]}
+  if [[ "$cp" =~ ^([0-9]+)\ ([0-9]*)\ ([0-9]*)$ ]]; then
+    line=${BASH_REMATCH[1]}; ts=${BASH_REMATCH[2]}; rline=${BASH_REMATCH[3]}
     # One pass from the checkpoint line: its turn ends at the next human
     # prompt or task notification (a `user` line; an attachment that merely
     # carries an origin, or a peer message, does not end it); keep the usage lines inside it, unless a
@@ -333,10 +407,151 @@ context_fields() { # transcript path, tasks in flight ("" = unknown) -> ";ctx=C;
   printf ';ctx=%s;since=%s' "$ctx" "$since"
   if [ -n "$ts" ]; then
     printf ';cpt=%s' "$ts"
-    # Finished: nothing of its own still running (or tasks unknown).
-    if [ -z "$tasks" ] || [ "$tasks" = 0 ]; then printf ';cpd=%s' "$ts"; fi
+    # Finished: nothing of its own still running (or tasks unknown). Every
+    # running task must have its id in hand, else it holds as before.
+    if [ -z "$tasks" ] || [ "$tasks" = 0 ]; then
+      printf ';cpd=%s' "$ts"
+    elif [ "$(printf '%s\n' "$ids" | grep -c '^i:')" = "$tasks" ]; then
+      held=$(own_tasks "$t" "$line" "$rline" "$ids")
+      if [[ "$held" =~ ^([0-9]+)\ ([0-9]+)$ ]]; then
+        [ "$held" = "0 0" ] && printf ';cpd=%s' "$ts"
+        printf ';own=%s;und=%s' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+      fi
+    fi
   fi
   return 0
+}
+
+# How many of the running tasks hold the checkpoint's finish (see "own task" and
+# "undated" in the header): transcript, the checkpoint's start line, its first
+# landed commit step's line (or empty), the ids ("i:<id>" a line) -> "O U"
+# (own, undated), or nothing on any failure or after 3 s (either holds it). One
+# pass of the main transcript (through `<`) finds the window's bounds (with
+# their timestamps) and each id's launch line: one key-anchored regex per
+# tool-result line and a hash lookup, so the number of tasks costs nothing.
+# Only for ids it lacks, one pass of the session's subagent transcripts finds
+# each launch key's earliest line and each resume; such an id is dated by its
+# latest resume or else that launch line, by timestamp against the window's,
+# and counts only when the agent up its chain worked for the checkpoint (one
+# of its starts in the window, nested agents up to 5 levels).
+own_tasks() {
+  L="$2" C="$3" IDS="$4" SUB="${1%.jsonl}/subagents" "$PERL" -ne '
+    BEGIN {
+      $SIG{ALRM} = sub { kill 9, $$ }; alarm 3;   # killed: prints nothing, which holds cpd
+      @id = map { substr($_, 2) } grep { /^i:/ } split /\n/, $ENV{IDS};
+      %want = map { $_ => 1 } grep { $_ ne "" } @id;
+      $L = $ENV{L}; $C = ($ENV{C} || 0) > $L ? $ENV{C} : 0;
+    }
+    # The window: the start line up to the first human prompt after it ($end);
+    # when the first commit step landed after that, also its turn, from the
+    # last human prompt before it ($rs) to the first one after it ($re).
+    $tsL = $1 if $. == $L && /"timestamp":"([^"]+)"/;
+    if ($. > $L && index($_, q("type":"user")) >= 0 && index($_, q("origin":{"kind":"human")) >= 0) {
+      my ($w) = /"timestamp":"([^"]+)"/;
+      if (!$end) { $end = $.; $tsEnd = $w }
+      if ($C && $. < $C) { $rs = $.; $tsRs = $w }
+      if ($C && $. > $C && !$re) { $re = $.; $tsRe = $w }
+    }
+    next if index($_, q("toolUseResult")) < 0 || index($_, q("isSidechain":true)) >= 0;
+    # %starts: each agent`s main launch line and every resume line, for the
+    # agents up a subagent shell`s chain.
+    while (/"(backgroundTaskId|taskId|agentId|resumedAgentId|revivedAgentId)":"([^"\\]+)"/g) {
+      my ($k, $v) = ($1, $2);
+      if ($k eq "resumedAgentId" || $k eq "revivedAgentId") {
+        push @{$starts{$v}}, $. unless @{$starts{$v} || []} && $starts{$v}[-1] == $.;
+        $at{$v} = $. if $want{$v};
+      } else {
+        push @{$starts{$v}}, $. if $k eq "agentId" && !$starts{$v};
+        $at{$v} //= $. if $want{$v};
+      }
+    }
+    END {
+      # $rs, when set, is a human prompt after the start, so $end is set and $rs >= $end.
+      my $inside = sub {   # a main-transcript line number
+        my $w = shift;
+        return ($w >= $L && (!$end || $w < $end)) || ($rs && $w >= $rs && (!$re || $w < $re));
+      };
+      # Timestamps date the launch line in a subagent file only when every bound has one
+      # and they run in order (fixtures and clock changes can break either). They
+      # compare as strings: Claude Code writes every one as fixed-width ISO UTC with
+      # milliseconds (`2026-11-24T09:48:00.123Z`; all 6,413 real files, 24 Nov 2026).
+      my $tsok = defined $tsL && (!$end || (defined $tsEnd && $tsL le $tsEnd))
+        && (!$rs || (defined $tsRs && $tsEnd le $tsRs && (!$re || (defined $tsRe && $tsRs le $tsRe))));
+      my $insideTs = sub {
+        my $t = shift;
+        return ($t ge $tsL && (!$end || $t lt $tsEnd)) || ($rs && $t ge $tsRs && (!$re || $t lt $tsRe));
+      };
+      my (%own, @cur);
+      for my $x (keys %want) { if (defined $at{$x}) { $own{$x} = $inside->($at{$x}) ? 1 : 0 } else { push @cur, $x } }
+      if (@cur && opendir(my $d, $ENV{SUB})) {
+        my @files = sort grep { /^agent-[A-Za-z0-9_-]+\.jsonl$/ && -f "$ENV{SUB}/$_" } readdir $d;
+        closedir $d;
+        # id -> [timestamp or undef, agent]: %launch the earliest launch-key line
+        # naming it, %resume its latest resume (SendMessage from inside an agent),
+        # @{$resumes{id}} every resume.
+        my (%launch, %resume, %resumes);
+        for my $f (@files) {
+          my ($a) = $f =~ /^agent-(.+)\.jsonl$/;
+          open(my $h, "<", "$ENV{SUB}/$f") or next;
+          while (my $s = <$h>) {
+            next if index($s, q("toolUseResult")) < 0;
+            my ($when) = $s =~ /"timestamp":"([^"]+)"/;   # undef when the line has none
+            while ($s =~ /"(backgroundTaskId|taskId|agentId|resumedAgentId|revivedAgentId)":"([^"\\]+)"/g) {
+              my ($k, $v) = ($1, $2);
+              next if $v eq $a;
+              # A line with no timestamp sorts after every dated one, so it is
+              # kept only while no dated line names the id (the first read stays).
+              # Launch: the earliest dated line wins. Resume: the latest does.
+              my $resumed = $k eq "resumedAgentId" || $k eq "revivedAgentId";
+              my $map = $resumed ? \%resume : \%launch;
+              my $old = $map->{$v};
+              $map->{$v} = [$when, $a]
+                if !$old || (defined $when && (!defined $old->[0]
+                  || ($resumed ? $when gt $old->[0] : $when lt $old->[0])));
+              push @{$resumes{$v}}, [$when, $a] if $resumed;
+            }
+          }
+          close $h;
+        }
+        # Did agent $p work for the checkpoint? Yes when one of its starts (its
+        # launch or a resume) lies in the window and came from the checkpoint: a
+        # main-transcript line in the window, or a line in an agent file, in the
+        # window by time, written by an agent that did (5 levels at most). 1, 0,
+        # or undef when no start of it is found (undated).
+        my $chain;
+        $chain = sub {
+          my ($p, $depth) = @_;
+          if ($starts{$p}) { for (@{$starts{$p}}) { return 1 if $inside->($_) } return 0 }
+          my @q = grep { defined } $launch{$p}, @{$resumes{$p} || []};
+          return undef if $depth >= 5 || !@q;
+          my $r = 0;
+          for my $q (@q) {
+            next if $tsok && defined $q->[0] && !$insideTs->($q->[0]);
+            my $o = $chain->($q->[1], $depth + 1);
+            return 1 if $o;
+            $r = undef unless defined $o;
+          }
+          return $r;
+        };
+        for my $x (@cur) {
+          # Dated by its latest resume, else its launch (as in the main
+          # transcript), by time: a shell an agent launched in its first run
+          # stays outside the window when the agent is resumed later. Then the
+          # agent that launched or resumed it must have worked for the checkpoint
+          # too: an older agent still running launches nothing of its own.
+          my $q = $resume{$x} || $launch{$x} or next;
+          if ($tsok && defined $q->[0] && !$insideTs->($q->[0])) { $own{$x} = 0; next }
+          my $o = $chain->($q->[1], 0);
+          $own{$x} = $o if defined $o;
+        }
+      }
+      my ($n, $u) = (0, 0);
+      for my $x (@id) {
+        my $o = $x eq "" ? undef : $own{$x};
+        if (!defined $o) { $u++ } elsif ($o) { $n++ }
+      }
+      print "$n $u";
+    }' < "$1" 2>/dev/null
 }
 
 ctxf=""
@@ -345,7 +560,14 @@ tasks=""
 if [ -n "$JQ" ]; then
   tpath=$(printf '%s' "$input" | "$JQ" -r '.transcript_path | strings' 2>/dev/null)
   if [ -n "$tpath" ] && [ -f "$tpath" ] && [ -r "$tpath" ]; then
-    ctxf=$(context_fields "$tpath" "$tasks" 2>/dev/null)
+    # The running tasks' ids, one "i:<id>" line each (the prefix keeps an
+    # empty id a line), for telling the checkpoint's own work from older work.
+    ids=""
+    if [ -n "$tasks" ] && [ "$tasks" != 0 ]; then
+      ids=$(printf '%s' "$input" | "$JQ" -r --argjson fin "$FINISHED" --argjson amb "$AMBIENT" "$JQ_RUNNING"'
+        running[] | "i:" + ((.id // "") | tostring | gsub("[\\p{Cc}]"; ""))' 2>/dev/null)
+    fi
+    ctxf=$(context_fields "$tpath" "$tasks" "$ids" 2>/dev/null)
   fi
 fi
 
