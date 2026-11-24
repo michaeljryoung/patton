@@ -144,6 +144,13 @@ Last updated: 2026-11-24 (Session 64: Pages links in the session bar, released a
 
 CLAUDE.md's `## Next Steps` section points here; this is the canonical list. Items leave only via `[x] DONE — Session N`, `[~] SUPERSEDED — <pointer>`, or `[-] DROPPED: <reason>`. Marked items linger 10 checkpoints, then sweep to `docs/session-archive.md`.
 
+### 2026-11-24 — usage panel (S65): capture live, layout and token figure waiting on his picks
+
+- His ask (20:13): he cycles three Ultra logins and each chat shows only the live one's usage; save the latest of each, with resets, and show the names, percent and a token count in Patton's bottom left ("not all of them have the same usage, or they might not in the future").
+- Capture, live from 20:23: the status line (central-claude-md `scripts/statusline.sh` + `scripts/plan_usage_snapshot.py`, `c3cf681`, 19 test cases) keeps each login's latest 5-hour and weekly reading, email and plan in `~/.claude/plan-usage/accounts.json`, plus `switches`, the timeline of which login was live when (for crediting tokens). A reading goes to the login whose weekly reset it carries, else to the live login only from a session that answered after the switch.
+- Claude Code reports percent and reset only, no tokens; the live login reports no 5-hour window today. This week's transcripts (since Sat 21 Nov 12:00, all logins): 7.5 bn tokens, 96% cache re-reads; 0.87 bn weighted by price; 0.27 bn without re-reads.
+- Try-out page: https://mjy-pages.vercel.app/p/patton-usage-panel/ (source `docs/mocks/usage-panel.html`): U1 meters, U2 lines, U3 strip; token figure weighted / all / none. Build after his picks: main reads `accounts.json` and counts each login's tokens per window from the transcripts (incremental), the panel at the bookmarks sidebar's foot, the rail's stacked bars when hidden.
+
 ### 2026-11-24 — Pages links in the session bar
 
 - Shipped at his "1 yes": links to his Pages site (`https://mjy-pages.vercel.app/p/<slug>/`, where his pages go since 24 Nov) show in the session bar as Page rows, labelled with the markdown text or the slug in words (`src/shared/pages-url.ts`, D6). Installs with the next install, on his word with Patton quit.

@@ -1,0 +1,355 @@
+<title>Patton Usage Panel</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: the page wears Patton's own chrome tokens (main.css: Helvetica Neue, ink on white, one grey
+   surface, square corners, colour only for meaning); three window mocks side by side, each the left
+   end of a Patton window with the panel at the sidebar's foot. */
+:root {
+  --ink: #0b0d12;
+  --bg: #ffffff;
+  --surface: #f4f5f7;
+  --surface-hover: #eceef2;
+  --muted: #596170;
+  --grey: #e3e6ec;
+  --hairline: var(--ink);
+  --focus: #2f6bff;
+  --accent: #2f6bff;
+  --amber: #f5a524;
+  --amber-text: #925d07;
+  --red: #ff4d5e;
+  --red-text: #c41d33;
+  --meter: var(--ink);
+  --term-bg: #ffffff;
+  --term-ink: #2b2f36;
+  --font-ui: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font-mono: "SF Mono", Menlo, Monaco, "Courier New", monospace;
+  --ui: 12px;
+  --row: 28px;
+  --head: 10.5px;
+  --head-ls: 0.06em;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ink: #dbe3ee; --bg: #111214; --surface: #17191d; --surface-hover: #1f2228; --muted: #8b95a5;
+    --grey: #2a2f37; --hairline: color-mix(in srgb, #dbe3ee 45%, #111214); --focus: #7aa2ff;
+    --amber-text: #f5a524; --red-text: #ff7a87; --meter: #dbe3ee; --term-bg: #111214; --term-ink: #c9d1dc;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --ink: #dbe3ee; --bg: #111214; --surface: #17191d; --surface-hover: #1f2228; --muted: #8b95a5;
+  --grey: #2a2f37; --hairline: color-mix(in srgb, #dbe3ee 45%, #111214); --focus: #7aa2ff;
+  --amber-text: #f5a524; --red-text: #ff7a87; --meter: #dbe3ee; --term-bg: #111214; --term-ink: #c9d1dc;
+  color-scheme: dark;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 15px;
+  line-height: 1.5;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.page { max-width: 1180px; margin: 0 auto; padding-block: 40px 64px; display: grid; gap: 40px; }
+h1 { font-size: 30px; font-weight: 500; letter-spacing: -0.01em; margin: 0; text-wrap: balance; }
+h2 { font-size: 19px; font-weight: 500; margin: 0; text-wrap: balance; }
+p { margin: 0; max-width: 66ch; }
+.lede { display: grid; gap: 12px; }
+.lede p { color: var(--muted); }
+.lede p strong { color: var(--ink); font-weight: 500; }
+.eyebrow { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+
+/* Token-figure switch */
+.switch { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
+.switch .eyebrow { margin-right: 2px; }
+.seg { display: inline-flex; flex-wrap: wrap; border: 1px solid var(--hairline); }
+.seg button {
+  font: inherit; font-size: 13px; color: var(--ink); background: var(--bg);
+  border: 0; border-right: 1px solid var(--hairline); padding: 6px 12px; cursor: pointer;
+}
+.seg button:last-child { border-right: 0; }
+.seg button[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
+.seg button:focus-visible, .strip:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+/* Variants */
+.variants { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 32px 28px; }
+.variant { display: grid; gap: 12px; align-content: start; }
+.variant header { display: flex; align-items: baseline; gap: 10px; }
+.variant .letter { font-size: 22px; font-weight: 500; font-variant-numeric: tabular-nums; }
+.variant .what { color: var(--muted); font-size: 14px; }
+
+/* The window mock: Patton's sidebar (196 px, as in main.css) beside a slice of terminal. */
+.win {
+  display: grid; grid-template-columns: 196px 1fr; height: 440px;
+  border: 1px solid var(--hairline); background: var(--term-bg); overflow: hidden;
+  font-family: var(--font-ui); font-size: var(--ui); line-height: 1.3;
+}
+.side { display: flex; flex-direction: column; background: var(--surface); border-right: 1px solid var(--hairline); min-width: 0; }
+.side-head {
+  height: var(--row); display: flex; align-items: center; justify-content: space-between; padding: 0 10px;
+  border-bottom: 1px solid var(--hairline); flex-shrink: 0;
+}
+.cap { font-size: var(--head); letter-spacing: var(--head-ls); text-transform: uppercase; color: var(--muted); }
+.marks { flex: 1; min-height: 0; overflow: hidden; padding: 6px 0; }
+.group { padding: 8px 10px 4px; }
+.bm { padding: 4px 10px; display: grid; }
+.bm .n { color: var(--ink); }
+.bm .s { color: var(--muted); font-size: 11px; }
+.bm.open .n::before { content: ""; display: inline-block; width: 5px; height: 5px; background: var(--accent); margin: 0 6px 1px 0; }
+.term { padding: 10px 12px; font-family: var(--font-mono); font-size: 11px; color: var(--term-ink); white-space: pre; overflow: hidden; line-height: 1.55; }
+
+/* The usage panel itself */
+.usage { flex-shrink: 0; border-top: 1px solid var(--hairline); padding: 8px 10px 10px; display: grid; gap: 9px; }
+.usage-head { display: flex; justify-content: space-between; align-items: baseline; }
+.acct { display: grid; gap: 3px; min-width: 0; }
+.acct-top { display: flex; justify-content: space-between; align-items: baseline; gap: 6px; min-width: 0; }
+.name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.live .name { font-weight: 700; }
+.tag { font-size: 9.5px; letter-spacing: var(--head-ls); text-transform: uppercase; color: var(--muted); margin-left: 5px; font-weight: 400; }
+.pct { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.meter { height: 4px; background: var(--grey); position: relative; }
+.meter i { position: absolute; inset: 0 auto 0 0; background: var(--meter); }
+.warn .meter i { background: var(--amber); }
+.full .meter i { background: var(--red); }
+.warn .pct, .st-warn { color: var(--amber-text); }
+.full .pct, .st-full { color: var(--red-text); }
+.sub { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.five { display: flex; align-items: center; gap: 6px; }
+.five .meter { flex: 1; height: 2px; }
+
+/* B: lines */
+.lines { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 5px 8px; align-items: baseline; }
+.lines .sub { text-align: right; }
+
+/* C: strip */
+.strip-wrap { flex-shrink: 0; position: relative; }
+.strip {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding: 7px 10px 8px; width: 100%;
+  border: 0; border-top: 1px solid var(--hairline); background: var(--surface); cursor: pointer; text-align: left;
+  font: inherit; color: inherit;
+}
+.strip:hover { background: var(--surface-hover); }
+.mini { display: grid; gap: 3px; min-width: 0; }
+.mini .top { display: flex; justify-content: space-between; gap: 4px; font-size: 11px; }
+.mini .ini { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mini .meter { height: 3px; }
+.card {
+  position: absolute; left: 6px; width: 250px; bottom: calc(100% + 6px);
+  background: var(--bg); border: 1px solid var(--hairline); padding: 10px 12px; display: grid; gap: 9px; z-index: 2;
+}
+.card[hidden] { display: none; }
+
+/* Notes and the measure table */
+.notes { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 28px 40px; }
+.note { display: grid; gap: 10px; align-content: start; }
+.note p, .note li { font-size: 14px; color: var(--muted); }
+.note p strong, .note li strong { color: var(--ink); font-weight: 500; }
+.note ul { margin: 0; padding-left: 18px; display: grid; gap: 6px; max-width: 66ch; }
+.tablewrap { overflow-x: auto; }
+table { border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; min-width: 460px; }
+th, td { text-align: left; padding: 7px 18px 7px 0; vertical-align: top; }
+th { font-weight: 400; color: var(--muted); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; }
+td.num { text-align: right; white-space: nowrap; }
+tbody tr + tr td { border-top: 1px solid var(--grey); }
+.example { color: var(--muted); font-style: italic; }
+@media (prefers-reduced-motion: no-preference) { .meter i { transition: width 0.3s ease; } }
+</style>
+
+<div class="page">
+  <section class="lede">
+    <span class="eyebrow">Patton · try-out · 24 Nov 2026</span>
+    <h1>Usage at the foot of the sidebar</h1>
+    <p><strong>Each login's latest week, its reset, and a token figure, in the bottom left.</strong> Claude Code only shows the login that is live, so from tonight your status line keeps the last reading of every login it sees. Patton will read that and draw one of the three panels below.</p>
+    <p>The top row is your real reading as of 20:23. Login 2 is its last logged reading (100% at 17:46, resets Sat 08:00). Login 3 is an example. Each login's name will come from its email the first time it is live. The token figures are rough estimates (see the table at the bottom).</p>
+  </section>
+
+  <div class="switch" role="group" aria-labelledby="sw-label">
+    <span class="eyebrow" id="sw-label">Token figure</span>
+    <div class="seg">
+      <button type="button" id="m-weighted" data-measure="weighted" aria-pressed="true">Weighted by price</button>
+      <button type="button" id="m-all" data-measure="all" aria-pressed="false">All tokens</button>
+      <button type="button" id="m-none" data-measure="none" aria-pressed="false">None, percent only</button>
+    </div>
+  </div>
+
+  <section class="variants" aria-label="Three layouts">
+    <article class="variant">
+      <header><span class="letter">U1</span><span class="what">Meters: name, bar, then tokens and reset</span></header>
+      <div class="win" aria-label="Window mock, layout U1">
+        <div class="side">
+          <div class="side-head"><span class="cap">Bookmarks</span><span class="cap">‹</span></div>
+          <div class="marks" data-marks></div>
+          <div class="usage" data-panel="meters"></div>
+        </div>
+        <div class="term" data-term></div>
+      </div>
+    </article>
+
+    <article class="variant">
+      <header><span class="letter">U2</span><span class="what">Lines: one line per login, no bars</span></header>
+      <div class="win" aria-label="Window mock, layout U2">
+        <div class="side">
+          <div class="side-head"><span class="cap">Bookmarks</span><span class="cap">‹</span></div>
+          <div class="marks" data-marks></div>
+          <div class="usage" data-panel="lines"></div>
+        </div>
+        <div class="term" data-term></div>
+      </div>
+    </article>
+
+    <article class="variant">
+      <header><span class="letter">U3</span><span class="what">Strip: three small meters, click for the detail</span></header>
+      <div class="win" aria-label="Window mock, layout U3">
+        <div class="side">
+          <div class="side-head"><span class="cap">Bookmarks</span><span class="cap">‹</span></div>
+          <div class="marks" data-marks></div>
+          <div class="strip-wrap">
+            <div class="card" id="strip-card" hidden data-panel="card"></div>
+            <button type="button" class="strip" id="strip-btn" aria-expanded="false" aria-controls="strip-card" data-panel="strip"></button>
+          </div>
+        </div>
+        <div class="term" data-term></div>
+      </div>
+    </article>
+  </section>
+
+  <section class="notes">
+    <div class="note">
+      <h2>How it behaves</h2>
+      <ul>
+        <li><strong>Live login first</strong>, in bold with a "live" tag. The others keep their last reading. A login you aren't using doesn't move, so its number stays true until its reset.</li>
+        <li><strong>After a reset</strong>, a login that hasn't been live since shows 0% and "reset Sat 08:00", because its week started over.</li>
+        <li><strong>Colour only for meaning</strong>, as everywhere in Patton: ink bars, amber from 80%, red at 100%.</li>
+        <li><strong>5-hour line</strong> only for a login whose plan reports one. Your live login reports a weekly limit only right now.</li>
+        <li><strong>With the sidebar hidden</strong>, the narrow strip down the left would show the three bars stacked, with the figures in a tooltip.</li>
+      </ul>
+    </div>
+    <div class="note">
+      <h2>What a token count can mean</h2>
+      <p>Anthropic reports each limit as a percent and a reset time. It doesn't give a token count, so any count has to come from Claude Code's own records of each request. Patton would add up the tokens each login spent since its week began, using the record of which login was live when.</p>
+      <p>Almost all tokens are Claude re-reading the conversation from its cache. Those cost a twentieth of fresh ones. Counted raw, they swamp everything else, and 1% of a week stops being a steady number. <strong>Weighted by price</strong> counts each token at its share of the cost. That figure tracks the limit, so it compares logins whose plans differ.</p>
+    </div>
+  </section>
+
+  <section class="note">
+    <h2>This week's real totals, all logins together</h2>
+    <p>Every Claude Code request on this Mac since Sat 21 Nov 12:00: 43,515 requests across 996 transcripts. Most of it ran on Opus 5.5, some on Sonnet 5.5.</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Measure</th><th>This week</th><th>Per 1% of a week</th><th>What it counts</th></tr></thead>
+        <tbody>
+          <tr><td>All tokens</td><td class="num">7.5 bn</td><td class="num">~46M</td><td>96% of it is cache re-reads</td></tr>
+          <tr><td>Weighted by price</td><td class="num">0.87 bn</td><td class="num">~5.4M</td><td>each token at its price, relative to a fresh Opus input token</td></tr>
+          <tr><td>Without re-reads</td><td class="num">0.27 bn</td><td class="num">~1.7M</td><td>new input, cache writes and output only</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>The per-1% column divides by the 162 points the two logins used this week (62 and 100), so it assumes both plans are the same size. Once each login's own count is kept, Patton would measure that per login. Cache writes are counted at the one-hour rate, which is an assumption.</p>
+  </section>
+</div>
+
+<script>
+(function () {
+  // Readings. Row 1 is real (20:23); row 2 is the last logged reading of the second login; row 3 is an example.
+  var ACCTS = [
+    { name: "michaeljrrushworth", live: true, week: 62, reset: "Sat 12:00", five: null },
+    { name: "Login 2", live: false, week: 100, reset: "Sat 08:00", five: null, note: "read 17:46" },
+    { name: "Login 3", live: false, week: 18, reset: "Mon 09:00", five: { pct: 40, reset: "22:00" }, example: true }
+  ];
+  var PER_POINT = { weighted: 5.37e6, all: 46.1e6 };
+  var measure = "weighted";
+
+  function fmt(n) {
+    if (n >= 1e9) return (n / 1e9).toFixed(n >= 1e10 ? 0 : 1) + " bn";
+    return Math.round(n / 1e6) + "M";
+  }
+  function tokens(a) {
+    if (measure === "none") return "";
+    var per = PER_POINT[measure];
+    var cap = Math.round(100 * per / 1e7) * 1e7;  // the size is an estimate: no false precision
+    return fmt(a.week * per) + " of ~" + fmt(cap);
+  }
+  function state(a) { return a.week >= 100 ? "full" : a.week >= 80 ? "warn" : ""; }
+  function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
+  function nameHtml(a) {
+    return '<span class="name' + (a.example ? " example" : "") + '">' + esc(a.name) +
+      (a.live ? '<span class="tag">live</span>' : "") + "</span>";
+  }
+  function subLine(a) {
+    var t = tokens(a);
+    return (t ? t + " · " : "") + (a.week >= 100 ? "back " : "resets ") + a.reset;
+  }
+  function fiveHtml(a) {
+    if (!a.five) return "";
+    return '<div class="five sub">5-hour ' + a.five.pct + '%<span class="meter"><i style="width:' + a.five.pct + '%"></i></span>' + a.five.reset + "</div>";
+  }
+  function meters() {
+    var h = '<div class="usage-head"><span class="cap">Usage this week</span><span class="sub">20:23</span></div>';
+    ACCTS.forEach(function (a) {
+      h += '<div class="acct ' + state(a) + (a.live ? " live" : "") + '">' +
+        '<div class="acct-top">' + nameHtml(a) + '<span class="pct">' + a.week + "%</span></div>" +
+        '<div class="meter"><i style="width:' + Math.min(a.week, 100) + '%"></i></div>' +
+        '<div class="sub">' + subLine(a) + "</div>" + fiveHtml(a) + "</div>";
+    });
+    return h;
+  }
+  function lines() {
+    var h = '<div class="usage-head"><span class="cap">Usage this week</span><span class="sub">20:23</span></div><div class="lines">';
+    ACCTS.forEach(function (a) {
+      var t = tokens(a);
+      h += '<span class="acct ' + (a.live ? "live" : "") + '" style="display:block;min-width:0">' + nameHtml(a) + "</span>" +
+        '<span class="pct' + (state(a) ? " st-" + state(a) : "") + '">' + a.week + "%</span>" +
+        '<span class="sub">' + (t ? t.split(" of ")[0] + " · " : "") + a.reset.split(" ")[0] + "</span>";
+    });
+    return h + "</div>";
+  }
+  function strip() {
+    var h = "";
+    ACCTS.forEach(function (a) {
+      var ini = a.name.charAt(0).toUpperCase() + (a.name.match(/\d/) ? a.name.match(/\d/)[0] : "");
+      h += '<span class="mini ' + state(a) + '"><span class="top"><span class="ini' + (a.example ? " example" : "") + '"' +
+        (a.live ? ' style="font-weight:700"' : "") + ">" + esc(ini) + '</span><span class="pct">' + a.week + "%</span></span>" +
+        '<span class="meter"><i style="width:' + Math.min(a.week, 100) + '%"></i></span></span>';
+    });
+    return h;
+  }
+  function render() {
+    document.querySelectorAll('[data-panel="meters"]').forEach(function (el) { el.innerHTML = meters(); });
+    document.querySelectorAll('[data-panel="lines"]').forEach(function (el) { el.innerHTML = lines(); });
+    document.querySelectorAll('[data-panel="card"]').forEach(function (el) { el.innerHTML = meters(); });
+    document.querySelectorAll('[data-panel="strip"]').forEach(function (el) {
+      el.innerHTML = strip();
+      el.setAttribute("aria-label", "Usage: " + ACCTS.map(function (a) { return a.name + " " + a.week + "%"; }).join(", ") + ". Show detail.");
+    });
+  }
+
+  // Bookmarks and terminal filler, the same in every mock
+  var MARKS = '<div class="group cap">Projects 9</div>' +
+    '<div class="bm open"><span class="n">Patton</span><span class="s">~/Projects/betterterm</span></div>' +
+    '<div class="bm open"><span class="n">AI Brain</span><span class="s">~/Projects/ai-brain</span></div>' +
+    '<div class="bm"><span class="n">Defence Manufacturing</span><span class="s">~/Projects/defence-manufacturing</span></div>' +
+    '<div class="bm"><span class="n">Pages</span><span class="s">~/Projects/pages</span></div>' +
+    '<div class="group cap">Pages 2</div>' +
+    '<div class="bm"><span class="n">Patton Icon Studies</span><span class="s">mjy-pages.vercel.app</span></div>';
+  var TERM = "❯ let's work on Patton project\n\n⏺ Patton is on v1.42.0+1, running since 16:14.\n  The F3 icon and the Pages links are released\n  (v1.42.3), not installed.\n\n⏺ Bash(git log --oneline -3)\n  ⎿ ebff449 Checkpoint S64\n    95ad1bd D6: a clicked web link opens …\n    6ac0448 Session bar: links to his Pages …";
+  document.querySelectorAll("[data-marks]").forEach(function (el) { el.innerHTML = MARKS; });
+  document.querySelectorAll("[data-term]").forEach(function (el) { el.textContent = TERM; });
+
+  document.querySelectorAll(".seg button").forEach(function (b) {
+    b.addEventListener("click", function () {
+      measure = b.getAttribute("data-measure");
+      document.querySelectorAll(".seg button").forEach(function (x) { x.setAttribute("aria-pressed", String(x === b)); });
+      render();
+    });
+  });
+  var btn = document.getElementById("strip-btn"), card = document.getElementById("strip-card");
+  btn.addEventListener("click", function () {
+    var open = card.hidden;
+    card.hidden = !open;
+    btn.setAttribute("aria-expanded", String(open));
+  });
+  render();
+})();
+</script>
