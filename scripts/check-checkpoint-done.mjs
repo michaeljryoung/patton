@@ -22,7 +22,8 @@
 // (red at a parked Stop, tab selected, green at the real finish) now ends red;
 // an interrupted checkpoint (cpt, never cpd) never rises; a finish held back by
 // background work is logged once per cpt; a Stop with only older tasks
-// running (cpd sent) raises it and logs how many were the checkpoint's own; a
+// running (cpd sent) raises it and logs how many were the checkpoint's own and
+// how many the hook couldn't date; a
 // second-boundary slack at the session start; the CSS variable is defined in
 // :root.
 // Run: JSDOM_DIR=<a folder whose node_modules has jsdom> node scripts/check-checkpoint-done.mjs
@@ -144,8 +145,8 @@ const ROOT = (state) => `state=${state}:app=claude-code`;
 const NOW = () => Math.floor(Date.now() / 1000);
 // Fixed readings, so "the same cpt again" really is the same number.
 const T0 = NOW() + 1000; // after any session start in this run
-const reading = (p, cpt, tasks = 0, cpd = tasks === 0 ? cpt : null, own = null) => view(p).__emit('onPattonState', PA.parsePattonOsc(
-  `patton;stop;tasks=${tasks};crons=0;ctx=50000;since=20000${cpt === null ? '' : `;cpt=${cpt}`}${cpd === null ? '' : `;cpd=${cpd}`}${own === null ? '' : `;own=${own}`}`));
+const reading = (p, cpt, tasks = 0, cpd = tasks === 0 ? cpt : null, own = null, und = null) => view(p).__emit('onPattonState', PA.parsePattonOsc(
+  `patton;stop;tasks=${tasks};crons=0;ctx=50000;since=20000${cpt === null ? '' : `;cpt=${cpt}`}${cpd === null ? '' : `;cpd=${cpd}`}${own === null ? '' : `;own=${own}`}${und === null ? '' : `;und=${und}`}`));
 // A Claude session that has run a turn and is at its prompt.
 const turnDone = (p) => { report(p, ROOT('working')); report(p, ROOT('done')); };
 const countFor = (needle, pane) => logs.filter((l) => l.includes(needle) && l.includes(`"pane":"${pane.id}"`)).length;
@@ -376,8 +377,8 @@ tm.switchToId(t3.id);
   check('held: not logged when tasks = 0', held() === 1, held());
   reading(pH, T0 + 89, 2); // older than the one marked
   check('held: not logged for a cpt older than the marked one', held() === 1, held());
-  reading(pH, T0 + 93, 2, null, 1);
-  check('held: a newer cpt is logged once more, with its own-task count', held() === 2 && logs.some((l) => l.includes('[CKPT] finish held') && l.includes(`"cpt":${T0 + 93}`) && l.includes('"own":1')), held());
+  reading(pH, T0 + 93, 2, null, 1, 1);
+  check('held: a newer cpt is logged once more, with its own and undated counts', held() === 2 && logs.some((l) => l.includes('[CKPT] finish held') && l.includes(`"cpt":${T0 + 93}`) && l.includes('"own":1') && l.includes('"und":1')), held());
   tm.switchToId(tH.id);
   tm.switchToId(t3.id);
 }
@@ -392,11 +393,11 @@ tm.switchToId(t3.id);
   tm.switchToId(t3.id);
   turnDone(pU);
   const heldBefore = countFor('[CKPT] finish held', pU);
-  reading(pU, T0 + 95, 1, T0 + 95, 0); // an older monitor still running, cpd sent
+  reading(pU, T0 + 95, 1, T0 + 95, 0, 0); // an older monitor still running, cpd sent
   check('older task: a Stop with tasks=1 and cpd raises the mark', pU.checkpointDone === true && countFinished(pU) === 1, countFinished(pU));
   check('older task: no finish-held line for it', countFor('[CKPT] finish held', pU) === heldBefore);
   const fin = logs.filter((l) => l.includes('[CKPT] finished {') && l.includes(`"pane":"${pU.id}"`));
-  check('older task: [CKPT] finished logs tasks=1 and own=0', fin.length === 1 && fin[0].includes('"tasks":1') && fin[0].includes('"own":0'), fin);
+  check('older task: [CKPT] finished logs tasks=1, own=0 and und=0', fin.length === 1 && fin[0].includes('"tasks":1') && fin[0].includes('"own":0') && fin[0].includes('"und":0'), fin);
   tm.switchToId(tU.id);
   tm.switchToId(t3.id);
 }

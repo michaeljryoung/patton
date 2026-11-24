@@ -61,25 +61,34 @@
 #      or when Claude Code gave no task fields (tasks unknown): the checkpoint
 #      has finished. Patton raises the red circle on `cpd`, not `cpt`, because
 #      the first Stop after a start is not always its finish.
-#   O  how many of the running tasks are the checkpoint's own (below), sent
-#      with `cpt` whenever tasks ran and every one was dated, so main.log
-#      shows a `cpd` sent over older work (`tasks` minus O of them).
-#   own task  a counted task (see `tasks`) launched in the checkpoint's turn:
-#      at or after the start line and before the next human prompt
-#      (task-notification turns before that prompt still count). When the
-#      checkpoint's commit step landed after a human prompt (an interrupted
-#      start rescued by his "go on", or a question he answered), the turn runs
-#      to the first human prompt after that commit step instead, since the
-#      checkpoint was still at work. Claude Code's Stop input gives each task
-#      only an id, type, status and description (2.1.321, Mzn: no start time),
-#      so it is dated by the line that launched it: the first non-sidechain
-#      line with a `toolUseResult` carrying the id under a launch key,
+#   O  how many of the running tasks are the checkpoint's own (below), and
+#   U  how many have no launch line found (undated, below); both hold `cpd`.
+#      Sent as `own=O;und=U` with `cpt` whenever tasks ran and every id was in
+#      hand, so main.log shows a `cpd` sent over older work (`tasks` minus
+#      O+U of them) and tells a finish held by the checkpoint's own work from
+#      one held only because the hook couldn't date a task (a dating gap to
+#      fix, such as a subagent's shell id never seen live).
+#   own task  a counted task (see `tasks`) launched in the checkpoint's window,
+#      which is two turns at most:
+#      - its own turn: from the start line to the first human prompt after it
+#        (task-notification turns before that prompt still count);
+#      - when RESCUED (its first landed commit step came after that prompt:
+#        an interrupted start finished on his "go on", or a question he
+#        answered mid-way), also the commit step's turn: from the last human
+#        prompt before that commit step to the first human prompt after it.
+#      Tasks launched in any other turn in between (his unrelated prompts
+#      before the rescue, a dev server started then) are not its own, nor are
+#      those after a later commit step (another round of notes, prompts later).
+#      Claude Code's Stop input gives each task only an id, type, status and
+#      description (2.1.321, Mzn: no start time), so it is dated by the line
+#      that launched it: the first non-sidechain line with a `toolUseResult`
+#      carrying the id under a launch key,
 #      `"backgroundTaskId":"<id>"` (a background Bash: run_in_background, or
 #      moved to the background after its timeout), `"agentId":"<id>"` (an
 #      async Agent) or `"taskId":"<id>"` (a Monitor). A mere mention (output
 #      text, TaskOutput's `task_id`, an exit code) dates nothing. An agent
 #      resumed by SendMessage (`resumedAgentId` / `revivedAgentId`) is dated
-#      by its latest resume, for itself and for the tasks it launches. The ids
+#      by its latest resume (the resume's main line is the launch line). The ids
 #      are the ones Claude Code's registry gives the hook: read in 2.1.321's
 #      source, Mzn lists `taskRegistry.all()` as `id: r.id` with no owner
 #      filter, a shell's `backgroundTaskId` is kept only when it has the
@@ -90,11 +99,18 @@
 #      that matches nothing still holds. A task a subagent launched has no
 #      launch line in the main transcript, only in `<transcript minus
 #      .jsonl>/subagents/agent-<agentId>.jsonl` (regular files only, read in
-#      name order), so it is dated by the launch of the agent whose file holds
-#      its launch key (the earliest such line by timestamp, if several files
-#      do), following nested agents up to the first one the main transcript
-#      launched (5 levels at most). A
-#      task with no launch line found, or an empty id, holds `cpd` as before;
+#      name order), so it is dated by its launch line there (the earliest by
+#      timestamp if several files have one; a line with no timestamp sorts
+#      after every dated one): that line's timestamp against the window's
+#      bounds' timestamps, so a shell an agent launched in its first run is
+#      not moved into the window when the checkpoint resumes the agent. A
+#      shell such an agent launches after the human prompt that ends the
+#      window is not its own either, though the agent itself still is. When
+#      the launch line or a bound has no timestamp, or the bounds run out of
+#      order, it falls back to the launch line in the main transcript of the
+#      agent whose file holds it, following nested agents up to the first one
+#      the main transcript launched (5 levels at most). An UNDATED task (no
+#      launch line found, or an empty id) holds `cpd` as before;
 #      so does any failure, ids that don't add up to `tasks`, or a reading
 #      past 3 s (the hook's own limit is 10 s). The cost is one regex per
 #      tool-result line and a hash lookup, whatever the number of tasks
@@ -341,16 +357,20 @@ context_fields() { # transcript path, tasks in flight ("" = unknown), their ids 
                      elif $k == "result" then [$o.message.content[] | select(.type? == "tool_result" and .is_error != true) | .tool_use_id | strings]
                      else [] end)})
       as $x ([];
-        if $x.k == "start" then . + [{n: $x.n, ts: $x.ts, cut: false, commit: false, ended: false, pend: []}]
+        # The line of the commit step this result answers (none when it answers none).
+        ([.[-1].pend[]? | . as $p | select(any($x.ids[]; . == $p.id)) | .n] | .[0]) as $cs
+        | if $x.k == "start" then . + [{n: $x.n, ts: $x.ts, cut: false, commit: false, ended: false, pend: []}]
         elif length == 0 then .
         elif $x.k == "human" then .[-1].ended = true
         elif $x.k == "interrupt" then (if .[-1].commit or .[-1].ended then . else .[-1].cut = true end)
-        elif $x.k == "commit" then .[-1].pend += $x.ids
+        elif $x.k == "commit" then .[-1].pend += [$x.ids[] | {id: ., n: $x.n}]
         # A commit step counts once its own result has come back without an error.
-        # (its line: the own-task window runs to the first human prompt after it)
-        elif (.[-1].pend as $p | any($x.ids[]; . as $id | any($p[]; . == $id))) then .[-1].commit = true | .[-1].cut = false | .[-1].cr = $x.n
+        # The FIRST such step (its line) is kept: when it landed after a human prompt
+        # (a rescue), its turn is part of the own-task window; later commit steps
+        # (another round of notes, prompts later) widen nothing.
+        elif $cs != null then .[-1].commit = true | .[-1].cut = false | .[-1].cs //= $cs
         else . end)
-    | map(select(.cut | not)) | last // empty | .n + " " + .ts + " " + (.cr // "")' 2>/dev/null)
+    | map(select(.cut | not)) | last // empty | .n + " " + .ts + " " + (.cs // "")' 2>/dev/null)
 
   base=0; ts=""
   if [[ "$cp" =~ ^([0-9]+)\ ([0-9]*)\ ([0-9]*)$ ]]; then
@@ -382,35 +402,45 @@ context_fields() { # transcript path, tasks in flight ("" = unknown), their ids 
     if [ -z "$tasks" ] || [ "$tasks" = 0 ]; then
       printf ';cpd=%s' "$ts"
     elif [ "$(printf '%s\n' "$ids" | grep -c '^i:')" = "$tasks" ]; then
-      own=$(own_tasks "$t" "$line" "$rline" "$ids")
-      if [[ "$own" =~ ^[0-9]+$ ]]; then
-        [ "$own" = 0 ] && printf ';cpd=%s' "$ts"
-        printf ';own=%s' "$own"
+      held=$(own_tasks "$t" "$line" "$rline" "$ids")
+      if [[ "$held" =~ ^([0-9]+)\ ([0-9]+)$ ]]; then
+        [ "$held" = "0 0" ] && printf ';cpd=%s' "$ts"
+        printf ';own=%s;und=%s' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
       fi
     fi
   fi
   return 0
 }
 
-# How many of the running tasks hold the checkpoint's finish (see "own task" in
-# the header): transcript, the checkpoint's start line, its landed commit
-# step's line (or empty), the ids ("i:<id>" a line) -> a count, or nothing on
-# any failure or after 3 s (either holds it). One pass of the main transcript
-# (through `<`) finds the end of the checkpoint's turn and each id's launch
-# line: one key-anchored regex per tool-result line and a hash lookup, so the
-# number of tasks costs nothing. Only for ids it lacks, one pass of the
-# session's subagent transcripts maps every launch key to the agent whose file
-# launched it, and each such id takes the main-transcript date of the first
-# agent up its chain (nested agents up to 5 levels).
+# How many of the running tasks hold the checkpoint's finish (see "own task" and
+# "undated" in the header): transcript, the checkpoint's start line, its first
+# landed commit step's line (or empty), the ids ("i:<id>" a line) -> "O U"
+# (own, undated), or nothing on any failure or after 3 s (either holds it). One
+# pass of the main transcript (through `<`) finds the window's bounds (with
+# their timestamps) and each id's launch line: one key-anchored regex per
+# tool-result line and a hash lookup, so the number of tasks costs nothing.
+# Only for ids it lacks, one pass of the session's subagent transcripts finds
+# each launch key's earliest line; such an id is dated by that line's timestamp
+# against the window's, or, with no usable timestamps, by the main-transcript
+# line of the first agent up its chain (nested agents up to 5 levels).
 own_tasks() {
-  L="$2" R="$3" IDS="$4" SUB="${1%.jsonl}/subagents" "$PERL" -ne '
+  L="$2" C="$3" IDS="$4" SUB="${1%.jsonl}/subagents" "$PERL" -ne '
     BEGIN {
       $SIG{ALRM} = sub { kill 9, $$ }; alarm 3;   # killed: prints nothing, which holds cpd
       @id = map { substr($_, 2) } grep { /^i:/ } split /\n/, $ENV{IDS};
       %want = map { $_ => 1 } grep { $_ ne "" } @id;
-      $L = $ENV{L}; $R = ($ENV{R} || 0) > $L ? $ENV{R} : $L;
+      $L = $ENV{L}; $C = ($ENV{C} || 0) > $L ? $ENV{C} : 0;
     }
-    if (!$end && $. > $R && index($_, q("type":"user")) >= 0 && index($_, q("origin":{"kind":"human")) >= 0) { $end = $. }
+    # The window: the start line up to the first human prompt after it ($end);
+    # when the first commit step landed after that, also its turn, from the
+    # last human prompt before it ($rs) to the first one after it ($re).
+    $tsL = $1 if $. == $L && /"timestamp":"([^"]+)"/;
+    if ($. > $L && index($_, q("type":"user")) >= 0 && index($_, q("origin":{"kind":"human")) >= 0) {
+      my ($w) = /"timestamp":"([^"]+)"/;
+      if (!$end) { $end = $.; $tsEnd = $w }
+      if ($C && $. < $C) { $rs = $.; $tsRs = $w }
+      if ($C && $. > $C && !$re) { $re = $.; $tsRe = $w }
+    }
     next if index($_, q("toolUseResult")) < 0 || index($_, q("isSidechain":true)) >= 0;
     while (/"(backgroundTaskId|taskId|agentId|resumedAgentId|revivedAgentId)":"([^"\\]+)"/g) {
       my ($k, $v) = ($1, $2);
@@ -418,43 +448,65 @@ own_tasks() {
       else { $agent{$v} //= $. if $k eq "agentId"; $at{$v} //= $. if $want{$v} }
     }
     END {
-      my (%line, @cur);
-      for my $x (keys %want) { if (defined $at{$x}) { $line{$x} = $at{$x} } else { push @cur, $x } }
+      $rs = undef if $rs && $end && $rs < $end;   # the commit step sat in the start turn: no second turn
+      $rs = undef unless $end;
+      my $inside = sub {   # a main-transcript line number
+        my $w = shift;
+        return ($w >= $L && (!$end || $w < $end)) || ($rs && $w >= $rs && (!$re || $w < $re));
+      };
+      # Timestamps date the launch line in a subagent file only when every bound has one
+      # and they run in order (fixtures and clock changes can break either).
+      my $tsok = defined $tsL && (!$end || (defined $tsEnd && $tsL le $tsEnd))
+        && (!$rs || (defined $tsRs && $tsRs ge $tsL && (!$re || (defined $tsRe && $tsRs le $tsRe))));
+      my $insideTs = sub {
+        my $t = shift;
+        return ($t ge $tsL && (!$end || $t lt $tsEnd)) || ($rs && $t ge $tsRs && (!$re || $t lt $tsRe));
+      };
+      my (%own, @cur);
+      for my $x (keys %want) { if (defined $at{$x}) { $own{$x} = $inside->($at{$x}) ? 1 : 0 } else { push @cur, $x } }
       if (@cur && opendir(my $d, $ENV{SUB})) {
         my @files = sort grep { /^agent-[A-Za-z0-9_-]+\.jsonl$/ && -f "$ENV{SUB}/$_" } readdir $d;
         closedir $d;
-        my %parent;   # id -> [timestamp, agent] of the earliest launch-key line naming it
+        my %parent;   # id -> [timestamp or undef, agent] of the earliest launch-key line naming it
         for my $f (@files) {
           my ($a) = $f =~ /^agent-(.+)\.jsonl$/;
           open(my $h, "<", "$ENV{SUB}/$f") or next;
           while (my $s = <$h>) {
             next if index($s, q("toolUseResult")) < 0;
-            my ($when) = $s =~ /"timestamp":"([^"]+)"/;
-            $when //= "~";
+            my ($when) = $s =~ /"timestamp":"([^"]+)"/;   # undef when the line has none
             while ($s =~ /"(?:backgroundTaskId|taskId|agentId)":"([^"\\]+)"/g) {
               my $v = $1;
               next if $v eq $a;
-              $parent{$v} = [$when, $a] if !$parent{$v} || $when lt $parent{$v}[0];
+              # Earliest dated line wins. A line with no timestamp sorts after
+              # every dated one, so it is kept only while no dated line names
+              # the id (among undated lines, the first read stays).
+              my $old = $parent{$v};
+              $parent{$v} = [$when, $a]
+                if !$old || (defined $when && (!defined $old->[0] || $when lt $old->[0]));
             }
           }
           close $h;
         }
         for my $x (@cur) {
+          my $q = $parent{$x} or next;
+          # Its own launch line, by time: a shell an agent launched in its
+          # first run stays outside the window when the agent is resumed later.
+          if ($tsok && defined $q->[0]) { $own{$x} = $insideTs->($q->[0]) ? 1 : 0; next }
           my ($p, %seen) = ($x);
           for (1 .. 5) {
-            my $q = $parent{$p} or last;
+            $q = $parent{$p} or last;
             $p = $q->[1];
             last if $seen{$p}++;
-            if (defined $agent{$p}) { $line{$x} = $agent{$p}; last }
+            if (defined $agent{$p}) { $own{$x} = $inside->($agent{$p}) ? 1 : 0; last }
           }
         }
       }
-      my $n = 0;
+      my ($n, $u) = (0, 0);
       for my $x (@id) {
-        my $w = $x eq "" ? undef : $line{$x};
-        $n++ if !defined $w || ($w >= $L && (!$end || $w < $end));
+        my $o = $x eq "" ? undef : $own{$x};
+        if (!defined $o) { $u++ } elsif ($o) { $n++ }
       }
-      print $n;
+      print "$n $u";
     }' < "$1" 2>/dev/null
 }
 

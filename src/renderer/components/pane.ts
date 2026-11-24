@@ -1035,7 +1035,7 @@ export class Pane {
       cpd: context.checkpointDoneAt,
     });
     // `cpt` drives the clock and hover card; the red circle follows `cpd`.
-    this.noteCheckpointFinished(context.checkpointDoneAt, tasks, context.ownTasks ?? null);
+    this.noteCheckpointFinished(context.checkpointDoneAt, tasks, context.ownTasks ?? null, context.undatedTasks ?? null);
     this.notifyCheckpoint();
   }
 
@@ -1050,10 +1050,10 @@ export class Pane {
    *  hook reports them. Deduped on "he has seen it", not "reported once": a
    *  finished checkpoint's mark can be cleared by a new turn and the next
    *  Stop carries the same `cpd`, and the mark must come back then. The log
-   *  line carries the Stop's running tasks and how many were the
-   *  checkpoint's own (`own`; null when none ran), so a finish raised over
-   *  older work shows. */
-  private noteCheckpointFinished(cpd: number | null, tasks: number | null, own: number | null): void {
+   *  line carries the Stop's running tasks, how many were the checkpoint's
+   *  own (`own`) and how many the hook couldn't date (`und`; both null when
+   *  none ran), so a finish raised over older work shows. */
+  private noteCheckpointFinished(cpd: number | null, tasks: number | null, own: number | null, und: number | null): void {
     if (cpd === null || this.claudeSessionAtMs === 0) return;
     // `cpd` is floored to the second and the session start is stamped tens of
     // ms after the transcript's own, so one second of slack: a session whose
@@ -1066,7 +1066,7 @@ export class Pane {
     this.markedCheckpointAt = Math.max(this.markedCheckpointAt ?? -Infinity, cpd);
     if (this._checkpointDone) return;
     this._checkpointDone = true;
-    rlog('info', '[CKPT] finished', { pane: this.id, cpd, tasks, own });
+    rlog('info', '[CKPT] finished', { pane: this.id, cpd, tasks, own, und });
     this.callbacks.onCheckpointMark?.(this);
   }
 
@@ -1640,7 +1640,9 @@ export class Pane {
     if (cpt <= Math.max(this.ackedCheckpointAt ?? -Infinity, this.markedCheckpointAt ?? -Infinity)) return;
     if (cpt === this.heldLoggedCheckpointAt) return;
     this.heldLoggedCheckpointAt = cpt;
-    rlog('info', '[CKPT] finish held', { pane: this.id, cpt, tasks, own: context.ownTasks ?? null });
+    rlog('info', '[CKPT] finish held', {
+      pane: this.id, cpt, tasks, own: context.ownTasks ?? null, und: context.undatedTasks ?? null,
+    });
   }
 
   /** Remove and return the stored verdict, stopping its expiry timer. */

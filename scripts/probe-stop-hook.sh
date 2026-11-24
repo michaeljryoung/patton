@@ -134,7 +134,7 @@ TD=$(mktemp -d "${TMPDIR:-/tmp}/patton-probe-ctx.XXXXXX")
 u() { # assistant line with usage: input, cache read, cache write
   printf '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":%s,"cache_read_input_tokens":%s,"cache_creation_input_tokens":%s,"output_tokens":9}},"timestamp":"2026-10-11T05:00:00.000Z"}\n' "$1" "$2" "$3"
 }
-human() { printf '{"type":"user","message":{"role":"user","content":"%s"},"timestamp":"2026-10-11T04:00:00.000Z","origin":{"kind":"human"}}\n' "$1"; }
+human() { printf '{"type":"user","message":{"role":"user","content":"%s"},"timestamp":"%s","origin":{"kind":"human"}}\n' "$1" "${2:-2026-10-11T04:00:00.000Z}"; }
 CKPT='{"type":"user","message":{"role":"user","content":"<command-message>checkpoint</command-message>\n<command-name>/checkpoint</command-name>"},"timestamp":"2026-10-11T04:48:38.277Z","origin":{"kind":"human"}}'
 SKILL='{"type":"user","isMeta":true,"message":{"role":"user","content":[{"type":"text","text":"Base directory for this skill: x"}]},"timestamp":"2026-10-11T04:48:38.300Z"}'
 QUOTED='{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t","content":"grep found <command-name>/checkpoint</command-name> in a file"}]},"timestamp":"2026-10-11T06:00:00.000Z"}'
@@ -215,13 +215,14 @@ NC_QUOTE='{"type":"assistant","message":{"role":"assistant","content":[{"type":"
 NC_PATH='{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"b","name":"Bash","input":{"command":"wc -l ~/.claude/scripts/checkpoint-commit.py\n# then checkpoint-commit.py runs","description":"x"}}]},"timestamp":"2026-10-11T04:55:00.000Z"}'
 NC_DQUOTE='{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"b","name":"Bash","input":{"command":"grep -c \"checkpoint-commit.py\" notes.txt","description":"x"}}]},"timestamp":"2026-10-11T04:55:00.000Z"}'
 check "cpd: start, Stop with a task running that it never launched (unknown): cpt, no cpd" \
-  "$(stopwantN 1 0 ";ctx=400000;since=0;cpt=$CPT;own=1")" "$(ctxjson "$TD/current.jsonl" "$ONE")"
+  "$(stopwantN 1 0 ";ctx=400000;since=0;cpt=$CPT;own=0;und=1")" "$(ctxjson "$TD/current.jsonl" "$ONE")"
 check "cpd: same file, Stop with no task: cpd" \
   "$(stopwant ";ctx=400000;since=0;cpt=$CPT;cpd=$CPT")" "$(ctxjson "$TD/current.jsonl" "$BOTH")"
 check "cpd: a cron alone doesn't hold it back" \
   "$(stopwantN 0 1 ";ctx=400000;since=0;cpt=$CPT;cpd=$CPT")" "$(ctxjson "$TD/current.jsonl" "$CRON")"
 # Own tasks (24 Nov 2026): only work launched in the checkpoint's turn holds cpd;
-# `own=N` counts the running tasks that are its own whenever they were dated.
+# `own=N` counts the running tasks dated inside its window, `und=N` those with
+# no launch line found (both hold it); both are sent whenever tasks were read.
 # Launch lines as Claude Code 2.1.321 writes them: a background Bash, an async
 # Agent, a Monitor, a SendMessage resume; MENTION is a later result that only
 # names an id (TaskOutput's task_id, output text).
@@ -236,87 +237,87 @@ RUN() { local s='' x; for x in "$@"; do s="$s${s:+,}{\"id\":\"$x\",\"type\":\"sh
   printf ',"background_tasks":[%s],"session_crons":[]' "$s"; }
 { human hi; LBASH bmon0old1; u 0 300000 0; echo "$CKPT"; u 0 400000 0; } > "$TD/own-old.jsonl"
 check "own: a task launched before the checkpoint doesn't hold cpd" \
-  "$(stopwantN 1 0 ";ctx=400000;since=0;cpt=$CPT;cpd=$CPT;own=0")" "$(ctxjson "$TD/own-old.jsonl" "$(RUN bmon0old1)")"
+  "$(stopwantN 1 0 ";ctx=400000;since=0;cpt=$CPT;cpd=$CPT;own=0;und=0")" "$(ctxjson "$TD/own-old.jsonl" "$(RUN bmon0old1)")"
 { human hi; LBASH bmon0old1; echo "$CKPT"; LBASH bckpt0own; u 0 400000 0; } > "$TD/own-new.jsonl"
 check "own: its own background job still running: no cpd" \
-  "$(stopwantN 1 0 ";ctx=400000;since=0;cpt=$CPT;own=1")" "$(ctxjson "$TD/own-new.jsonl" "$(RUN bckpt0own)")"
+  "$(stopwantN 1 0 ";ctx=400000;since=0;cpt=$CPT;own=1;und=0")" "$(ctxjson "$TD/own-new.jsonl" "$(RUN bckpt0own)")"
 check "own: its own job and an older one running: no cpd" \
-  "$(stopwantN 2 0 ";ctx=400000;since=0;cpt=$CPT;own=1")" "$(ctxjson "$TD/own-new.jsonl" "$(RUN bmon0old1 bckpt0own)")"
+  "$(stopwantN 2 0 ";ctx=400000;since=0;cpt=$CPT;own=1;und=0")" "$(ctxjson "$TD/own-new.jsonl" "$(RUN bmon0old1 bckpt0own)")"
 { cat "$TD/own-new.jsonl"; TN bckpt0own; u 0 410000 0; } > "$TD/own-done.jsonl"
 check "own: its job ended (notification turn), the older one still running: cpd" \
-  "$(stopwantN 1 0 ";ctx=410000;since=10000;cpt=$CPT;cpd=$CPT;own=0")" "$(ctxjson "$TD/own-done.jsonl" "$(RUN bmon0old1)")"
+  "$(stopwantN 1 0 ";ctx=410000;since=10000;cpt=$CPT;cpd=$CPT;own=0;und=0")" "$(ctxjson "$TD/own-done.jsonl" "$(RUN bmon0old1)")"
 { echo "$CKPT"; u 0 400000 0; TN x; LAGENT a0123456789abcdef; u 0 410000 0; } > "$TD/own-taskn.jsonl"
 check "own: an agent launched in a task-notification turn of the checkpoint holds it" \
-  "$(stopwantN 1 0 ";ctx=410000;since=10000;cpt=$CPT;own=1")" "$(ctxjson "$TD/own-taskn.jsonl" "$(RUN a0123456789abcdef)")"
+  "$(stopwantN 1 0 ";ctx=410000;since=10000;cpt=$CPT;own=1;und=0")" "$(ctxjson "$TD/own-taskn.jsonl" "$(RUN a0123456789abcdef)")"
 { echo "$CKPT"; u 0 400000 0; human next; LBASH blater000; u 0 410000 0; } > "$TD/own-later.jsonl"
 check "own: a task launched after his next prompt doesn't hold it" \
-  "$(stopwantN 1 0 ";ctx=410000;since=10000;cpt=$CPT;cpd=$CPT;own=0")" "$(ctxjson "$TD/own-later.jsonl" "$(RUN blater000)")"
+  "$(stopwantN 1 0 ";ctx=410000;since=10000;cpt=$CPT;cpd=$CPT;own=0;und=0")" "$(ctxjson "$TD/own-later.jsonl" "$(RUN blater000)")"
 check "own: an id never launched in the transcript holds it (unknown, as before)" \
-  "$(stopwantN 1 0 ";ctx=400000;since=0;cpt=$CPT;own=1")" "$(ctxjson "$TD/own-old.jsonl" "$(RUN bnowhere0)")"
+  "$(stopwantN 1 0 ";ctx=400000;since=0;cpt=$CPT;own=0;und=1")" "$(ctxjson "$TD/own-old.jsonl" "$(RUN bnowhere0)")"
 check "own: an empty id holds it" \
-  "$(stopwantN 1 0 ";ctx=400000;since=0;cpt=$CPT;own=1")" "$(ctxjson "$TD/own-old.jsonl" ',"background_tasks":[{"type":"shell","status":"running"}],"session_crons":[]')"
+  "$(stopwantN 1 0 ";ctx=400000;since=0;cpt=$CPT;own=0;und=1")" "$(ctxjson "$TD/own-old.jsonl" ',"background_tasks":[{"type":"shell","status":"running"}],"session_crons":[]')"
 check "own: an id must match whole (bmon0old1 launched, bmon0old running): holds" \
-  "$(stopwantN 1 0 ";ctx=400000;since=0;cpt=$CPT;own=1")" "$(ctxjson "$TD/own-old.jsonl" "$(RUN bmon0old)")"
+  "$(stopwantN 1 0 ";ctx=400000;since=0;cpt=$CPT;own=0;und=1")" "$(ctxjson "$TD/own-old.jsonl" "$(RUN bmon0old)")"
 # A Monitor's launch carries `taskId`.
 { human hi; LMON m0monold1; echo "$CKPT"; LMON m0monown1; u 0 400000 0; } > "$TD/own-mon.jsonl"
 check "own: a Monitor launched before the checkpoint doesn't hold it" \
-  "$(stopwantN 1 0 ";ctx=400000;since=0;cpt=$CPT;cpd=$CPT;own=0")" "$(ctxjson "$TD/own-mon.jsonl" "$(RUN m0monold1)")"
+  "$(stopwantN 1 0 ";ctx=400000;since=0;cpt=$CPT;cpd=$CPT;own=0;und=0")" "$(ctxjson "$TD/own-mon.jsonl" "$(RUN m0monold1)")"
 check "own: the checkpoint's own Monitor holds it" \
-  "$(stopwantN 1 0 ";ctx=400000;since=0;cpt=$CPT;own=1")" "$(ctxjson "$TD/own-mon.jsonl" "$(RUN m0monown1)")"
+  "$(stopwantN 1 0 ";ctx=400000;since=0;cpt=$CPT;own=1;und=0")" "$(ctxjson "$TD/own-mon.jsonl" "$(RUN m0monown1)")"
 # Only a launch key dates an id: a mention dates nothing (review S2, S3, T-c).
 { human hi; printf '{"type":"user","isSidechain":false,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"q","content":"ok"}]},"timestamp":"2026-10-11T04:00:00.000Z","toolUseResult":{"stdout":"","exitCode":1,"durationMs":42}}\n'; echo "$CKPT"; u 0 400000 0; } > "$TD/own-short.jsonl"
 check "own: a short id (1) isn't dated by an earlier \"exitCode\":1 (unknown: holds)" \
-  "$(stopwantN 1 0 ";ctx=400000;since=0;cpt=$CPT;own=1")" "$(ctxjson "$TD/own-short.jsonl" "$(RUN 1)")"
+  "$(stopwantN 1 0 ";ctx=400000;since=0;cpt=$CPT;own=0;und=1")" "$(ctxjson "$TD/own-short.jsonl" "$(RUN 1)")"
 # A sidechain line in the main transcript never dates an id (review T-b).
 SIDEL=$(LBASH bside0001 | SUBL azzzzzzzzzzzzzzzz)
 { human hi; echo "$SIDEL"; echo "$CKPT"; LBASH bside0001; u 0 400000 0; } > "$TD/own-side.jsonl"
 check "own: a sidechain launch line before the checkpoint is skipped (the real launch is its own)" \
-  "$(stopwantN 1 0 ";ctx=400000;since=0;cpt=$CPT;own=1")" "$(ctxjson "$TD/own-side.jsonl" "$(RUN bside0001)")"
+  "$(stopwantN 1 0 ";ctx=400000;since=0;cpt=$CPT;own=1;und=0")" "$(ctxjson "$TD/own-side.jsonl" "$(RUN bside0001)")"
 # A resumed agent is dated by its latest resume (review S5).
 { human hi; LAGENT aold00000000000e1; u 0 300000 0; echo "$CKPT"; LRESUME aold00000000000e1; u 0 400000 0; } > "$TD/own-resume.jsonl"
 check "own: an older agent resumed by the checkpoint holds it" \
-  "$(stopwantN 1 0 ";ctx=400000;since=0;cpt=$CPT;own=1")" "$(ctxjson "$TD/own-resume.jsonl" "$(RUN aold00000000000e1)")"
+  "$(stopwantN 1 0 ";ctx=400000;since=0;cpt=$CPT;own=1;und=0")" "$(ctxjson "$TD/own-resume.jsonl" "$(RUN aold00000000000e1)")"
 { human hi; LAGENT aold00000000000e2; LRESUME aold00000000000e2; u 0 300000 0; echo "$CKPT"; u 0 400000 0; } > "$TD/own-resume-old.jsonl"
 check "own: an agent resumed before the checkpoint doesn't hold it" \
-  "$(stopwantN 1 0 ";ctx=400000;since=0;cpt=$CPT;cpd=$CPT;own=0")" "$(ctxjson "$TD/own-resume-old.jsonl" "$(RUN aold00000000000e2)")"
+  "$(stopwantN 1 0 ";ctx=400000;since=0;cpt=$CPT;cpd=$CPT;own=0;und=0")" "$(ctxjson "$TD/own-resume-old.jsonl" "$(RUN aold00000000000e2)")"
 # A rescued checkpoint with his prompt in the middle (review S14): its turn runs
 # to the first human prompt after the commit step.
 { human hi; echo "$CKPT"; u 0 400000 0; echo "$INTR"; human "go on"; LBASH bresumed1; echo "$COMMIT1"; echo "$COMMITOK"; u 0 450000 0; } > "$TD/own-s14.jsonl"
 check "own: interrupted, his go on, its own job, the commit: holds" \
-  "$(stopwantN 1 0 ";ctx=450000;since=50000;cpt=$CPT;own=1")" "$(ctxjson "$TD/own-s14.jsonl" "$(RUN bresumed1)")"
+  "$(stopwantN 1 0 ";ctx=450000;since=50000;cpt=$CPT;own=1;und=0")" "$(ctxjson "$TD/own-s14.jsonl" "$(RUN bresumed1)")"
 { cat "$TD/own-s14.jsonl"; human later; LBASH bafter001; u 0 460000 0; } > "$TD/own-s14b.jsonl"
 check "own: the same, a job launched after the prompt that follows the commit: cpd" \
-  "$(stopwantN 1 0 ";ctx=460000;since=60000;cpt=$CPT;cpd=$CPT;own=0")" "$(ctxjson "$TD/own-s14b.jsonl" "$(RUN bafter001)")"
+  "$(stopwantN 1 0 ";ctx=460000;since=60000;cpt=$CPT;cpd=$CPT;own=0;und=0")" "$(ctxjson "$TD/own-s14b.jsonl" "$(RUN bafter001)")"
 # A shell a subagent launched: dated by the agent's own launch in the main
 # transcript, in a session folder whose path has spaces and a quote.
 SUBD="$TD/a dir's name/sub"
 mkdir -p "$SUBD/subagents"
 { human hi; LAGENT aold000000000000a; echo "$CKPT"; LAGENT anew000000000000b; u 0 400000 0; } > "$SUBD.jsonl"
 LBASH bbyold000 | SUBL aold000000000000a > "$SUBD/subagents/agent-aold000000000000a.jsonl"
-LBASH bbynew000 | SUBL anew000000000000b > "$SUBD/subagents/agent-anew000000000000b.jsonl"
+LBASH bbynew000 2026-10-11T04:50:00.000Z | SUBL anew000000000000b > "$SUBD/subagents/agent-anew000000000000b.jsonl"
 check "own: a shell from an agent launched before the checkpoint doesn't hold it" \
-  "$(stopwantN 1 0 ";ctx=400000;since=0;cpt=$CPT;cpd=$CPT;own=0")" "$(ctxjson "$SUBD.jsonl" "$(RUN bbyold000)")"
+  "$(stopwantN 1 0 ";ctx=400000;since=0;cpt=$CPT;cpd=$CPT;own=0;und=0")" "$(ctxjson "$SUBD.jsonl" "$(RUN bbyold000)")"
 check "own: a shell from the checkpoint's own agent holds it" \
-  "$(stopwantN 1 0 ";ctx=400000;since=0;cpt=$CPT;own=1")" "$(ctxjson "$SUBD.jsonl" "$(RUN bbynew000)")"
+  "$(stopwantN 1 0 ";ctx=400000;since=0;cpt=$CPT;own=1;und=0")" "$(ctxjson "$SUBD.jsonl" "$(RUN bbynew000)")"
 LAGENT anest00000000000c | SUBL anew000000000000b >> "$SUBD/subagents/agent-anew000000000000b.jsonl"
-LBASH bnested00 | SUBL anest00000000000c > "$SUBD/subagents/agent-anest00000000000c.jsonl"
+LBASH bnested00 2026-10-11T04:51:00.000Z | SUBL anest00000000000c > "$SUBD/subagents/agent-anest00000000000c.jsonl"
 check "own: two levels down (agent in the checkpoint's agent) holds it" \
-  "$(stopwantN 1 0 ";ctx=400000;since=0;cpt=$CPT;own=1")" "$(ctxjson "$SUBD.jsonl" "$(RUN bnested00)")"
+  "$(stopwantN 1 0 ";ctx=400000;since=0;cpt=$CPT;own=1;und=0")" "$(ctxjson "$SUBD.jsonl" "$(RUN bnested00)")"
 # A FIFO named like an agent file is skipped, not read (it would block until the kill).
 mkfifo "$SUBD/subagents/agent-afifo00000000000.jsonl"
 T0MS=$(/usr/bin/perl -MTime::HiRes=time -e 'printf "%.0f", time()*1000')
 check "own: a FIFO among the agent files is skipped" \
-  "$(stopwantN 1 0 ";ctx=400000;since=0;cpt=$CPT;cpd=$CPT;own=0")" "$(ctxjson "$SUBD.jsonl" "$(RUN bbyold000)")"
+  "$(stopwantN 1 0 ";ctx=400000;since=0;cpt=$CPT;cpd=$CPT;own=0;und=0")" "$(ctxjson "$SUBD.jsonl" "$(RUN bbyold000)")"
 T1MS=$(/usr/bin/perl -MTime::HiRes=time -e 'printf "%.0f", time()*1000')
 expect_true "own: ... and costs no wait ($((T1MS - T0MS)) ms, bound 2000)" "$([ $((T1MS - T0MS)) -lt 2000 ]; echo $?)" ""
 rm -f "$SUBD/subagents/agent-afifo00000000000.jsonl"
 # Main mentions of a subagent's shell date nothing (review S2, S3).
 MENTION bbyold000 >> "$SUBD.jsonl"
 check "own: an older agent's shell named by a main result in the checkpoint's turn: cpd" \
-  "$(stopwantN 1 0 ";ctx=400000;since=0;cpt=$CPT;cpd=$CPT;own=0")" "$(ctxjson "$SUBD.jsonl" "$(RUN bbyold000)")"
-{ human next; MENTION bbynew000; u 0 450000 0; } >> "$SUBD.jsonl"
+  "$(stopwantN 1 0 ";ctx=400000;since=0;cpt=$CPT;cpd=$CPT;own=0;und=0")" "$(ctxjson "$SUBD.jsonl" "$(RUN bbyold000)")"
+{ human next 2026-10-11T05:10:00.000Z; MENTION bbynew000; u 0 450000 0; } >> "$SUBD.jsonl"
 check "own: its own agent's shell first named in main after his next prompt: holds" \
-  "$(stopwantN 1 0 ";ctx=450000;since=50000;cpt=$CPT;own=1")" "$(ctxjson "$SUBD.jsonl" "$(RUN bbynew000)")"
+  "$(stopwantN 1 0 ";ctx=450000;since=50000;cpt=$CPT;own=1;und=0")" "$(ctxjson "$SUBD.jsonl" "$(RUN bbynew000)")"
 rm -f "$SUBD"/subagents/*.jsonl "$SUBD.jsonl" && rmdir "$SUBD/subagents" "$SUBD" "$TD/a dir's name"
 # Two agent files carry a launch key for one id: the earliest line by timestamp
 # is its launch, whatever the file names' order (review S4).
@@ -327,7 +328,7 @@ for pair in "aaaa0000000000001 zzzz0000000000002" "zzzz0000000000001 aaaa0000000
   LBASH bshared01 2026-10-11T04:59:00.000Z | SUBL "$1" > "$TD/amb/subagents/agent-$1.jsonl"
   LBASH bshared01 2026-10-11T04:50:00.000Z | SUBL "$2" > "$TD/amb/subagents/agent-$2.jsonl"
   check "own: launched by the checkpoint's agent $2, named again later by older $1: holds" \
-    "$(stopwantN 1 0 ";ctx=400000;since=0;cpt=$CPT;own=1")" "$(ctxjson "$TD/amb.jsonl" "$(RUN bshared01)")"
+    "$(stopwantN 1 0 ";ctx=400000;since=0;cpt=$CPT;own=1;und=0")" "$(ctxjson "$TD/amb.jsonl" "$(RUN bshared01)")"
   rm -f "$TD"/amb/subagents/*.jsonl "$TD/amb.jsonl" && rmdir "$TD/amb/subagents" "$TD/amb"
 done
 # The interrupt and commit-rescue rules are unchanged with tasks in flight.
@@ -336,7 +337,45 @@ check "own: an interrupted checkpoint with an older task running: no cpt, no cpd
   "$(stopwantN 1 0 ";ctx=450000;since=450000")" "$(ctxjson "$TD/own-cut.jsonl" "$(RUN bmon0old1)")"
 { human hi; LBASH bmon0old1; echo "$CKPT"; u 0 400000 0; echo "$INTR"; human "go on"; echo "$COMMIT1"; echo "$COMMITOK"; u 0 450000 0; } > "$TD/own-rescued.jsonl"
 check "own: interrupted then committed, an older task running: cpd" \
-  "$(stopwantN 1 0 ";ctx=450000;since=50000;cpt=$CPT;cpd=$CPT;own=0")" "$(ctxjson "$TD/own-rescued.jsonl" "$(RUN bmon0old1)")"
+  "$(stopwantN 1 0 ";ctx=450000;since=50000;cpt=$CPT;cpd=$CPT;own=0;und=0")" "$(ctxjson "$TD/own-rescued.jsonl" "$(RUN bmon0old1)")"
+# The window (second review, W3-W5): the checkpoint's turn, plus, when its first
+# commit step landed after a human prompt, that step's turn only. Tasks from
+# unrelated turns in between, or after a commit step in its own turn, don't count.
+{ human hi; echo "$CKPT"; u 0 400000 0; human "yes please"; LBASH bw3own0001; echo "$COMMIT1"; echo "$COMMITOK"; u 0 450000 0; } > "$TD/own-w3.jsonl"
+check "own W3: his answer mid-checkpoint, its job in the commit step's turn: holds" \
+  "$(stopwantN 1 0 ";ctx=450000;since=50000;cpt=$CPT;own=1;und=0")" "$(ctxjson "$TD/own-w3.jsonl" "$(RUN bw3own0001)")"
+{ human hi; echo "$CKPT"; u 0 400000 0; human "unrelated work"; LBASH bw4dev0001; u 0 420000 0; } > "$TD/own-w4b.jsonl"
+check "own W4b: no commit step, a server from an unrelated prompt: cpd" \
+  "$(stopwantN 1 0 ";ctx=420000;since=20000;cpt=$CPT;cpd=$CPT;own=0;und=0")" "$(ctxjson "$TD/own-w4b.jsonl" "$(RUN bw4dev0001)")"
+{ cat "$TD/own-w4b.jsonl"; human "ok commit it"; echo "$COMMIT1"; echo "$COMMITOK"; u 0 450000 0; } > "$TD/own-w4.jsonl"
+check "own W4: the same, the commit step two prompts later: cpd" \
+  "$(stopwantN 1 0 ";ctx=450000;since=50000;cpt=$CPT;cpd=$CPT;own=0;und=0")" "$(ctxjson "$TD/own-w4.jsonl" "$(RUN bw4dev0001)")"
+{ human hi; echo "$CKPT"; u 0 400000 0; echo "$INTR"; human "different thing"; LBASH bw4srv0001; u 0 420000 0; human "finish the checkpoint"; echo "$COMMIT1"; echo "$COMMITOK"; u 0 450000 0; } > "$TD/own-w4c.jsonl"
+check "own W4c: interrupted, a server from an unrelated prompt, rescued later: cpd" \
+  "$(stopwantN 1 0 ";ctx=450000;since=50000;cpt=$CPT;cpd=$CPT;own=0;und=0")" "$(ctxjson "$TD/own-w4c.jsonl" "$(RUN bw4srv0001)")"
+{ human hi; echo "$CKPT"; u 0 400000 0; echo "$COMMIT1"; echo "$COMMITOK"; human "next"; LBASH bw5srv0001; u 0 420000 0; human "again"; echo "$COMMIT1"; echo "$COMMITOK"; u 0 450000 0; } > "$TD/own-w5.jsonl"
+check "own W5: committed in its turn, a server next prompt, a second commit step later: cpd" \
+  "$(stopwantN 1 0 ";ctx=450000;since=50000;cpt=$CPT;cpd=$CPT;own=0;und=0")" "$(ctxjson "$TD/own-w5.jsonl" "$(RUN bw5srv0001)")"
+# A shell an agent launched in its first run, before the checkpoint resumed the
+# agent, is dated by its own launch line's time, not the resume (second review).
+RSD="$TD/resumed"
+mkdir -p "$RSD/subagents"
+{ human hi 2026-10-11T04:30:00.000Z; LAGENT aresumed00000001; u 0 300000 0; echo "$CKPT"; LRESUME aresumed00000001; u 0 400000 0; } > "$RSD.jsonl"
+{ LBASH bfirstrun1 2026-10-11T04:40:00.000Z; LBASH bresumed2 2026-10-11T04:49:00.000Z; } | SUBL aresumed00000001 > "$RSD/subagents/agent-aresumed00000001.jsonl"
+check "own: a resumed agent's shell from its first run: cpd" \
+  "$(stopwantN 1 0 ";ctx=400000;since=0;cpt=$CPT;cpd=$CPT;own=0;und=0")" "$(ctxjson "$RSD.jsonl" "$(RUN bfirstrun1)")"
+check "own: a resumed agent's shell launched after the resume: holds" \
+  "$(stopwantN 1 0 ";ctx=400000;since=0;cpt=$CPT;own=1;und=0")" "$(ctxjson "$RSD.jsonl" "$(RUN bresumed2)")"
+check "own: the resumed agent itself (dated by its resume): holds" \
+  "$(stopwantN 1 0 ";ctx=400000;since=0;cpt=$CPT;own=1;und=0")" "$(ctxjson "$RSD.jsonl" "$(RUN aresumed00000001)")"
+# An undated launch line loses to a dated one, whatever the file order (review nit).
+LBASH bundated01 | sed 's/"timestamp":"[^"]*",//' | SUBL aresumed00000001 >> "$RSD/subagents/agent-aresumed00000001.jsonl"
+LBASH bundated01 2026-10-11T04:41:00.000Z | SUBL azzz000000000009 > "$RSD/subagents/agent-azzz000000000009.jsonl"
+check "own: an undated launch line (read first) loses to a dated one before the checkpoint: cpd" \
+  "$(stopwantN 1 0 ";ctx=400000;since=0;cpt=$CPT;cpd=$CPT;own=0;und=0")" "$(ctxjson "$RSD.jsonl" "$(RUN bundated01)")"
+check "own: a mix: own, undated-unknown and older shells counted apart" \
+  "$(stopwantN 3 0 ";ctx=400000;since=0;cpt=$CPT;own=1;und=1")" "$(ctxjson "$RSD.jsonl" "$(RUN bresumed2 bnowhere9 bfirstrun1)")"
+rm -f "$RSD"/subagents/*.jsonl "$RSD.jsonl" && rmdir "$RSD/subagents" "$RSD"
 # Time bound (review: 174 MB took 6.2 s with 60 tasks): the own-task reading
 # costs one regex per tool-result line, whatever the number of tasks. A 60 MB
 # transcript with 60 running tasks, and 60 MB of agent transcripts searched for
@@ -474,6 +513,9 @@ if command -v node >/dev/null 2>&1 && [ -x "$ESBUILD" ]; then
         ["patton;stop;tasks=0;crons=0;ctx=5;since=3;cpt=9", "{\"kind\":\"stop\",\"tasks\":0,\"crons\":0,\"context\":{\"ctxTokens\":5,\"sinceTokens\":3,\"checkpointAt\":9,\"checkpointDoneAt\":null}}"],
         ["patton;stop;tasks=0;crons=0;ctx=5;since=3;cpt=9;cpd=9", "{\"kind\":\"stop\",\"tasks\":0,\"crons\":0,\"context\":{\"ctxTokens\":5,\"sinceTokens\":3,\"checkpointAt\":9,\"checkpointDoneAt\":9}}"],
         ["patton;stop;tasks=2;crons=0;ctx=5;since=3;cpt=9;cpd=9;own=0", "{\"kind\":\"stop\",\"tasks\":2,\"crons\":0,\"context\":{\"ctxTokens\":5,\"sinceTokens\":3,\"checkpointAt\":9,\"checkpointDoneAt\":9,\"ownTasks\":0}}"],
+        ["patton;stop;tasks=2;crons=0;ctx=5;since=3;cpt=9;own=1;und=2", "{\"kind\":\"stop\",\"tasks\":2,\"crons\":0,\"context\":{\"ctxTokens\":5,\"sinceTokens\":3,\"checkpointAt\":9,\"checkpointDoneAt\":null,\"ownTasks\":1,\"undatedTasks\":2}}"],
+        ["patton;stop;tasks=2;crons=0;ctx=5;since=3;cpt=9;own=1;und=99999", "{\"kind\":\"stop\",\"tasks\":2,\"crons\":0,\"context\":{\"ctxTokens\":5,\"sinceTokens\":3,\"checkpointAt\":9,\"checkpointDoneAt\":null,\"ownTasks\":1}}"],
+        ["patton;stop;tasks=2;crons=0;ctx=5;since=3;cpt=9;own=-1;und=x;und=", "{\"kind\":\"stop\",\"tasks\":2,\"crons\":0,\"context\":{\"ctxTokens\":5,\"sinceTokens\":3,\"checkpointAt\":9,\"checkpointDoneAt\":null}}"],
         ["patton;stop;tasks=2;crons=0;ctx=5;since=3;cpt=9;own=12345", "{\"kind\":\"stop\",\"tasks\":2,\"crons\":0,\"context\":{\"ctxTokens\":5,\"sinceTokens\":3,\"checkpointAt\":9,\"checkpointDoneAt\":null}}"],
         ["patton;ctx;ctx=5;since=3;cpt=9;cpd=1234567890123", "{\"kind\":\"ctx\",\"context\":{\"ctxTokens\":5,\"sinceTokens\":3,\"checkpointAt\":9,\"checkpointDoneAt\":null}}"],
         ["patton;stop;tasks=0;crons=0;ctx=5;since=3;future=abc;x", "{\"kind\":\"stop\",\"tasks\":0,\"crons\":0,\"context\":{\"ctxTokens\":5,\"sinceTokens\":3,\"checkpointAt\":null,\"checkpointDoneAt\":null}}"],
