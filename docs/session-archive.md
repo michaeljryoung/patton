@@ -936,3 +936,17 @@ _Earlier entries archived → `docs/session-archive.md` (latest trim 2026-11-23,
 ## Gotchas (S62 trim 2026-11-24)
 
 - **rclone's `gdrive:` remote on this Mac is the Lindus Drive, read-only** (S61). Anything for his personal Drive goes through the Drive API with `gcloud auth print-access-token --account michaeljryoung@gmail.com`; confirm the account with a read-only `about` call first.
+
+## Session Log (S63 trim 2026-11-24)
+
+### 2026-11-20 (Session 59 — v1.33.0 installed)
+- Patton quit 16:22:52 (main.log) and the session ran in iTerm; his "do the update etc". Its crash reporter had already exited. Built from the tag in `.worktrees/install-1.33.0` (`npm run package`, prod audit 0), installed 16:24:11: Info.plist 1.33.0, codesign ok, asar byte-identical to `out/`; the extracted asar holds `[COMPOSE] place`, `bar not found` and `composeOverBar` and no `[OKAY]`; worktree removed. `bar_ship` now live.
+- The "etc": the installed Stop hook is byte-identical to v1.33.0's (no hook change since v1.31.0); cask 1.33.0 `516e7a08…` equals the release DMG's digest; release run green.
+- main.log since the 11:55 v1.31.0 install: `[COMPOSE] aside` (blocked) then `back` (unblocked) 195 s later at 13:28:45, and an aside for a menu back 42 ms later at 15:36:40, partial `box_ship` evidence; `[GROUP]` 0 lines.
+- The notes commit `2826d19`, made with `PATTON_NO_INSTALL=1`, set off the post-commit rebuild in the background; it built into `out/` only and /Applications stayed at 16:24:11.
+
+_Earlier entries archived → `docs/session-archive.md` (latest trim 2026-11-24, S62)._
+
+## Decisions (S63 trim 2026-11-24)
+
+- **2026-11-22 (S61) — Anything he will see or hear is tried by him before it ships.** A page built from the real code (the sound module bundled, the box fill, group shades, a preview of real renders) goes to him first, and the release waits for his word: S60 had shipped a default sound nobody had heard.
