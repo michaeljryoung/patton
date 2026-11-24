@@ -950,3 +950,13 @@ _Earlier entries archived → `docs/session-archive.md` (latest trim 2026-11-24,
 ## Decisions (S63 trim 2026-11-24)
 
 - **2026-11-22 (S61) — Anything he will see or hear is tried by him before it ships.** A page built from the real code (the sound module bundled, the box fill, group shades, a preview of real renders) goes to him first, and the release waits for his word: S60 had shipped a default sound nobody had heard.
+
+## Session Log (S64 trim 2026-11-24)
+
+### 2026-11-22 (Session 60 — long drafts room below, Ctrl-U, the session bar, sound, bookmarks; v1.34.0 → v1.36.0 released, not installed)
+- His /compact screenshot ("the text box has expanded and started covering over some of what Claude is doing"): he chose "Room made below" (D15 in `docs/compose-box.md`); Ctrl-U deletes the line (D16). A real-Claude probe showed a resize repaints only the visible screen. Three reviews; slow-redraw probes found a flap and four stale-row cases, fixed with a settling state. v1.34.0; the Stop hook's ambient-task label fix (Claude sends "auto-mode scan", "memory import") v1.34.1.
+- His "bar on right ... like the desktop app": sketch v3 (https://claude.ai/code/artifact/08d6e409-4c7d-4f4e-8fe1-ceb84b75c586), his choices: permanent with a minimize button ("i hate hvaing to remember" shortcuts), no checklist (0 of 61 sessions kept one) or changes, links and failures in, the checkpoint clock moved in. Built from `docs/session-bar.md` (D1–D13) by three parallel builders, an end-to-end check by an agent that didn't build (57 ok), three reviews (no major); v1.35.0.
+- Then his four asks: calmer sound (soft chime default, choice, Preview, volume); bookmarks show names only; artifact bookmarks named by id start, with web opens logged (cause of his "don't really work" not yet seen); Office files open from links. v1.36.0, cask `31e8b956…` matches. The document viewer: four options confused him ("all your options look the same"), so `docs/review-tab.md` records one design from his four needs; not built.
+- His "This is taking a very long time" and "I think minor things are worth fixing": memory `patton-fix-minors-fast-loop`. About 2–3% of his week.
+
+_Earlier entries archived → `docs/session-archive.md` (latest trim 2026-11-24, S63)._
