@@ -10,6 +10,7 @@ import { disambiguator, displayLabel, fullTarget, newArtifactLabel } from '../se
 import { onPageTitlesChanged } from '../services/page-titles';
 import { ConfirmDialog } from './confirm-dialog';
 import { ContextMenu } from './context-menu';
+import { UsagePanel } from './usage-panel';
 import type { Tab } from './tab';
 
 const WIDTH_STORAGE_KEY = 'patton.bookmarks.width';
@@ -102,6 +103,8 @@ export class BookmarksPanel {
   private bookmarks: Bookmark[] = [];
   private loaded: Promise<void> | null = null;
   private contextMenu = new ContextMenu();
+  /** Plan usage per Claude login, at the sidebar's foot and on the rail. */
+  private usagePanel: UsagePanel;
   private confirmDialog = new ConfirmDialog(document.body);
   private disposables: (() => void)[] = [];
   private refreshTimer: ReturnType<typeof setTimeout> | null = null;
@@ -176,6 +179,12 @@ export class BookmarksPanel {
     this.labelInput = this.panel.querySelector('.bookmarks-form-label') as HTMLInputElement;
     this.formError = this.panel.querySelector('.bookmarks-form-error') as HTMLElement;
     this.addButton = this.panel.querySelector('.bookmarks-add') as HTMLButtonElement;
+    this.usagePanel = new UsagePanel({
+      parent: this.panel,
+      before: this.panel.querySelector('.bookmarks-resizer'),
+      rail: this.rail,
+      railTitle: this.rail.title,
+    });
 
     const savedWidth = Number(localStorage.getItem(WIDTH_STORAGE_KEY));
     if (Number.isFinite(savedWidth) && savedWidth >= DEFAULTS.BOOKMARKS_PANEL_MIN_WIDTH) {
@@ -990,6 +999,7 @@ export class BookmarksPanel {
     for (const d of this.disposables) d();
     this.contextMenu.dispose();
     this.confirmDialog.dispose();
+    this.usagePanel.dispose();
     this.rail.remove();
     this.panel.remove();
   }

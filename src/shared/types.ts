@@ -364,6 +364,11 @@ export interface PattonAPI {
     get: () => Promise<PageTitleMap | null>;
     onChanged: (callback: (titles: PageTitleMap) => void) => () => void;
   };
+  /** Plan usage per Claude login: the last reading (null when the call was refused), and every change. */
+  planUsage: {
+    get: () => Promise<import('./plan-usage').PlanUsage | null>;
+    onChanged: (callback: (usage: import('./plan-usage').PlanUsage) => void) => () => void;
+  };
   // --- Project board ---
   board: {
     get: () => Promise<BoardPayload>;

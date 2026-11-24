@@ -3,6 +3,7 @@ import { IPC, uiTextScaleFromArgv } from '../shared/constants';
 import type { BoardLayout, BoardPayload, Bookmark, ConfirmRequest, PageTitleMap, PattonAPI, PauseAllRunRequest, RenderSnapshot } from '../shared/types';
 import { SESSION_FEED_IPC, type SessionFeedEvent } from '../shared/session-feed';
 import { REVIEW_IPC, type ReviewDocInfo } from '../shared/review';
+import type { PlanUsage } from '../shared/plan-usage';
 
 const api: PattonAPI = {
   getPathForFile: (file) => webUtils.getPathForFile(file),
@@ -107,6 +108,14 @@ const api: PattonAPI = {
       const listener = (_event: Electron.IpcRendererEvent, titles: PageTitleMap) => callback(titles);
       ipcRenderer.on(IPC.PAGE_TITLES_CHANGED, listener);
       return () => ipcRenderer.removeListener(IPC.PAGE_TITLES_CHANGED, listener);
+    },
+  },
+  planUsage: {
+    get: () => ipcRenderer.invoke(IPC.PLAN_USAGE_GET),
+    onChanged: (callback) => {
+      const listener = (_event: Electron.IpcRendererEvent, usage: PlanUsage) => callback(usage);
+      ipcRenderer.on(IPC.PLAN_USAGE_CHANGED, listener);
+      return () => ipcRenderer.removeListener(IPC.PLAN_USAGE_CHANGED, listener);
     },
   },
   // --- Project board ---

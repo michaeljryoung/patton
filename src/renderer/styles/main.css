@@ -182,6 +182,7 @@ html, body {
 .notes-header,
 .bookmarks-header,
 .bookmarks-group-title,
+.usage-title,
 .settings-label {
   font-size: var(--head);
   font-weight: 400;
@@ -638,6 +639,155 @@ html, body {
 
 .bookmark-row:hover .bookmark-grip {
   opacity: 1;
+}
+
+/* --- Plan usage at the sidebar's foot (components/usage-panel.ts, layout U1
+ * from docs/mocks/usage-panel.html): each Claude login's week as a percent, a
+ * 4 px meter and its reset, live login first in bold. Colour only for meaning:
+ * ink meters, amber from 80%, red at 100%. */
+.usage-panel {
+  flex-shrink: 0;
+  display: grid;
+  gap: calc(9px * var(--ui-scale));
+  padding: calc(8px * var(--ui-scale)) 12px calc(10px * var(--ui-scale));
+  border-top: 1px solid var(--hairline);
+  line-height: 1.3;
+  user-select: none;
+}
+
+.usage-panel[hidden] {
+  display: none;
+}
+
+.usage-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.usage-time,
+.usage-sub {
+  color: var(--muted);
+  font-size: calc(11px * var(--ui-scale));
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-acct {
+  display: grid;
+  gap: calc(3px * var(--ui-scale));
+  min-width: 0;
+}
+
+.usage-acct-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  color: var(--ink);
+}
+
+.usage-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.usage-acct.live .usage-name {
+  font-weight: 700;
+}
+
+.usage-tag {
+  margin-left: 5px;
+  font-size: calc(9.5px * var(--ui-scale));
+  font-weight: 400;
+  letter-spacing: var(--head-ls);
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.usage-pct {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.usage-meter {
+  display: block;
+  position: relative;
+  height: 4px;
+  background: var(--grey);
+}
+
+.usage-meter > i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--ink);
+}
+
+.usage-acct.warn > .usage-meter > i,
+.usage-five.warn .usage-meter > i {
+  background: var(--amber);
+}
+
+.usage-acct.full > .usage-meter > i,
+.usage-five.full .usage-meter > i {
+  background: var(--red);
+}
+
+.usage-acct.warn .usage-pct,
+.usage-five.warn .usage-five-pct {
+  color: var(--amber-text);
+}
+
+.usage-acct.full .usage-pct,
+.usage-five.full .usage-five-pct {
+  color: var(--error-text);
+}
+
+.usage-five {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.usage-five .usage-meter {
+  flex: 1;
+  height: 2px;
+}
+
+/* The hidden sidebar's strip: one 3 px bar per login (live first) at its foot,
+ * filled to the week's percent in a 40 px track, the same colours. */
+.usage-rail {
+  display: flex;
+  align-items: flex-end;
+  gap: 1px;
+  height: 40px;
+  margin: auto 0 10px;
+}
+
+.usage-rail[hidden] {
+  display: none;
+}
+
+.usage-rail-bar {
+  position: relative;
+  width: 3px;
+  height: 100%;
+  background: var(--grey);
+}
+
+.usage-rail-bar > i {
+  position: absolute;
+  inset: auto 0 0 0;
+  background: var(--ink);
+}
+
+.usage-rail-bar.warn > i {
+  background: var(--amber);
+}
+
+.usage-rail-bar.full > i {
+  background: var(--red);
 }
 
 /* Drag handle on the panel's right edge to resize it */

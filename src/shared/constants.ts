@@ -32,6 +32,9 @@ export const IPC = {
   // --- end bookmarks ---
   PAGE_TITLES_GET: 'page-titles:get',
   PAGE_TITLES_CHANGED: 'page-titles:changed',
+  /** Plan usage per Claude login (main/plan-usage-ipc.ts). */
+  PLAN_USAGE_GET: 'plan-usage:get',
+  PLAN_USAGE_CHANGED: 'plan-usage:changed',
 
   SETTINGS_UI_TEXT_SCALE: 'settings:ui-text-scale',
   APP_SETTINGS: 'app:settings',

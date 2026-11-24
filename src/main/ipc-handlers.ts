@@ -14,6 +14,7 @@ import { registerClipboardImageHandlers } from './clipboard-image';
 import { registerSessionFeedHandlers } from './session-feed-ipc';
 import { registerCopyOriginalHandlers } from './copy-original-ipc';
 import { registerPageTitleHandlers } from './page-titles-ipc';
+import { registerPlanUsageHandlers } from './plan-usage-ipc';
 import { openReview, registerReviewHandlers } from './review-docs';
 import { getSystemFonts } from './system-fonts';
 import { RateLimiter } from './rate-limiter';
@@ -1016,6 +1017,7 @@ export function registerIpcHandlers(ptyManager: PtyManager): void {
   registerClipboardImageHandlers();
   registerReviewHandlers();
   const pageTitles = registerPageTitleHandlers();
+  registerPlanUsageHandlers();
   const sessionFeed = registerSessionFeedHandlers(ptyManager, (p) => {
     pageTitles.learnPublish(p).catch((err) => console.warn('[TITLE] learn failed', { code: (err as { code?: unknown } | null)?.code ?? null }));
   });

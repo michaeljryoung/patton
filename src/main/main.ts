@@ -5,6 +5,7 @@ import { registerIpcHandlers } from './ipc-handlers';
 import { createWindow } from './window-manager';
 import { guardBeforeQuit } from './quit-guard';
 import { stopPageTitleBackfill } from './page-titles-ipc';
+import { stopPlanUsagePoll } from './plan-usage-ipc';
 import { buildMenu } from './menu';
 import { getSettings } from './store';
 import { installFileLogger } from './logger';
@@ -128,6 +129,7 @@ app.on('before-quit', (event) => {
 
   globalShortcut.unregisterAll();
   stopPageTitleBackfill();
+  stopPlanUsagePoll();
   try {
     ptyManager.destroyAll();
   } catch (err) {
