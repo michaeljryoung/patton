@@ -1587,6 +1587,7 @@ export class TabManager {
         flag: t.flag,
         autoFlag: t.autoFlag,
         parked: t.parked,
+        working: t.working,
         waitingText: t.waitingText,
         wake: isWakeTab(t),
       })),

@@ -533,6 +533,20 @@
   animation: none;
 }
 
+/* --- Claude working (W1) ---
+ * Michael's pick on the S63 try-out page ("W1 · Still dot"): a small grey dot
+ * that never moves, in the strip's muted ink, while Claude is mid-turn and no
+ * other mark applies (tab-bar.ts). 5 px plus 2 px each side keeps the 9 px
+ * slot, so a tab doesn't shift when a turn starts or ends. */
+.tab-bar-tab-indicator.working {
+  width: 5px;
+  height: 5px;
+  margin: 0 2px;
+  background: var(--muted);
+  box-shadow: none;
+  animation: none;
+}
+
 .tab-bar-tab-rename {
   flex: 1;
   min-width: 40px;

@@ -75,6 +75,9 @@ interface TabHeaderInfo {
   /** Claude Code is waiting on its own background work (Stop hook or OSC
    *  7501 task records, whose titles are untrusted text), not on you. */
   parked?: { tasks: number; crons: number; titles?: string[] } | null;
+  /** Claude is mid-turn in one of its panes (Tab.working): a still grey dot,
+   *  only when no other mark is (W1, docs/tab-select.md). */
+  working?: boolean;
   /** Why the tab needs you (Claude Code's own status report), plain text. */
   waitingText?: string | null;
   /** The tab group it is in, if any (a group's tabs are one unbroken run). */
@@ -105,12 +108,13 @@ function parkedText({ tasks, crons, titles }: { tasks: number; crons: number; ti
 }
 
 /** The tab's title plus whatever its dot says, e.g. "patton, waiting for you". */
-function tabLabel(tab: TabHeaderInfo, needsYou: boolean, shownFlag: TabFlag | null, ckpt: boolean): string {
+function tabLabel(tab: TabHeaderInfo, needsYou: boolean, shownFlag: TabFlag | null, ckpt: boolean, working: boolean): string {
   const states: string[] = [];
   if (ckpt) states.push('checkpoint finished');
   if (needsYou) states.push(tab.waitingText ? `waiting for you (${tab.waitingText})` : 'waiting for you');
   if (shownFlag) states.push(`flagged ${shownFlag}`);
   if (tab.parked && !needsYou && !shownFlag) states.push(parkedText(tab.parked).toLowerCase());
+  if (working) states.push('Claude working');
   return states.length > 0 ? `${tab.title}, ${states.join(', ')}` : tab.title;
 }
 
@@ -613,12 +617,23 @@ export class TabBar {
         ring.setAttribute('role', 'img');
         el.appendChild(ring);
       }
+      // W1, his pick on the S63 try-out page: Claude is mid-turn and nothing
+      // above applies, so a small still grey dot (tabs.css `.working`), on the
+      // active tab too. Lowest of all: never hides a mark that asks for you.
+      const showWorking = !shownFlag && !ckpt && !needsYou && !tab.parked && !!tab.working;
+      if (showWorking) {
+        const dot = document.createElement('span');
+        dot.className = 'tab-bar-tab-indicator working';
+        dot.setAttribute('aria-label', 'Claude working');
+        dot.setAttribute('role', 'img');
+        el.appendChild(dot);
+      }
 
       // One label for screen readers and the hover tooltip: a tab's children
       // are presentational in ARIA, so the dots' own labels never reach the
       // tab's accessible name, and the dots themselves have no tooltip. With
       // the hover card on, the card is the tooltip and the tab has no title.
-      const label = tabLabel(tab, needsYou, shownFlag, ckpt)
+      const label = tabLabel(tab, needsYou, shownFlag, ckpt, showWorking)
         + (group ? `, in ${group.name ? `${group.name} group` : 'unnamed group'}` : '');
       el.setAttribute('aria-label', label);
       if (!this.hoverCard) el.title = label;

@@ -1479,6 +1479,13 @@ export class Pane {
 
   // ---- Session bar (docs/session-bar.md) ----
 
+  /** Claude is mid-turn here: working, not asking (a prompt reads as the
+   *  green dot) and not past a turn that ended over a still-working root (the
+   *  ring). The tab strip's still grey dot (W1, docs/tab-select.md) reads it. */
+  get midTurn(): boolean {
+    return this.claudeWorking && !this.claudeBlocked && !this.turnEnded;
+  }
+
   /** Claude runs in this pane (7501 `app=claude-code`, else the title fallback). */
   get isClaudePane(): boolean {
     return this.claudeActive;

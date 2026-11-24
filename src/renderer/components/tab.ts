@@ -55,6 +55,8 @@ export class Tab {
   // The focused pane's checkpoint clock changed, or another pane took focus.
   private onCheckpointChanged: (() => void) | null = null;
   private onStatusChanged: (() => void) | null = null;
+  /** `working` as of the last strip redraw it asked for (noteWorking). */
+  private _lastWorking = false;
   title = 'Terminal';
   private _customTitle = false;
   // The project the focused pane's folder belongs to, if any. Its name outranks
@@ -219,6 +221,9 @@ export class Tab {
         // being built isn't in _panes yet; the tab names itself once it is.
         if (this._panes.includes(p)) this.refreshTitle();
         if (p === this._focusedPane) this.onCheckpointChanged?.();
+        // Its key holds working, blocked and the ring's turn end: the strip's
+        // working dot follows, redrawn only when the tab's answer changes.
+        this.noteWorking();
       },
       onStatusChange: (p) => {
         // A waiting pane's reason is in the tab's tooltip and aria-label.
@@ -299,6 +304,20 @@ export class Tab {
 
   private clearAwaitingInput(pane: Pane): void {
     if (!this._panesNeedingYou.delete(pane)) return;
+    this.onTitleChanged?.();
+  }
+
+  /** Claude is mid-turn in some pane of this tab (Pane.midTurn): the strip's
+   *  still grey dot, drawn only when no other mark is (tab-bar.ts). */
+  get working(): boolean {
+    return this._panes.some((p) => p.midTurn);
+  }
+
+  /** Redraw the strip when `working` changed since the last redraw it asked for. */
+  private noteWorking(): void {
+    const now = this.working;
+    if (now === this._lastWorking) return;
+    this._lastWorking = now;
     this.onTitleChanged?.();
   }
 
@@ -687,6 +706,7 @@ export class Tab {
     // The closed pane may have been the only one running Claude (or the one
     // naming the tab), even when it wasn't the focused one.
     this.refreshTitle();
+    this._lastWorking = this.working; // the redraw below shows it
     this.onTitleChanged?.(); // the bookmarks sidebar counts panes
   }
 
