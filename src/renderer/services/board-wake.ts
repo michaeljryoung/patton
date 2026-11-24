@@ -21,6 +21,12 @@ export function wakeCommandOf(settings: Partial<Pick<AppSettings, 'boardWakeComm
   return typeof value === 'string' ? value.trim() : DEFAULTS.BOARD_WAKE_COMMAND;
 }
 
+/** Wake runs in this tab: one of its panes is titled exactly WAKE. The strip
+ *  draws such a tab compact (tab-bar.ts) and TabManager moves it first. */
+export function isWakeTab(tab: { readonly panes: readonly { readonly title: string }[] }): boolean {
+  return tab.panes.some((pane) => pane.title === WAKE_TITLE);
+}
+
 /** The first pane in the window titled exactly WAKE, with its tab, or null. */
 export function findWakePane(tabs: readonly Tab[]): { tab: Tab; pane: Pane } | null {
   for (const tab of tabs) {

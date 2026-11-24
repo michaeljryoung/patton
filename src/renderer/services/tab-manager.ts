@@ -7,7 +7,7 @@ import { HistoryManager } from './history-manager';
 import { CONFIRM_SHORTCUT_DWELL_MS, DEFAULTS } from '../../shared/constants';
 import { announce } from './announcer';
 import { rlog } from './renderer-logger';
-import { WAKE_TITLE } from './board-wake';
+import { WAKE_TITLE, isWakeTab } from './board-wake';
 import { onProjectNamesChanged, projectDisplay, projectName, projectNameKey, projectRenameFields, startProjectNames } from './project-names';
 import { hoverBlocks, type HoverBlock, type HoverPaneInput } from './tab-hover';
 import type { SessionState, SessionTabState, RendererMode, TabFlag, WindowCloseInfo, ConfirmRequest, PauseAllReport } from '../../shared/types';
@@ -503,7 +503,7 @@ export class TabManager {
    *  window, once per run: a drag elsewhere afterwards sticks, and the tab
    *  stays put when wake ends. The caller redraws the strip. */
   private moveWakeTabFirst(tab: Tab): void {
-    const waking = tab.panes.some((pane) => pane.title === WAKE_TITLE);
+    const waking = isWakeTab(tab);
     if (!waking) {
       this.wakeTabIds.delete(tab.id);
       return;
@@ -1586,6 +1586,7 @@ export class TabManager {
         autoFlag: t.autoFlag,
         parked: t.parked,
         waitingText: t.waitingText,
+        wake: isWakeTab(t),
       })),
       [...this.groups.values()].map((g) => ({ ...g })),
     );

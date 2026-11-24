@@ -4,6 +4,7 @@ import { DEFAULTS } from '../../shared/constants';
 import type { TabFlag } from '../../shared/types';
 import type { HoverBlock } from '../services/tab-hover';
 import { TabHoverCard } from './tab-hover-card';
+import { rlog } from '../services/renderer-logger';
 import { GROUP_NAME_MAX, stateOf, stepMove, strongestState, type StrongestState } from '../services/tab-groups';
 
 export interface TabBarCallbacks {
@@ -78,6 +79,10 @@ interface TabHeaderInfo {
   waitingText?: string | null;
   /** The tab group it is in, if any (a group's tabs are one unbroken run). */
   groupId?: string | null;
+  /** Wake runs in it (a pane titled exactly WAKE, `isWakeTab`): drawn compact,
+   *  its own content's width, neither sharing the strip nor squeezed (tabs.css
+   *  `.wake-compact`). */
+  wake?: boolean;
 }
 
 /** Task titles listed in the parked tooltip before "and N more". */
@@ -230,6 +235,9 @@ export class TabBar {
    *  focus back after the rebuild that click's fold caused) does not, so the
    *  list closes once the pointer leaves. */
   private keyboardModality = false;
+  /** Tabs drawn compact on the last rebuild (wake runs in them), so the log
+   *  line comes once when a tab turns compact or back, not on every redraw. */
+  private compactIds = new Set<string>();
 
   constructor(container: HTMLElement, callbacks: TabBarCallbacks) {
     this.container = container;
@@ -443,6 +451,20 @@ export class TabBar {
     return stepMove(tabs, item, dir, (t) => t.groupId ?? null, (g) => folded.has(g)) !== null;
   }
 
+  /** Log each tab that turned compact (wake started in it) or back since the
+   *  last rebuild. A tab that closed while compact just leaves the set. */
+  private logCompactChanges(tabs: TabHeaderInfo[]): void {
+    const now = new Set(tabs.filter((t) => t.wake).map((t) => t.id));
+    const open = new Set(tabs.map((t) => t.id));
+    for (const id of now) {
+      if (!this.compactIds.has(id)) rlog('info', '[TAB] wake compact', { tabId: id, on: true });
+    }
+    for (const id of this.compactIds) {
+      if (!now.has(id) && open.has(id)) rlog('info', '[TAB] wake compact', { tabId: id, on: false });
+    }
+    this.compactIds = now;
+  }
+
   update(tabs: TabHeaderInfo[], groups: TabGroupHeader[] = []): void {
     this.latestTabs = tabs;
     this.latestGroups = groups;
@@ -475,6 +497,7 @@ export class TabBar {
     const focusedGroupId = focused instanceof HTMLElement && focused.classList.contains('tab-bar-group-chip')
       && this.tabsContainer.contains(focused) ? focused.dataset.groupId ?? null : null;
     this.tabsContainer.innerHTML = '';
+    this.logCompactChanges(tabs);
     for (const tab of tabs) {
       // A chip sits immediately left of its group's tabs; a folded group's tabs
       // stay off the strip.
@@ -486,6 +509,9 @@ export class TabBar {
       if (group?.folded) continue;
       const el = document.createElement('div');
       el.className = `tab-bar-tab${tab.active ? ' active' : ''}${group ? ` in-group group-shade-${shadeOf.get(group.id)}` : ''}`;
+      // Michael, 24 Nov: wake's tab "always just this size even if other tabs
+      // open": as wide as its own label and dot, grouped or not (tabs.css).
+      if (tab.wake) el.classList.add('wake-compact');
       el.dataset.tabId = tab.id;
       if (group) el.dataset.groupId = group.id;
 
