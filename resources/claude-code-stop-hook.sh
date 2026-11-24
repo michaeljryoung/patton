@@ -101,16 +101,22 @@
 #      .jsonl>/subagents/agent-<agentId>.jsonl` (regular files only, read in
 #      name order), so it is dated by its launch line there (the earliest by
 #      timestamp if several files have one; a line with no timestamp sorts
-#      after every dated one): that line's timestamp against the window's
-#      bounds' timestamps, so a shell an agent launched in its first run is
-#      not moved into the window when the checkpoint resumes the agent. A
-#      shell such an agent launches after the human prompt that ends the
-#      window is not its own either, though the agent itself still is. When
-#      the launch line or a bound has no timestamp, or the bounds run out of
-#      order, it falls back to the launch line in the main transcript of the
-#      agent whose file holds it, following nested agents up to the first one
-#      the main transcript launched (5 levels at most). An UNDATED task (no
-#      launch line found, or an empty id) holds `cpd` as before;
+#      after every dated one), or, for an agent an agent re-engaged by
+#      SendMessage, by its latest resume line there, as in the main
+#      transcript: that line's timestamp against the window's bounds'
+#      timestamps, so a shell an agent launched in its first run is not moved
+#      into the window when the checkpoint resumes the agent. A shell such an
+#      agent launches after the human prompt that ends the window is not its
+#      own either, though the agent itself still is. Inside the window it
+#      counts only when the agent whose file holds that line worked for the
+#      checkpoint too: one of the agent's own starts (launch or resume) lies in
+#      the window and came from the checkpoint, in the main transcript by line
+#      or, for a nested agent, by its line's timestamp in an agent file that
+#      passes the same test (5 levels at most); an agent from before the
+#      checkpoint, still running, launches nothing of its own. When a line or
+#      a bound has no timestamp, or the bounds run out of order, only that
+#      chain decides. An UNDATED task (no launch line found, no chain to the
+#      main transcript, or an empty id) holds `cpd` as before;
 #      so does any failure, ids that don't add up to `tasks`, or a reading
 #      past 3 s (the hook's own limit is 10 s). The cost is one regex per
 #      tool-result line and a hash lookup, whatever the number of tasks
@@ -137,7 +143,11 @@
 #                skill's commit script: `[dir/]checkpoint-commit.py` in a
 #                command's place (the start of the command or of a line, or
 #                after `;`, `&` or `|`; past any VAR=value prefixes), run
-#                directly or as `[dir/]python3 [-flags] [dir/]checkpoint-commit.py`.
+#                directly or as `[dir/]python3 [-flags] [dir/]checkpoint-commit.py`,
+#                with `--message` somewhere after it (the script requires it,
+#                so a `--help` or `-h` call is no commit step: it would
+#                otherwise fix a rescue's window at a turn that committed
+#                nothing; all 385 real run lines carried it, 24 Nov 2026).
 #                So `python3 ~/.claude/scripts/checkpoint-commit.py …` and
 #                `cd x; PATTON_NO_INSTALL=1 python3 /abs/checkpoint-commit.py`
 #                count, while a mention (quoted, in a comment, a path given to
@@ -317,7 +327,7 @@ context_fields() { # transcript path, tasks in flight ("" = unknown), their ids 
               || index($_, q("content":"[Request interrupted by user)) >= 0)) {
         if ($g[-1]{i} < 4) { $g[-1]{i}++; push @{$g[-1]{o}}, "$.:$_" }
       } elsif (index($_, q(checkpoint-commit.py)) >= 0 && index($_, q("name":"Bash")) >= 0
-          && /(?:"command":"|[;&|]|\\n)(?:\s|\\[nrt])*(?:[A-Za-z_]\w*=\S*(?:\s|\\[nrt])+)*(?:(?:\S*\/)?python[0-9.]*(?:\s|\\[nrt])+(?:-\S+(?:\s|\\[nrt])+)*)?(?:\S*\/)?checkpoint-commit\.py/) {
+          && /(?:"command":"|[;&|]|\\n)(?:\s|\\[nrt])*(?:[A-Za-z_]\w*=\S*(?:\s|\\[nrt])+)*(?:(?:\S*\/)?python[0-9.]*(?:\s|\\[nrt])+(?:-\S+(?:\s|\\[nrt])+)*)?(?:\S*\/)?checkpoint-commit\.py.*?--message/) {
         if ($g[-1]{c} < 4) {
           $g[-1]{c}++; push @{$g[-1]{o}}, "$.:$_";
           $g[-1]{ids}{$1} = 1 while /"id":"([^"\\]+)"/g;
@@ -328,7 +338,7 @@ context_fields() { # transcript path, tasks in flight ("" = unknown), their ids 
     def commit_ids($o):
       $o.message.content[]? | select(.type? == "tool_use" and .name? == "Bash"
         and ((.input.command? // "") | strings
-             | test("(^|[;&|\\n])\\s*([A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*((\\S*/)?python[0-9.]*\\s+(-\\S+\\s+)*)?(\\S*/)?checkpoint-commit\\.py")))
+             | test("(^|[;&|\\n])\\s*([A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*((\\S*/)?python[0-9.]*\\s+(-\\S+\\s+)*)?(\\S*/)?checkpoint-commit\\.py[\\s\\S]*--message")))
       | .id | strings;
     def kind($o):
       if ($o.isMeta == true) or ($o.isSidechain == true) then null
@@ -420,9 +430,10 @@ context_fields() { # transcript path, tasks in flight ("" = unknown), their ids 
 # their timestamps) and each id's launch line: one key-anchored regex per
 # tool-result line and a hash lookup, so the number of tasks costs nothing.
 # Only for ids it lacks, one pass of the session's subagent transcripts finds
-# each launch key's earliest line; such an id is dated by that line's timestamp
-# against the window's, or, with no usable timestamps, by the main-transcript
-# line of the first agent up its chain (nested agents up to 5 levels).
+# each launch key's earliest line and each resume; such an id is dated by its
+# latest resume or else that launch line, by timestamp against the window's,
+# and counts only when the agent up its chain worked for the checkpoint (one
+# of its starts in the window, nested agents up to 5 levels).
 own_tasks() {
   L="$2" C="$3" IDS="$4" SUB="${1%.jsonl}/subagents" "$PERL" -ne '
     BEGIN {
@@ -442,22 +453,30 @@ own_tasks() {
       if ($C && $. > $C && !$re) { $re = $.; $tsRe = $w }
     }
     next if index($_, q("toolUseResult")) < 0 || index($_, q("isSidechain":true)) >= 0;
+    # %starts: each agent`s main launch line and every resume line, for the
+    # agents up a subagent shell`s chain.
     while (/"(backgroundTaskId|taskId|agentId|resumedAgentId|revivedAgentId)":"([^"\\]+)"/g) {
       my ($k, $v) = ($1, $2);
-      if ($k eq "resumedAgentId" || $k eq "revivedAgentId") { $agent{$v} = $.; $at{$v} = $. if $want{$v} }
-      else { $agent{$v} //= $. if $k eq "agentId"; $at{$v} //= $. if $want{$v} }
+      if ($k eq "resumedAgentId" || $k eq "revivedAgentId") {
+        push @{$starts{$v}}, $. unless @{$starts{$v} || []} && $starts{$v}[-1] == $.;
+        $at{$v} = $. if $want{$v};
+      } else {
+        push @{$starts{$v}}, $. if $k eq "agentId" && !$starts{$v};
+        $at{$v} //= $. if $want{$v};
+      }
     }
     END {
-      $rs = undef if $rs && $end && $rs < $end;   # the commit step sat in the start turn: no second turn
-      $rs = undef unless $end;
+      # $rs, when set, is a human prompt after the start, so $end is set and $rs >= $end.
       my $inside = sub {   # a main-transcript line number
         my $w = shift;
         return ($w >= $L && (!$end || $w < $end)) || ($rs && $w >= $rs && (!$re || $w < $re));
       };
       # Timestamps date the launch line in a subagent file only when every bound has one
-      # and they run in order (fixtures and clock changes can break either).
+      # and they run in order (fixtures and clock changes can break either). They
+      # compare as strings: Claude Code writes every one as fixed-width ISO UTC with
+      # milliseconds (`2026-11-24T09:48:00.123Z`; all 6,413 real files, 24 Nov 2026).
       my $tsok = defined $tsL && (!$end || (defined $tsEnd && $tsL le $tsEnd))
-        && (!$rs || (defined $tsRs && $tsRs ge $tsL && (!$re || (defined $tsRe && $tsRs le $tsRe))));
+        && (!$rs || (defined $tsRs && $tsEnd le $tsRs && (!$re || (defined $tsRe && $tsRs le $tsRe))));
       my $insideTs = sub {
         my $t = shift;
         return ($t ge $tsL && (!$end || $t lt $tsEnd)) || ($rs && $t ge $tsRs && (!$re || $t lt $tsRe));
@@ -467,38 +486,63 @@ own_tasks() {
       if (@cur && opendir(my $d, $ENV{SUB})) {
         my @files = sort grep { /^agent-[A-Za-z0-9_-]+\.jsonl$/ && -f "$ENV{SUB}/$_" } readdir $d;
         closedir $d;
-        my %parent;   # id -> [timestamp or undef, agent] of the earliest launch-key line naming it
+        # id -> [timestamp or undef, agent]: %launch the earliest launch-key line
+        # naming it, %resume its latest resume (SendMessage from inside an agent),
+        # @{$resumes{id}} every resume.
+        my (%launch, %resume, %resumes);
         for my $f (@files) {
           my ($a) = $f =~ /^agent-(.+)\.jsonl$/;
           open(my $h, "<", "$ENV{SUB}/$f") or next;
           while (my $s = <$h>) {
             next if index($s, q("toolUseResult")) < 0;
             my ($when) = $s =~ /"timestamp":"([^"]+)"/;   # undef when the line has none
-            while ($s =~ /"(?:backgroundTaskId|taskId|agentId)":"([^"\\]+)"/g) {
-              my $v = $1;
+            while ($s =~ /"(backgroundTaskId|taskId|agentId|resumedAgentId|revivedAgentId)":"([^"\\]+)"/g) {
+              my ($k, $v) = ($1, $2);
               next if $v eq $a;
-              # Earliest dated line wins. A line with no timestamp sorts after
-              # every dated one, so it is kept only while no dated line names
-              # the id (among undated lines, the first read stays).
-              my $old = $parent{$v};
-              $parent{$v} = [$when, $a]
-                if !$old || (defined $when && (!defined $old->[0] || $when lt $old->[0]));
+              # A line with no timestamp sorts after every dated one, so it is
+              # kept only while no dated line names the id (the first read stays).
+              # Launch: the earliest dated line wins. Resume: the latest does.
+              my $resumed = $k eq "resumedAgentId" || $k eq "revivedAgentId";
+              my $map = $resumed ? \%resume : \%launch;
+              my $old = $map->{$v};
+              $map->{$v} = [$when, $a]
+                if !$old || (defined $when && (!defined $old->[0]
+                  || ($resumed ? $when gt $old->[0] : $when lt $old->[0])));
+              push @{$resumes{$v}}, [$when, $a] if $resumed;
             }
           }
           close $h;
         }
-        for my $x (@cur) {
-          my $q = $parent{$x} or next;
-          # Its own launch line, by time: a shell an agent launched in its
-          # first run stays outside the window when the agent is resumed later.
-          if ($tsok && defined $q->[0]) { $own{$x} = $insideTs->($q->[0]) ? 1 : 0; next }
-          my ($p, %seen) = ($x);
-          for (1 .. 5) {
-            $q = $parent{$p} or last;
-            $p = $q->[1];
-            last if $seen{$p}++;
-            if (defined $agent{$p}) { $own{$x} = $inside->($agent{$p}) ? 1 : 0; last }
+        # Did agent $p work for the checkpoint? Yes when one of its starts (its
+        # launch or a resume) lies in the window and came from the checkpoint: a
+        # main-transcript line in the window, or a line in an agent file, in the
+        # window by time, written by an agent that did (5 levels at most). 1, 0,
+        # or undef when no start of it is found (undated).
+        my $chain;
+        $chain = sub {
+          my ($p, $depth) = @_;
+          if ($starts{$p}) { for (@{$starts{$p}}) { return 1 if $inside->($_) } return 0 }
+          my @q = grep { defined } $launch{$p}, @{$resumes{$p} || []};
+          return undef if $depth >= 5 || !@q;
+          my $r = 0;
+          for my $q (@q) {
+            next if $tsok && defined $q->[0] && !$insideTs->($q->[0]);
+            my $o = $chain->($q->[1], $depth + 1);
+            return 1 if $o;
+            $r = undef unless defined $o;
           }
+          return $r;
+        };
+        for my $x (@cur) {
+          # Dated by its latest resume, else its launch (as in the main
+          # transcript), by time: a shell an agent launched in its first run
+          # stays outside the window when the agent is resumed later. Then the
+          # agent that launched or resumed it must have worked for the checkpoint
+          # too: an older agent still running launches nothing of its own.
+          my $q = $resume{$x} || $launch{$x} or next;
+          if ($tsok && defined $q->[0] && !$insideTs->($q->[0])) { $own{$x} = 0; next }
+          my $o = $chain->($q->[1], 0);
+          $own{$x} = $o if defined $o;
         }
       }
       my ($n, $u) = (0, 0);

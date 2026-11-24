@@ -197,14 +197,14 @@ stopwantN() { printf '{"terminalSequence":"\\u001b]777;patton;stop;tasks=%s;cron
 INTR='{"type":"user","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user]"}]},"timestamp":"2026-10-11T04:50:00.000Z"}'
 INTRT='{"type":"user","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user for tool use]"}]},"timestamp":"2026-10-11T04:50:00.000Z"}'
 INTRS='{"type":"user","message":{"role":"user","content":"[Request interrupted by user]"},"timestamp":"2026-10-11T04:50:00.000Z"}'
-COMMIT1='{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"b","name":"Bash","input":{"command":"python3 ~/.claude/scripts/checkpoint-commit.py --session 3","description":"Commit"}}]},"timestamp":"2026-10-11T04:55:00.000Z"}'
-COMMIT2='{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"b","name":"Bash","input":{"command":"cd /x; PATTON_NO_INSTALL=1 python3 /abs/checkpoint-commit.py","description":"Commit"}}]},"timestamp":"2026-10-11T04:55:00.000Z"}'
+COMMIT1='{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"b","name":"Bash","input":{"command":"python3 ~/.claude/scripts/checkpoint-commit.py . --message \"Session 3\"","description":"Commit"}}]},"timestamp":"2026-10-11T04:55:00.000Z"}'
+COMMIT2='{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"b","name":"Bash","input":{"command":"cd /x; PATTON_NO_INSTALL=1 python3 /abs/checkpoint-commit.py /x \\\n  --message=s3","description":"Commit"}}]},"timestamp":"2026-10-11T04:55:00.000Z"}'
 # A commit step's own result (tool_use id "b"): success, refused, failed.
 COMMITOK='{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"b","content":"OK committed"}]},"timestamp":"2026-10-11T04:55:10.000Z"}'
 COMMITNO='{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"b","is_error":true,"content":"The user doesn'"'"'t want to proceed with this tool use."}]},"timestamp":"2026-10-11T04:55:10.000Z"}'
 COMMITERR='{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"b","is_error":true,"content":"Exit code 1\nFAIL"}]},"timestamp":"2026-10-11T04:55:10.000Z"}'
 OTHEROK='{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"zz","content":"OK"}]},"timestamp":"2026-10-11T04:55:10.000Z"}'
-COMMITCR='{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"b","name":"Bash","input":{"command":"cd /x;\rcheckpoint-commit.py","description":"Commit"}}]},"timestamp":"2026-10-11T04:55:00.000Z"}'
+COMMITCR='{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"b","name":"Bash","input":{"command":"cd /x;\rcheckpoint-commit.py . --message m","description":"Commit"}}]},"timestamp":"2026-10-11T04:55:00.000Z"}'
 EARLY='{"type":"user","message":{"role":"user","content":"<command-message>checkpoint</command-message>\n<command-name>/checkpoint</command-name>"},"timestamp":"2026-10-11T03:00:00.000Z","origin":{"kind":"human"}}'
 EARLYT=1791687600
 # Lines that must NOT count as an interrupt or a commit step.
@@ -213,6 +213,8 @@ NI_RESULT='{"type":"user","message":{"role":"user","content":[{"type":"tool_resu
 NI_SIDE='{"type":"user","isSidechain":true,"message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user]"}]},"timestamp":"2026-10-11T04:50:00.000Z"}'
 NC_QUOTE='{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"b","name":"Bash","input":{"command":"python3 -c \"print('"'"'checkpoint-commit.py'"'"' in cmd)\"","description":"x"}}]},"timestamp":"2026-10-11T04:55:00.000Z"}'
 NC_PATH='{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"b","name":"Bash","input":{"command":"wc -l ~/.claude/scripts/checkpoint-commit.py\n# then checkpoint-commit.py runs","description":"x"}}]},"timestamp":"2026-10-11T04:55:00.000Z"}'
+# The script run without --message (it requires one): a help call commits nothing (review 3, P2).
+NC_HELP='{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"b","name":"Bash","input":{"command":"python3 ~/.claude/scripts/checkpoint-commit.py --help 2>&1 | head -40","description":"x"}}]},"timestamp":"2026-10-11T04:55:00.000Z"}'
 NC_DQUOTE='{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"b","name":"Bash","input":{"command":"grep -c \"checkpoint-commit.py\" notes.txt","description":"x"}}]},"timestamp":"2026-10-11T04:55:00.000Z"}'
 check "cpd: start, Stop with a task running that it never launched (unknown): cpt, no cpd" \
   "$(stopwantN 1 0 ";ctx=400000;since=0;cpt=$CPT;own=0;und=1")" "$(ctxjson "$TD/current.jsonl" "$ONE")"
@@ -227,9 +229,9 @@ check "cpd: a cron alone doesn't hold it back" \
 # Agent, a Monitor, a SendMessage resume; MENTION is a later result that only
 # names an id (TaskOutput's task_id, output text).
 LBASH() { printf '{"type":"user","isSidechain":false,"message":{"role":"user","content":[{"tool_use_id":"tb%s","type":"tool_result","content":"Command running in background with ID: %s."}]},"timestamp":"%s","toolUseResult":{"stdout":"","backgroundTaskId":"%s"}}\n' "$1" "$1" "${2:-2026-10-11T04:40:00.000Z}" "$1"; }
-LAGENT() { printf '{"type":"user","isSidechain":false,"message":{"role":"user","content":[{"tool_use_id":"ta%s","type":"tool_result","content":[{"type":"text","text":"Async agent launched successfully.\\nagentId: %s"}]}]},"timestamp":"2026-10-11T04:40:00.000Z","toolUseResult":{"isAsync":true,"status":"async_launched","agentId":"%s"}}\n' "$1" "$1" "$1"; }
+LAGENT() { printf '{"type":"user","isSidechain":false,"message":{"role":"user","content":[{"tool_use_id":"ta%s","type":"tool_result","content":[{"type":"text","text":"Async agent launched successfully.\\nagentId: %s"}]}]},"timestamp":"%s","toolUseResult":{"isAsync":true,"status":"async_launched","agentId":"%s"}}\n' "$1" "$1" "${2:-2026-10-11T04:40:00.000Z}" "$1"; }
 LMON() { printf '{"type":"user","isSidechain":false,"message":{"role":"user","content":[{"tool_use_id":"tm%s","type":"tool_result","content":"Monitor started (task %s)"}]},"timestamp":"2026-10-11T04:40:00.000Z","toolUseResult":{"taskId":"%s","timeoutMs":300000,"persistent":false}}\n' "$1" "$1" "$1"; }
-LRESUME() { printf '{"type":"user","isSidechain":false,"message":{"role":"user","content":[{"tool_use_id":"tx%s","type":"tool_result","content":"Resuming agent"}]},"timestamp":"2026-10-11T04:41:00.000Z","toolUseResult":{"success":true,"message":"Resuming agent","resumedAgentId":"%s","revivedAgentId":"%s"}}\n' "$1" "$1" "$1"; }
+LRESUME() { printf '{"type":"user","isSidechain":false,"message":{"role":"user","content":[{"tool_use_id":"tx%s","type":"tool_result","content":"Resuming agent"}]},"timestamp":"%s","toolUseResult":{"success":true,"message":"Resuming agent","resumedAgentId":"%s","revivedAgentId":"%s"}}\n' "$1" "${2:-2026-10-11T04:41:00.000Z}" "$1" "$1"; }
 MENTION() { printf '{"type":"user","isSidechain":false,"message":{"role":"user","content":[{"tool_use_id":"tr%s","type":"tool_result","content":"status of %s: still running"}]},"timestamp":"2026-10-11T04:41:00.000Z","toolUseResult":{"retrieval_status":"not_ready","task":{"task_id":"%s"},"stdout":"status of %s"}}\n' "$1" "$1" "$1" "$1"; }
 TN() { printf '{"type":"user","message":{"role":"user","content":"<task-notification>\\n<task-id>%s</task-id>\\n<status>completed</status>\\n</task-notification>"},"origin":{"kind":"task-notification"}}\n' "$1"; }
 SUBL() { sed 's/"isSidechain":false/"isSidechain":true,"agentId":"'"$1"'"/'; }   # a main-style line as agent $1's own
@@ -299,7 +301,7 @@ check "own: a shell from an agent launched before the checkpoint doesn't hold it
   "$(stopwantN 1 0 ";ctx=400000;since=0;cpt=$CPT;cpd=$CPT;own=0;und=0")" "$(ctxjson "$SUBD.jsonl" "$(RUN bbyold000)")"
 check "own: a shell from the checkpoint's own agent holds it" \
   "$(stopwantN 1 0 ";ctx=400000;since=0;cpt=$CPT;own=1;und=0")" "$(ctxjson "$SUBD.jsonl" "$(RUN bbynew000)")"
-LAGENT anest00000000000c | SUBL anew000000000000b >> "$SUBD/subagents/agent-anew000000000000b.jsonl"
+LAGENT anest00000000000c 2026-10-11T04:50:30.000Z | SUBL anew000000000000b >> "$SUBD/subagents/agent-anew000000000000b.jsonl"
 LBASH bnested00 2026-10-11T04:51:00.000Z | SUBL anest00000000000c > "$SUBD/subagents/agent-anest00000000000c.jsonl"
 check "own: two levels down (agent in the checkpoint's agent) holds it" \
   "$(stopwantN 1 0 ";ctx=400000;since=0;cpt=$CPT;own=1;und=0")" "$(ctxjson "$SUBD.jsonl" "$(RUN bnested00)")"
@@ -376,6 +378,33 @@ check "own: an undated launch line (read first) loses to a dated one before the 
 check "own: a mix: own, undated-unknown and older shells counted apart" \
   "$(stopwantN 3 0 ";ctx=400000;since=0;cpt=$CPT;own=1;und=1")" "$(ctxjson "$RSD.jsonl" "$(RUN bresumed2 bnowhere9 bfirstrun1)")"
 rm -f "$RSD"/subagents/*.jsonl "$RSD.jsonl" && rmdir "$RSD/subagents" "$RSD"
+# Third review (P1, P7): a subagent's task is the checkpoint's own only when the
+# agent that launched or re-engaged it worked for the checkpoint too, and a
+# nested agent re-engaged from inside its parent is dated by that resume.
+R3D="$TD/r3"
+mkdir -p "$R3D/subagents"
+{ human hi 2026-10-11T04:00:00.000Z; LAGENT aconc00000000001 2026-10-11T04:10:00.000Z; LAGENT aparent0000000007 2026-10-11T04:10:00.000Z
+  u 0 300000 0; echo "$CKPT"; LRESUME aparent0000000007 2026-10-11T04:49:00.000Z; u 0 400000 0; } > "$R3D.jsonl"
+LBASH bconc0001 2026-10-11T04:50:00.000Z | SUBL aconc00000000001 > "$R3D/subagents/agent-aconc00000000001.jsonl"
+{ LAGENT achild000000007 2026-10-11T04:11:00.000Z; LAGENT achild000000008 2026-10-11T04:11:00.000Z
+  LRESUME achild000000007 2026-10-11T04:49:30.000Z; } | SUBL aparent0000000007 > "$R3D/subagents/agent-aparent0000000007.jsonl"
+LBASH bchild0007 2026-10-11T04:49:40.000Z | SUBL achild000000007 > "$R3D/subagents/agent-achild000000007.jsonl"
+check "own P1: an agent from before the checkpoint, still running, launches a shell in its turn: cpd" \
+  "$(stopwantN 1 0 ";ctx=400000;since=0;cpt=$CPT;cpd=$CPT;own=0;und=0")" "$(ctxjson "$R3D.jsonl" "$(RUN bconc0001)")"
+check "own P7: the checkpoint resumes an agent, which re-engages its older child: holds" \
+  "$(stopwantN 1 0 ";ctx=400000;since=0;cpt=$CPT;own=1;und=0")" "$(ctxjson "$R3D.jsonl" "$(RUN achild000000007)")"
+check "own P7: ... and a shell that child launches after the re-engagement: holds" \
+  "$(stopwantN 1 0 ";ctx=400000;since=0;cpt=$CPT;own=1;und=0")" "$(ctxjson "$R3D.jsonl" "$(RUN bchild0007)")"
+check "own P7: an older child of that agent, never re-engaged, still running: cpd" \
+  "$(stopwantN 1 0 ";ctx=400000;since=0;cpt=$CPT;cpd=$CPT;own=0;und=0")" "$(ctxjson "$R3D.jsonl" "$(RUN achild000000008)")"
+rm -f "$R3D"/subagents/*.jsonl "$R3D.jsonl" && rmdir "$R3D/subagents" "$R3D"
+# Third review (P2): a run of the commit script without --message (--help) is
+# no commit step, so it can't fix a rescued checkpoint's window at its turn.
+NC_HELPI='{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"h","name":"Bash","input":{"command":"python3 ~/.claude/scripts/checkpoint-commit.py --help","description":"x"}}]},"timestamp":"2026-10-11T04:49:10.000Z"}'
+HELPOK='{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"h","content":"usage: checkpoint-commit.py"}]},"timestamp":"2026-10-11T04:49:12.000Z"}'
+{ human hi; echo "$CKPT"; u 0 400000 0; echo "$NC_HELPI"; echo "$HELPOK"; echo "$INTR"; human "go on"; LBASH bgoon0001; echo "$COMMIT1"; echo "$COMMITOK"; u 0 450000 0; } > "$TD/own-p2.jsonl"
+check "own P2: a --help run, an interrupt, his go on, its own job, the commit: holds" \
+  "$(stopwantN 1 0 ";ctx=450000;since=50000;cpt=$CPT;own=1;und=0")" "$(ctxjson "$TD/own-p2.jsonl" "$(RUN bgoon0001)")"
 # Time bound (review: 174 MB took 6.2 s with 60 tasks): the own-task reading
 # costs one regex per tool-result line, whatever the number of tasks. A 60 MB
 # transcript with 60 running tasks, and 60 MB of agent transcripts searched for
@@ -453,8 +482,8 @@ check "not cut off: a commit step after a carriage return (perl prefilter keeps 
 { echo "$CKPT"; u 0 400000 0; echo "$NI_TEXT"; echo "$NI_RESULT"; echo "$NI_SIDE"; human next; u 0 450000 0; } > "$TD/not-intr.jsonl"
 check "not interrupts: assistant text, tool result, sidechain line" \
   "$(stopwant ";ctx=450000;since=50000;cpt=$CPT;cpd=$CPT")" "$(ctxjson "$TD/not-intr.jsonl" "$BOTH")"
-{ echo "$CKPT"; u 0 400000 0; echo "$INTR"; echo "$NC_QUOTE"; echo "$NC_DQUOTE"; echo "$NC_PATH"; human next; u 0 450000 0; } > "$TD/not-commit.jsonl"
-check "not commit steps: the script's name quoted, given to wc, in a comment" \
+{ echo "$CKPT"; u 0 400000 0; echo "$INTR"; echo "$NC_QUOTE"; echo "$NC_DQUOTE"; echo "$NC_PATH"; echo "$NC_HELP"; echo "$COMMITOK"; human next; u 0 450000 0; } > "$TD/not-commit.jsonl"
+check "not commit steps: the script's name quoted, given to wc, in a comment, run with --help" \
   "$(stopwant ";ctx=450000;since=450000")" "$(ctxjson "$TD/not-commit.jsonl" "$BOTH")"
 { echo "$CKPT"; u 0 400000 0; human next; u 0 420000 0; echo "$INTR"; human x; u 0 450000 0; } > "$TD/intr-later.jsonl"
 check "not cut off: an interrupt after the checkpoint's turn ended (next human prompt)" \
