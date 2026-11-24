@@ -4,7 +4,10 @@
 // look, the folded chip (members gone, count, ONE indicator by rank), click /
 // drag / double-click, the keyboard (Enter, Space, menu key, Shift+F10, arrows),
 // aria, the tab menu's group entries and the chip menu, the name box, the list
-// under a folded chip (kept inside the window), a tab dropped on a chip, and
+// under a folded chip (kept inside the window), a tab dropped on a chip, the
+// drop slots and their cue (24 Nov 2026: a line at the slot, in the joining
+// group's colour, its chip marked; Michael's "drag a tab to the edge of the tab
+// group, and it will include it"), and
 // focus: a chip press keeps the terminal's, a folded tab's goes to its chip.
 // Run: JSDOM_DIR=<a folder whose node_modules has jsdom> node scripts/check-tab-groups-strip.mjs
 import { build } from 'esbuild';
@@ -22,7 +25,8 @@ const { JSDOM } = createRequire(join(jsdomDir, 'noop.js'))('jsdom');
 const repo = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 const bundle = await build({
-  stdin: { contents: `export { TabBar } from './src/renderer/components/tab-bar';`, resolveDir: repo, loader: 'ts' },
+  stdin: { contents: `export { TabBar } from './src/renderer/components/tab-bar';
+export { dropPlacement } from './src/renderer/services/tab-groups';`, resolveDir: repo, loader: 'ts' },
   bundle: true, format: 'iife', globalName: 'TB', platform: 'browser', write: false,
   loader: { '.css': 'empty' }, logLevel: 'silent',
 });
@@ -47,12 +51,13 @@ w.eval(bundle.outputFiles[0].text);
 
 // --- recording callbacks ---
 const calls = [];
+let applyDrops = false;
 const rec = (name) => (...args) => { calls.push([name, ...args]); };
 const callsOf = (name) => calls.filter((c) => c[0] === name);
 const clear = () => { calls.length = 0; };
 const noop = () => {};
 const bar = new w.TB.TabBar(doc.getElementById('bar'), {
-  onSelect: rec('select'), onClose: noop, onNew: noop, onReorder: rec('reorder'), onSettings: noop,
+  onSelect: rec('select'), onClose: noop, onNew: noop, onSettings: noop,
   onSetFlag: noop, onRename: noop, onRenameProject: noop,
   onNewGroup: (tabId) => {
     calls.push(['newGroup', tabId]);
@@ -63,6 +68,17 @@ const bar = new w.TB.TabBar(doc.getElementById('bar'), {
     return 'gnew';
   },
   onAddToGroup: rec('addToGroup'),
+  // As TabManager.dropTabs does, when a section turns it on: the same rule, then a redraw.
+  onDropTabs: (ids, over) => {
+    calls.push(['dropTabs', ids, over]);
+    if (!applyDrops) return;
+    const folded = new Set(state.groups.filter((g) => g.folded).map((g) => g.id));
+    const moving = state.tabs.filter((t) => ids.includes(t.id));
+    const o = over.kind === 'tab' ? { kind: 'tab', item: state.tabs.find((t) => t.id === over.id), half: over.half } : over;
+    const p = w.TB.dropPlacement(state.tabs, moving, o, (t) => t.groupId ?? null, (g) => folded.has(g));
+    if (!p || p.kind !== 'slot') return;
+    draw(p.list.map((t) => (moving.includes(t) ? { ...t, groupId: p.group ?? undefined } : t)), state.groups);
+  },
   onRemoveFromGroup: rec('removeFromGroup'),
   onRenameGroup: rec('renameGroup'),
   onToggleGroup: rec('toggleGroup'),
@@ -517,17 +533,18 @@ await section('10. Drop on a chip', 9, async () => {
   chip('g2').dispatchEvent(dragEv('dragover'));
   check('dragging a tab over a chip marks it as a drop target', chip('g2').classList.contains('drag-over'));
   chip('g2').dispatchEvent(dragEv('drop'));
-  check('a tab dropped on a chip calls onAddToGroup(tab, group)', JSON.stringify(callsOf('addToGroup')) === JSON.stringify([['addToGroup', 'a', 'g2']]), calls);
-  check('...and not onReorder', callsOf('reorder').length === 0, calls);
+  check('a tab dropped on a chip calls onDropTabs([tab], that chip)', JSON.stringify(callsOf('dropTabs')) === JSON.stringify([['dropTabs', ['a'], { kind: 'chip', groupId: 'g2' }]]), calls);
+  check('...and no cue is left', !doc.querySelector('.drag-over, .drop-before, .drop-after'), calls);
   grip.dispatchEvent(dragEv('dragend'));
   clear();
   const grip2 = tabEl('g2a').querySelector('.tab-bar-tab-grip');
   dt.data = {};
   grip2.dispatchEvent(dragEv('dragstart'));
   chip('g2').dispatchEvent(dragEv('dragover'));
+  const ownCue = chip('g2').classList.contains('drag-over');
   chip('g2').dispatchEvent(dragEv('drop'));
   grip2.dispatchEvent(dragEv('dragend'));
-  check('a tab dropped on its own group\'s chip calls nothing', callsOf('addToGroup').length === 0, calls);
+  check('a tab over its own group\'s chip shows no cue (the drop changes nothing; TabManager does nothing with it)', !ownCue && callsOf('addToGroup').length === 0, calls);
 
   // A drag that began elsewhere (another window's tab-3, or plain text) carries text/plain too: it must do nothing here.
   clear();
@@ -539,20 +556,140 @@ await section('10. Drop on a chip', 9, async () => {
     tabEl('b').dispatchEvent(foreign('drop', 'g2a'));
   } catch (e) { threw = e; }
   check('a foreign drop on a chip calls no callback and throws nothing', callsOf('addToGroup').length === 0 && !threw, { calls, threw: String(threw) });
-  check('a foreign drop on a tab calls no callback (no reorder, no regroup)', callsOf('reorder').length === 0 && callsOf('addToGroup').length === 0, calls);
+  check('a foreign drop on a tab calls no callback (no move, no regroup)', callsOf('dropTabs').length === 0 && callsOf('addToGroup').length === 0, calls);
   // A foreign drop that arrives while a local drag is in flight but names another tab is foreign too.
   const gripB = tabEl('g2a').querySelector('.tab-bar-tab-grip');
   dt.data = {};
   gripB.dispatchEvent(dragEv('dragstart'));
   chip('g1').dispatchEvent(foreign('drop', 'b'));
-  check('...even mid-drag, data that is not the dragged tab is refused', callsOf('addToGroup').length === 0, calls);
+  check('...even mid-drag, data that is not the dragged tab is refused', callsOf('addToGroup').length === 0 && callsOf('dropTabs').length === 0, calls);
   clear();
   tabEl('b').dispatchEvent(dragEv('drop'));
-  check('a drop on a tab after a grip dragstart still calls onReorder(dragged, target)', JSON.stringify(callsOf('reorder')) === JSON.stringify([['reorder', 'g2a', 'b']]), calls);
+  check('a drop on a tab after a grip dragstart calls onDropTabs(dragged, the tab and the half under the pointer)', JSON.stringify(callsOf('dropTabs')) === JSON.stringify([['dropTabs', ['g2a'], { kind: 'tab', id: 'b', half: 'right' }]]), calls);
   gripB.dispatchEvent(dragEv('dragend'));
   clear();
   tabEl('b').dispatchEvent(foreign('drop', 'g2a'));
-  check('after dragend, a drop reading like a tab id does nothing', callsOf('reorder').length === 0, calls);
+  check('after dragend, a drop reading like a tab id does nothing', callsOf('dropTabs').length === 0, calls);
+});
+
+// ============ 10b. Drop slots and their cue (24 Nov 2026) ============
+// Michael: "in Google Chrome, you can drag a tab to the edge of the tab group, and it will include it,
+// whereas in this, that doesn't work. You have to drag it into the middle of it." Every strip item is
+// 100 px wide here (stubbed rects), so x = 20 is a tab's left half and 80 its right.
+await section('10b. Drop slots and their cue', 30, async () => {
+  const realRect = w.Element.prototype.getBoundingClientRect;
+  w.Element.prototype.getBoundingClientRect = function () {
+    if (this.classList?.contains('tab-bar-tab') || this.classList?.contains('tab-bar-group-chip')) {
+      const at = [...this.parentElement.children].indexOf(this) * 100;
+      return { left: at, right: at + 100, width: 100, top: 0, bottom: 30, height: 30, x: at, y: 0 };
+    }
+    return realRect.call(this);
+  };
+  applyDrops = true;
+  try {
+    const dt = { data: {}, setData(k, v) { this.data[k] = v; }, getData(k) { return this.data[k] ?? ''; }, effectAllowed: '', dropEffect: '', setDragImage() {} };
+    const ev = (type, x, related) => {
+      const e = new w.Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(e, 'dataTransfer', { value: dt });
+      if (x !== undefined) Object.defineProperty(e, 'clientX', { value: x });
+      if (related !== undefined) Object.defineProperty(e, 'relatedTarget', { value: related });
+      return e;
+    };
+    const leftOf = (el) => el.getBoundingClientRect().left;
+    const over = (id, half) => { const el = tabEl(id); el.dispatchEvent(ev('dragover', leftOf(el) + (half === 'left' ? 20 : 80))); };
+    const dropOn = (id, half) => { const el = tabEl(id); el.dispatchEvent(ev('drop', leftOf(el) + (half === 'left' ? 20 : 80))); };
+    const startDrag = (id) => { dt.data = {}; tabEl(id).querySelector('.tab-bar-tab-grip').dispatchEvent(ev('dragstart')); };
+    /** The cue now: which tab carries the line and on which side, its colour, the chips marked. */
+    const cue = () => {
+      const lines = [...doc.querySelectorAll('.drop-before, .drop-after')].map((el) => `${el.dataset.tabId}:${el.classList.contains('drop-before') ? 'before' : 'after'}:${el.style.getPropertyValue('--drop-line')}`);
+      const chips = [...doc.querySelectorAll('.tab-bar-group-chip.drag-over')].map((el) => el.dataset.groupId);
+      return `${lines.join(',') || '-'} | ${chips.join(',') || '-'}`;
+    };
+    const order = () => state.tabs.map((t) => (t.groupId ? `${t.id}@${t.groupId}` : t.id)).join(' ');
+
+    // a | [Games g1] g1a g1b | b | [g2] g2a g2b g2c
+    draw();
+    clear();
+    startDrag('a');
+    over('b', 'left');
+    check('his case, the cue: over b\'s near half (Games\' right edge) a line before b in Games\' line colour, Games\' chip marked', cue() === 'b:before:var(--group1-line) | g1', cue());
+    over('b', 'right');
+    check('b\'s far half: a line after b in ink, no chip (the slot before g2\'s chip is outside g2)', cue() === 'b:after:var(--ink) | -', cue());
+    over('g1b', 'right');
+    check('Games\' last tab, right half: a line after it in Games\' colour, its chip marked', cue() === 'g1b:after:var(--group1-line) | g1', cue());
+    over('g1a', 'left');
+    check('Games\' first tab, left half: inside Games, before it', cue() === 'g1a:before:var(--group1-line) | g1', cue());
+    over('g2a', 'left');
+    check('the second group\'s first tab, left half: its own shade (group2), its chip; the earlier cue gone', cue() === 'g2a:before:var(--group2-line) | g2', cue());
+    over('a', 'right');
+    check('over the dragged tab itself: no cue', cue() === '- | -', cue());
+    chip('g2').dispatchEvent(ev('dragover', 250));
+    check('over a chip: that chip marked, no slot line', cue() === '- | g2', cue());
+    over('b', 'left');
+    tabEl('b').dispatchEvent(ev('dragleave', 220, tabEl('g2a')));
+    check('leaving one tab for another keeps the cue (the next dragover redraws it)', cue() === 'b:before:var(--group1-line) | g1', cue());
+    tabEl('b').dispatchEvent(ev('dragleave', 220, doc.body));
+    check('leaving the strip clears every cue', cue() === '- | -', cue());
+    over('b', 'left');
+    dropOn('b', 'left');
+    check('his case, the drop: onDropTabs([a], b left half)', JSON.stringify(callsOf('dropTabs').at(-1)) === JSON.stringify(['dropTabs', ['a'], { kind: 'tab', id: 'b', half: 'left' }]), calls);
+    check('...a joins Games at its end', order() === 'g1a@g1 g1b@g1 a@g1 b g2a@g2 g2b@g2 g2c@g2', order());
+    check('...and no cue is left after the drop', cue() === '- | -' && !doc.querySelector('.dragging'), cue());
+
+    // Out past the edge again: g1's last tab (a) onto b's far half leaves the group; its near half is its own edge.
+    startDrag('a');
+    over('b', 'left');
+    check('the group\'s last tab over the next tab\'s near half (its own edge): no cue (nothing would change)', cue() === '- | -', cue());
+    over('b', 'right');
+    check('...over its far half: an ink line after b (it will leave the group)', cue() === 'b:after:var(--ink) | -', cue());
+    dropOn('b', 'right');
+    check('...dropped there, a leaves Games', order() === 'g1a@g1 g1b@g1 b a g2a@g2 g2b@g2 g2c@g2', order());
+
+    // dragend clears the cue.
+    startDrag('a');
+    over('g1b', 'right');
+    tabEl('a').querySelector('.tab-bar-tab-grip').dispatchEvent(ev('dragend'));
+    check('dragend clears every cue', cue() === '- | -', cue());
+
+    // A folded group: only its chip joins it.
+    fold('g1');
+    clear();
+    startDrag('a');
+    over('b', 'left');
+    check('folded Games: the slot after its chip is not a join (ink, no chip)', cue() === 'b:before:var(--ink) | -', cue());
+    chip('g1').dispatchEvent(ev('dragover', 50));
+    check('...its chip still takes the drop', cue() === '- | g1', cue());
+    over('b', 'left');
+    dropOn('b', 'left');
+    check('...dropped before b, a stays ungrouped', order() === 'g1a@g1 g1b@g1 a b g2a@g2 g2b@g2 g2c@g2', order());
+
+    // Two adjacent groups: a | [g1] g1a g1b | [g2] g2a g2b g2c
+    draw(baseTabs().filter((t) => t.id !== 'b'));
+    startDrag('a');
+    over('g1b', 'right');
+    check('two adjacent groups: the first\'s last tab, right half (before the second\'s chip): joins the first', cue() === 'g1b:after:var(--group1-line) | g1', cue());
+    over('g2a', 'left');
+    check('...the second\'s first tab, left half: joins the second', cue() === 'g2a:before:var(--group2-line) | g2', cue());
+    tabEl('a').querySelector('.tab-bar-tab-grip').dispatchEvent(ev('dragend'));
+
+    // A selection: a (the tab you're on) and g2b, ⌘-clicked, dropped together at Games' right edge.
+    draw();
+    const meta = (id) => { fire(tabEl(id).querySelector('.tab-bar-tab-title'), 'mousedown', { screenX: 50, screenY: 50, metaKey: true }); fire(doc, 'mouseup', { screenX: 50, screenY: 50 }); };
+    meta('g2b');
+    check('set-up: g2b ⌘-clicked into the selection with a', JSON.stringify(bar.selectedIds()) === JSON.stringify(['a', 'g2b']), bar.selectedIds());
+    clear();
+    startDrag('g2b');
+    over('b', 'left');
+    check('a selection over b\'s near half: Games\' colour and chip', cue() === 'b:before:var(--group1-line) | g1', cue());
+    dropOn('b', 'left');
+    check('...dropped: onDropTabs([a, g2b], b left)', JSON.stringify(callsOf('dropTabs').at(-1)) === JSON.stringify(['dropTabs', ['a', 'g2b'], { kind: 'tab', id: 'b', half: 'left' }]), calls);
+    check('...both join Games at its end, in strip order, g2 still one run', order() === 'g1a@g1 g1b@g1 a@g1 g2b@g1 b g2a@g2 g2c@g2', order());
+    check('...no cue left', cue() === '- | -', cue());
+  } finally {
+    applyDrops = false;
+    w.Element.prototype.getBoundingClientRect = realRect;
+    draw();
+  }
 });
 
 await section('11. Focus: a chip click keeps the terminal\'s focus; a folded tab\'s focus goes to its chip', 6, async () => {
@@ -700,14 +837,17 @@ await section('12. The folded chip\'s list stays inside the window\'s right edge
   check('shades: the chip\'s secondary lettering is a --muted mix read from tabs.css (a percentage of ink)', chipMutedPct > 0 && chipMutedPct < 100, chipMutedPct);
   // The colour var the drop line takes in each rule that draws it.
   const dropVar = (sel) => tabsCss.replace(/\/\*[\s\S]*?\*\//g, '').match(new RegExp(`${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{[^}]*inset 2px 0 0 var\\(--([a-z-]+)\\)`))?.[1];
-  const drops = { chip: dropVar('.tab-bar-group-chip.drag-over'), tab: dropVar('.tab-bar-tab.in-group.drag-over'), selected: dropVar('.tab-bar-tab.in-group.active.drag-over') };
-  check('shades: the drop line on a chip, a grouped tab and the selected grouped tab each name a colour token', Object.values(drops).every(Boolean), drops);
+  // The chip's drop line (a drop on it, or a slot that joins its group) and the slot line between
+  // tabs (24 Nov 2026): --drop-line, which tab-bar.ts sets to the joining group's --groupN-line, else ink.
+  const drops = { chip: dropVar('.tab-bar-group-chip.drag-over') };
+  const slotLine = /\.tab-bar-tab\.drop-before::after,\s*\.tab-bar-tab\.drop-after::after\s*\{[^}]*background:\s*var\(--drop-line, var\(--ink\)\)/.test(tabsCss.replace(/\/\*[\s\S]*?\*\//g, ''));
+  check('shades: the chip\'s drop line names a colour token, and the slot line is --drop-line falling back to ink', !!drops.chip && slotLine, { drops, slotLine });
   for (const mode of ['light', 'dark']) {
     const T = (n) => colourIn(mode, n);
     const ink = T('ink');
     const sec = mix(ink, T('muted'), chipMutedPct / 100);
     const edge = T('dot-edge');
-    const rows = { ink: [], secondary: [], status: [], drop: [] };
+    const rows = { ink: [], secondary: [], status: [], drop: [], join: [] };
     want[mode].forEach(([tab, chipC, line], i) => {
       const L = hex(line);
       const fills = [['tab', hex(tab)], ['tab hover', mix(L, hex(tab), 0.18)], ['chip', hex(chipC)], ['chip hover', mix(L, hex(chipC), 0.25)], ['selected', T('bg')]];
@@ -722,9 +862,10 @@ await section('12. The folded chip\'s list stays inside the window\'s right edge
         rows.status.push([`${tag} parked ring`, +ratio(T('parked'), fill).toFixed(2)]);
         if (what.startsWith('chip')) rows.secondary.push([`${tag} chip lettering`, +ratio(sec, fill).toFixed(2)]);
         if (what === 'tab') rows.secondary.push([`${tag} --muted title`, +ratio(T('muted'), fill).toFixed(2)]);
-        if (what !== 'selected' || drops.selected) {
-          const dv = drops[what.startsWith('chip') ? 'chip' : what === 'selected' ? 'selected' : 'tab'];
-          if (dv) rows.drop.push([`${tag} drop line --${dv}`, +ratio(T(dv), fill).toFixed(2)]);
+        if (what.startsWith('chip')) rows.drop.push([`${tag} drop line --${drops.chip}`, +ratio(T(drops.chip), fill).toFixed(2)]);
+        else {
+          rows.drop.push([`${tag} slot line --ink`, +ratio(ink, fill).toFixed(2)]);
+          rows.join.push([`${tag} joining slot line --group${i + 1}-line`, +ratio(L, fill).toFixed(2)]);
         }
       }
     });
@@ -733,7 +874,10 @@ await section('12. The folded chip\'s list stays inside the window\'s right edge
     check(`shades: ${mode}, ink reaches 4.5:1 on every group fill and its hover (lowest ${low(rows.ink)})`, under(rows.ink, 4.5).length === 0, under(rows.ink, 4.5));
     check(`shades: ${mode}, secondary text (the chips' --muted mix, an inactive tab's --muted title) reaches 4.5:1 (lowest ${low(rows.secondary)})`, under(rows.secondary, 4.5).length === 0, under(rows.secondary, 4.5));
     check(`shades: ${mode}, status dots, flags and the parked ring reach 3:1 on every fill, counting a dot's edge as its outline (lowest ${low(rows.status)})`, under(rows.status, 3).length === 0, under(rows.status, 3).slice(0, 6));
-    check(`shades: ${mode}, the drop line on a chip, a tab and the selected tab reaches 3:1 on every fill (lowest ${low(rows.drop)})`, rows.drop.length > 0 && under(rows.drop, 3).length === 0, under(rows.drop, 3));
+    check(`shades: ${mode}, the chip's drop line and the ink slot line reach 3:1 on every fill (lowest ${low(rows.drop)})`, rows.drop.length > 0 && under(rows.drop, 3).length === 0, under(rows.drop, 3));
+    // Not a bar: the joining slot line is the group's own pale line colour (as briefed), so a join is
+    // also shown by the chip's --focus line above, which passes.
+    console.log(`info  shades: ${mode}, a joining slot line in its group's line colour on that group's fills: lowest ${low(rows.join)}:1`);
   }
 }
 

@@ -77,7 +77,14 @@ function makeDt() {
     effectAllowed: '', dropEffect: '',
   };
 }
-const dragEv = (type, dt) => { const e = new w.Event(type, { bubbles: true, cancelable: true }); Object.defineProperty(e, 'dataTransfer', { value: dt }); return e; };
+/** A drag event; `half` puts the pointer over that half of the target (jsdom's rects are all 0 wide, so
+ *  clientX -1 is left of a tab's middle and 1 right of it; no clientX reads as the right half). */
+const dragEv = (type, dt, half) => {
+  const e = new w.Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperty(e, 'dataTransfer', { value: dt });
+  if (half) Object.defineProperty(e, 'clientX', { value: half === 'left' ? -1 : 1 });
+  return e;
+};
 
 /** A B [C D]=Research E F [G]=Other, B active; then B ⇧-click E: B C D E selected. */
 async function fourSpanningGroup() {
@@ -288,7 +295,7 @@ await section(async () => {
   check('drag of a selected tab: all four drawn dragging', [...tm.bar.querySelectorAll('.tab-bar-tab.dragging')].length === 4);
   check('…with a "4 tabs" drag picture', dt.images.join() === '4 tabs', dt.images);
   tabEl(tm, 'D').dispatchEvent(dragEv('dragover', dt));
-  check('…a selected tab shows no drop line', !tabEl(tm, 'D').classList.contains('drag-over'));
+  check('…a selected tab shows no drop line', !tabEl(tm, 'D').matches('.drop-before, .drop-after, .drag-over'));
   tabEl(tm, 'D').dispatchEvent(dragEv('drop', dt));
   check('…a drop on a tab of the selection moves nothing', order(tm) === 'A B C@Research D@Research E F G@Other', order(tm));
   grip.dispatchEvent(dragEv('dragend', dt));
@@ -296,7 +303,7 @@ await section(async () => {
   const dt2 = makeDt();
   tabEl(tm, 'C').querySelector('.tab-bar-tab-grip').dispatchEvent(dragEv('dragstart', dt2));
   tabEl(tm, 'G').dispatchEvent(dragEv('drop', dt2));
-  check('drop on a grouped tab to the right: after it, in order, all joining its group', order(tm) === 'A F G@Other B@Other C@Other D@Other E@Other', order(tm));
+  check('drop on a grouped tab (right half): after it, in order, all joining its group', order(tm) === 'A F G@Other B@Other C@Other D@Other E@Other', order(tm));
   const moved = logs.slice(mark).find((l) => l.msg === '[TAB] moved together');
   check('…[TAB] moved together {count, to}', moved?.data?.count === 4 && moved?.data?.to === idOf(tm, 'G'), moved);
   check('…[GROUP] tabs moved between groups with the count', logs.slice(mark).some((l) => l.msg === '[GROUP] tabs moved between groups' && l.data?.count === 4));
@@ -305,8 +312,8 @@ await section(async () => {
   const m3 = logs.length;
   const dt3 = makeDt();
   tabEl(tm, 'E').querySelector('.tab-bar-tab-grip').dispatchEvent(dragEv('dragstart', dt3));
-  tabEl(tm, 'A').dispatchEvent(dragEv('drop', dt3));
-  check('drop on an ungrouped tab to the left: before it, out of their groups', order(tm) === 'B C D E A F G@Other', order(tm));
+  tabEl(tm, 'A').dispatchEvent(dragEv('drop', dt3, 'left'));
+  check('drop on an ungrouped tab\'s left half: before it, out of their groups', order(tm) === 'B C D E A F G@Other', order(tm));
   runsSound(tm, 'drop on ungrouped tab', m3);
 });
 await section(async () => {
@@ -334,8 +341,8 @@ await section(async () => {
   const dt = makeDt();
   tabEl(tm, 'F').querySelector('.tab-bar-tab-grip').dispatchEvent(dragEv('dragstart', dt));
   check('an unselected tab drags alone, no "N tabs" picture', tm.bar.querySelectorAll('.tab-bar-tab.dragging').length === 1 && dt.images.length === 0);
-  tabEl(tm, 'A').dispatchEvent(dragEv('drop', dt));
-  check('…and moves as one tab did before (reorder)', order(tm).startsWith('F A B'), order(tm));
+  tabEl(tm, 'A').dispatchEvent(dragEv('drop', dt, 'left'));
+  check('…and moves as one tab does (before A, at its left half)', order(tm).startsWith('F A B'), order(tm));
   // A drop from another window (tab ids repeat across windows) is ignored.
   const other = await makeWindow(['X', 'Y', 'Z']);
   const before = order(tm);
@@ -391,11 +398,6 @@ await section(async () => {
     s(G.takeBlockOutOfGroup(['a', 'c', 'd', 'k', 'e'], ['c', 'd'], 'R', gOf({ k: 'R' }))) === 'akcde');
   check('takeBlockOutOfGroup: none remain → where they are',
     s(G.takeBlockOutOfGroup(list, ['c', 'd'], 'R', gOf({}))) === s(list));
-  check('moveBlockTo: target right of the first moved → after it',
-    s(G.moveBlockTo(list, ['b', 'c'], 'e', gOf({}))) === 'adebcfg');
-  check('moveBlockTo: target left → before it', s(G.moveBlockTo(list, ['e', 'f'], 'b', gOf({}))) === 'aefbcdg');
-  check('moveBlockTo: a target in the block leaves the list', s(G.moveBlockTo(list, ['b', 'c'], 'c', gOf({}))) === s(list));
-  check('moveBlockTo: an unknown target leaves the list', s(G.moveBlockTo(list, ['b'], 'zz', gOf({}))) === s(list));
   // Property: for random lists, groups and selections, every helper keeps every run whole.
   let bad = 0;
   let cases = 0;
@@ -420,10 +422,13 @@ await section(async () => {
     let out;
     if (pickOp === 0) { for (const x of moving) m[x] = 'NEW'; out = G.gatherAsNewGroup(items, moving, gOf(m)); }
     else if (pickOp === 1) {
+      // A drag dropped on a random half of a random tab, some groups folded (dropPlacement).
       const target = items[rnd(n)];
-      if (moving.includes(target)) continue;
-      for (const x of moving) { if (m[target]) m[x] = m[target]; else delete m[x]; }
-      out = G.moveBlockTo(items, moving, target, gOf(m));
+      const foldedSet = new Set(Object.values(member).filter(() => rnd(3) === 0));
+      const p = G.dropPlacement(items, moving, { kind: 'tab', item: target, half: rnd(2) ? 'left' : 'right' }, gOf(member), (g) => foldedSet.has(g));
+      if (p === null || p.kind !== 'slot') continue;
+      for (const x of moving) { if (p.group) m[x] = p.group; else delete m[x]; }
+      out = p.list;
     } else if (pickOp === 2) {
       const gid = Object.values(member)[0];
       if (!gid) continue;
@@ -459,7 +464,7 @@ await section(async () => {
   stripEl(tm).dispatchEvent(dragEv('dragover', dt));
   check('end drop: a drag over the empty strip draws the end line', stripEl(tm).classList.contains('drag-over-end'));
   tabEl(tm, 'F').dispatchEvent(dragEv('dragover', dt));
-  check('…over a tab, the end line goes and the tab\'s line shows', !stripEl(tm).classList.contains('drag-over-end') && tabEl(tm, 'F').classList.contains('drag-over'));
+  check('…over a tab, the end line goes and the tab\'s slot line shows', !stripEl(tm).classList.contains('drag-over-end') && tabEl(tm, 'F').classList.contains('drop-after'));
   stripEl(tm).dispatchEvent(dragEv('dragover', dt));
   stripEl(tm).dispatchEvent(dragEv('drop', dt));
   check('a selection dropped on the empty strip goes to the end, in order, out of their groups', order(tm) === 'A F G@Other B C D E', order(tm));
@@ -490,7 +495,7 @@ await section(async () => {
   check('one tab dropped on the drag space goes to the end', order(tm) === 'B C@Research D@Research E F G A', order(tm));
   // A drop on a tab bubbles to the strip: moved once, by the tab's rule, not to the end too.
   const dt3 = dragFrom(tm, 'A');
-  tabEl(tm, 'B').dispatchEvent(dragEv('drop', dt3));
+  tabEl(tm, 'B').dispatchEvent(dragEv('drop', dt3, 'left'));
   check('a drop on a tab is the tab\'s alone (not also an end drop)', order(tm) === 'A B C@Research D@Research E F G', order(tm));
   // A drop on the dragged tab itself (part of the drag) moves nothing.
   clickTab(tm, 'E', { meta: true });
@@ -659,21 +664,24 @@ await section(async () => {
   // Found by the seeded fuzz: the tab you're on moved onto a tab hidden in a folded group.
   const { tm, research } = await fourSpanningGroup();
   tm.toggleGroupFolded(research, 'click');
-  tm.reorder(idOf(tm, 'B'), idOf(tm, 'C'));
+  // Since 24 Nov a drop lands in a slot of the strip: a tab hidden in a folded group is no slot.
+  const before = order(tm);
+  tm.dropTabs([idOf(tm, 'B')], { kind: 'tab', id: idOf(tm, 'C'), half: 'right' });
   const g = tm.getTabGroups().find((x) => x.id === research);
-  check('reorder of the tab you\'re on into a folded group unfolds it (never hidden)', g?.folded === false && g.tabIds.includes(idOf(tm, 'B')), order(tm));
+  check('a drop of the tab you\'re on onto a tab hidden in a folded group does nothing (never hidden)', g?.folded === true && !g.tabIds.includes(idOf(tm, 'B')) && order(tm) === before, order(tm));
   const t2 = (await fourSpanningGroup()).tm;
   const r2 = t2.getTabGroups()[0].id;
   t2.toggleGroupFolded(r2, 'click');
-  t2.moveTabsTo([idOf(t2, 'B'), idOf(t2, 'E')], idOf(t2, 'D'));
-  check('…and so does a selection holding it moved there', t2.getTabGroups().find((x) => x.id === r2)?.folded === false, order(t2));
+  const before2 = order(t2);
+  t2.dropTabs([idOf(t2, 'B'), idOf(t2, 'E')], { kind: 'tab', id: idOf(t2, 'D'), half: 'left' });
+  check('…nor a selection holding it', t2.getTabGroups().find((x) => x.id === r2)?.folded === true && order(t2) === before2, order(t2));
 });
 await section(async () => {
   // The ⇧ anchor follows its tab through a reorder.
   const tm = await makeWindow(['A', 'B', 'C', 'D', 'E', 'F']);
   clickTab(tm, 'B');
   clickTab(tm, 'E', { meta: true }); // anchor E
-  tm.reorder(idOf(tm, 'E'), idOf(tm, 'A')); // E A B C D F
+  tm.dropTabs([idOf(tm, 'E')], { kind: 'tab', id: idOf(tm, 'A'), half: 'left' }); // E A B C D F
   check('set-up: E moved to the front', order(tm) === 'E A B C D F', order(tm));
   clickTab(tm, 'C', { shift: true });
   check('⇧ after a reorder counts from the anchor where it is now', selected(tm) === 'E A B C' && activeName(tm) === 'B', selected(tm));

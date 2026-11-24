@@ -1245,7 +1245,7 @@ async function main() {
   check('wake first: the strip shows it first', tabBarEl.querySelector('.tab-bar-tab')?.dataset.tabId === wakeTab.id);
   check('wake first: logged with where it came from', logs.slice(logW).some((l) => l[0] === '[WAKE] tab moved first' && l[1]?.tabId === wakeTab.id && l[1]?.from === idxW), logs.slice(logW).filter((l) => l[0].startsWith('[WAKE]')));
   // Dragged elsewhere while wake runs, a later title report leaves it there.
-  tm.reorder(wakeTab.id, tm.getTabs()[2].id);
+  tm.dropTabs([wakeTab.id], { kind: 'tab', id: tm.getTabs()[2].id, half: 'right' });
   const dragIdx = tm.getTabs().indexOf(wakeTab);
   const movesBefore = logs.filter((l) => l[0] === '[WAKE] tab moved first').length;
   emit(wakeTab.ptyId, '\x1b]2;WAKE\x07');

@@ -20,8 +20,8 @@ import type { LinkRow } from './session-bar-model';
 import { resolveHyperlink } from './link-target';
 import { ReviewTabs } from './review-tabs';
 import {
-  cleanGroupName, gatherAfterGroup, gatherAsNewGroup, moveBlockTo, moveGroupFirst, nearestVisible, newGroupId,
-  placeAfterGroup, repairRuns, stepMove, takeBlockOutOfGroup, takeOutOfGroup, visibleItems, MAX_GROUPS, type TabGroup,
+  cleanGroupName, dropPlacement, gatherAfterGroup, gatherAsNewGroup, moveGroupFirst, nearestVisible, newGroupId,
+  placeAfterGroup, repairRuns, stepMove, takeBlockOutOfGroup, takeOutOfGroup, visibleItems, MAX_GROUPS, type TabDropTarget, type TabGroup,
 } from './tab-groups';
 
 /** Why a group unfolded, as the `[GROUP] unfolded` log line names it. */
@@ -121,7 +121,6 @@ export class TabManager {
       onSelect: (id) => this.switchToId(id),
       onClose: (id) => { this.confirmAndCloseTab(id).catch(console.error); },
       onNew: () => { this.userNewTab().catch(console.error); },
-      onReorder: (fromId, toId) => this.reorder(fromId, toId),
       onMoveStep: (id, dir) => this.moveTabStep(id, dir),
       onSettings: () => options?.onSettings?.(),
       onRename: (id, name) => this.renameTab(id, name),
@@ -142,7 +141,7 @@ export class TabManager {
       onAddTabsToGroup: (tabIds, groupId) => this.addTabsToGroup(tabIds, groupId),
       onRemoveTabsFromGroups: (tabIds) => this.removeTabsFromGroups(tabIds),
       onSetTabsFlag: (tabIds, flag) => this.setTabsFlag(tabIds, flag),
-      onMoveTabs: (tabIds, toId) => this.moveTabsTo(tabIds, toId),
+      onDropTabs: (tabIds, over) => this.dropTabs(tabIds, over),
       onMoveTabsToEnd: (tabIds) => this.moveTabsToEnd(tabIds),
       // --- Bookmarks ---
       onBookmarkProject: (id) => {
@@ -458,31 +457,57 @@ export class TabManager {
   }
 
   // --- Tab reordering ---
-  reorder(fromId: string, toId: string): void {
-    const fromIdx = this.tabs.findIndex(t => t.id === fromId);
-    const toIdx = this.tabs.findIndex(t => t.id === toId);
-    if (fromIdx === -1 || toIdx === -1 || fromIdx === toIdx) return;
-
-    // The moved tab takes the group of the tab it was dropped on (Move Left /
-    // Move Right come here too): a grouped target means joining that group,
-    // an ungrouped one leaving any group.
-    const targetGroup = this.groupOf(this.tabs[toIdx]);
-    const [moved] = this.tabs.splice(fromIdx, 1);
-    this.tabs.splice(toIdx, 0, moved);
-    const fromGroup = this.groupOf(moved);
-    if (targetGroup !== fromGroup) {
-      if (targetGroup === null) this.groupOfTab.delete(moved.id);
-      else this.groupOfTab.set(moved.id, targetGroup);
-      rlog('info', '[GROUP] tab moved between groups', { tabId: moved.id, from: fromGroup, to: targetGroup, by: 'reorder' });
+  /** Tabs dragged on the strip (one, or a selection) dropped on a tab or a
+   *  chip: services/tab-groups.ts dropPlacement decides the slot and the group
+   *  (over a tab: its left half = before it, right half = after it; the slot
+   *  right after an open group's last tab joins that group; a chip adds, as Add
+   *  to does). The strip's cue while dragging comes from the same function.
+   *  One `[GROUP] drop` line per drop, what was decided included. */
+  dropTabs(ids: readonly string[], over: TabDropTarget): void {
+    const moving = this.tabsInOrder(ids);
+    const target = over.kind === 'tab' ? this.tabs.find((t) => t.id === over.id) : undefined;
+    const known = over.kind === 'tab' ? target !== undefined : this.groups.has(over.groupId);
+    const placement = known && moving.length > 0
+      ? dropPlacement(this.tabs, moving, over.kind === 'tab' ? { kind: 'tab', item: target!, half: over.half } : over, this.groupOf, (g) => this.groups.get(g)?.folded === true)
+      : null;
+    rlog('info', '[GROUP] drop', {
+      tabs: moving.length,
+      over: over.kind === 'tab' ? { tabId: over.id, half: over.half } : { groupId: over.groupId },
+      result: placement === null ? 'none' : placement.kind === 'chip' ? 'chip' : placement.why,
+      slot: placement?.kind === 'slot' ? placement.index : null,
+      before: placement?.kind === 'slot' ? placement.before?.id ?? 'end' : null,
+      group: placement?.group ?? null,
+    });
+    if (placement === null) return;
+    if (placement.kind === 'chip') {
+      if (moving.length > 1) this.addTabsToGroup(ids, placement.group);
+      else this.addTabToGroup(moving[0].id, placement.group);
+      return;
     }
-    this.unfoldForActive(targetGroup, [moved]);
+    const to = placement.group;
+    const from = new Map(moving.map((t) => [t, this.groupOf(t)] as const));
+    for (const tab of moving) {
+      if (to === null) this.groupOfTab.delete(tab.id);
+      else this.groupOfTab.set(tab.id, to);
+    }
+    this.setTabOrder(placement.list);
+    const changed = moving.filter((t) => from.get(t) !== to);
+    if (moving.length === 1) {
+      if (changed.length === 1) rlog('info', '[GROUP] tab moved between groups', { tabId: moving[0].id, from: from.get(moving[0]), to, by: 'drag' });
+    } else {
+      rlog('info', '[TAB] moved together', { count: moving.length, to: over.kind === 'tab' ? over.id : 'end' });
+      if (changed.length > 0) rlog('info', '[GROUP] tabs moved between groups', { count: changed.length, to, by: 'drag' });
+      announce(`${TabManager.tabsWord(moving.length)} moved`);
+    }
+    // Never expected (a slot's group is open), but the tab you're on never hides.
+    this.unfoldForActive(to, moving);
     this.updateTabBar();
   }
 
   /** Tab menu → Move Left (-1) / Move Right (1): exactly one step on the
    *  strip (tab-groups.ts stepMove): out of a group at its edge, into an open
    *  group beside it, past a folded group whole, else a swap. Drag-and-drop
-   *  keeps reorder()'s rule. Announced; nothing happens where nothing would change. */
+   *  goes through dropTabs' slots. Announced; nothing happens where nothing would change. */
   moveTabStep(id: string, dir: -1 | 1): void {
     const tab = this.tabs.find((t) => t.id === id);
     if (!tab) return;
@@ -861,29 +886,6 @@ export class TabManager {
     // Tab.setFlag toggles a flag picked again, so only tabs without it are set.
     for (const tab of tabs) if (tab.flag !== flag) tab.setFlag(flag);
     rlog('info', '[TAB] flagged together', { count: tabs.length, flag });
-    this.updateTabBar();
-  }
-
-  /** A selection dragged onto a tab outside it: the block lands after the
-   *  target when the target is right of the first moved tab, else before it,
-   *  in their order, all taking the target's group (or leaving theirs). */
-  moveTabsTo(ids: readonly string[], toId: string): void {
-    const moving = this.tabsInOrder(ids);
-    const target = this.tabs.find((t) => t.id === toId);
-    if (!target || moving.length === 0 || moving.includes(target)) return;
-    const to = this.groupOf(target);
-    let changed = 0;
-    for (const tab of moving) {
-      if (this.groupOf(tab) === to) continue;
-      changed++;
-      if (to === null) this.groupOfTab.delete(tab.id);
-      else this.groupOfTab.set(tab.id, to);
-    }
-    this.setTabOrder(moveBlockTo(this.tabs, moving, target, this.groupOf));
-    rlog('info', '[TAB] moved together', { count: moving.length, to: toId });
-    if (changed > 0) rlog('info', '[GROUP] tabs moved between groups', { count: changed, to, by: 'drag' });
-    this.unfoldForActive(to, moving);
-    announce(`${TabManager.tabsWord(moving.length)} moved`);
     this.updateTabBar();
   }
 

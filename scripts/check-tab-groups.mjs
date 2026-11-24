@@ -10,8 +10,9 @@
 // emptied group deleted; fold moving the selection right, else left, else to a
 // new tab; jumps unfolding; ⌘1–9 and next/prev counting only visible tabs; closing
 // the selected tab; Close Group (one in-app ask, the Claude count, a new tab first
-// when the group held every tab, Cancel); Ungroup; New Tab in Group; reorder's
-// join/leave rule and a drop on a chip; wake moving the whole group; discardTab's
+// when the group held every tab, Cancel); Ungroup; New Tab in Group; a drag's
+// drop slot (dropPlacement: either half of a tab, a group's right edge, a folded
+// group, adjacent groups, a selection, no-ops) and a drop on a chip; wake moving the whole group; discardTab's
 // inheritance; the folded chip's strongest-state rank; session save/restore
 // (names, folds, order, broken run repaired, the active tab's group unfolded, an
 // old session without groups); main's sanitising; the [GROUP] log lines;
@@ -94,7 +95,7 @@ const M = await import(pathToFileURL(join(work, 'main.mjs')).href);
 await build({
   stdin: {
     contents: `export { TabManager } from './services/tab-manager';
-export { strongestState, stateOf, repairRuns, runsAreSound, cleanGroupName } from './services/tab-groups';
+export { strongestState, stateOf, repairRuns, runsAreSound, cleanGroupName, dropPlacement } from './services/tab-groups';
 export { sessionPaletteActions } from './services/session-palette';`,
     resolveDir: join(repo, 'src', 'renderer'), loader: 'ts',
   },
@@ -480,23 +481,26 @@ await section(async () => {
   repairMark = logs.length;
   const g = tm.addTabToNewGroup(idOf(tm, 'B'));
   tm.addTabToGroup(idOf(tm, 'C'), g);
-  tm.reorder(idOf(tm, 'A'), idOf(tm, 'B'));
-  check('reorder onto a grouped tab: joins its group', order(tm) === 'B A C D E' && groups(tm)[0].tabs === 'B A C', { order: order(tm), groups: groups(tm) });
-  invariant(tm, 'reorder join');
-  tm.reorder(idOf(tm, 'C'), idOf(tm, 'D'));
-  check('reorder onto an ungrouped tab: leaves its group', order(tm) === 'B A D C E' && groups(tm)[0].tabs === 'B A', { order: order(tm), groups: groups(tm) });
-  invariant(tm, 'reorder leave');
-  tm.reorder(idOf(tm, 'D'), idOf(tm, 'A'));
-  check('reorder from the right onto a grouped tab: joins', order(tm) === 'B D A C E' && groups(tm)[0].tabs === 'B D A', { order: order(tm), groups: groups(tm) });
-  tm.reorder(idOf(tm, 'B'), idOf(tm, 'A'));
-  check('reorder inside the group: stays in it', order(tm) === 'D A B C E' && groups(tm)[0].tabs === 'D A B', { order: order(tm), groups: groups(tm) });
-  invariant(tm, 'reorder inside');
+  const drop = (from, to, half) => tm.dropTabs([idOf(tm, from)], { kind: 'tab', id: idOf(tm, to), half });
+  drop('A', 'B', 'right');
+  check('drop on a grouped tab\'s right half: after it, joining its group', order(tm) === 'B A C D E' && groups(tm)[0].tabs === 'B A C', { order: order(tm), groups: groups(tm) });
+  invariant(tm, 'drop join');
+  drop('C', 'D', 'right');
+  check('drop on an ungrouped tab\'s far (right) half: after it, out of its group', order(tm) === 'B A D C E' && groups(tm)[0].tabs === 'B A', { order: order(tm), groups: groups(tm) });
+  invariant(tm, 'drop leave');
+  drop('D', 'A', 'left');
+  check('drop from the right on a grouped tab\'s left half: before it, joining', order(tm) === 'B D A C E' && groups(tm)[0].tabs === 'B D A', { order: order(tm), groups: groups(tm) });
+  drop('B', 'A', 'right');
+  check('drop inside the group: stays in it', order(tm) === 'D A B C E' && groups(tm)[0].tabs === 'D A B', { order: order(tm), groups: groups(tm) });
+  invariant(tm, 'drop inside');
   // A second group: dragging its tab onto the first group's tab moves it across.
   const g2 = tm.addTabToNewGroup(idOf(tm, 'E'));
   tm.addTabToGroup(idOf(tm, 'C'), g2);
-  tm.reorder(idOf(tm, 'E'), idOf(tm, 'B'));
-  check('reorder between groups: joins the target\'s group', groups(tm).map((x) => x.tabs).join('|') === 'D A E B|C' && order(tm) === 'D A E B C', { order: order(tm), groups: groups(tm) });
-  invariant(tm, 'reorder between groups');
+  const nX = logs.length;
+  drop('E', 'B', 'left');
+  check('drop between groups: joins the target\'s group', groups(tm).map((x) => x.tabs).join('|') === 'D A E B|C' && order(tm) === 'D A E B C', { order: order(tm), groups: groups(tm) });
+  check('...[GROUP] tab moved between groups, by drag', logsSince(nX, '[GROUP] tab moved between groups').some((l) => l.data?.by === 'drag' && l.data?.to === g && l.data?.from === g2));
+  invariant(tm, 'drop between groups');
 
   // A tab dropped on a chip joins that group (the real TabBar's drop handler).
   // The drag starts on the tab's grip, as a real one does (the strip honours only its own drags).
@@ -903,6 +907,123 @@ await section(async () => {
   const open = G.sessionPaletteActions(tm.listSessions(), Date.now());
   const cWhere = open.find((x) => x.action.startsWith(`session:${idOf(tm, 'C')}:`))?.ariaLabel?.split(', ').slice(-1)[0];
   check('palette: unfolded, C reads "tab 3" again', cWhere === 'tab 3', cWhere);
+});
+
+// ── 13. A drag's drop slot (24 Nov 2026; Michael: "in Google Chrome, you can drag a tab to the
+//        edge of the tab group, and it will include it, whereas in this, that doesn't work") ──
+// The pure rule: a | [G1] b c | d | [G2] e f | [G3, folded] (h) | i | [G4] j | [G5] k
+await section(async () => {
+  const items = ['a', 'b', 'c', 'd', 'e', 'f', 'h', 'i', 'j', 'k'];
+  const member = { b: 'G1', c: 'G1', e: 'G2', f: 'G2', h: 'G3', j: 'G4', k: 'G5' };
+  const gOf = (m) => (x) => m[x] ?? null;
+  const folded = (g) => g === 'G3';
+  const P = (moving, over, m = member, isFolded = folded) => G.dropPlacement(items, moving, over, gOf(m), isFolded);
+  const tab = (item, half) => ({ kind: 'tab', item, half });
+  const s = (p) => (p === null ? 'null' : p.kind === 'chip' ? `chip ${p.group}` : `${p.list.join('')} ${p.group ?? '-'} ${p.why}`);
+  const cases = [
+    ['rule 1: a grouped tab\'s left half, at its group\'s start: inside it, before it', P(['a'], tab('b', 'left')), 'abcdefhijk G1 in-group'],
+    ['rule 1: a grouped tab\'s right half: inside, after it', P(['a'], tab('b', 'right')), 'bacdefhijk G1 in-group'],
+    ['rule 1: the group\'s last tab, right half: joins at its end', P(['a'], tab('c', 'right')), 'bcadefhijk G1 in-group'],
+    ['rule 2 (his case): an ungrouped tab\'s half touching an open group\'s right edge joins it, at its end', P(['a'], tab('d', 'left')), 'bcadefhijk G1 group-edge'],
+    ['rule 3: that tab\'s other half: ungrouped, after it (the slot before G2\'s chip is outside G2)', P(['a'], tab('d', 'right')), 'bcdaefhijk - ungrouped'],
+    ['rule 1: the next group\'s first tab, left half (the slot after its chip): inside G2', P(['a'], tab('e', 'left')), 'bcdaefhijk G2 in-group'],
+    ['rule 5: the slot right after a folded group\'s chip is not a join', P(['a'], tab('i', 'left')), 'bcdefhaijk - ungrouped'],
+    ['rule 5: a tab hidden in a folded group is not a slot', P(['a'], tab('h', 'left')), 'null'],
+    ['rule 5: two adjacent groups, A\'s last tab right half (A\'s edge before B\'s chip): joins A', P(['a'], tab('j', 'right')), 'bcdefhijak G4 in-group'],
+    ['rule 5: ...B\'s first tab left half: joins B', P(['a'], tab('k', 'left')), 'bcdefhijak G5 in-group'],
+    ['rule 2 with the left neighbour folded open: an open G3 is joined at its edge', P(['a'], tab('i', 'left'), member, () => false), 'bcdefhaijk G3 group-edge'],
+    ['rule 4: a folded group\'s chip joins it', P(['a'], { kind: 'chip', groupId: 'G3' }), 'chip G3'],
+    ['rule 4: an open group\'s chip joins it', P(['d'], { kind: 'chip', groupId: 'G1' }), 'chip G1'],
+    ['rule 4/8: a chip of the group every dragged tab is in: nothing', P(['b', 'c'], { kind: 'chip', groupId: 'G1' }), 'null'],
+    ['rule 6: a group\'s last tab onto the next tab\'s near half (its own edge): nothing', P(['c'], tab('d', 'left')), 'null'],
+    ['rule 6: ...onto its far half: out of the group, after it', P(['c'], tab('d', 'right')), 'abdcefhijk - ungrouped'],
+    ['rule 6: inside its own group: stays in it', P(['b'], tab('c', 'right')), 'acbdefhijk G1 in-group'],
+    ['rule 6: a grouped tab dragged into another group\'s edge joins that one', P(['b'], tab('i', 'left'), member, () => false), 'acdefhbijk G3 group-edge'],
+    ['rule 7: a selection at a group\'s right edge: all join it at its end, in strip order', P(['i', 'a'], tab('d', 'left')), 'bcaidefhjk G1 group-edge'],
+    ['rule 7: a selection from two groups to an ungrouped slot: all out, one block', P(['e', 'b'], tab('i', 'right')), 'acdfhibejk - ungrouped'],
+    ['rule 8: a tab dropped on itself: nothing', P(['d'], tab('d', 'left')), 'null'],
+    ['rule 8: on a tab it carries (a selection): nothing', P(['a', 'd'], tab('d', 'right')), 'null'],
+    ['rule 8: a slot that changes nothing (just before c, inside G1 already): nothing', P(['b'], tab('c', 'left')), 'null'],
+    ['rule 8: an ungrouped tab to the slot it is in: nothing', P(['d'], tab('e', 'left'), { ...member, e: null, f: null }), 'null'],
+    ['an unknown target: nothing', P(['a'], tab('zz', 'left')), 'null'],
+    ['nothing dragged: nothing', P([], tab('d', 'left')), 'null'],
+  ];
+  for (const [name, got, want] of cases) check(`dropPlacement ${name}`, s(got) === want, { got: s(got), want });
+  // Each slot result keeps every run whole and every item.
+  const slotResults = cases.map((c) => c[1]).filter((p) => p?.kind === 'slot');
+  check('dropPlacement: every slot result keeps every item once', slotResults.every((p) => p.list.length === items.length && [...p.list].sort().join() === [...items].sort().join()));
+  // The left half of a tab and the right half of its left neighbour are one slot (same order, same group)
+  // unless a chip stands between them, which starts a group.
+  const lg = (p) => s(p).split(' ').slice(0, 2).join(' ');
+  const pairs = [['b', 'c'], ['c', 'd'], ['d', 'e'], ['i', 'j']].map(([l, r]) => [lg(P(['a'], tab(l, 'right'))), lg(P(['a'], tab(r, 'left')))]);
+  check('dropPlacement: a slot lands the same from either side (b|c, c|d: his edge equals the group\'s last tab\'s far half); across a chip it differs (d|e, i|j)',
+    pairs[0][0] === pairs[0][1] && pairs[1][0] === pairs[1][1] && pairs[2][0] !== pairs[2][1] && pairs[3][0] !== pairs[3][1], pairs);
+});
+
+// The real TabManager: Michael's case and what a drop leaves, and the [GROUP] drop line.
+await section(async () => {
+  const tm = await makeWindow(['A', 'B', 'C', 'D', 'E', 'F']);
+  repairMark = logs.length;
+  const g = tm.addTabToNewGroup(idOf(tm, 'B'));
+  tm.addTabToGroup(idOf(tm, 'C'), g);
+  const drop = (names, to, half) => tm.dropTabs(names.map((n) => idOf(tm, n)), { kind: 'tab', id: idOf(tm, to), half });
+  const n = logs.length;
+  drop(['F'], 'D', 'left');
+  check('his case: F dropped at the group\'s right edge (D\'s near half) joins it, at its end', order(tm) === 'A B C F D E' && groups(tm)[0].tabs === 'B C F', { order: order(tm), groups: groups(tm) });
+  const line = logsSince(n, '[GROUP] drop')[0];
+  check('...one [GROUP] drop line with the slot and group decided', logsSince(n, '[GROUP] drop').length === 1 && line.data?.result === 'group-edge' && line.data?.group === g
+    && line.data?.before === idOf(tm, 'D') && line.data?.slot === 3 && line.data?.over?.half === 'left', line);
+  check('...and the group change logged by drag', logsSince(n, '[GROUP] tab moved between groups').some((l) => l.data?.by === 'drag' && l.data?.to === g && l.data?.from === null));
+  invariant(tm, 'edge join');
+  const n2 = logs.length;
+  drop(['F'], 'D', 'left');
+  check('the same slot again changes nothing, and still logs one [GROUP] drop (result none)', order(tm) === 'A B C F D E' && logsSince(n2, '[GROUP] drop').length === 1
+    && logsSince(n2, '[GROUP] drop')[0].data?.result === 'none' && logsSince(n2, '[GROUP] tab moved between groups').length === 0, order(tm));
+  drop(['F'], 'D', 'right');
+  check('past the edge onto D\'s far half: F leaves the group', order(tm) === 'A B C D F E' && groups(tm)[0].tabs === 'B C', { order: order(tm), groups: groups(tm) });
+  drop(['A', 'E'], 'D', 'left');
+  check('a selection at the group\'s edge: both join it at its end, in order', order(tm) === 'B C A E D F' && groups(tm)[0].tabs === 'B C A E', { order: order(tm), groups: groups(tm) });
+  invariant(tm, 'selection edge join');
+  tm.foldGroup(g);
+  drop(['F'], 'D', 'left');
+  check('folded: the slot after its chip is not a join', order(tm) === 'B C A E F D' && groups(tm)[0].tabs === 'B C A E', { order: order(tm), groups: groups(tm) });
+  drop(['D'], 'B', 'left');
+  check('a drop on a tab hidden in a folded group does nothing', order(tm) === 'B C A E F D', order(tm));
+  invariant(tm, 'folded slot');
+});
+
+// The real TabBar and TabManager: a drag over a tab's halves (clientX against its rect) and the drop.
+await section(async () => {
+  const tm = await makeWindow(['A', 'B', 'C', 'D', 'E']);
+  repairMark = logs.length;
+  const g = tm.addTabToNewGroup(idOf(tm, 'B'));
+  tm.addTabToGroup(idOf(tm, 'C'), g);
+  const tabEl = (name) => tm.bar.querySelector(`.tab-bar-tab[data-tab-id="${idOf(tm, name)}"]`);
+  const realRect = w.Element.prototype.getBoundingClientRect;
+  w.Element.prototype.getBoundingClientRect = function () {
+    if (this.classList?.contains('tab-bar-tab')) {
+      const at = [...this.parentElement.children].indexOf(this);
+      return { left: at * 100, right: at * 100 + 100, width: 100, top: 0, bottom: 30, height: 30, x: at * 100, y: 0 };
+    }
+    return realRect.call(this);
+  };
+  try {
+    const dt = { data: {}, setData(k, v) { this.data[k] = v; }, getData(k) { return this.data[k] ?? ''; }, effectAllowed: '', dropEffect: '', setDragImage() {} };
+    const ev = (type, x) => { const e = new w.Event(type, { bubbles: true, cancelable: true }); Object.defineProperty(e, 'dataTransfer', { value: dt }); Object.defineProperty(e, 'clientX', { value: x }); return e; };
+    const grip = tabEl('E').querySelector('.tab-bar-tab-grip');
+    grip.dispatchEvent(ev('dragstart', 0));
+    const d = tabEl('D');
+    const dLeft = [...d.parentElement.children].indexOf(d) * 100;
+    d.dispatchEvent(ev('dragover', dLeft + 20));
+    check('strip: over D\'s near half the cue is a line before D in the group\'s line colour, and the chip is marked',
+      d.classList.contains('drop-before') && d.style.getPropertyValue('--drop-line') === 'var(--group1-line)' && chip(tm, g).classList.contains('drag-over'), { cls: d.className, line: d.style.getPropertyValue('--drop-line') });
+    d.dispatchEvent(ev('drop', dLeft + 20));
+    check('strip: dropped there, E joins the group at its end', order(tm) === 'A B C E D' && groups(tm)[0].tabs === 'B C E', { order: order(tm), groups: groups(tm) });
+    check('strip: no cue is left after the drop', !tm.bar.querySelector('.drop-before, .drop-after, .drag-over'));
+    invariant(tm, 'strip edge drop');
+  } finally {
+    w.Element.prototype.getBoundingClientRect = realRect;
+  }
 });
 
 // SECTIONS

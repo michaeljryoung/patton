@@ -167,14 +167,81 @@ export function takeBlockOutOfGroup<T>(list: readonly T[], items: readonly T[], 
   return insertBlock(rest, moving, last + 1, groupOf);
 }
 
-/** Several tabs dropped on `target` (memberships already set to the target's
- *  group, or none): as a single tab's drop, a target right of the first moved
- *  tab takes the block after it, one to the left before it. */
-export function moveBlockTo<T>(list: readonly T[], items: readonly T[], target: T, groupOf: GroupOf<T>): T[] {
-  const { moving, rest } = splitOut(list, items);
-  if (moving.length === 0 || moving.includes(target) || !list.includes(target)) return list.slice();
-  const rightward = list.indexOf(target) > list.indexOf(moving[0]);
-  return insertBlock(rest, moving, rest.indexOf(target) + (rightward ? 1 : 0), groupOf);
+// --- A drag dropped on the strip (24 Nov 2026) ---
+// Michael: "in Google Chrome, you can drag a tab to the edge of the tab group,
+// and it will include it, whereas in this, that doesn't work. You have to drag
+// it into the middle of it." So, as Chrome does, a drop lands in a SLOT between
+// tabs (the half of the tab under the pointer: left = before it, right = after
+// it), and the slot decides the group (docs/tab-groups.md, 2026-11-24).
+
+/** Where the pointer is, by id: a tab on the strip and which half of it, or a
+ *  group's chip. What the strip hands TabManager on a drop. */
+export type TabDropTarget =
+  | { kind: 'tab'; id: string; half: 'left' | 'right' }
+  | { kind: 'chip'; groupId: string };
+
+/** The same, with the tab itself (the pure rule's input). */
+export type DropOver<T> =
+  | { kind: 'tab'; item: T; half: 'left' | 'right' }
+  | { kind: 'chip'; groupId: string };
+
+/** What a drop does. `slot`: the moving tabs, in strip order, land as one block
+ *  at `index` of the list without them (before `before`, null = the end), all
+ *  in `group` (null = ungrouped); `list` is the order after the drop. `why` is
+ *  the rule that chose the group. `chip`: they join `group` as Add to does. */
+export type DropPlacement<T> =
+  | { kind: 'slot'; list: T[]; index: number; before: T | null; group: string | null; why: 'in-group' | 'group-edge' | 'ungrouped' }
+  | { kind: 'chip'; group: string };
+
+/** Where tabs dragged on the strip land, and in which group; null when the drop
+ *  changes nothing (a tab dropped on itself or one it carries, on a tab hidden
+ *  in a folded group, or back where it is).
+ *  1. Over a grouped tab (either half): that group, at that slot.
+ *  2. Over the left half of an ungrouped tab whose left neighbour is an OPEN
+ *     group's last tab: the slot is that group's right edge, so it joins the
+ *     group, at its end ("drag to the edge and it includes it").
+ *  3. Any other slot over an ungrouped tab: ungrouped there. A folded group's
+ *     chip is not a tab, so the slot after it is ungrouped, and so is the slot
+ *     before any chip (the chip marks where a group starts).
+ *  4. Over a chip: joins that group as Add to does (after its last tab).
+ *  A grouped tab follows the same rules, so dragging it past its group's edge
+ *  onto the far half of the next ungrouped tab takes it out. Several tabs move
+ *  as one block and every group stays one unbroken run. */
+export function dropPlacement<T>(list: readonly T[], moving: readonly T[], over: DropOver<T>, groupOf: GroupOf<T>, isFolded: (groupId: string) => boolean): DropPlacement<T> | null {
+  const movingSet = new Set(moving.filter((x) => list.includes(x)));
+  if (movingSet.size === 0) return null;
+  const block = list.filter((x) => movingSet.has(x));
+  if (over.kind === 'chip') {
+    if (block.every((x) => groupOf(x) === over.groupId)) return null;
+    return { kind: 'chip', group: over.groupId };
+  }
+  const target = over.item;
+  const at = list.indexOf(target);
+  if (at === -1 || movingSet.has(target)) return null;
+  const own = groupOf(target);
+  if (own !== null && isFolded(own)) return null; // hidden: not a slot
+  let group: string | null = null;
+  let why: 'in-group' | 'group-edge' | 'ungrouped' = 'ungrouped';
+  if (own !== null) {
+    group = own;
+    why = 'in-group';
+  } else if (over.half === 'left' && at > 0) {
+    // The tab just left of an ungrouped tab ends any group it is in. An open
+    // group's last tab is drawn there; a folded group's tabs are hidden, so the
+    // pointer meets its chip instead and joins nothing.
+    const left = groupOf(list[at - 1]);
+    if (left !== null && !isFolded(left)) {
+      group = left;
+      why = 'group-edge';
+    }
+  }
+  const rest = list.filter((x) => !movingSet.has(x));
+  const index = rest.indexOf(target) + (over.half === 'right' ? 1 : 0);
+  const after: GroupOf<T> = (x) => (movingSet.has(x) ? group : groupOf(x));
+  const out = insertBlock(rest, block, index, after);
+  const same = out.every((x, i) => x === list[i]) && block.every((x) => groupOf(x) === group);
+  if (same) return null;
+  return { kind: 'slot', list: out, index, before: rest[index] ?? null, group, why };
 }
 
 /** Make every group one unbroken run: the first run of each group stays where

@@ -5,13 +5,12 @@ import type { TabFlag } from '../../shared/types';
 import type { HoverBlock } from '../services/tab-hover';
 import { TabHoverCard } from './tab-hover-card';
 import { rlog } from '../services/renderer-logger';
-import { GROUP_NAME_MAX, stateOf, stepMove, strongestState, type StrongestState } from '../services/tab-groups';
+import { GROUP_NAME_MAX, dropPlacement, stateOf, stepMove, strongestState, type StrongestState, type TabDropTarget } from '../services/tab-groups';
 
 export interface TabBarCallbacks {
   onSelect: (id: string) => void;
   onClose: (id: string) => void;
   onNew: () => void;
-  onReorder: (fromId: string, toId: string) => void;
   /** Tab menu → Move Left (-1) / Move Right (1): one step on the strip
    *  (services/tab-groups.ts stepMove), announced by the caller. */
   onMoveStep?: (id: string, dir: -1 | 1) => void;
@@ -45,8 +44,10 @@ export interface TabBarCallbacks {
   onAddTabsToGroup?: (tabIds: string[], groupId: string) => void;
   onRemoveTabsFromGroups?: (tabIds: string[]) => void;
   onSetTabsFlag?: (tabIds: string[], flag: TabFlag | null) => void;
-  /** A selection dragged onto a tab that isn't in it. */
-  onMoveTabs?: (tabIds: string[], toId: string) => void;
+  /** One tab or a selection dragged from this strip and dropped on a tab (and
+   *  which half of it) or a chip; TabManager.dropTabs decides where they land
+   *  (services/tab-groups.ts dropPlacement, the rule the cue shows). */
+  onDropTabs?: (tabIds: string[], over: TabDropTarget) => void;
   /** One tab or a selection dropped on the strip's empty end, the + button or
    *  the drag space: to the end of the strip, out of any group. */
   onMoveTabsToEnd?: (tabIds: string[]) => void;
@@ -266,6 +267,9 @@ export class TabBar {
   /** The tabs the drag from this strip carries: the grip's tab alone, or the
    *  whole selection in strip order when the grip's tab is in it. */
   private draggedIds: string[] = [];
+  /** Each group's shade (1-3) as last drawn: the colour of the drop line for
+   *  a drop that joins it. */
+  private shadeOfGroup = new Map<string, number>();
   /** Esc clears the selection when it comes from the strip or the page body,
    *  never from a terminal, where it must reach Claude (it interrupts a turn). */
   private readonly onEscapeKey = (e: KeyboardEvent): void => {
@@ -387,6 +391,11 @@ export class TabBar {
     // A tab (or a selection) dropped on the empty strip goes to its end, ungrouped
     // (D2); a drop on a tab or a chip is theirs, and bubbles here unhandled.
     this.acceptEndDrop(this.tabsContainer, (e) => !(e.target as HTMLElement).closest('.tab-bar-tab, .tab-bar-group-chip'));
+    // Leaving the strip (not just one tab for the next) takes every drop cue off.
+    this.tabsContainer.addEventListener('dragleave', (e) => {
+      if (e.relatedTarget instanceof Node && this.tabsContainer.contains(e.relatedTarget)) return;
+      this.clearDropCues();
+    });
 
     const newBtn = document.createElement('button');
     newBtn.className = 'tab-bar-new';
@@ -703,6 +712,7 @@ export class TabBar {
     const membersOf = (groupId: string) => tabs.filter((t) => t.groupId === groupId);
     // A group's shade (1-3, cycling) is its place among the groups on the strip.
     const shadeOf = new Map<string, number>();
+    this.shadeOfGroup = shadeOf;
     // The strip scrolls sideways (hidden scrollbar) and is rebuilt on every
     // update, which empties it and resets scrollLeft: keep the position, and
     // bring the active tab into view when it is a different tab or the count
@@ -767,33 +777,22 @@ export class TabBar {
         el.appendChild(grip);
       }
 
-      // --- Drop target for reordering (the whole tab accepts drops) ---
+      // --- Drop target: the slot at the half of this tab under the pointer ---
       el.addEventListener('dragover', (e) => {
         e.preventDefault();
         e.dataTransfer!.dropEffect = 'move';
-        this.tabsContainer.querySelectorAll('.drag-over').forEach(
-          el => el.classList.remove('drag-over'),
-        );
-        this.tabsContainer.classList.remove('drag-over-end');
-        if (this.draggedId && !this.draggedIds.includes(tab.id)) {
-          el.classList.add('drag-over');
-        }
-      });
-      el.addEventListener('dragleave', () => {
-        el.classList.remove('drag-over');
+        this.showDropCue({ kind: 'tab', id: tab.id, half: TabBar.halfOf(el, e) });
       });
       el.addEventListener('drop', (e) => {
         e.preventDefault();
-        el.classList.remove('drag-over');
+        this.clearDropCues();
         // Only a drag that began on this strip's grip counts: tab ids repeat
         // across windows, so foreign text must not move this window's tab.
         const fromId = e.dataTransfer!.getData('text/plain');
-        if (fromId && fromId === this.draggedId && !this.draggedIds.includes(tab.id)) {
-          const ids = this.draggedIds.slice();
-          this.endTabDrag();
-          if (ids.length > 1) this.callbacks.onMoveTabs?.(ids, tab.id);
-          else this.callbacks.onReorder(fromId, tab.id);
-        }
+        if (!fromId || fromId !== this.draggedId) return;
+        const ids = this.draggedIds.slice();
+        this.endTabDrag();
+        this.callbacks.onDropTabs?.(ids, { kind: 'tab', id: tab.id, half: TabBar.halfOf(el, e) });
       });
 
       // One dot slot, several sources, in this order. A user-set flag wins and
@@ -1071,8 +1070,8 @@ export class TabBar {
   private endTabDrag(): void {
     this.draggedId = null;
     this.draggedIds = [];
-    this.tabsContainer.querySelectorAll('.dragging, .drag-over').forEach((x) => x.classList.remove('dragging', 'drag-over'));
-    this.tabsContainer.classList.remove('drag-over-end');
+    this.tabsContainer.querySelectorAll('.dragging').forEach((x) => x.classList.remove('dragging'));
+    this.clearDropCues();
     // The update held back while it lasted (a title tick, a tab opened).
     this.applyHeldUpdate();
   }
@@ -1085,6 +1084,47 @@ export class TabBar {
     if (this.draggedId) this.endTabDrag();
   };
 
+  /** Which half of a tab the pointer is over: left = the slot before it. */
+  private static halfOf(el: HTMLElement, e: DragEvent): 'left' | 'right' {
+    const r = el.getBoundingClientRect();
+    return e.clientX < r.left + r.width / 2 ? 'left' : 'right';
+  }
+
+  /** The drop cue for the pointer's place (docs/tab-groups.md, 24 Nov 2026):
+   *  over a tab, a 2 px line at the slot's edge, in the joining group's line
+   *  colour (else ink), and that group's chip marked too; over a chip, the chip.
+   *  Nothing where the drop would change nothing. From the same rule the drop
+   *  follows (dropPlacement), on the tabs as last handed to update(). */
+  private showDropCue(over: TabDropTarget): void {
+    this.clearDropCues();
+    if (!this.draggedId) return;
+    const tabs = this.latestTabs;
+    const moving = tabs.filter((t) => this.draggedIds.includes(t.id));
+    const item = over.kind === 'tab' ? tabs.find((t) => t.id === over.id) : undefined;
+    if (over.kind === 'tab' && !item) return;
+    const folded = new Set(this.latestGroups.filter((g) => g.folded).map((g) => g.id));
+    const placement = dropPlacement(tabs, moving, over.kind === 'tab' ? { kind: 'tab', item: item!, half: over.half } : over,
+      (t) => t.groupId ?? null, (g) => folded.has(g));
+    if (!placement) return;
+    if (placement.group !== null) this.chipEl(placement.group)?.classList.add('drag-over');
+    if (placement.kind === 'chip' || over.kind !== 'tab') return;
+    const el = this.tabElement(over.id);
+    if (!el) return;
+    el.classList.add(over.half === 'left' ? 'drop-before' : 'drop-after');
+    const shade = placement.group !== null ? this.shadeOfGroup.get(placement.group) : undefined;
+    el.style.setProperty('--drop-line', shade ? `var(--group${shade}-line)` : 'var(--ink)');
+  }
+
+  /** Every drop cue off: slot lines, chip marks, the end line. */
+  private clearDropCues(): void {
+    this.tabsContainer.querySelectorAll<HTMLElement>('.drop-before, .drop-after').forEach((x) => {
+      x.classList.remove('drop-before', 'drop-after');
+      x.style.removeProperty('--drop-line');
+    });
+    this.tabsContainer.querySelectorAll('.drag-over').forEach((x) => x.classList.remove('drag-over'));
+    this.tabsContainer.classList.remove('drag-over-end');
+  }
+
   /** `el` takes a drag from this strip's grip as a move to the strip's end
    *  (D2, the page's kind 'end'), with the end line on the strip while over it.
    *  `here` narrows it (the strip itself: not a drop on a tab or chip). A drag
@@ -1095,7 +1135,7 @@ export class TabBar {
       if (!this.draggedId || !here(e)) return;
       e.preventDefault();
       if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
-      this.tabsContainer.querySelectorAll('.drag-over').forEach((x) => x.classList.remove('drag-over'));
+      this.clearDropCues();
       this.tabsContainer.classList.add('drag-over-end');
     });
     el.addEventListener('dragleave', (e) => {
@@ -1198,28 +1238,20 @@ export class TabBar {
       showMenu(e.clientX, e.clientY, false);
     });
 
-    // A tab dropped on the chip joins the group (as "Add to").
+    // A tab dropped on the chip joins the group (as "Add to"), open or folded.
     chip.addEventListener('dragover', (e) => {
       e.preventDefault();
       if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
-      this.tabsContainer.querySelectorAll('.drag-over').forEach((el) => el.classList.remove('drag-over'));
-      this.tabsContainer.classList.remove('drag-over-end');
-      if (this.draggedId) chip.classList.add('drag-over');
+      this.showDropCue({ kind: 'chip', groupId: group.id });
     });
-    chip.addEventListener('dragleave', () => chip.classList.remove('drag-over'));
     chip.addEventListener('drop', (e) => {
       e.preventDefault();
-      chip.classList.remove('drag-over');
+      this.clearDropCues();
       const fromId = e.dataTransfer?.getData('text/plain');
       if (!fromId || fromId !== this.draggedId) return; // a drag from another window or plain text
       const ids = this.draggedIds.slice();
       this.endTabDrag();
-      if (ids.length > 1) {
-        if (ids.some((id) => this.currentTabInfo(id)?.groupId !== group.id)) this.callbacks.onAddTabsToGroup?.(ids, group.id);
-        return;
-      }
-      const tab = this.currentTabInfo(fromId);
-      if (tab && tab.groupId !== group.id) this.callbacks.onAddToGroup?.(fromId, group.id);
+      this.callbacks.onDropTabs?.(ids, { kind: 'chip', groupId: group.id });
     });
 
     // The list of a folded group's tabs: on hover, and on keyboard focus (focus-visible: a click's focus doesn't count).
