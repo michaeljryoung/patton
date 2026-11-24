@@ -214,7 +214,7 @@ export class Tab {
         this.raiseAwaitingInput(pane);
         this.onCommandDone?.();
       },
-      onWorkStarted: () => this.clearAwaitingInput(pane),
+      onWorkStarted: () => this.clearAwaitingInput(pane, 'work started'),
       onCheckpointChange: (p) => {
         // Fires whenever Claude starts or leaves a pane (its key includes
         // claudeActive): the tab's name follows (runsClaude). A pane still
@@ -288,22 +288,33 @@ export class Tab {
     // used to SET the dot (they fire too liberally — on every prompt redraw,
     // resize, session restore); the only SET path is onCommandDone.
     pane.terminalView.onPromptState((state) => {
-      if (state === 'command') this.clearAwaitingInput(pane);
+      if (state === 'command') this.clearAwaitingInput(pane, 'shell command');
     });
     this._panes.push(pane);
     return pane;
   }
 
   private raiseAwaitingInput(pane: Pane): void {
-    if (this._isActive || this._panesNeedingYou.has(pane)) return;
+    // Logged either way (24 Nov 2026: a finished Defence turn "didn't flash
+    // green" and main.log couldn't say whether the dot was skipped because the
+    // tab was the selected one, already up, or raised and lost).
+    const focused = typeof document !== 'undefined' && document.hasFocus();
+    if (this._isActive || this._panesNeedingYou.has(pane)) {
+      rlog('info', '[DOT] green skipped', {
+        tabId: this.id, pane: pane.id, why: this._isActive ? 'selected tab' : 'already up', windowFocused: focused,
+      });
+      return;
+    }
     this._panesNeedingYou.set(pane, Date.now());
+    rlog('info', '[DOT] green raised', { tabId: this.id, pane: pane.id, windowFocused: focused });
     // Every pane, not only the first: the tab's dot changes once, but the
     // sidebar's count follows each waiting pane.
     this.onTitleChanged?.();
   }
 
-  private clearAwaitingInput(pane: Pane): void {
+  private clearAwaitingInput(pane: Pane, why: string): void {
     if (!this._panesNeedingYou.delete(pane)) return;
+    rlog('info', '[DOT] green cleared', { tabId: this.id, pane: pane.id, why });
     this.onTitleChanged?.();
   }
 
@@ -371,7 +382,9 @@ export class Tab {
       this._parkedPanes.set(pane, info);
       // A parked pane doesn't need you, even if the ✳ title path got there
       // first and raised the dot: the hook's verdict is the better signal.
-      this._panesNeedingYou.delete(pane);
+      if (this._panesNeedingYou.delete(pane)) {
+        rlog('info', '[DOT] green cleared', { tabId: this.id, pane: pane.id, why: 'parked' });
+      }
     } else if (!this._parkedPanes.delete(pane)) {
       return;
     }
@@ -691,7 +704,7 @@ export class Tab {
     this.onPaneUnregistered?.(pane);
     const idx = this._panes.indexOf(pane);
     if (idx !== -1) this._panes.splice(idx, 1);
-    this.clearAwaitingInput(pane); // a closed pane can't still need you
+    this.clearAwaitingInput(pane, 'pane closed'); // a closed pane can't still need you
     this._paneProjects.delete(pane);
     this._paneLookups.delete(pane);
     this.setPaneParked(pane, null);
@@ -865,6 +878,7 @@ export class Tab {
     // Becoming active clears any pending "awaiting input" dot — user is
     // now looking at this tab. Notify so the tab-bar drops the indicator.
     const wasAwaiting = this._panesNeedingYou.size > 0;
+    if (wasAwaiting) rlog('info', '[DOT] green cleared', { tabId: this.id, panes: this._panesNeedingYou.size, why: 'selected' });
     this._panesNeedingYou.clear();
     this.element.style.display = 'flex';
     for (const pane of this._panes) {

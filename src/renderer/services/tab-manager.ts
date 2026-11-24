@@ -392,6 +392,7 @@ export class TabManager {
     }
 
     this.activeTab = tab;
+    rlog('info', '[TAB] switched', { tabId: tab.id });
     tab.show();
     this.updateTabBar();
   }
