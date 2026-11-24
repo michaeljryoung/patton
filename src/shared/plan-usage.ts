@@ -47,6 +47,8 @@ export interface WeekTokens {
   since: number | null;
   /** The week this count is for (its reset), so a count is never shown against another week. */
   resetsAt: number;
+  /** Set (epoch seconds) only when the count is more than 5 minutes old, because scans since have failed. */
+  countedAt?: number | null;
 }
 
 /** One entry of the file's `switches`: from `at` (epoch seconds), `account` was the live login. */

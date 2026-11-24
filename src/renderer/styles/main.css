@@ -676,6 +676,11 @@ html, body {
   font-variant-numeric: tabular-nums;
 }
 
+.usage-reset .usage-tokens,
+.usage-reset .usage-when {
+  white-space: nowrap;
+}
+
 .usage-acct {
   display: grid;
   gap: calc(3px * var(--ui-scale));

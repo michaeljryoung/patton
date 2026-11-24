@@ -21,11 +21,18 @@
 import { build } from 'esbuild';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), '..');
+
+// The usage panel's polls (ipc-handlers.ts registers them) must not read this Mac's accounts file
+// or transcripts: with both pointed at paths that are not there the poll finds no file, so there is
+// no switch to credit and no token scan, whatever is installed here.
+const noUsage = mkdtempSync(join(tmpdir(), 'check-close-guard-usage-'));
+process.env.PATTON_PLAN_USAGE_FILE = join(noUsage, 'no-accounts.json');
+process.env.PATTON_CLAUDE_PROJECTS_DIR = join(noUsage, 'no-projects');
 
 let failed = 0;
 let passed = 0;
@@ -72,12 +79,7 @@ class FakeWindow extends Emitter {
       session: { webRequest: { onHeadersReceived() {} } },
       setWindowOpenHandler() {},
       isDestroyed: () => this.destroyed,
-      send: (ch, payload) => {
-        if (this.destroyed) throw new Error('Object has been destroyed');
-        // The usage panel's push comes on its own clock (its first file read is async): not part of any close sequence.
-        if (ch === 'plan-usage:changed') return;
-        this.trace.push(`send:${ch}`); this.sent.push({ ch, payload });
-      },
+      send: (ch, payload) => { if (this.destroyed) throw new Error('Object has been destroyed'); this.trace.push(`send:${ch}`); this.sent.push({ ch, payload }); },
     });
     this.webContents = wc;
     windows.push(this);
@@ -184,7 +186,6 @@ const bundle = await build({
       export { closePreconfirmations, CLOSE_PRECONFIRM_TTL_MS } from './src/main/close-preconfirm';
       export { IPC } from './src/shared/constants';
       export { guardBeforeQuit, isQuitConfirmed } from './src/main/quit-guard';
-      export { setTokenWorkerScript } from './src/main/plan-usage-ipc';
     `,
     resolveDir: repo,
     loader: 'ts',
@@ -204,9 +205,6 @@ const bundleText = bundle.outputFiles[0].text;
 const instantiate = () => {
   const m = { exports: {} };
   new Function('module', 'exports', '__dirname', 'require', bundleText)(m, m.exports, join(repo, '.vite', 'build'), (createRequire)(join(repo, 'noop.js')));
-  // No token scan of this Mac's transcripts in a close-guard check: its late push or a missing
-  // worker's warning would land in the window traces and warning lists checked here.
-  m.exports.setTokenWorkerScript(null);
   return m.exports;
 };
 let { createWindow, registerIpcHandlers, closePreconfirmations, CLOSE_PRECONFIRM_TTL_MS, IPC, guardBeforeQuit, isQuitConfirmed } = instantiate();
@@ -952,10 +950,23 @@ await fresh();
 }
 
 
+// Wiring (source): a confirmed quit stops the usage poll and, through it, the token worker.
+{
+  const mainSrc = readFileSync(join(repo, 'src/main/main.ts'), 'utf8');
+  const quit = mainSrc.slice(mainSrc.indexOf("app.on('before-quit'"));
+  const handler = quit.slice(0, quit.indexOf('\n});'));
+  const guardAt = handler.indexOf('guardBeforeQuit(');
+  const stopAt = handler.indexOf('stopPlanUsagePoll()');
+  check('wiring: before-quit calls stopPlanUsagePoll, after the quit guard has let the quit through', guardAt !== -1 && stopAt > guardAt && /if \(!guardBeforeQuit\([^)]*\)\) return;/.test(handler), { guardAt, stopAt });
+  const ipcSrc = readFileSync(join(repo, 'src/main/plan-usage-ipc.ts'), 'utf8');
+  const stopFn = ipcSrc.slice(ipcSrc.indexOf('export function stopPlanUsagePoll'));
+  check('wiring: stopPlanUsagePoll ends the poll and stops the token host', /clearInterval\(pollTimer\)/.test(stopFn.slice(0, stopFn.indexOf('\n}'))) && /tokenHost\?\.stop\(\)/.test(stopFn.slice(0, stopFn.indexOf('\n}'))));
+}
+
 console.info = realInfo;
 console.warn = realWarn;
 Date.now = realDateNow;
 performance.now = realNow;
-for (const d of tmpDirs) rmSync(d, { recursive: true, force: true });
+for (const d of [...tmpDirs, noUsage]) rmSync(d, { recursive: true, force: true });
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

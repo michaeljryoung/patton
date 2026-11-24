@@ -4,7 +4,7 @@
  * epoch seconds, shown in local time, 24 h.
  */
 import type { PlanUsage, UsageWindow, WeekTokens } from '../../shared/plan-usage';
-import { weekEstimate } from '../../shared/token-credit';
+import { weekEstimate, WEEK_S } from '../../shared/token-credit';
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -83,20 +83,29 @@ export function tokenLine(t: WeekTokens, pct: number): string {
   return estimate === null ? formatTokens(t.tokens) : `${formatTokens(t.tokens)} of ~${formatTokens(estimate)}`;
 }
 
-/** The week's whole sub line: "<tokens> · resets Sat 12:00", or the reset alone with no count. */
-export function weekSubLine(w: UsageWindow, t: WeekTokens | null | undefined): string {
+/** The week's sub line in its two parts, so a narrow sidebar wraps only between them: the token
+ *  part with its "·" (null with no count to show), and the reset. */
+export function weekSubParts(w: UsageWindow, t: WeekTokens | null | undefined): { tokens: string | null; reset: string } {
   const shown = shownTokens(w, t);
-  return shown ? `${tokenLine(shown, w.pct)} · ${weekLine(w)}` : weekLine(w);
+  return { tokens: shown ? `${tokenLine(shown, w.pct)} ·` : null, reset: weekLine(w) };
 }
 
-/** The count in full, for the tooltip and accessible name. */
+/** The week's whole sub line: "<tokens> · resets Sat 12:00", or the reset alone with no count. */
+export function weekSubLine(w: UsageWindow, t: WeekTokens | null | undefined): string {
+  const { tokens, reset } = weekSubParts(w, t);
+  return tokens === null ? reset : `${tokens} ${reset}`;
+}
+
+/** The count in full, for the tooltip and accessible name. Worded as what it is: the tokens Claude
+ *  Code recorded while this login was live by the status line's login record, which can be off
+ *  around a switch (see docs/reference/key-files.md, Plan usage). */
 export function tokenDetail(t: WeekTokens, pct: number): string {
   const exact = `${exactTokens(t.tokens)} tokens`;
-  if (!t.complete) {
-    const since = t.since !== null ? ` since ${dayTime(t.since)}, when the record of which login was live began` : '';
-    return `at least ${exact} Claude Code recorded on this login${since}, cached re-reads included`;
-  }
-  const estimate = weekEstimate(t, pct, shownPct(pct));
+  const from = t.complete
+    ? `from ${dayTime(t.resetsAt - WEEK_S)}`
+    : t.since !== null ? `from ${dayTime(t.since)}, when the record of which login was live began` : 'from when the record of which login was live began';
+  const estimate = t.complete ? weekEstimate(t, pct, shownPct(pct)) : null;
   const of = estimate === null ? '' : ` (a whole week ~${exactTokens(estimate)}, from the percent)`;
-  return `${exact} Claude Code recorded on this login since the week began, cached re-reads included${of}`;
+  const counted = t.countedAt != null && Number.isFinite(t.countedAt) ? `; tokens counted at ${clockTime(t.countedAt)}` : '';
+  return `about ${exact} Claude Code recorded while this login was live (${from}); approximate around switches, cached re-reads included${of}${counted}`;
 }

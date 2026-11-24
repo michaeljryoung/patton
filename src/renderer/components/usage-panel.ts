@@ -12,7 +12,7 @@
 import { EMPTY_PLAN_USAGE, planUsageAt, usageIdentity, type PlanUsage, type PlanUsageAccount, type UsageWindow } from '../../shared/plan-usage';
 import type { PattonAPI } from '../../shared/types';
 import { rlog } from '../services/renderer-logger';
-import { clockTime, dayTime, newestRead, shownPct, shownTokens, tokenDetail, usageLevel, weekLine, weekSubLine } from '../services/usage-format';
+import { clockTime, dayTime, newestRead, shownPct, shownTokens, tokenDetail, usageLevel, weekLine, weekSubParts } from '../services/usage-format';
 
 /** If main's first answer is null (rate-limited), ask once more after this (ms). */
 const RETRY_DELAY_MS = 2000;
@@ -202,7 +202,19 @@ export class UsagePanel {
 
     block.appendChild(meter('usage-meter', week ? week.pct : 0));
     // The week's token count, where there is one, goes before the reset: "<tokens> · resets …".
-    block.appendChild(el('div', 'usage-sub usage-reset', week ? weekSubLine(week, a.weekTokens) : 'no recent reading'));
+    // Two spans, each unbreakable, so a narrow sidebar wraps between them and never mid-phrase.
+    const sub = el('div', 'usage-sub usage-reset');
+    if (week) {
+      const parts = weekSubParts(week, a.weekTokens);
+      if (parts.tokens !== null) {
+        sub.appendChild(el('span', 'usage-tokens', parts.tokens));
+        sub.appendChild(document.createTextNode(' '));
+      }
+      sub.appendChild(el('span', 'usage-when', parts.reset));
+    } else {
+      sub.textContent = 'no recent reading';
+    }
+    block.appendChild(sub);
 
     const five: UsageWindow | null = a.fiveHour && !a.fiveHour.passed ? a.fiveHour : null;
     if (five) {

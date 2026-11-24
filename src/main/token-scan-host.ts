@@ -24,8 +24,10 @@ export class TokenScanHost {
   private pending = new Map<number, Pending>();
   private nextId = 1;
   private stopped = false;
+  private starts = 0;
 
-  constructor(private readonly scriptPath: string) {}
+  /** `onStart(n)` is told each time a worker is started, n counting from 1: a 2 or more is a restart. */
+  constructor(private readonly scriptPath: string, private readonly onStart?: (n: number) => void) {}
 
   async scan(req: Omit<TokenScanRequest, 'id'>): Promise<TokenScanReply> {
     if (this.stopped) throw Object.assign(new Error('stopped'), { code: 'STOPPED' });
@@ -61,6 +63,8 @@ export class TokenScanHost {
       if (this.worker === worker) this.fail(Object.assign(new Error(`token worker exited ${code}`), { code: 'WORKER_EXIT' }));
     });
     this.worker = worker;
+    this.starts++;
+    this.onStart?.(this.starts);
     return worker;
   }
 

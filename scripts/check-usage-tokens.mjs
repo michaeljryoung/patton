@@ -6,26 +6,35 @@
 // (b) the scanner on a temp projects tree: duplicates counted once (a repeat with
 //     more tokens raises it), a partial last line left for the next scan, a
 //     subagent's file, bad JSON and a user line that merely quotes the marks, a
-//     file older than the floor, a request older than the floor, truncation and
-//     replacement read from the start without double counting, the incremental
-//     scan reading only new bytes, the floor moving later (prune) and earlier
-//     (start over), a missing root;
+//     file older than the floor, a request older than the floor, truncation,
+//     replacement and an in-place rewrite (its bytes before the offset changed)
+//     read from the start without double counting, a replaced file with the
+//     same 256 bytes before the offset, the incremental scan reading only new
+//     bytes, the floor moving later (prune) and earlier (start over), a missing
+//     root (listed 0), a request in two files (once, at its earliest time), a
+//     line over the 32 MB cap (skipped, the lines after it count; one still
+//     unterminated is not read again), an unreadable file named once;
 // (c) crediting (src/shared/token-credit.ts): the last switch at or before each
 //     request, nothing before the first switch, two logins with a switch mid-week,
 //     window bounds, complete vs partial, the scan floor, the estimate rule;
 // (d) the words (src/renderer/services/usage-format.ts): k / M / bn, the sub line
 //     complete, without an estimate, partial, passed, for another week, the detail;
-// (e) the real worker (bundled as Forge builds it, run with eval through
-//     src/main/token-scan-host.ts): same totals as the scanner, state kept;
+// (e) the real worker (bundled here with esbuild as one CommonJS file, not by
+//     Forge's Vite; the Vite-built file is also run when .vite/build has one),
+//     run with eval through src/main/token-scan-host.ts: same totals as the
+//     scanner, state kept, a worker that dies is started again (and told);
 // (f) main's IPC module with the worker: counts joined into the push per login,
-//     one "[USAGE] tokens" line per changed scan and none for an unchanged one,
-//     a scan error logged once and the last counts kept, stop ends the worker;
+//     one "[USAGE] tokens" line per scan whose rounded totals changed, a scan
+//     scheduled by the poll itself when switches or weeks change, a count never
+//     shown against another week, no count with no transcripts, a stale count
+//     naming its time, errors logged once and the last counts kept, and a
+//     separate process that exits on its own after stopPlanUsagePoll;
 // (g) wiring: Forge builds the worker beside main, the worker needs only Node.
 // TOKEN_SCAN_PROBE=1 also scans this Mac's real ~/.claude/projects once,
 // read-only, and prints the time and file count (no assertion).
 // Run: node scripts/check-usage-tokens.mjs
 import { build } from 'esbuild';
-import { appendFileSync, chmodSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -180,7 +189,67 @@ try {
     check('scanner: a deleted transcript leaves its requests counted and is no longer listed', sumOf(sc) === 5132 && st.files === 1, { sum: sumOf(sc), files: st.files });
 
     const none = await new M.TokenScanner().scan(join(tmp, 'no-such-dir'), floor);
-    check('scanner: a missing root is no files, not an error', none.files === 0 && none.requests === 0, none);
+    check('scanner: a missing root is no files, not an error, and lists no transcript', none.files === 0 && none.requests === 0 && none.listed === 0, none);
+    const emptyRoot = join(tmp, 'empty-root');
+    mkdirSync(emptyRoot);
+    check('scanner: a root with no transcript in it lists none', (await new M.TokenScanner().scan(emptyRoot, floor)).listed === 0);
+    check('scanner: a root with transcripts lists them, old ones too', (await new M.TokenScanner().scan(root, floor)).listed === 2);
+
+    // Rewritten in place (same inode) so that it ends past the saved offset: the early line is gone and
+    // new ones were added in the same pass. Reading on from the old offset would start mid-file.
+    {
+      const rwRoot = join(tmp, 'rw'); mkdirSync(rwRoot);
+      const f = join(rwRoot, 'a.jsonl');
+      const L = (i, n) => asst(`rw${i}`, `r${i}`, NOW - 100 + i, { i: n });
+      writeFileSync(f, [L(1, 10), L(2, 20), L(3, 30)].join('\n') + '\n');
+      const r = new M.TokenScanner(); await r.scan(rwRoot, floor);
+      const ino = statSync(f).ino;
+      writeFileSync(f, [L(1, 10), L(3, 30), L(4, 40), L(5, 50)].join('\n') + '\n');
+      check('scanner (setup): the rewrite keeps the inode and ends past the old offset', statSync(f).ino === ino && statSync(f).size > Buffer.byteLength([L(1, 10), L(2, 20), L(3, 30)].join('\n') + '\n'));
+      await r.scan(rwRoot, floor);
+      check('scanner: a file rewritten in place is read from the start (its new lines count, none twice)', sumOf(r) === 150 && countOf(r) === 5, { sum: sumOf(r), n: countOf(r) });
+    }
+
+    // Replaced by rename with other early content but the same 256 bytes before the saved offset (and
+    // the same offset): only the inode tells it from an append.
+    {
+      const rpRoot = join(tmp, 'rp'); mkdirSync(rpRoot);
+      const f = join(rpRoot, 'a.jsonl');
+      const common = JSON.stringify({ type: 'assistant', requestId: 'rC', timestamp: iso(NOW - 80), message: { id: 'mC', content: [{ type: 'text', text: 'p'.repeat(600) }], usage: { input_tokens: 5 } } });
+      writeFileSync(f, asst('mX', 'rX', NOW - 90, { i: 1000 }) + '\n' + common + '\n');
+      const r = new M.TokenScanner(); await r.scan(rpRoot, floor);
+      writeFileSync(`${f}.tmp`, asst('mY', 'rY', NOW - 90, { i: 2000 }) + '\n' + common + '\n' + asst('mZ', 'rZ', NOW - 70, { i: 3 }) + '\n');
+      renameSync(`${f}.tmp`, f);
+      await r.scan(rpRoot, floor);
+      check('scanner: a replaced file (new inode) is read whole even when the bytes before the old offset hash the same', sumOf(r) === 1000 + 5 + 2000 + 3, sumOf(r));
+    }
+
+    // The same request in two files (a resumed or forked session), stamped differently: once, at its earliest time,
+    // whichever file is listed first.
+    for (const [late, early] of [['a.jsonl', 'b.jsonl'], ['b.jsonl', 'a.jsonl']]) {
+      const dupRoot = join(tmp, `dup-${late}`); mkdirSync(dupRoot);
+      writeFileSync(join(dupRoot, late), asst('mDup', 'rDup', NOW - 100, { i: 40 }) + '\n');
+      writeFileSync(join(dupRoot, early), asst('mDup', 'rDup', NOW - 500, { i: 40, o: 2 }) + '\n');
+      const r = new M.TokenScanner(); await r.scan(dupRoot, floor);
+      const got = [...r.requests()];
+      check(`scanner: a request in two files counts once, at its earliest time and larger figure (${late} later)`, got.length === 1 && got[0].t === NOW - 500 && got[0].n === 42, got);
+    }
+
+    // A file that cannot be read is named once, with its code, however many scans find it so.
+    if (process.getuid?.() !== 0) {
+      const errRoot = join(tmp, 'err'); mkdirSync(errRoot);
+      const bad = join(errRoot, 'bad.jsonl');
+      writeFileSync(bad, asst('mBad', 'rBad', NOW - 5, { i: 1 }) + '\n');
+      writeFileSync(join(errRoot, 'good.jsonl'), asst('mGood', 'rGood', NOW - 5, { i: 2 }) + '\n');
+      chmodSync(bad, 0o000);
+      const r = new M.TokenScanner();
+      const e1 = await r.scan(errRoot, floor);
+      const e2 = await r.scan(errRoot, floor);
+      chmodSync(bad, 0o644);
+      check('scanner: an unreadable file is skipped, named once with its code, and the others count', e1.skipped === 1 && JSON.stringify(e1.errors) === JSON.stringify([['bad.jsonl', 'EACCES']]) && e2.skipped === 1 && e2.errors.length === 0 && sumOf(r) === 2, { e1, e2 });
+      const e3 = await r.scan(errRoot, floor);
+      check('scanner: once readable it is read and counts', e3.skipped === 0 && sumOf(r) === 3, { e3, sum: sumOf(r) });
+    }
 
     // A very long line (a tool result) between requests: read across chunk joins, the requests around it count.
     const longFile = join(projA, 'long.jsonl');
@@ -190,6 +259,33 @@ try {
     await sc2.scan(root, floor);
     check('scanner: requests either side of a 9 MB line (over two read chunks) both count', [...sc2.requests()].filter((r) => r.n === 11 || r.n === 13).length === 2);
     rmSync(longFile);
+
+    // A line over the 32 MB cap is skipped unread; the requests before and after it count, and it is not read again.
+    {
+      const capRoot = join(tmp, 'cap'); mkdirSync(capRoot);
+      const f = join(capRoot, 'a.jsonl');
+      const over = JSON.stringify({ type: 'user', message: { content: 'y'.repeat(M.LINE_CAP_BYTES + 1024 * 1024) } });
+      writeFileSync(f, asst('mP1', 'rP1', NOW - 10, { i: 21 }) + '\n' + over + '\n' + asst('mP2', 'rP2', NOW - 9, { i: 23 }) + '\n');
+      const r = new M.TokenScanner();
+      const a = await r.scan(capRoot, floor);
+      check('scanner: a line over the 32 MB cap is skipped, the lines either side of it count', sumOf(r) === 44 && countOf(r) === 2, { sum: sumOf(r), n: countOf(r) });
+      check('scanner: ... and the next scan reads none of it again', a.bytes === statSync(f).size && (await r.scan(capRoot, floor)).bytes === 0);
+    }
+    // One still unterminated (40 MB, growing): not read again from its start; the lines after its newline count.
+    {
+      const capRoot = join(tmp, 'cap-open'); mkdirSync(capRoot);
+      const f = join(capRoot, 'a.jsonl');
+      writeFileSync(f, asst('mQ1', 'rQ1', NOW - 10, { i: 31 }) + '\n' + '{"type":"user","message":{"content":"' + 'z'.repeat(40 * 1024 * 1024));
+      const r = new M.TokenScanner();
+      const a = await r.scan(capRoot, floor);
+      const b = await r.scan(capRoot, floor);
+      appendFileSync(f, 'z'.repeat(1024 * 1024));
+      const c = await r.scan(capRoot, floor);
+      appendFileSync(f, '"}}\n' + asst('mQ2', 'rQ2', NOW - 9, { i: 37 }) + '\n');
+      const d = await r.scan(capRoot, floor);
+      check('scanner: an unterminated line over the cap is read once, then only what is appended to it', a.bytes > 40e6 && b.bytes === 0 && c.bytes === 1024 * 1024 && d.bytes < 1000, [a.bytes, b.bytes, c.bytes, d.bytes]);
+      check('scanner: ... and the request after its newline counts', sumOf(r) === 31 + 37 && countOf(r) === 2, { sum: sumOf(r), n: countOf(r) });
+    }
   });
 
   // ── (c) crediting
@@ -248,9 +344,12 @@ try {
     check('format: no count, the reset alone', M.weekSubLine(week, null) === 'resets Sat 12:00');
     check('format: a full week keeps "back" after the tokens', M.weekSubLine({ ...week, pct: 100 }, full) === '2.9 bn of ~2.9 bn · back Sat 12:00', M.weekSubLine({ ...week, pct: 100 }, full));
     const d = M.tokenDetail(full, 63);
-    check('format: the detail gives the exact count and how it was counted', d.includes('2,912,345,678 tokens') && d.includes('since the week began') && d.includes('cached re-reads included') && d.includes('~4,600,000,000'), d);
+    check('format: the detail says about how many tokens Claude Code recorded while the login was live, from the week start, approximate around switches',
+      d.startsWith('about 2,912,345,678 tokens Claude Code recorded while this login was live (from Sat 12:00)') && d.includes('approximate around switches') && d.includes('cached re-reads included') && d.includes('~4,600,000,000'), d);
     const dp = M.tokenDetail(part, 63);
-    check('format: a partial detail says "at least" and since when', dp.startsWith('at least 412,345,678 tokens') && dp.includes('since Tue 20:22') && dp.includes('cached re-reads included'), dp);
+    check('format: a partial detail runs from the first switch, still approximate', dp.startsWith('about 412,345,678 tokens') && dp.includes('from Tue 20:22, when the record of which login was live began') && dp.includes('approximate around switches') && dp.includes('cached re-reads included'), dp);
+    check('format: a stale count names its time, a fresh one does not', M.tokenDetail({ ...full, countedAt: tue }, 63).endsWith('; tokens counted at 20:22') && !d.includes('counted at'));
+    check('format: the sub line is a token part ending in "·" and a reset part, so a wrap falls between them', JSON.stringify(M.weekSubParts(week, full)) === JSON.stringify({ tokens: '2.9 bn of ~4.6 bn ·', reset: 'resets Sat 12:00' }) && M.weekSubParts(week, null).tokens === null, M.weekSubParts(week, full));
   });
 
   // ── (e) the real worker through the host
@@ -281,6 +380,28 @@ try {
     try { await badHost.scan({ root, floor, switches: sw, windows }); } catch (err) { failedStart = err?.code === 'ENOENT'; }
     check('worker: a missing worker script rejects the scan with ENOENT', failedStart);
     badHost.stop();
+
+    // A worker that dies is dropped, the scan rejected, and the next scan starts one afresh (onStart told).
+    const dying = join(tmp, 'dying-worker.cjs');
+    writeFileSync(dying, "require('node:worker_threads').parentPort.on('message', () => process.exit(3));");
+    const starts = [];
+    const dyingHost = new M.TokenScanHost(dying, (n) => starts.push(n));
+    const codes = [];
+    for (let i = 0; i < 2; i++) {
+      try { await dyingHost.scan({ root, floor, switches: sw, windows }); } catch (err) { codes.push(err?.code); }
+    }
+    dyingHost.stop();
+    check('worker: a worker that exits rejects the scan, and the next scan starts another (onStart 1, 2)', codes.join() === 'WORKER_EXIT,WORKER_EXIT' && starts.join() === '1,2', { codes, starts });
+
+    // The Vite-built worker, when a build has put one in .vite/build.
+    const built = join(repo, '.vite', 'build', 'token-scan-worker.cjs');
+    if (existsSync(built)) {
+      const bh = new M.TokenScanHost(built);
+      try {
+        const rb = await bh.scan({ root, floor, switches: sw, windows });
+        check('worker: the Vite-built worker (.vite/build) answers with the scanner\'s totals', rb.ok && JSON.stringify(rb.totals) === JSON.stringify([...want]), rb);
+      } finally { bh.stop(); }
+    } else console.log('skip worker: no .vite/build/token-scan-worker.cjs (not built here)');
   });
 
   // ── (f) main's IPC module with the worker
@@ -349,7 +470,9 @@ try {
       check('ipc: the push carries B\'s complete count (its week began after the first switch), deduped', acct('bbbb2222')?.weekTokens?.tokens === 300_000_000 && acct('bbbb2222').weekTokens.complete === true, acct('bbbb2222')?.weekTokens);
       check('ipc: ... and A\'s partial count since the first switch (the request before it uncredited)', acct('aaaa1111')?.weekTokens?.tokens === 2_000_000 && acct('aaaa1111').weekTokens.complete === false && acct('aaaa1111').weekTokens.since === firstSwitch, acct('aaaa1111')?.weekTokens);
       check('ipc: a passed week gets no count', acct('cccc3333')?.weekTokens === null);
-      check('ipc: one "[USAGE] tokens" line, with totals in millions, files and ms', tokenLogs().length === 1 && tokenLogs()[0][2]?.totalsM?.bbbb2222 === 300 && tokenLogs()[0][2]?.files === 1 && typeof tokenLogs()[0][2]?.ms === 'number', tokenLogs());
+      check('ipc: one "[USAGE] tokens" line, with totals in millions, files, bytes, requests, skipped and ms',
+        tokenLogs().length === 1 && tokenLogs()[0][2]?.totalsM?.bbbb2222 === 300 && tokenLogs()[0][2]?.files === 1 && typeof tokenLogs()[0][2]?.ms === 'number'
+        && tokenLogs()[0][2]?.skipped === 0 && tokenLogs()[0][2]?.requests === 2 && tokenLogs()[0][2]?.bytes === statSync(tx).size, tokenLogs());
       check('ipc: no "[USAGE] read" line for the token count alone (one for the first reading)', logs.filter((l) => l[1] === '[USAGE] read').length === 1);
       const get = stub.handlers.get(I.IPC.PLAN_USAGE_GET);
       const got = await get();
@@ -361,7 +484,28 @@ try {
 
       appendFileSync(tx, asst('m3', 'r3', NOW - 5, { o: 1_000 }) + '\n');
       await I.scanTokensOnce();
-      check('ipc: a new request is one push and one log line', pushes().length === marks.pushes + 1 && tokenLogs().length === marks.logs + 1 && acct('bbbb2222').weekTokens.tokens === 300_001_000, [pushes().length, tokenLogs().length, acct('bbbb2222')?.weekTokens]);
+      check('ipc: a new request moves the count (one push) but not the rounded totals, so no log line', pushes().length === marks.pushes + 1 && tokenLogs().length === marks.logs && acct('bbbb2222').weekTokens.tokens === 300_001_000, [pushes().length, tokenLogs().length, acct('bbbb2222')?.weekTokens]);
+
+      // A request that carries B's total across a million: one log line.
+      appendFileSync(tx, asst('m3b', 'r3b', NOW - 1800, { o: 2_000_000 }) + '\n');
+      await I.scanTokensOnce();
+      check('ipc: a total that crosses a rounded million is one push and one log line', pushes().length === marks.pushes + 2 && tokenLogs().length === marks.logs + 1 && tokenLogs().at(-1)[2]?.totalsM?.bbbb2222 === 302, [pushes().length, tokenLogs().length, tokenLogs().at(-1)]);
+      marks = { pushes: pushes().length, logs: tokenLogs().length };
+
+      // A transcript that cannot be read is logged once with its file name and code, and the others still count.
+      if (process.getuid?.() !== 0) {
+        const bad = join(proot, 'p', 'bad.jsonl');
+        writeFileSync(bad, asst('mBad', 'rBad', NOW - 20, { i: 0 }) + '\n');
+        chmodSync(bad, 0o000);
+        await I.scanTokensOnce();
+        await I.scanTokensOnce();
+        chmodSync(bad, 0o644);
+        const rf = logs.filter((l) => l[1] === '[USAGE] tokens read failed');
+        check('ipc: an unreadable transcript is logged once over two scans, by file name and code', rf.length === 1 && rf[0][2]?.file === 'bad.jsonl' && rf[0][2]?.code === 'EACCES', rf);
+        await I.scanTokensOnce();
+        check('ipc: ... and once readable it counts, with no new failure line', logs.filter((l) => l[1] === '[USAGE] tokens read failed').length === 1 && acct('aaaa1111') !== undefined);
+        marks = { pushes: pushes().length, logs: tokenLogs().length };
+      }
 
       // A scan error: logged once over two failing scans, and the last counts stay.
       if (process.getuid?.() !== 0) {
@@ -369,12 +513,23 @@ try {
         marks = { pushes: pushes().length, logs: logs.length };
         await I.scanTokensOnce();
         await I.scanTokensOnce();
-        chmodSync(proot, 0o755);
         const fails = logs.filter((l) => l[1] === '[USAGE] tokens scan failed');
         check('ipc: an unreadable transcripts folder is logged once over two scans, with its code', fails.length === 1 && fails[0][2]?.error === 'EACCES', fails);
-        check('ipc: ... and the last counts stay (no push)', pushes().length === marks.pushes && acct('bbbb2222').weekTokens.tokens === 300_001_000);
+        check('ipc: ... and the last counts stay (no push)', pushes().length === marks.pushes && acct('bbbb2222').weekTokens.tokens === 302_001_000);
+        // Past 5 minutes of failing scans, the count says when it was counted (the sub line unchanged).
+        const realDateNow = Date.now;
+        const lateBy = 6 * 60 * 1000;
+        const countedAt = Math.floor(realDateNow() / 1000);
+        Date.now = () => realDateNow() + lateBy;
+        try {
+          await I.pollPlanUsageOnce();
+          await I.scanTokensOnce();
+          const wt = acct('bbbb2222')?.weekTokens;
+          check('ipc: counts older than 5 minutes (scans failing) carry the time they were counted', wt?.tokens === 302_001_000 && Math.abs((wt.countedAt ?? 0) - countedAt) <= 5, wt);
+        } finally { Date.now = realDateNow; }
+        chmodSync(proot, 0o755);
         await I.scanTokensOnce();
-        check('ipc: once readable again the count carries on unchanged (no push)', pushes().length === marks.pushes);
+        check('ipc: once readable again the count is fresh (no countedAt) and still 302,001,000', acct('bbbb2222')?.weekTokens?.tokens === 302_001_000 && !acct('bbbb2222').weekTokens.countedAt, acct('bbbb2222')?.weekTokens);
       } else console.log('skip ipc: unreadable folder (running as root)');
 
       // The file's switches change: the next poll scans at once (no minute's wait).
@@ -382,15 +537,53 @@ try {
       accounts.updated = NOW + 1;
       writeFileSync(`${file}.tmp`, JSON.stringify(accounts));
       renameSync(`${file}.tmp`, file);
+      await I.pollPlanUsageOnce(); // the poll itself starts the scan; none is called by hand
+      const waitFor = async (fn, ms = 10_000) => { const t0 = Date.now(); while (!fn() && Date.now() - t0 < ms) await new Promise((r) => setTimeout(r, 25)); return fn(); };
+      const recredited = await waitFor(() => acct('aaaa1111')?.weekTokens?.tokens === 2_001_000 && acct('bbbb2222')?.weekTokens?.tokens === 302_000_000);
+      check('ipc: a change of switches makes the poll scan at once, with no minute\'s wait (the last request now A\'s)', recredited, [acct('aaaa1111')?.weekTokens, acct('bbbb2222')?.weekTokens]);
+
+      // A count is shown only against the week it was counted for: B's week moves on, and until a scan
+      // counts the new week the old figure is not drawn against it.
+      const movedReset = resetB + 2 * DAY;
+      accounts.accounts.bbbb2222.seven_day = { used_percentage: 5, resets_at: movedReset, read_at: NOW };
+      accounts.updated = NOW + 2;
+      writeFileSync(`${file}.tmp`, JSON.stringify(accounts));
+      renameSync(`${file}.tmp`, file);
+      I.setTokenWorkerScript(null); // no scan: only the join of the old figure with the new week is under test
       await I.pollPlanUsageOnce();
-      await I.scanTokensOnce(); // waits for the scan the poll started, then runs one more
-      check('ipc: a change of switches re-credits (the last request now A\'s)', acct('aaaa1111')?.weekTokens?.tokens === 2_001_000 && acct('bbbb2222')?.weekTokens?.tokens === 300_000_000, [acct('aaaa1111')?.weekTokens, acct('bbbb2222')?.weekTokens]);
+      check('ipc: a count for last week is not joined to the new week (resetsAt must match)', acct('bbbb2222')?.week?.resetsAt === movedReset && acct('bbbb2222').weekTokens === null, acct('bbbb2222'));
+      I.setTokenWorkerScript(workerPath);
+      await I.scanTokensOnce();
+      check('ipc: after the next scan the new week has its own count', acct('bbbb2222')?.weekTokens?.resetsAt === movedReset && acct('bbbb2222').weekTokens.tokens === 0, acct('bbbb2222')?.weekTokens);
+
+      // No transcripts folder: no count at all (not a 0).
+      const keepDir = process.env.PATTON_CLAUDE_PROJECTS_DIR;
+      process.env.PATTON_CLAUDE_PROJECTS_DIR = join(tmp, 'no-such-projects');
+      await I.scanTokensOnce();
+      check('ipc: a missing transcripts folder gives no count for anyone', last().accounts.every((a) => a.weekTokens === null), last().accounts.map((a) => a.weekTokens));
+      process.env.PATTON_CLAUDE_PROJECTS_DIR = keepDir;
+      await I.scanTokensOnce();
+      check('ipc: ... and the count is back when the folder is', acct('aaaa1111')?.weekTokens?.tokens === 2_001_000, acct('aaaa1111')?.weekTokens);
 
       I.stopPlanUsagePoll();
       marks = { pushes: pushes().length, logs: logs.length };
       appendFileSync(tx, asst('m4', 'r4', NOW - 4, { o: 7 }) + '\n');
       await I.scanTokensOnce();
       check('ipc: after stop no scan runs (no push, no log)', pushes().length === marks.pushes && logs.length === marks.logs);
+
+      // A second copy of the module (fresh state) with a worker that dies at once: the failure is logged, and the
+      // next scan's new worker is logged as a restart.
+      const dying = join(tmp, 'dying-ipc-worker.cjs');
+      writeFileSync(dying, "require('node:worker_threads').parentPort.on('message', () => process.exit(3));");
+      const I2 = await import(`${pathToFileURL(join(tmp, 'ipc.mjs')).href}?second`);
+      I2.setTokenWorkerScript(dying);
+      I2.registerPlanUsageHandlers();
+      await I2.pollPlanUsageOnce();
+      await I2.scanTokensOnce();
+      await I2.scanTokensOnce();
+      const restarts = logs.filter((l) => l[1] === '[USAGE] tokens worker restarted');
+      check('ipc: a worker that died is started again and the restart is logged', restarts.length >= 1 && restarts[0][2]?.starts === 2 && restarts.every((r, i) => r[2]?.starts === i + 2) && logs.some((l) => l[1] === '[USAGE] tokens scan failed' && l[2]?.error === 'WORKER_EXIT'), { restarts, fails: logs.filter((l) => l[1] === '[USAGE] tokens scan failed') });
+      I2.stopPlanUsagePoll();
     } finally {
       try { chmodSync(proot, 0o755); } catch { /* */ }
       I?.stopPlanUsagePoll?.();
@@ -401,6 +594,47 @@ try {
     }
   });
 
+  // ── (f2) no zombie after quit: a separate process starts the worker, calls stopPlanUsagePoll and must exit by itself
+  await section('exit', async () => {
+    const eroot = join(tmp, 'exit-projects'); mkdirSync(join(eroot, 'p'), { recursive: true });
+    writeFileSync(join(eroot, 'p', 'x.jsonl'), asst('mE1', 'rE1', NOW - 100, { i: 12 }) + '\n');
+    const efile = join(tmp, 'exit-accounts.json');
+    writeFileSync(efile, JSON.stringify({ version: 1, updated: NOW, live: { account: 'aaaa1111', since: NOW - DAY },
+      accounts: { aaaa1111: { email: 'a@example.com', last_live: NOW, seven_day: { used_percentage: 10, resets_at: NOW + 3 * DAY, read_at: NOW } } },
+      switches: [[NOW - 2 * DAY, 'aaaa1111']] }));
+    const script = join(tmp, 'exit-child.mjs');
+    writeFileSync(script, `
+      import { pathToFileURL } from 'node:url';
+      const [ipc, worker] = process.argv.slice(2);
+      const I = await import(pathToFileURL(ipc).href);
+      I.setTokenWorkerScript(worker);
+      I.registerPlanUsageHandlers();
+      await I.pollPlanUsageOnce();
+      await I.scanTokensOnce();
+      console.log('scanned');
+      I.stopPlanUsagePoll();
+    `);
+    const { spawn } = await import('node:child_process');
+    const run = (stopMissing) => new Promise((resolve) => {
+      const env = { ...process.env, PATTON_PLAN_USAGE_FILE: efile, PATTON_CLAUDE_PROJECTS_DIR: eroot };
+      const child = spawn(process.execPath, [script, join(tmp, stopMissing ? 'ipc-nostop.mjs' : 'ipc.mjs'), workerPath], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+      let out = '';
+      child.stdout.on('data', (d) => { out += d; });
+      child.stderr.on('data', (d) => { out += d; });
+      const t0 = Date.now();
+      const timer = setTimeout(() => child.kill('SIGKILL'), 8000);
+      child.on('exit', (code, signal) => { clearTimeout(timer); resolve({ code, signal, ms: Date.now() - t0, out }); });
+    });
+    const r = await run(false);
+    check('exit: a process that scanned and called stopPlanUsagePoll ends by itself (no process.exit, no zombie worker)', r.code === 0 && r.signal === null && r.out.includes('scanned') && r.out.includes('[USAGE] tokens'), r);
+    // The same child against a copy of main's module whose stop leaves the worker running must be seen to hang.
+    const ipcText = readFileSync(join(tmp, 'ipc.mjs'), 'utf8');
+    check('exit (setup): the module has a worker stop to remove', ipcText.includes('tokenHost?.stop()'));
+    writeFileSync(join(tmp, 'ipc-nostop.mjs'), ipcText.replace('tokenHost?.stop()', 'void 0'));
+    const hung = await run(true);
+    check('exit: without the worker stop the same process does not end by itself (the check can tell)', hung.signal === 'SIGKILL', hung);
+  });
+
   // ── (g) wiring
   await section('wiring', async () => {
     const forge = readFileSync(join(repo, 'forge.config.ts'), 'utf8');
@@ -408,7 +642,7 @@ try {
     const ipc = readFileSync(join(repo, 'src/main/plan-usage-ipc.ts'), 'utf8');
     check('wiring: main loads it from beside its own bundle', ipc.includes("TOKEN_WORKER_FILE = 'token-scan-worker.cjs'") && ipc.includes('join(__dirname, TOKEN_WORKER_FILE)'));
     check('wiring: rescanned every 60 s', ipc.includes('TOKEN_SCAN_MS = 60 * 1000'));
-    check('wiring: stop ends the worker', /stopPlanUsagePoll[\s\S]*?tokenHost\?\.stop\(\)/.test(ipc));
+    check('wiring: stopPlanUsagePoll stops the token host', /export function stopPlanUsagePoll[\s\S]*?tokenHost\?\.stop\(\)/.test(ipc));
     const requires = [...workerBundle.outputFiles[0].text.matchAll(/require\(["']([^"']+)["']\)/g)].map((m) => m[1]);
     check('wiring: the worker needs only Node built-ins (it runs by eval, with no node_modules)', requires.length > 0 && requires.every((r) => r.startsWith('node:') || ['fs', 'path', 'worker_threads'].includes(r)), requires);
   });

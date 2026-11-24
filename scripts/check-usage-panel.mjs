@@ -405,9 +405,23 @@ try {
     check('tokens: a login with no count keeps the reset alone', sub('aaaa1111') === 'back Sat 08:00', sub('aaaa1111'));
     check('tokens: a passed week shows no count', sub('cccc3333') === 'reset Tue 08:00', sub('cccc3333'));
     const title = block('38e237e1').title;
-    check('tokens: the tooltip and accessible name give the exact count and how it was counted',
-      title.includes('2,912,345,678 tokens Claude Code recorded on this login since the week began, cached re-reads included') && block('38e237e1').getAttribute('aria-label') === title, title);
-    check('tokens: a partial tooltip says "at least" and since when', block('bbbb2222').title.includes('at least 412,345,678 tokens') && block('bbbb2222').title.includes('since Tue 20:22'), block('bbbb2222').title);
+    check('tokens: the tooltip and accessible name say about how many tokens Claude Code recorded while this login was live, from the week start, approximate around switches',
+      title.includes('about 2,912,345,678 tokens Claude Code recorded while this login was live (from Sat 12:00)') && title.includes('approximate around switches') && title.includes('cached re-reads included') && block('38e237e1').getAttribute('aria-label') === title, title);
+    const partTitle = block('bbbb2222').title;
+    check('tokens: a partial tooltip gives the first switch as its start, still approximate', partTitle.includes('about 412,345,678 tokens') && partTitle.includes('from Tue 20:22, when the record of which login was live began') && partTitle.includes('approximate around switches'), partTitle);
+    check('tokens: a fresh count names no count time', !title.includes('tokens counted at'), title);
+    // Two spans, each unbreakable by CSS, so a narrow sidebar wraps only between them.
+    const spans = [...block('38e237e1').querySelectorAll('.usage-reset > span')].map((x) => [x.className, x.textContent]);
+    check('tokens: the sub line is a token span and a reset span', JSON.stringify(spans) === JSON.stringify([['usage-tokens', '2.9 bn of ~4.6 bn ·'], ['usage-when', 'resets Sat 12:00']]), spans);
+    check('tokens: a login with no count has the reset span alone', [...block('aaaa1111').querySelectorAll('.usage-reset > span')].map((x) => x.className).join() === 'usage-when');
+    const css = readFileSync(join(repo, 'src/renderer/styles/main.css'), 'utf8');
+    check('tokens: both spans are white-space: nowrap in the stylesheet', /\.usage-reset \.usage-tokens,\s*\.usage-reset \.usage-when\s*\{[^}]*white-space:\s*nowrap/.test(css));
+    // A count more than 5 minutes old says when it was counted.
+    const stale = JSON.parse(JSON.stringify(u1));
+    live(stale).weekTokens.countedAt = at(24, 20, 5);
+    p.setUsage(stale);
+    check('tokens: a stale count names its time in the tooltip, the sub line unchanged', block('38e237e1').title.includes('; tokens counted at 20:05') && sub('38e237e1') === '2.9 bn of ~4.6 bn · resets Sat 12:00', block('38e237e1').title);
+    p.setUsage(u1);
 
     // A new count re-draws; the same count does not touch the DOM.
     const before = sec.querySelector('.usage-acct');

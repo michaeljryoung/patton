@@ -26,6 +26,10 @@ export type TokenScanReply =
       bytes: number;
       requests: number;
       skipped: number;
+      /** Transcripts of any age under the root: 0 is no folder or none in it (no count to show). */
+      listed: number;
+      /** Files whose read failed for a (file, error code) not named before: [file name, code]. */
+      errors: [string, string][];
       /** How long the scan and the crediting took, in the worker. */
       ms: number;
     }

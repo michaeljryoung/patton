@@ -22,6 +22,8 @@ import type { TokenScanReply } from './token-scan-protocol';
 const POLL_MS = 10 * 1000;
 /** Token counts are rescanned this often (checked on the 10 s poll). */
 export const TOKEN_SCAN_MS = 60 * 1000;
+/** A count older than this (no good scan since) says when it was counted. */
+export const TOKEN_STALE_MS = 5 * 60 * 1000;
 /** Forge builds the worker beside main.cjs (forge.config.ts). */
 const TOKEN_WORKER_FILE = 'token-scan-worker.cjs';
 
@@ -32,7 +34,8 @@ let fileUsage: PlanUsage = EMPTY_PLAN_USAGE;
 let switches: LoginSwitch[] = [];
 /** The stat key of the file last read; '' before the first read. */
 let readKey = '';
-let lastContent = '';
+/** What the windows were last sent; they start from the empty reading, so a poll that finds no file sends nothing. */
+let lastContent = JSON.stringify(EMPTY_PLAN_USAGE);
 /** The reading without its read times: what the log line is about. */
 let lastIdentity = '';
 let lastProblem: PlanUsageProblem = null;
@@ -49,8 +52,10 @@ let tokenAgain = false;
 let lastTokenScanAt = 0;
 /** The scan's inputs (windows and switches) at the last scan: a change scans at once. */
 let lastTokenInputs = '';
-/** The exact totals at the last `[USAGE] tokens` line. */
+/** The accounts and their totals in millions at the last `[USAGE] tokens` line. */
 let lastTokenTotals = '';
+/** When the last scan that answered ended (ms); 0 before one has. */
+let lastGoodScanAt = 0;
 /** The last scan error logged, so each distinct error is logged once ('' after a good scan). */
 let lastTokenError = '';
 let tokensStopped = false;
@@ -102,7 +107,9 @@ function withTokens(usage: PlanUsage): PlanUsage {
     accounts: usage.accounts.map((a) => {
       const f = tokenFigures.get(a.id);
       const fits = f !== undefined && a.week !== null && !a.week.passed && f.resetsAt === a.week.resetsAt;
-      return { ...a, weekTokens: fits ? f : null };
+      // Past 5 minutes with no good scan, the count says when it was counted.
+      const stale = lastGoodScanAt > 0 && Date.now() - lastGoodScanAt > TOKEN_STALE_MS;
+      return { ...a, weekTokens: fits ? (stale ? { ...f, countedAt: Math.floor(lastGoodScanAt / 1000) } : f) : null };
     }),
   };
 }
@@ -149,9 +156,11 @@ async function scanTokens(): Promise<void> {
   lastTokenInputs = JSON.stringify([windows, switches]);
   const floor = scanFloor(switches, windows, now);
   let figures = new Map<string, WeekTokens>();
-  let stats: { files: number; filesRead: number; ms: number } | null = null;
+  let stats: { files: number; filesRead: number; ms: number; skipped: number; bytes: number; requests: number } | null = null;
   if (floor !== null) {
-    tokenHost ??= new TokenScanHost(script);
+    tokenHost ??= new TokenScanHost(script, (n) => {
+      if (n > 1) console.warn('[USAGE] tokens worker restarted', { starts: n });
+    });
     let reply: TokenScanReply;
     try {
       reply = await tokenHost.scan({ root: claudeProjectsDir(), floor, switches, windows });
@@ -165,18 +174,27 @@ async function scanTokens(): Promise<void> {
       return;
     }
     lastTokenError = '';
-    const totals = new Map(reply.totals);
-    for (const w of windows) figures.set(w.id, weekTokens(totals.get(w.id) ?? 0, w, switches));
-    stats = { files: reply.files, filesRead: reply.filesRead, ms: reply.ms };
+    lastGoodScanAt = Date.now();
+    for (const [file, code] of reply.errors) console.warn('[USAGE] tokens read failed', { file, code });
+    // No transcripts folder (or none in it): nothing was counted, so no count is shown, not a 0.
+    if (reply.listed > 0) {
+      const totals = new Map(reply.totals);
+      for (const w of windows) figures.set(w.id, weekTokens(totals.get(w.id) ?? 0, w, switches));
+    }
+    stats = { files: reply.files, filesRead: reply.filesRead, ms: reply.ms, skipped: reply.skipped, bytes: reply.bytes, requests: reply.requests };
   } else {
     figures = new Map();
   }
-  const totalsKey = JSON.stringify([...figures]);
+  // Logged when the accounts or a total in rounded millions change, not on every exact change.
+  const millions: Record<string, number> = {};
+  for (const [id, f] of figures) millions[id] = Math.round(f.tokens / 1e6);
+  const totalsKey = JSON.stringify(millions);
   if (totalsKey !== lastTokenTotals) {
     lastTokenTotals = totalsKey;
-    const millions: Record<string, number> = {};
-    for (const [id, f] of figures) millions[id] = Math.round(f.tokens / 1e6);
-    console.info('[USAGE] tokens', { accounts: figures.size, totalsM: millions, files: stats?.files ?? 0, read: stats?.filesRead ?? 0, ms: stats?.ms ?? 0 });
+    console.info('[USAGE] tokens', {
+      accounts: figures.size, totalsM: millions, files: stats?.files ?? 0, read: stats?.filesRead ?? 0, skipped: stats?.skipped ?? 0,
+      bytes: stats?.bytes ?? 0, requests: stats?.requests ?? 0, ms: stats?.ms ?? 0,
+    });
   }
   tokenFigures = figures;
   publish();
@@ -212,7 +230,7 @@ export function pollPlanUsageOnce(): Promise<void> {
   if (!inFlight) {
     inFlight = refreshOnce()
       .catch((err) => console.warn('[USAGE] refresh failed', { code: (err as { code?: unknown } | null)?.code ?? null }))
-      .finally(() => { inFlight = null; maybeScanTokens(); });
+      .finally(() => { inFlight = null; publish(); maybeScanTokens(); });
   }
   return inFlight;
 }
