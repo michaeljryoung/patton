@@ -562,6 +562,48 @@ async function pageRun(SCALES) {
       await feed(pane, { type: 'link', url: url + '.', label: 'The plan', at: Date.now() + 1000 });
       const links = [...(barEl()?.querySelectorAll('.sb-sec-links .sb-link') ?? [])].filter((b) => (b.title || '').split('\n').includes(url));
       check(`${at} a link fed twice is one row`, links.length === 1, links.map((b) => b.title));
+
+      // A links row patched in place (only its age changed) keeps its button's tooltip and label current.
+      {
+        const sid = String(S).replace('.', '');
+        const linkBtn = (key) => [...(barEl()?.querySelectorAll('.sb-sec-links .sb-link') ?? [])].find((b) => b.dataset.link === key);
+        // Let rows left over from earlier checks (ended tasks waiting out their 30 s) go first, so nothing but ages changes below.
+        skew += 65_000;
+        tm.sessionBar.renderLists();
+        // A: the same link shared again a minute later under the same label.
+        const aurl = `https://claude.ai/code/artifact/aaaa1111-${sid}`;
+        await feed(pane, { type: 'link', url: aurl, label: 'Patch A', at: Date.now() });
+        const a0 = linkBtn(`url:${aurl}`);
+        const aLi0 = a0 && a0.closest('li');
+        const aWhen0 = aLi0 && aLi0.querySelector('.sb-t').textContent;
+        skew += 65_000;
+        await feed(pane, { type: 'link', url: aurl, label: 'Patch A', at: Date.now() });
+        const a1 = linkBtn(`url:${aurl}`);
+        const aWhen1 = a1 && a1.closest('li').querySelector('.sb-t').textContent;
+        check(`${at} (A) a link shared again a minute later: patched in place, its button's label says the new time (${aWhen0} -> ${aWhen1})`,
+          !!a0 && a0 === a1 && aWhen1 !== aWhen0 && a1.getAttribute('aria-label') === `Open Patch A (Page, ${aWhen1})`, a1 && { same: a0 === a1, label: a1.getAttribute('aria-label'), aWhen1 });
+        // B: the day turns, so the time text gains its date.
+        skew += 2 * 86_400_000;
+        tm.sessionBar.renderLists();
+        const b1 = linkBtn(`url:${aurl}`);
+        const bWhen = b1 && b1.closest('li').querySelector('.sb-t').textContent;
+        check(`${at} (B) the day turns: the button's label carries the new time text ("${bWhen}")`,
+          !!b1 && b1 === a0 && bWhen !== aWhen1 && b1.getAttribute('aria-label') === `Open Patch A (Page, ${bWhen})`, b1 && { label: b1.getAttribute('aria-label'), bWhen });
+        skew -= 2 * 86_400_000 + 130_000;
+        // C: a file shared again as a new version under one label.
+        const f1 = `/tmp/patch-c-${sid}/Plan.docx`;
+        const f2 = `/tmp/patch-c-${sid}/Plan v2.docx`;
+        await feed(pane, { type: 'link', path: f1, label: 'Plan', at: Date.now() });
+        const c0 = linkBtn('file:plan.docx');
+        skew += 65_000;
+        await feed(pane, { type: 'link', path: f2, label: 'Plan', at: Date.now() });
+        const c1 = linkBtn('file:plan.docx');
+        check(`${at} (C) a file shared again as a new version: patched in place, the tooltip names the new path`,
+          !!c0 && c0 === c1 && c1.title === `Plan\n${f2}`, c1 && { same: c0 === c1, title: c1.title });
+        skew -= 65_000;
+        tm.sessionBar.renderLists();
+        for (const btn of [a1, c1]) btn && btn.closest('li').remove();
+      }
     }
 
     // ---- 7 again: back to the plain shell, the bar hides and its terminal keeps its columns

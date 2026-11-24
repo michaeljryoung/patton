@@ -366,8 +366,8 @@ export class SessionBar {
     if (focusKey) this.listsEl.querySelector<HTMLElement>(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus();
   }
 
-  /** Copy the time text, class, title and label of each freshly built row onto the row
-   *  already shown (same shape, checked by the caller). False when the rows don't line up. */
+  /** Copy the time text, class, and the title and label of each freshly built row and of its
+   *  inner elements onto the row already shown (same shape, checked by the caller). False when the rows don't line up. */
   private patchRows(fresh: HTMLElement[]): boolean {
     const old = Array.from(this.listsEl.querySelectorAll<HTMLElement>('li'));
     const next = fresh.flatMap((sec) => Array.from(sec.querySelectorAll<HTMLElement>('li')));
@@ -376,11 +376,17 @@ export class SessionBar {
       const o = old[i];
       const n = next[i];
       if (o.className !== n.className) o.className = n.className;
-      for (const a of ['title', 'aria-label']) {
-        const v = n.getAttribute(a);
-        if (v !== o.getAttribute(a)) {
-          if (v === null) o.removeAttribute(a);
-          else o.setAttribute(a, v);
+      // The row and everything in it that carries a title or label (a link's button holds its own).
+      const oe = [o, ...Array.from(o.querySelectorAll<HTMLElement>('*'))];
+      const ne = [n, ...Array.from(n.querySelectorAll<HTMLElement>('*'))];
+      if (oe.length !== ne.length) return false;
+      for (let j = 0; j < oe.length; j++) {
+        for (const a of ['title', 'aria-label']) {
+          const v = ne[j].getAttribute(a);
+          if (v !== oe[j].getAttribute(a)) {
+            if (v === null) oe[j].removeAttribute(a);
+            else oe[j].setAttribute(a, v);
+          }
         }
       }
       const ot = o.querySelector('.sb-t');

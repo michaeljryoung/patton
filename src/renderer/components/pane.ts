@@ -2351,8 +2351,17 @@ export class Pane {
           // "Terminal" now, and no title arrives to tell it so.
           const shownBefore = this.shownTitle;
           this.titleSincePrompt = false;
+          // A `wake` that ends resets its own title, but a custom Wake command
+          // may not (or its reset may be interrupted): once the shell is back
+          // at a prompt, nothing is keeping the Mac awake here, so the raw
+          // WAKE title (compact tab, yellow flag) goes with it.
+          const wakeEnded = this.title === WAKE_TITLE;
+          if (wakeEnded) {
+            this.title = SHELL_TITLE;
+            this.trackAutoFlag(SHELL_TITLE);
+          }
           this.claudeGone('shell-prompt');
-          if (this.shownTitle !== shownBefore) this.callbacks.onTitleChange(this);
+          if (wakeEnded || this.shownTitle !== shownBefore) this.callbacks.onTitleChange(this);
         }
       }),
     );

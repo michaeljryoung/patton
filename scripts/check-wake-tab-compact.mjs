@@ -218,6 +218,19 @@ const mkTm = () => {
   check('TabManager: wake ending clears the class (the tab stays where it is)', order(barEl)[0] === c.id && !order(barEl).some((x) => x.endsWith('*')), order(barEl));
 }
 
+{ // wake ends with no title of its own (a custom Wake command): the prompt mark clears it
+  const { barEl, tm } = mkTm();
+  await tm.createTab(); const b = await tm.createTab();
+  emit(b.focusedPane.ptyId, '\x1b]133;D;0\x07\x1b]133;A\x07'); await tick(10);
+  await setTitle(b.focusedPane, 'WAKE');
+  check('TabManager: wake by title, no prompt yet: compact', order(barEl)[0] === `${b.id}*`, order(barEl));
+  emit(b.focusedPane.ptyId, '\x1b]133;D;130\x07\x1b]133;A\x07');
+  await until(() => !order(barEl).some((x) => x.endsWith('*')));
+  check('TabManager: wake ended by a prompt mark (no OSC title): not compact, raw title no longer WAKE, no yellow flag',
+    !order(barEl).some((x) => x.endsWith('*')) && b.focusedPane.title !== 'WAKE' && !isWakeTab(b) && !b.focusedPane.autoFlagged,
+    { order: order(barEl), raw: b.focusedPane.title, flag: b.focusedPane.autoFlagged });
+}
+
 { // WAKE on the unfocused pane of a split tab
   const { barEl, tm } = mkTm();
   await tm.createTab(); const b = await tm.createTab();
