@@ -132,6 +132,7 @@ function stateNote(s: StrongestState, count = 1): string {
   if (s.kind === 'checkpoint') return `${count} checkpoint${count === 1 ? '' : 's'} finished`;
   if (s.kind === 'needs-you') return `${count} waiting for you`;
   if (s.kind === 'flag') return `${count} flagged ${s.flag}`;
+  if (s.kind === 'working') return `${count} Claude working`;
   return `${count} waiting on background work`;
 }
 
@@ -157,6 +158,9 @@ function indicatorFor(s: StrongestState): HTMLElement {
   } else if (s.kind === 'flag') {
     dot.className = `tab-bar-tab-indicator flag-${s.flag}`;
     dot.setAttribute('aria-label', `Flagged ${s.flag}`);
+  } else if (s.kind === 'working') {
+    dot.className = 'tab-bar-tab-indicator working';
+    dot.setAttribute('aria-label', 'Claude working');
   } else {
     dot.className = 'tab-bar-tab-indicator parked';
     dot.setAttribute('aria-label', 'Waiting on its own background work');
@@ -179,7 +183,7 @@ function chipLabel(group: TabGroupHeader, members: TabHeaderInfo[]): string {
       if (entry) entry.n++;
       else { counts.set(key, { s, n: 1 }); order.push(key); }
     }
-    const rank = (k: string) => (k === 'checkpoint' ? 0 : k === 'needs-you' ? 1 : k.startsWith('flag-') ? 2 : 3);
+    const rank = (k: string) => (k === 'checkpoint' ? 0 : k === 'needs-you' ? 1 : k.startsWith('flag-') ? 2 : k === 'parked' ? 3 : 4);
     order.sort((a, b) => rank(a) - rank(b));
     for (const key of order) {
       const { s, n } = counts.get(key)!;

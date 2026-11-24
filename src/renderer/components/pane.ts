@@ -1479,11 +1479,14 @@ export class Pane {
 
   // ---- Session bar (docs/session-bar.md) ----
 
-  /** Claude is mid-turn here: working, not asking (a prompt reads as the
-   *  green dot) and not past a turn that ended over a still-working root (the
-   *  ring). The tab strip's still grey dot (W1, docs/tab-select.md) reads it. */
+  /** Claude is mid-turn here: Claude runs in this pane (another program may
+   *  send 7501 `state=working` too), working, not asking (a prompt reads as
+   *  the green dot) and not past a turn that ended over a still-working root
+   *  (the ring). The tab strip's still grey dot (W1, docs/tab-select.md) reads
+   *  it. `!turnEnded` is not redundant: turnEnded is set exactly while the root
+   *  stays `working` (claudeWorking true) after a Stop over working children. */
   get midTurn(): boolean {
-    return this.claudeWorking && !this.claudeBlocked && !this.turnEnded;
+    return this.claudeActive && this.claudeWorking && !this.claudeBlocked && !this.turnEnded;
   }
 
   /** Claude runs in this pane (7501 `app=claude-code`, else the title fallback). */

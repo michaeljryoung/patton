@@ -55,6 +55,8 @@ export * as tabGroups from './services/tab-groups';`,
 
   const dataListeners = [];
   const emit = (ptyId, data) => { for (const cb of dataListeners) cb(ptyId, data); };
+  const feedListeners = [];
+  const feed = (ptyId, event) => { for (const cb of feedListeners) cb(ptyId, event); };
   const loose = new Proxy(function () {}, { get: (_t, p) => (p === 'then' ? undefined : loose), apply: () => loose });
   let nextPty = 1;
   let session = null;
@@ -71,7 +73,7 @@ export * as tabGroups from './services/tab-groups';`,
     projects: { getNames: async () => ({}), onNamesChanged: () => () => {}, resolve: async () => null, setName: async () => {} },
     history: { get: async () => [], add: () => {}, clear: () => {} },
     log: { send: () => {} },
-    sessionFeed: { watch: async () => true, unwatch: async () => {}, onEvent: () => () => {} },
+    sessionFeed: { watch: async () => true, unwatch: async () => {}, onEvent: (cb) => { feedListeners.push(cb); return () => {}; } },
   };
   w.patton = new Proxy(api, { get: (t, p) => (p in t ? t[p] : loose) });
 
@@ -105,7 +107,7 @@ export * as tabGroups from './services/tab-groups';`,
     return tm;
   }
 
-  return { w, doc, emit, logs, makeWindow, TabManager, repairRuns, tabGroups };
+  return { w, doc, emit, feed, logs, makeWindow, TabManager, repairRuns, tabGroups };
 }
 
 /** check(), section() and the exit guard every check uses. */

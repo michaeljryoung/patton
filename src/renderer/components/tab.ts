@@ -315,10 +315,18 @@ export class Tab {
 
   /** Redraw the strip when `working` changed since the last redraw it asked for. */
   private noteWorking(): void {
-    const now = this.working;
-    if (now === this._lastWorking) return;
-    this._lastWorking = now;
+    if (!this.syncWorking()) return;
     this.onTitleChanged?.();
+  }
+
+  /** Record `working` as the strip is about to show it; logs and returns true
+   *  when it differs from the last one shown (once per change, not per redraw). */
+  private syncWorking(): boolean {
+    const now = this.working;
+    if (now === this._lastWorking) return false;
+    this._lastWorking = now;
+    rlog('info', '[TAB] working', { tabId: this.id, on: now });
+    return true;
   }
 
   get awaitingInput(): boolean {
@@ -554,6 +562,9 @@ export class Tab {
     const next = this.autoTitle;
     if (next === this.title) return false;
     this.title = next;
+    // The redraw below carries the fresh `working`: noteWorking() must not
+    // draw it a second time when a working flip coincides with the rename.
+    this.syncWorking();
     this.onTitleChanged?.();
     return true;
   }
@@ -706,7 +717,7 @@ export class Tab {
     // The closed pane may have been the only one running Claude (or the one
     // naming the tab), even when it wasn't the focused one.
     this.refreshTitle();
-    this._lastWorking = this.working; // the redraw below shows it
+    this.syncWorking(); // the redraw below shows it
     this.onTitleChanged?.(); // the bookmarks sidebar counts panes
   }
 

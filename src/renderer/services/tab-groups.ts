@@ -246,26 +246,30 @@ export interface IndicatorInput {
   flag?: TabFlag | null;
   autoFlag?: TabFlag | null;
   parked?: unknown;
+  /** Claude is mid-turn in one of its panes (Tab.working). */
+  working?: boolean;
 }
 
 export type StrongestState =
   | { kind: 'checkpoint' }
   | { kind: 'needs-you' }
   | { kind: 'flag'; flag: TabFlag }
-  | { kind: 'parked' };
+  | { kind: 'parked' }
+  | { kind: 'working' };
 
-const RANK: Record<StrongestState['kind'], number> = { checkpoint: 4, 'needs-you': 3, flag: 2, parked: 1 };
+const RANK: Record<StrongestState['kind'], number> = { checkpoint: 5, 'needs-you': 4, flag: 3, parked: 2, working: 1 };
 
 /** One tab's strongest state, by the rank a folded chip uses: the red
  *  checkpoint circle, then the green needs-you dot (both on inactive tabs
  *  only, as on the strip), then a flag (manual, else automatic), then the
- *  parked ring. */
+ *  parked ring, then (lowest) the still grey working dot. */
 export function stateOf(tab: IndicatorInput): StrongestState | null {
   if (tab.checkpointDone && !tab.active) return { kind: 'checkpoint' };
   if (tab.awaitingInput && !tab.active) return { kind: 'needs-you' };
   const flag = tab.flag ?? tab.autoFlag ?? null;
   if (flag) return { kind: 'flag', flag };
   if (tab.parked) return { kind: 'parked' };
+  if (tab.working) return { kind: 'working' };
   return null;
 }
 

@@ -242,6 +242,9 @@ await section(async () => {
   check('rank: checkpoint beats parked across a gap', G.strongestState([{ parked: {} }, { checkpointDone: true }])?.kind === 'checkpoint');
   check('rank: a manual flag shows over the automatic one', G.strongestState([{ flag: 'blue', autoFlag: 'yellow' }])?.flag === 'blue');
   check('rank: the automatic flag shows when there is no manual one', G.strongestState([{ autoFlag: 'yellow' }])?.flag === 'yellow');
+  check('rank: parked beats working', G.strongestState([{ working: true }, { parked: {} }])?.kind === 'parked');
+  check('rank: working shows when nothing higher applies', G.strongestState([{}, { working: true }])?.kind === 'working');
+  check('rank: a flag beats working', G.strongestState([{ working: true }, { autoFlag: 'yellow' }])?.kind === 'flag');
   check('rank: a tab with nothing shows nothing', G.strongestState([{}, {}]) === null);
 });
 
