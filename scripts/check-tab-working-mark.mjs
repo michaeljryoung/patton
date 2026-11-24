@@ -196,7 +196,6 @@ await section(async () => {
   // A title the shell side set: hidden while no Claude runs ("Terminal"), shown the moment it does.
   emit(tabG.ptyId, '\x1b]2;Fix the bug\x07');
   await until(() => false, 60);
-  const titleBefore = tabG.title;
   const d0 = draws5;
   emit(tabG.ptyId, root('working', ''));
   await until(() => tabG.working, 1000);
