@@ -102,6 +102,23 @@ ROUND5 = [
 for k, _, _, _ in ROUND5:
     data = base64.b64encode(open(f"{REPO}/docs/mocks/icon-studies/round5/{k}-512.png", "rb").read()).decode()
     icons.symbols[k] = f'<image href="data:image/png;base64,{data}" x="0" y="0" width="1024" height="1024"/>'
+# Round 6: "isnt the point that the face is part of the falling numbers, and is made up of falling numbers, not just
+# behind numbers" (24 Nov 16:24): the falling streams themselves draw the face (portrait_rain.py face_in_rain).
+ROUND6 = [
+    ("f1", "F1", "Face in the rain", "Every digit is part of a falling stream; the streams brighten where they pass through the face."),
+    ("f2", "F2", "Subtler", "The same streams, the face a step fainter."),
+    ("f3", "F3", "Subtlest", "Mostly falling rain, the face just drawn out of it."),
+]
+for k, _, _, _ in ROUND6:
+    data = base64.b64encode(open(f"{REPO}/docs/mocks/icon-studies/round6/{k}-512.png", "rb").read()).decode()
+    icons.symbols[k] = f'<image href="data:image/png;base64,{data}" x="0" y="0" width="1024" height="1024"/>'
+round6 = []
+for key, label, name, desc in ROUND6:
+    round6.append(
+        f'<article class="variant" aria-labelledby="h-{key}">{use(key, 150, "big")}'
+        f'<div class="meta"><h3 id="h-{key}"><span class="letter wide">{label}</span>{name}</h3><p>{desc}</p>'
+        f'{sizes_row(lambda px, k=key: use(k, px))}</div></article>')
+
 round5 = []
 for key, label, name, desc in ROUND5:
     round5.append(
@@ -258,6 +275,16 @@ h3 {{ margin: 0; font-size: 16px; font-weight: 600; display: flex; align-items: 
     <p class="dek">Ten directions for a sleeker icon that keeps the reference to the general: his helmet, his three stars, his name, and the tank named after him. Each sits on the rounded tile that current Mac apps use, shown full size and at 64, 32 and 16 pixels, three of the sizes Patton's icon file carries.</p>
   </header>
 
+  <section class="round2" aria-labelledby="r6-head">
+    <div class="section-head">
+      <h2 id="r6-head">Round 6 · The face made of falling digits</h2>
+      <p>You said the face should be made of the falling numbers, not sit behind them. Here the same falling streams cover the whole tile and simply brighten where they pass through the face. P2, the one you liked, comes first in the Docks below.</p>
+    </div>
+    <div class="variants three">{"".join(round6)}</div>
+    {dock("light", [("p2", "P2", "P2")] + [(k, name, label) for k, label, name, _ in ROUND6])}
+    {dock("dark", [("p2", "P2", "P2")] + [(k, name, label) for k, label, name, _ in ROUND6])}
+  </section>
+
   <section class="round2" aria-labelledby="r5-head">
     <div class="section-head">
       <h2 id="r5-head">Round 5 · More background, fainter face</h2>
@@ -325,7 +352,7 @@ h3 {{ margin: 0; font-size: 16px; font-weight: 600; display: flex; align-items: 
   </section>
 
   <section class="reply" aria-label="How to choose">
-    <p><strong>Reply with R1, R2 or R3</strong> to swap it in, or keep P1.</p>
+    <p><strong>Reply with F1, F2 or F3</strong> (or R1–R3 from round 5) to swap it in, or keep P1.</p>
     <p>A pick goes into the release that carries the Stop hook fix and the compact wake tab, so it arrives in the same install.</p>
   </section>
 </div>

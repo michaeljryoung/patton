@@ -74,6 +74,51 @@ def tile_svg(key, ink, strength, trail_max, base, bg1, bg2, rain_col, face_col, 
             f'<defs>{defs}</defs>{icons.tile(f"{key}-bg", inner)}</svg>')
 
 
+def face_in_rain(seed, ink, face_gain, floor, gap, boost, face_floor, rain_col, face_col, head_col):
+    """Round 6 (his 24 Nov 16:24: "isnt the point that the face is part of the falling numbers, and is made up of
+    falling numbers, not just behind numbers"): every digit belongs to a falling stream (two or three drops per
+    column, each a bright head and a fading trail); the portrait only brightens and lightens the streams where they
+    pass through it, so the face is drawn by the rain itself."""
+    rng = random.Random(seed)
+    drops = []
+    for _ in range(GRID):
+        n = rng.choice((3, 3, 4))
+        drops.append([(rng.randint(-6, GRID + 6), rng.randint(10, 26)) for _ in range(n)])
+    out = []
+    for r in range(GRID):
+        y = 100 + CELL * r + CELL * 0.78
+        for c in range(GRID):
+            x = 100 + CELL * c + CELL / 2
+            level, is_head = gap, False
+            for head, length in drops[c]:
+                d = head - r
+                if d == 0:
+                    level, is_head = 1.0, True
+                elif 0 < d < length:
+                    level = max(level, 0.85 * (1 - d / length) + 0.08)
+            f = min(1.0, ink[r][c] * boost) ** 0.8
+            alpha = floor + level * (0.30 + face_gain * f)
+            alpha = min(1.0, alpha + face_floor * f)
+            col = head_col if is_head else (face_col if f > 0.35 else rain_col)
+            out.append(f'<text x="{x:.1f}" y="{y:.1f}" fill="{col}" fill-opacity="{alpha:.2f}">{rng.choice("0123456789")}</text>')
+    return f'<g {FONT} font-size="{CELL * 0.98:.1f}">{"".join(out)}</g>'
+
+
+def face_tile_svg(key, ink, face_gain, floor, gap, boost, face_floor):
+    defs = icons.SHARED_DEFS + icons.lg(f"{key}-bg", "#07110A", "#020503")
+    inner = f'<rect x="100" y="100" width="824" height="824" fill="url(#{key}-bg)"/>'
+    inner += face_in_rain(7, ink, face_gain, floor, gap, boost, face_floor, "#2FCB62", "#9DFFB8", "#E2FFE9")
+    return ('<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">'
+            f'<defs>{defs}</defs>{icons.tile(f"{key}-bg", inner)}</svg>')
+
+
+FACE_VARIANTS = {
+    # name: (face_gain, floor, gap, boost, face_floor)
+    "f1": (1.00, 0.05, 0.09, 3.6, 0.42),
+    "f2": (0.80, 0.05, 0.08, 3.4, 0.30),
+    "f3": (0.60, 0.04, 0.08, 3.2, 0.20),
+}
+
 VARIANTS = {
     # name: (strength, trail_max, base, bg1, bg2, rain, face, head)
     "p1": (0.95, 0.42, 0.10, "#07110A", "#020503", "#2FCB62", "#8DFFAE", "#D8FFE2"),
@@ -93,4 +138,6 @@ if __name__ == "__main__":
     ink = portrait_ink()
     for key, v in VARIANTS.items():
         (out / f"{key}.svg").write_text(tile_svg(key, ink, *v))
+    for key, v in FACE_VARIANTS.items():
+        (out / f"{key}.svg").write_text(face_tile_svg(key, ink, *v))
         print(out / f"{key}.svg")
