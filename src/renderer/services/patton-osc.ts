@@ -2,7 +2,7 @@
 import type { HookCron, HookTask } from '../../shared/session-feed';
 import { hookListsFrom } from './hook-lists';
 
-/** The Stop hook's context reading (`ctx=…;since=…[;cpt=…][;cpd=…]`): tokens
+/** The Stop hook's context reading (`ctx=…;since=…[;cpt=…][;cpd=…][;own=…]`): tokens
  *  of the session's latest request, tokens added since the end of its current
  *  /checkpoint's turn, when that checkpoint was asked for (Unix seconds, null
  *  without one), and the same time again once it has finished (`cpd`: sent
@@ -13,6 +13,10 @@ export interface ContextReading {
   sinceTokens: number;
   checkpointAt: number | null;
   checkpointDoneAt: number | null;
+  /** How many of the running tasks are the checkpoint's own (`own`), when the
+   *  hook dated them: set only at a checkpoint's Stop with tasks running, so
+   *  a `cpd` sent over older work shows in main.log. */
+  ownTasks?: number;
 }
 
 /** Patton's own OSC 777 messages from its Claude Code Stop hook:
@@ -34,11 +38,11 @@ export type PattonState =
     }
   | { kind: 'ctx'; context: ContextReading };
 
-// Both messages may end in `;key=value` fields: ctx=C;since=S[;cpt=T][;cpd=T] (and, on
+// Both messages may end in `;key=value` fields: ctx=C;since=S[;cpt=T][;cpd=T][;own=O] (and, on
 // a stop, tl, cl and tp: services/hook-lists.ts). They
 // are read one by one, so an unknown or malformed field (a future version's)
 // costs only itself, never the stop verdict. Token counts are capped at nine
-// digits, the timestamp at twelve.
+// digits, the timestamp at twelve, the own-task count at four.
 const STOP_RE = /^patton;stop;tasks=(\d{1,4});crons=(\d{1,4})(;.*)?$/;
 const CTX_RE = /^patton;ctx(;.*)?$/;
 
@@ -47,7 +51,10 @@ function contextFrom(tail: string | undefined): ContextReading | null {
   let since: string | undefined;
   let cpt: string | undefined;
   let cpd: string | undefined;
+  let own: string | undefined;
   for (const field of (tail ?? '').split(';')) {
+    const o = /^own=(\d{1,4})$/.exec(field);
+    if (o) { own = o[1]; continue; }
     const m = /^(ctx|since|cpt|cpd)=(\d{1,12})$/.exec(field);
     if (!m) continue;
     if (m[1] === 'ctx') ctx = m[2];
@@ -61,6 +68,7 @@ function contextFrom(tail: string | undefined): ContextReading | null {
     sinceTokens: Number(since),
     checkpointAt: cpt === undefined ? null : Number(cpt),
     checkpointDoneAt: cpd === undefined ? null : Number(cpd),
+    ...(own === undefined ? {} : { ownTasks: Number(own) }),
   };
 }
 
