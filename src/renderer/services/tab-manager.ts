@@ -20,8 +20,8 @@ import type { LinkRow } from './session-bar-model';
 import { resolveHyperlink } from './link-target';
 import { ReviewTabs } from './review-tabs';
 import {
-  cleanGroupName, moveGroupFirst, nearestVisible, newGroupId, placeAfterGroup, repairRuns, stepMove, takeOutOfGroup,
-  visibleItems, MAX_GROUPS, type TabGroup,
+  cleanGroupName, gatherAfterGroup, gatherAsNewGroup, moveBlockTo, moveGroupFirst, nearestVisible, newGroupId,
+  placeAfterGroup, repairRuns, stepMove, takeBlockOutOfGroup, takeOutOfGroup, visibleItems, MAX_GROUPS, type TabGroup,
 } from './tab-groups';
 
 /** Why a group unfolded, as the `[GROUP] unfolded` log line names it. */
@@ -138,6 +138,11 @@ export class TabManager {
       onNewTabInGroup: (groupId) => { this.newTabInGroup(groupId).catch(console.error); },
       onUngroup: (groupId) => this.ungroup(groupId),
       onCloseGroup: (groupId) => { this.closeGroup(groupId).catch(console.error); },
+      onTabsToNewGroup: (tabIds) => this.addTabsToNewGroup(tabIds),
+      onAddTabsToGroup: (tabIds, groupId) => this.addTabsToGroup(tabIds, groupId),
+      onRemoveTabsFromGroups: (tabIds) => this.removeTabsFromGroups(tabIds),
+      onSetTabsFlag: (tabIds, flag) => this.setTabsFlag(tabIds, flag),
+      onMoveTabs: (tabIds, toId) => this.moveTabsTo(tabIds, toId),
       // --- Bookmarks ---
       onBookmarkProject: (id) => {
         const tab = this.tabs.find(t => t.id === id);
@@ -749,6 +754,111 @@ export class TabManager {
     rlog('info', '[GROUP] tab removed', { groupId, tabId });
     const group = this.groups.get(groupId);
     announce(`${tab.title} removed from ${group ? this.groupLabel(group) : 'its'} group`);
+    this.updateTabBar();
+  }
+
+  // --- Several tabs at once (multi-select, docs/tab-select.md D2) ---
+  // Each moves its tabs as one block in their strip order (tab-groups.ts), so
+  // every group stays one unbroken run; ids of tabs that closed meanwhile are skipped.
+
+  /** The open tabs with these ids, in strip order. */
+  private tabsInOrder(ids: readonly string[]): Tab[] {
+    const want = new Set(ids);
+    return this.tabs.filter((t) => want.has(t.id));
+  }
+
+  private static tabsWord(n: number): string {
+    return `${n} ${n === 1 ? 'tab' : 'tabs'}`;
+  }
+
+  /** Add N Tabs to New Group: one new group holding them all, as one block
+   *  where the first of them was (never inside another group's run); tabs in
+   *  other groups leave them. Returns the new group's id. */
+  addTabsToNewGroup(ids: readonly string[]): string | null {
+    const moving = this.tabsInOrder(ids);
+    if (moving.length === 0) return null;
+    if (this.groups.size >= MAX_GROUPS) {
+      announce(`A window holds at most ${MAX_GROUPS} groups.`);
+      return null;
+    }
+    const fromGroups = new Set(moving.map(this.groupOf).filter((g) => g !== null)).size;
+    const id = newGroupId();
+    this.groups.set(id, { id, name: '', folded: false });
+    for (const tab of moving) this.groupOfTab.set(tab.id, id);
+    this.setTabOrder(gatherAsNewGroup(this.tabs, moving, this.groupOf));
+    rlog('info', '[GROUP] created', { groupId: id, tabs: moving.length, fromGroups });
+    announce(`New group made with ${TabManager.tabsWord(moving.length)}`);
+    this.updateTabBar();
+    return id;
+  }
+
+  /** Add N Tabs to <group>, or a selection dropped on its chip: those not in
+   *  it follow its last tab, in their order. Into a folded group they leave
+   *  the strip, unless the selected tab is among them: then it unfolds. */
+  addTabsToGroup(ids: readonly string[], groupId: string): void {
+    const group = this.groups.get(groupId);
+    if (!group) return;
+    const moving = this.tabsInOrder(ids).filter((t) => this.groupOf(t) !== groupId);
+    if (moving.length === 0) return;
+    for (const tab of moving) this.groupOfTab.set(tab.id, groupId);
+    this.setTabOrder(gatherAfterGroup(this.tabs, moving, groupId, this.groupOf));
+    rlog('info', '[GROUP] tabs added', { groupId, tabs: moving.length });
+    if (group.folded && this.activeTab && moving.includes(this.activeTab)) this.unfoldGroup(group, 'add');
+    announce(`${TabManager.tabsWord(moving.length)} added to ${this.groupLabel(group)} group`);
+    this.updateTabBar();
+  }
+
+  /** Remove N Tabs from Group: from each group, its leaving tabs land as a
+   *  block just after its remaining ones (where they are, if none remain). */
+  removeTabsFromGroups(ids: readonly string[]): void {
+    const byGroup = new Map<string, Tab[]>();
+    for (const tab of this.tabsInOrder(ids)) {
+      const groupId = this.groupOf(tab);
+      if (groupId === null) continue;
+      byGroup.set(groupId, [...(byGroup.get(groupId) ?? []), tab]);
+    }
+    if (byGroup.size === 0) return;
+    let count = 0;
+    for (const [groupId, leaving] of byGroup) {
+      for (const tab of leaving) this.groupOfTab.delete(tab.id);
+      this.setTabOrder(takeBlockOutOfGroup(this.tabs, leaving, groupId, this.groupOf));
+      rlog('info', '[GROUP] tabs removed', { groupId, tabs: leaving.length });
+      count += leaving.length;
+    }
+    announce(`${TabManager.tabsWord(count)} removed from ${byGroup.size === 1 ? 'their group' : 'their groups'}`);
+    this.updateTabBar();
+  }
+
+  /** Flag N Tabs: Green / Yellow / Red / None. Sets the flag on every one
+   *  (no toggle: a mixed set would toggle unevenly). */
+  setTabsFlag(ids: readonly string[], flag: TabFlag | null): void {
+    const tabs = this.tabsInOrder(ids);
+    if (tabs.length === 0) return;
+    // Tab.setFlag toggles a flag picked again, so only tabs without it are set.
+    for (const tab of tabs) if (tab.flag !== flag) tab.setFlag(flag);
+    rlog('info', '[TAB] flagged together', { count: tabs.length, flag });
+    this.updateTabBar();
+  }
+
+  /** A selection dragged onto a tab outside it: the block lands after the
+   *  target when the target is right of the first moved tab, else before it,
+   *  in their order, all taking the target's group (or leaving theirs). */
+  moveTabsTo(ids: readonly string[], toId: string): void {
+    const moving = this.tabsInOrder(ids);
+    const target = this.tabs.find((t) => t.id === toId);
+    if (!target || moving.length === 0 || moving.includes(target)) return;
+    const to = this.groupOf(target);
+    let changed = 0;
+    for (const tab of moving) {
+      if (this.groupOf(tab) === to) continue;
+      changed++;
+      if (to === null) this.groupOfTab.delete(tab.id);
+      else this.groupOfTab.set(tab.id, to);
+    }
+    this.setTabOrder(moveBlockTo(this.tabs, moving, target, this.groupOf));
+    rlog('info', '[TAB] moved together', { count: moving.length, to: toId });
+    if (changed > 0) rlog('info', '[GROUP] tabs moved between groups', { count: changed, to, by: 'drag' });
+    announce(`${TabManager.tabsWord(moving.length)} moved`);
     this.updateTabBar();
   }
 

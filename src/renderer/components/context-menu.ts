@@ -10,7 +10,7 @@ interface ContextMenuSeparator {
   separator: true;
 }
 
-type ContextMenuEntry = ContextMenuItem | ContextMenuSeparator;
+export type ContextMenuEntry = ContextMenuItem | ContextMenuSeparator;
 
 export class ContextMenu {
   private overlay: HTMLElement;

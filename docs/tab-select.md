@@ -15,3 +15,26 @@ Two tab-strip features Michael picked on the try-out page `docs/mocks/tryout-s63
 - No motion and no reduced-motion variant are needed: the dot never moves.
 
 Check: `scripts/check-tab-working-mark.mjs` (the real TabBar: every priority pair, the active tab, labels, the folded chip, no log per redraw; the real TabManager, Tab and Pane fed 7501 records and window titles through a fake PTY: working, blocked, done, a turn ending over background work, the title path's ◐ and ✳, no redraw from a repeated report).
+
+## D2 — Multi-select: S1, a light tint with a thin outline
+
+**His words:** "ability to select multiple tabs at once for putting in groups or moving at once - shift and click and selects from first to last ... cmd click to select individually then be able to move or group as whole, or colour as whole, rename shouldnt apply to whole bunch". **His pick:** S1 ("Tint and outline"), over S2 (a top line) and S3 (a check mark).
+
+**What it does** (the page's section 3, built in the real strip):
+- A plain click opens a tab, and it alone is selected. ⌘-click adds or takes out a tab without opening it; ⇧-click selects every tab on the strip from the anchor to the clicked one, without opening any. The anchor is the last plain- or ⌘-clicked tab, as on the page. The tab you're on always counts and keeps its look; only the others draw `.multi`.
+- Esc, or a click on the empty strip or the drag space beside +, goes back to the tab you're on alone. Right-click a selected tab for what acts on them all: "Add N Tabs to New Group" (the name box opens on the new chip), "Add N Tabs to <group>" (N = those not in it yet; a group holding them all is left out), "Remove N Tabs from Group", "Flag N Tabs: Green / Yellow / Red / None", and "Rename Tab…" marked "this tab only". Right-click an unselected tab: the single-tab menu as before.
+- Dragging a selected tab's grip carries the whole selection in strip order, under a "N tabs" picture. Dropped on a tab: after it when it is right of the first moved tab, else before it, all taking that tab's group (an ungrouped tab takes them out of theirs). Dropped on a chip: added to that group.
+
+**Where it lives.** `TabBar` keeps the selection (`selectedExtra`, `selectAnchor`, `clickTab`, `pruneSelection`, `selectionMenuItems`, `onEscapeKey`); `TabManager` acts (`addTabsToNewGroup`, `addTabsToGroup`, `removeTabsFromGroups`, `setTabsFlag`, `moveTabsTo`) through the block helpers in `services/tab-groups.ts` (`insertBlock`, `gatherAsNewGroup`, `gatherAfterGroup`, `takeBlockOutOfGroup`, `moveBlockTo`), so every group stays one unbroken run. The look is `.tab-bar-tab.multi` in `tabs.css` on the tokens `--tab-sel` (accent in light, focus colour in dark), `--tab-sel-mix` and `--tab-sel-mix-hover` (12 / 20 % light, 20 / 28 % dark), as on the page. Logs: `[TAB] selection {count}` only when the selection changes (count includes the tab you're on), `[TAB] moved together {count, to}`, `[TAB] flagged together {count, flag}`, `[GROUP] created {tabs, fromGroups}`, `[GROUP] tabs added|removed {tabs}`, `[GROUP] tabs moved between groups {count, to, by: 'drag'}`.
+
+**Where the page was silent:**
+- Esc clears only when the key comes from the strip or the page itself. An Esc typed in a terminal goes to Claude (it interrupts a turn) and leaves the selection; so does an Esc that cancels a rename box.
+- ⌘ only, not Ctrl: on the Mac a Ctrl-click is a right-click.
+- Any change of the tab you're on by another route (⌘1–9, ⌘⇧], the palette, a closed tab, a bookmark) drops the selection, as does a plain click. Closed tabs and tabs hidden by folding their group leave it at the next redraw, and unfolding doesn't bring them back. ⇧ counts only tabs on the strip, so it never selects into a folded group.
+- A window drag from a tab, the empty strip or the drag space changes no selection: only a press that doesn't move the window counts as a click.
+- Flag N Tabs sets the flag on every one; picking the ticked flag again keeps it (a single tab's menu toggles, but a mixed set would toggle unevenly). "Flag N Tabs: None" clears all.
+- Move Left / Move Right, bookmarking and "Set Default Tab Name for Project…" act on one tab, so the selection's menu leaves them out; right-click an unselected tab, or select just one, for them.
+- A drag from another window is ignored here as before (tab ids repeat across windows, CLAUDE.md Gotchas): a multi-selection never crosses windows.
+- A group made from the selection sits where its first tab was; if that was inside another group's run, just past that run's end. Taking tabs out of a group puts them just after its remaining tabs (where they are when none remain).
+
+Check: `scripts/check-tab-select.mjs` (the real TabManager and TabBar in jsdom: clicks with ⌘ and ⇧, the log, Esc from the strip, the body, a terminal and a rename box, the empty strip and drag space against a window drag, every menu action on a 4-tab selection spanning a group, the drag in both directions, onto a run and a chip, a foreign drop, pruning on close and fold, rename of one tab, the five helpers and a 3,000-case property test that keeps every run whole; five planted mutations each caught).

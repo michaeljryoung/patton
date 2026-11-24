@@ -340,6 +340,60 @@
   box-shadow: inset 0 2px 0 var(--g-line), inset 2px 0 0 var(--focus), inset 0 -3px 0 var(--ink);
 }
 
+/* Multi-select, look S1 (his pick on the S63 try-out page, docs/tab-select.md
+   D2): a selected tab that isn't the one you're on takes a light tint of
+   --tab-sel over its own fill (its group's shade when grouped) and a 1 px
+   outline in it; the active tab keeps its look and is never .multi. After the
+   group rules, which weigh the same. The close button paints --tab-bg over the
+   tab's right end, so it carries the outline's edges too. */
+.tab-bar-tab.multi {
+  --sel-base: var(--surface);
+  --tab-bg: color-mix(in srgb, var(--tab-sel) var(--tab-sel-mix), var(--sel-base));
+  background: var(--tab-bg);
+  color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--tab-sel);
+}
+
+.tab-bar-tab.multi.in-group {
+  --sel-base: var(--g-tab);
+  box-shadow: inset 0 2px 0 var(--g-line), inset 0 0 0 1px var(--tab-sel);
+}
+
+.tab-bar-tab.multi:hover {
+  --tab-bg: color-mix(in srgb, var(--tab-sel) var(--tab-sel-mix-hover), var(--sel-base));
+}
+
+.tab-bar-tab.multi .tab-bar-tab-close {
+  box-shadow: inset 0 1px 0 var(--tab-sel), inset -1px 0 0 var(--tab-sel), inset 0 -1px 0 var(--tab-sel);
+}
+
+.tab-bar-tab.multi.in-group .tab-bar-tab-close {
+  box-shadow: inset 0 2px 0 var(--g-line), inset -1px 0 0 var(--tab-sel), inset 0 -1px 0 var(--tab-sel);
+}
+
+/* A drop line still shows on a selected tab (a single tab dragged onto it). */
+.tab-bar-tab.multi.drag-over {
+  box-shadow: inset 2px 0 0 var(--accent), inset 0 0 0 1px var(--tab-sel);
+}
+
+.tab-bar-tab.multi.in-group.drag-over {
+  box-shadow: inset 0 2px 0 var(--g-line), inset 2px 0 0 var(--focus), inset 0 0 0 1px var(--tab-sel);
+}
+
+/* The picture under the pointer while several tabs are dragged ("4 tabs"):
+   drawn off-screen for setDragImage, removed straight after. */
+.tab-bar-drag-badge {
+  position: fixed;
+  top: -1000px;
+  left: 0;
+  z-index: 3000;
+  pointer-events: none;
+  padding: 2px 7px;
+  font: 600 11px var(--font-ui);
+  background: var(--inverse-bg);
+  color: var(--inverse-fg);
+}
+
 /* Under a folded chip, on hover or keyboard focus: each of its tabs with its
    own indicator; a click on a row opens that tab. */
 .tab-bar-group-list {

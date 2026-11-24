@@ -1,4 +1,4 @@
-import { ContextMenu } from './context-menu';
+import { ContextMenu, type ContextMenuEntry } from './context-menu';
 import { onUiTextScaleApplied } from '../services/ui-text-scale';
 import { DEFAULTS } from '../../shared/constants';
 import type { TabFlag } from '../../shared/types';
@@ -38,6 +38,15 @@ export interface TabBarCallbacks {
   onNewTabInGroup?: (groupId: string) => void;
   onUngroup?: (groupId: string) => void;
   onCloseGroup?: (groupId: string) => void;
+  // --- Several selected tabs at once (docs/tab-select.md D2); ids in strip order ---
+  /** Add N Tabs to New Group: returns the new group's id (null: none made). */
+  onTabsToNewGroup?: (tabIds: string[]) => string | null;
+  /** Add N Tabs to <group>, or a selection dropped on a group's chip. */
+  onAddTabsToGroup?: (tabIds: string[], groupId: string) => void;
+  onRemoveTabsFromGroups?: (tabIds: string[]) => void;
+  onSetTabsFlag?: (tabIds: string[], flag: TabFlag | null) => void;
+  /** A selection dragged onto a tab that isn't in it. */
+  onMoveTabs?: (tabIds: string[], toId: string) => void;
 }
 
 /** A tab group as the strip draws it. */
@@ -242,6 +251,24 @@ export class TabBar {
   /** Tabs drawn compact on the last rebuild (wake runs in them), so the log
    *  line comes once when a tab turns compact or back, not on every redraw. */
   private compactIds = new Set<string>();
+  /** Multi-select (docs/tab-select.md D2): the tabs selected besides the
+   *  active one, which always counts and is never in this set. */
+  private selectedExtra = new Set<string>();
+  /** The tab a ⇧-click counts from: the last plain or ⌘-clicked tab. */
+  private selectAnchor: string | null = null;
+  /** The tabs the drag from this strip carries: the grip's tab alone, or the
+   *  whole selection in strip order when the grip's tab is in it. */
+  private draggedIds: string[] = [];
+  /** Esc clears the selection when it comes from the strip or the page body,
+   *  never from a terminal, where it must reach Claude (it interrupts a turn). */
+  private readonly onEscapeKey = (e: KeyboardEvent): void => {
+    if (e.key !== 'Escape' || this.selectedExtra.size === 0 || this.renameOpen) return;
+    const t = e.target;
+    const fromPage = t === null || t === document.body || t === document.documentElement;
+    const fromStrip = t instanceof Node && this.container.contains(t);
+    if (!fromPage && !fromStrip) return;
+    this.clearSelection();
+  };
 
   constructor(container: HTMLElement, callbacks: TabBarCallbacks) {
     this.container = container;
@@ -263,7 +290,9 @@ export class TabBar {
     this.tabsContainer = document.createElement('div');
     this.tabsContainer.className = 'tab-bar-tabs';
     this.tabsContainer.setAttribute('role', 'tablist');
+    this.tabsContainer.setAttribute('aria-multiselectable', 'true');
     this.container.appendChild(this.tabsContainer);
+    document.addEventListener('keydown', this.onEscapeKey);
     // A new Interface Text Size changes every tab's width (and the strip's
     // scroll extent), which can leave the active tab off-screen: bring it back.
     this.stopScaleWatch = onUiTextScaleApplied(() => this.revealActive());
@@ -333,7 +362,8 @@ export class TabBar {
       // Only handle clicks on the container itself, not on child tabs
       // (a chip runs its own drag: two would move the window twice as far)
       if ((e.target as HTMLElement).closest('.tab-bar-tab, .tab-bar-group-chip')) return;
-      this.startWindowDrag(e, { keepFocus: true });
+      // A click that doesn't move the window clears a multi-selection.
+      this.startWindowDrag(e, { keepFocus: true, onClickWithoutDrag: () => this.clearSelection() });
     });
     this.tabsContainer.addEventListener('dblclick', (e) => {
       if (e.target !== this.tabsContainer || this.dragMoved) return;
@@ -355,7 +385,7 @@ export class TabBar {
     const dragSpace = document.createElement('div');
     dragSpace.className = 'tab-bar-drag-space';
     dragSpace.setAttribute('aria-hidden', 'true');
-    dragSpace.addEventListener('mousedown', (e) => this.startWindowDrag(e, { keepFocus: true }));
+    dragSpace.addEventListener('mousedown', (e) => this.startWindowDrag(e, { keepFocus: true, onClickWithoutDrag: () => this.clearSelection() }));
     dragSpace.addEventListener('dblclick', () => {
       if (this.dragMoved) return;
       window.patton.titleBarDoubleClick();
@@ -445,6 +475,128 @@ export class TabBar {
     btn.title = label;
   }
 
+  // --- Multi-select (docs/tab-select.md D2) ---
+
+  /** The selected tabs' ids in strip order, the active tab included. */
+  selectedIds(): string[] {
+    return this.latestTabs.filter((t) => t.active || this.selectedExtra.has(t.id)).map((t) => t.id);
+  }
+
+  /** The tabs on the strip (not in a folded group), in order. */
+  private visibleTabIds(tabs: TabHeaderInfo[] = this.latestTabs, groups: TabGroupHeader[] = this.latestGroups): string[] {
+    const folded = new Set(groups.filter((g) => g.folded).map((g) => g.id));
+    return tabs.filter((t) => !t.groupId || !folded.has(t.groupId)).map((t) => t.id);
+  }
+
+  /** Replace the extra selection; logs and returns true when it changed (the caller redraws). */
+  private applyExtras(next: Set<string>, tabs: TabHeaderInfo[] = this.latestTabs): boolean {
+    const same = next.size === this.selectedExtra.size && [...next].every((id) => this.selectedExtra.has(id));
+    this.selectedExtra = next;
+    if (same) return false;
+    const hasActive = tabs.some((t) => t.active);
+    rlog('info', '[TAB] selection', { count: next.size + (hasActive ? 1 : 0) });
+    return true;
+  }
+
+  /** Redraw from the latest tabs (a selection change). */
+  private redraw(): void {
+    this.update(this.latestTabs, this.latestGroups);
+  }
+
+  /** Back to the active tab alone (Esc, a click on the empty strip). */
+  clearSelection(): void {
+    this.selectAnchor = this.latestTabs.find((t) => t.active)?.id ?? null;
+    if (this.applyExtras(new Set())) this.redraw();
+  }
+
+  /** A click on a tab that didn't move the window. Plain: open the tab, and
+   *  it alone is selected. ⌘: add or take it out without opening it (the
+   *  active tab always stays in). ⇧: every tab on the strip from the anchor
+   *  to this one, without opening any. */
+  private clickTab(id: string, mods: { meta: boolean; shift: boolean }): void {
+    const active = this.latestTabs.find((t) => t.active)?.id ?? null;
+    if (mods.shift) {
+      const order = this.visibleTabIds();
+      const to = order.indexOf(id);
+      if (to === -1) return;
+      let from = this.selectAnchor !== null ? order.indexOf(this.selectAnchor) : -1;
+      if (from === -1 && active !== null) from = order.indexOf(active);
+      if (from === -1) from = to;
+      const [lo, hi] = from < to ? [from, to] : [to, from];
+      if (this.applyExtras(new Set(order.slice(lo, hi + 1).filter((x) => x !== active)))) this.redraw();
+      return;
+    }
+    if (mods.meta) {
+      if (id === active) return;
+      const next = new Set(this.selectedExtra);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      this.selectAnchor = id;
+      if (this.applyExtras(next)) this.redraw();
+      return;
+    }
+    this.selectAnchor = id;
+    if (this.applyExtras(new Set())) this.redraw();
+    this.callbacks.onSelect(id);
+  }
+
+  /** Drop what a rebuild makes stale: closed tabs, tabs hidden in a folded
+   *  group, and everything when the active tab changed by another route. */
+  private pruneSelection(tabs: TabHeaderInfo[], groups: TabGroupHeader[]): void {
+    const active = tabs.find((t) => t.active)?.id ?? null;
+    const visible = new Set(this.visibleTabIds(tabs, groups));
+    const activeMoved = this.lastActiveId !== null && active !== this.lastActiveId;
+    const next = activeMoved ? new Set<string>() : new Set([...this.selectedExtra].filter((id) => id !== active && visible.has(id)));
+    if (activeMoved || this.selectAnchor === null || !visible.has(this.selectAnchor)) this.selectAnchor = active;
+    this.applyExtras(next, tabs);
+  }
+
+  /** The menu on a tab that is one of several selected: what acts on them all,
+   *  and Rename Tab… for the clicked tab alone. */
+  private selectionMenuItems(tabId: string, ids: string[]): ContextMenuEntry[] {
+    const n = ids.length;
+    const tabsWord = (k: number) => (k === 1 ? 'Tab' : 'Tabs');
+    const items: ContextMenuEntry[] = [];
+    if (this.callbacks.onTabsToNewGroup) {
+      items.push({
+        label: `Add ${n} ${tabsWord(n)} to New Group`,
+        action: () => {
+          const groupId = this.callbacks.onTabsToNewGroup?.(ids) ?? null;
+          if (groupId !== null) this.startGroupRename(groupId, true);
+        },
+      });
+      for (const group of this.latestGroups) {
+        const notIn = ids.filter((id) => this.currentTabInfo(id)?.groupId !== group.id).length;
+        if (notIn === 0) continue;
+        items.push({
+          label: `Add ${notIn} ${tabsWord(notIn)} to ${group.name || 'Unnamed Group'}`,
+          action: () => this.callbacks.onAddTabsToGroup?.(ids, group.id),
+        });
+      }
+      const inAny = ids.filter((id) => this.currentTabInfo(id)?.groupId).length;
+      if (inAny > 0) {
+        items.push({ label: `Remove ${inAny} ${tabsWord(inAny)} from Group`, action: () => this.callbacks.onRemoveTabsFromGroups?.(ids) });
+      }
+      items.push({ separator: true });
+    }
+    for (const { flag, label } of FLAG_CHOICES) {
+      const all = ids.every((id) => this.currentTabInfo(id)?.flag === flag);
+      items.push({ label: `${all ? '✓ ' : ''}Flag ${n} Tabs: ${label}`, action: () => this.callbacks.onSetTabsFlag?.(ids, flag) });
+    }
+    items.push({ label: `Flag ${n} Tabs: None`, action: () => this.callbacks.onSetTabsFlag?.(ids, null) });
+    items.push({ separator: true });
+    items.push({
+      label: 'Rename Tab…',
+      shortcut: 'this tab only',
+      action: () => {
+        const liveTitle = this.liveTitleSpan(tabId);
+        const info = this.currentTabInfo(tabId);
+        if (liveTitle && info) this.startTabRename(liveTitle, info);
+      },
+    });
+    return items;
+  }
+
   /** Whether Move Left (-1) / Move Right (1) would change anything for this
    *  tab, by the same rule TabManager applies (stepMove), on the latest tabs. */
   private canMoveStep(tabId: string, dir: -1 | 1): boolean {
@@ -479,6 +631,7 @@ export class TabBar {
     }
     this.heldUpdate = null;
     this.heldGroups = null;
+    this.pruneSelection(tabs, groups);
     const groupById = new Map(groups.map((g) => [g.id, g]));
     const membersOf = (groupId: string) => tabs.filter((t) => t.groupId === groupId);
     // A group's shade (1-3, cycling) is its place among the groups on the strip.
@@ -512,7 +665,9 @@ export class TabBar {
       }
       if (group?.folded) continue;
       const el = document.createElement('div');
-      el.className = `tab-bar-tab${tab.active ? ' active' : ''}${group ? ` in-group group-shade-${shadeOf.get(group.id)}` : ''}`;
+      // One of several selected tabs (not the active one, which keeps its look): S1, tabs.css `.multi`.
+      const multi = !tab.active && this.selectedExtra.has(tab.id);
+      el.className = `tab-bar-tab${tab.active ? ' active' : ''}${group ? ` in-group group-shade-${shadeOf.get(group.id)}` : ''}${multi ? ' multi' : ''}`;
       // Michael, 24 Nov: wake's tab "always just this size even if other tabs
       // open": as wide as its own label and dot, grouped or not (tabs.css).
       if (tab.wake) el.classList.add('wake-compact');
@@ -521,7 +676,7 @@ export class TabBar {
 
       // --- Accessibility ---
       el.setAttribute('role', 'tab');
-      el.setAttribute('aria-selected', tab.active ? 'true' : 'false');
+      el.setAttribute('aria-selected', tab.active || multi ? 'true' : 'false');
       el.setAttribute('tabindex', tab.active ? '0' : '-1');
 
       // --- Drag grip for tab reordering (only this small handle initiates drag) ---
@@ -533,17 +688,15 @@ export class TabBar {
         grip.addEventListener('dragstart', (e) => {
           e.stopPropagation();
           this.draggedId = tab.id;
+          // A selected tab carries the whole selection, in strip order.
+          const selected = this.selectedIds();
+          this.draggedIds = selected.length > 1 && selected.includes(tab.id) ? selected : [tab.id];
           e.dataTransfer!.effectAllowed = 'move';
           e.dataTransfer!.setData('text/plain', tab.id);
-          el.classList.add('dragging');
+          for (const id of this.draggedIds) this.tabElement(id)?.classList.add('dragging');
+          if (this.draggedIds.length > 1) this.setDragBadge(e, this.draggedIds.length);
         });
-        grip.addEventListener('dragend', () => {
-          this.draggedId = null;
-          el.classList.remove('dragging');
-          this.tabsContainer.querySelectorAll('.drag-over').forEach(
-            el => el.classList.remove('drag-over'),
-          );
-        });
+        grip.addEventListener('dragend', () => this.endTabDrag());
         el.appendChild(grip);
       }
 
@@ -554,7 +707,7 @@ export class TabBar {
         this.tabsContainer.querySelectorAll('.drag-over').forEach(
           el => el.classList.remove('drag-over'),
         );
-        if (this.draggedId && this.draggedId !== tab.id) {
+        if (this.draggedId && !this.draggedIds.includes(tab.id)) {
           el.classList.add('drag-over');
         }
       });
@@ -567,8 +720,11 @@ export class TabBar {
         // Only a drag that began on this strip's grip counts: tab ids repeat
         // across windows, so foreign text must not move this window's tab.
         const fromId = e.dataTransfer!.getData('text/plain');
-        if (fromId && fromId === this.draggedId && fromId !== tab.id) {
-          this.callbacks.onReorder(fromId, tab.id);
+        if (fromId && fromId === this.draggedId && !this.draggedIds.includes(tab.id)) {
+          const ids = this.draggedIds.slice();
+          this.endTabDrag();
+          if (ids.length > 1) this.callbacks.onMoveTabs?.(ids, tab.id);
+          else this.callbacks.onReorder(fromId, tab.id);
         }
       });
 
@@ -634,6 +790,7 @@ export class TabBar {
       // tab's accessible name, and the dots themselves have no tooltip. With
       // the hover card on, the card is the tooltip and the tab has no title.
       const label = tabLabel(tab, needsYou, shownFlag, ckpt, showWorking)
+        + (multi ? ', selected' : '')
         + (group ? `, in ${group.name ? `${group.name} group` : 'unnamed group'}` : '');
       el.setAttribute('aria-label', label);
       if (!this.hoverCard) el.title = label;
@@ -661,6 +818,12 @@ export class TabBar {
 
       // Right-click → set/clear the colour flag, or rename the tab's project.
       const showTabMenu = (x: number, y: number, viaKeyboard: boolean): void => {
+        // A tab that is one of several selected: the menu for them all (D2).
+        const selected = this.selectedIds();
+        if (selected.length > 1 && selected.includes(tab.id)) {
+          this.contextMenu.show(x, y, this.selectionMenuItems(tab.id, selected), el, viaKeyboard);
+          return;
+        }
         const project = tab.project;
         this.contextMenu.show(x, y, [
           ...FLAG_CHOICES.map(({ flag, label }) => ({
@@ -776,8 +939,10 @@ export class TabBar {
         // and drop the box, and dragging would move the window.
         if ((e.target as HTMLElement).closest('.tab-bar-tab-grip, .tab-bar-tab-close, .tab-bar-tab-rename')) return;
 
-        // Drags the window past a 5 px threshold, selects the tab if released without moving.
-        this.startWindowDrag(e, { onClickWithoutDrag: () => this.callbacks.onSelect(tab.id) });
+        // Drags the window past a 5 px threshold; released without moving it is a
+        // click: plain, ⌘ or ⇧ (multi-select, D2), as the press's keys say.
+        const mods = { meta: e.metaKey, shift: e.shiftKey };
+        this.startWindowDrag(e, { onClickWithoutDrag: () => this.clickTab(tab.id, mods) });
       });
 
       this.tabsContainer.appendChild(el);
@@ -812,6 +977,30 @@ export class TabBar {
   }
 
   // --- Tab groups ---
+
+  /** A tab's element as the strip is now (null if not drawn). */
+  private tabElement(tabId: string): HTMLElement | null {
+    return this.tabsContainer.querySelector<HTMLElement>(`.tab-bar-tab[data-tab-id="${CSS.escape(tabId)}"]`);
+  }
+
+  /** A drag of several tabs shows "N tabs" under the pointer, not one tab's picture. */
+  private setDragBadge(e: DragEvent, count: number): void {
+    if (!e.dataTransfer || typeof e.dataTransfer.setDragImage !== 'function') return;
+    const badge = document.createElement('div');
+    badge.className = 'tab-bar-drag-badge';
+    badge.textContent = `${count} tabs`;
+    document.body.appendChild(badge);
+    e.dataTransfer.setDragImage(badge, -12, -14);
+    // The picture is taken now; the element can go once this event is done.
+    setTimeout(() => badge.remove(), 0);
+  }
+
+  /** A drag from this strip is over (dropped here, or ended anywhere). */
+  private endTabDrag(): void {
+    this.draggedId = null;
+    this.draggedIds = [];
+    this.tabsContainer.querySelectorAll('.dragging, .drag-over').forEach((x) => x.classList.remove('dragging', 'drag-over'));
+  }
 
   /** The chip element of a group as the strip is now (null if not drawn). */
   private chipEl(groupId: string): HTMLElement | null {
@@ -908,6 +1097,12 @@ export class TabBar {
       chip.classList.remove('drag-over');
       const fromId = e.dataTransfer?.getData('text/plain');
       if (!fromId || fromId !== this.draggedId) return; // a drag from another window or plain text
+      const ids = this.draggedIds.slice();
+      this.endTabDrag();
+      if (ids.length > 1) {
+        if (ids.some((id) => this.currentTabInfo(id)?.groupId !== group.id)) this.callbacks.onAddTabsToGroup?.(ids, group.id);
+        return;
+      }
       const tab = this.currentTabInfo(fromId);
       if (tab && tab.groupId !== group.id) this.callbacks.onAddToGroup?.(fromId, group.id);
     });
@@ -1171,6 +1366,7 @@ export class TabBar {
   }
 
   dispose(): void {
+    document.removeEventListener('keydown', this.onEscapeKey);
     this.stopScaleWatch?.();
     this.stopScaleWatch = null;
     if (this.pauseResultTimer) clearTimeout(this.pauseResultTimer);

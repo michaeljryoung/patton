@@ -106,6 +106,77 @@ export function stepMove<T>(list: readonly T[], item: T, dir: -1 | 1, groupOf: G
   return { list: out, group: null, kind: 'past', groupId: nextGroup };
 }
 
+// --- Several tabs at once (multi-select, docs/tab-select.md D2) ---
+// Each takes the moving tabs out and puts them back as one block, in their
+// strip order, so every group stays one unbroken run. The caller records the
+// new memberships FIRST (groupOf answers for after the move), except where a
+// function says otherwise.
+
+/** Put `items` into `rest` (a list without them) at `at`. A place inside
+ *  another group's run, which the items aren't joining, moves to just past
+ *  that run's end. */
+export function insertBlock<T>(rest: readonly T[], items: readonly T[], at: number, groupOf: GroupOf<T>): T[] {
+  const out = rest.slice();
+  let place = Math.max(0, Math.min(at, out.length));
+  const prev = out[place - 1];
+  const next = out[place];
+  if (prev !== undefined && next !== undefined) {
+    const g = groupOf(prev);
+    if (g !== null && g === groupOf(next) && !items.every((item) => groupOf(item) === g)) {
+      place = lastIndexOf(out, g, groupOf) + 1;
+    }
+  }
+  out.splice(place, 0, ...items);
+  return out;
+}
+
+/** The items as `list` orders them, and `list` without them. */
+function splitOut<T>(list: readonly T[], items: readonly T[]): { moving: T[]; rest: T[] } {
+  const set = new Set(items);
+  return { moving: list.filter((x) => set.has(x)), rest: list.filter((x) => !set.has(x)) };
+}
+
+/** Several tabs made into one new group (memberships already set): the block
+ *  sits where the first of them was, never inside another group's run. */
+export function gatherAsNewGroup<T>(list: readonly T[], items: readonly T[], groupOf: GroupOf<T>): T[] {
+  const { moving, rest } = splitOut(list, items);
+  if (moving.length === 0) return list.slice();
+  const first = list.indexOf(moving[0]);
+  const at = list.slice(0, first).filter((x) => !moving.includes(x)).length;
+  return insertBlock(rest, moving, at, groupOf);
+}
+
+/** Several tabs added to a group that has other members (memberships already
+ *  set): the block follows the group's last other tab. */
+export function gatherAfterGroup<T>(list: readonly T[], items: readonly T[], groupId: string, groupOf: GroupOf<T>): T[] {
+  const { moving, rest } = splitOut(list, items);
+  if (moving.length === 0) return list.slice();
+  const last = lastIndexOf(rest, groupId, groupOf);
+  if (last === -1) return list.slice();
+  return insertBlock(rest, moving, last + 1, groupOf);
+}
+
+/** Several tabs taken out of one group (memberships already cleared): the
+ *  block lands just after the group's remaining tabs, or stays where it is
+ *  when none remain. */
+export function takeBlockOutOfGroup<T>(list: readonly T[], items: readonly T[], groupId: string, groupOf: GroupOf<T>): T[] {
+  const { moving, rest } = splitOut(list, items);
+  if (moving.length === 0) return list.slice();
+  const last = lastIndexOf(rest, groupId, groupOf);
+  if (last === -1) return list.slice();
+  return insertBlock(rest, moving, last + 1, groupOf);
+}
+
+/** Several tabs dropped on `target` (memberships already set to the target's
+ *  group, or none): as a single tab's drop, a target right of the first moved
+ *  tab takes the block after it, one to the left before it. */
+export function moveBlockTo<T>(list: readonly T[], items: readonly T[], target: T, groupOf: GroupOf<T>): T[] {
+  const { moving, rest } = splitOut(list, items);
+  if (moving.length === 0 || moving.includes(target) || !list.includes(target)) return list.slice();
+  const rightward = list.indexOf(target) > list.indexOf(moving[0]);
+  return insertBlock(rest, moving, rest.indexOf(target) + (rightward ? 1 : 0), groupOf);
+}
+
 /** Make every group one unbroken run: the first run of each group stays where
  *  it is and any straggler later in the list moves to follow it (order kept).
  *  `moved` counts the stragglers moved (0 = the list was already sound). */

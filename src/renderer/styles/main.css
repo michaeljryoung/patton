@@ -26,6 +26,9 @@
   --thumb: #848b97;
   --hairline: var(--ink);
   --focus: #2f6bff;
+  /* Selected tabs besides the one you're on (multi-select S1, docs/tab-select.md
+     D2): a tint of this colour over the tab's own fill, and a 1 px outline. */
+  --tab-sel: var(--accent); --tab-sel-mix: 12%; --tab-sel-mix-hover: 20%;
   --error-text: #c41d33;
   --scrim: rgba(11, 13, 18, 0.32);
 
@@ -121,6 +124,7 @@
     --group3-tab: #261f12; --group3-chip: #3b2f17; --group3-line: #7a6127;
     --thumb: #636c7a;
     --focus: #7aa2ff;
+    --tab-sel: var(--focus); --tab-sel-mix: 20%; --tab-sel-mix-hover: 28%;
     --error-text: #ff7a87;
     --scrim: rgba(0, 0, 0, 0.55);
     --dot-edge: transparent;
