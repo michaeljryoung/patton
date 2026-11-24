@@ -31,6 +31,15 @@ OPTIONS = [
 ]
 LETTERS = "ABCDEFGHIJ"
 
+# Round 2: his pick A, "but cap shouldnt be too curved" (24 Nov).
+ROUND2 = [
+    ("a", "A1", "As first drawn", "The rim sweeps well down at the sides, under a round crown."),
+    ("a2", "A2", "Flatter brim", "The same crown; the rim drops half as far at the sides."),
+    ("a3", "A3", "Flatter crown", "A lower, broader top with steeper sides; the first rim."),
+    ("a4", "A4", "Both flatter", "The lower crown on the flatter brim."),
+    ("a5", "A5", "Straight brim", "A flat-topped crown on a straight brim, the most geometric."),
+]
+
 TODAY = {"big": png("icon_128x128@2x.png"), 64: png("icon_64x64@2x.png"), 32: png("icon_32x32@2x.png"), 16: png("icon_16x16@2x.png")}
 
 
@@ -57,10 +66,20 @@ for i, (sym, name, desc, keeps) in enumerate(OPTIONS):
         f'{sizes_row(lambda px, s=sym: use(s, px))}</div></article>')
 
 
-def dock(theme):
+round2 = []
+for sym, label, name, desc in ROUND2:
+    round2.append(
+        f'<article class="variant" aria-labelledby="h-{sym}">{use(sym, 150, "big")}'
+        f'<div class="meta"><h3 id="h-{sym}"><span class="letter wide">{label}</span>{name}</h3><p>{desc}</p>'
+        f'{sizes_row(lambda px, s=sym: use(s, px))}</div></article>')
+
+
+def dock(theme, entries=None):
+    if entries is None:
+        entries = [(sym, name, LETTERS[i]) for i, (sym, name, _, _) in enumerate(OPTIONS)]
     items = [f'<li><img src="{TODAY[64]}" width="64" height="64" alt="Today\'s icon"><span>Now</span></li>']
-    for i, (sym, name, _, _) in enumerate(OPTIONS):
-        items.append(f'<li title="{name}">{use(sym, 64)}<span>{LETTERS[i]}</span></li>')
+    for sym, name, label in entries:
+        items.append(f'<li title="{name}">{use(sym, 64)}<span>{label}</span></li>')
     return f'<div class="wall wall-{theme}"><ul class="dock" aria-label="{theme} Dock">' + "".join(items) + '</ul></div>'
 
 
@@ -146,11 +165,26 @@ figcaption {{ font-size: 11px; color: var(--muted); font-variant-numeric: tabula
 .wall-light .dock span {{ color: #2A2F36; }}
 .wall-dark .dock span {{ color: #E6E8EC; }}
 
+.round2 {{ display: grid; gap: 16px; }}
+.variants {{ display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }}
+.variant {{ display: grid; grid-template-rows: auto 1fr; gap: 12px; background: var(--surface); border: 1px solid var(--line);
+  border-radius: 14px; padding: 16px; }}
+.variant .meta {{ grid-template-rows: auto 1fr auto; }}
+.variant .big {{ width: 150px; height: 150px; max-width: 100%; justify-self: center; }}
+h3 {{ margin: 0; font-size: 16px; font-weight: 600; display: flex; align-items: baseline; gap: 8px; }}
+.letter.wide {{ width: auto; padding-inline: 7px; }}
+.variant .sizes {{ gap: 12px; }}
+
 .reply {{ display: grid; gap: 6px; max-width: 68ch; border-top: 1px solid var(--line); padding-top: 24px; }}
 .reply p {{ margin: 0; }}
 .reply strong {{ font-weight: 600; }}
 
-@media (max-width: 860px) {{ .grid {{ grid-template-columns: minmax(0, 1fr); }} }}
+@media (max-width: 860px) {{
+  .grid {{ grid-template-columns: minmax(0, 1fr); }}
+  .variants {{ grid-template-columns: minmax(0, 1fr); }}
+  .variant {{ grid-template-columns: 120px minmax(0, 1fr); grid-template-rows: none; align-items: start; }}
+  .variant .big {{ width: 120px; height: 120px; }}
+}}
 @media (max-width: 460px) {{
   .option {{ grid-template-columns: minmax(0, 1fr); justify-items: start; }}
   .option .big {{ width: 148px; height: 148px; }}
@@ -163,6 +197,16 @@ figcaption {{ font-size: 11px; color: var(--muted); font-variant-numeric: tabula
     <h1>Ten icons for Patton</h1>
     <p class="dek">Ten directions for a sleeker icon that keeps the reference to the general: his helmet, his three stars, his name, and the tank named after him. Each sits on the rounded tile that current Mac apps use, shown full size and at 64, 32 and 16 pixels, three of the sizes Patton's icon file carries.</p>
   </header>
+
+  <section class="round2" aria-labelledby="r2-head">
+    <div class="section-head">
+      <h2 id="r2-head">Round 2 · A, less curved</h2>
+      <p>You picked A and said the helmet shouldn't be too curved. Here are four flatter versions beside the first: a flatter brim, a flatter crown, both, and a straight brim.</p>
+    </div>
+    <div class="variants">{"".join(round2)}</div>
+    {dock("light", [(sym, name, label) for sym, label, name, _ in ROUND2])}
+    {dock("dark", [(sym, name, label) for sym, label, name, _ in ROUND2])}
+  </section>
 
   <section class="today" aria-label="Today's icon">
     <img class="art" src="{TODAY['big']}" width="128" height="128" alt="Today's Patton icon: a pen portrait of a general in a helmet">
@@ -191,7 +235,7 @@ figcaption {{ font-size: 11px; color: var(--muted); font-variant-numeric: tabula
   </section>
 
   <section class="reply" aria-label="How to choose">
-    <p><strong>Reply with a letter.</strong> Two letters work too if you want parts of each, such as B's portrait in D's colours.</p>
+    <p><strong>Reply with A1 to A5,</strong> or a part of one on another, such as A5's brim under A1's crown.</p>
     <p>The one you pick becomes Patton's icon file in every size, and ships with the fixes from the walk-through, so it arrives in the same install.</p>
   </section>
 </div>

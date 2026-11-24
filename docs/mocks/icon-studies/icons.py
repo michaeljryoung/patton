@@ -72,19 +72,50 @@ HIGHLIGHT = "M 318,452 C 324,362 388,300 462,284 C 408,318 364,374 348,456 Z"
 
 symbols = {}
 
-# A — Helmet
-defs = lg("pa-bg", "#ECE3C8", "#CBBC90") + lg("pa-shell", "#6C7943", "#38421F", 0.2, 0, 0.8, 1) + lg("pa-brim", "#4C5731", "#2A3118")
-inner = '<rect x="100" y="100" width="824" height="824" fill="url(#pa-bg)"/>'
-inner += '<g transform="translate(0,30)">'
-inner += '<ellipse cx="512" cy="722" rx="290" ry="24" fill="#3a3320" opacity="0.28" filter="url(#pi-soft)"/>'
-inner += f'<path d="{DOME}" fill="url(#pa-shell)"/>'
-inner += f'<path d="{HIGHLIGHT}" fill="#ffffff" opacity="0.2"/>'
-for x in (402, 512, 622):
-    inner += star_el(x, 440, 46, "#F4F0E3")
-inner += f'<path d="{BRIM}" fill="url(#pa-brim)"/>'
-inner += f'<path d="{BRIM_EDGE}" fill="none" stroke="#ffffff" stroke-opacity="0.2" stroke-width="6" stroke-linecap="round"/>'
-inner += '</g>'
-symbols["a"] = defs + tile("pa-bg", inner)
+# A — Helmet, and round 2's less curved versions of it (his 24 Nov pick: "a but cap shouldnt be too curved")
+HELMET_DEFS = lg("pa-bg", "#ECE3C8", "#CBBC90") + lg("pa-shell", "#6C7943", "#38421F", 0.2, 0, 0.8, 1) + lg("pa-brim", "#4C5731", "#2A3118")
+
+
+def helmet_tile(dome, brim, brim_edge, highlight, ty, star_y, shadow_y):
+    inner = '<rect x="100" y="100" width="824" height="824" fill="url(#pa-bg)"/>'
+    inner += f'<g transform="translate(0,{ty})">'
+    inner += f'<ellipse cx="512" cy="{shadow_y}" rx="290" ry="24" fill="#3a3320" opacity="0.28" filter="url(#pi-soft)"/>'
+    inner += f'<path d="{dome}" fill="url(#pa-shell)"/>'
+    inner += f'<path d="{highlight}" fill="#ffffff" opacity="0.2"/>'
+    for x in (402, 512, 622):
+        inner += star_el(x, star_y, 46, "#F4F0E3")
+    inner += f'<path d="{brim}" fill="url(#pa-brim)"/>'
+    inner += (f'<path d="{brim_edge}" fill="none" stroke="#ffffff" stroke-opacity="0.2" stroke-width="6" '
+              'stroke-linecap="round"/>')
+    inner += '</g>'
+    return tile("pa-bg", inner)
+
+
+symbols["a"] = HELMET_DEFS + helmet_tile(DOME, BRIM, BRIM_EDGE, HIGHLIGHT, 30, 440, 722)
+
+# Round 2. Flat brim: the rim drops 38 at the ends instead of 78.
+DOME_LOWRIM = ("M 252,628 C 236,392 360,262 512,262 C 664,262 788,392 772,628 "
+               "C 700,614 610,608 512,608 C 414,608 324,614 252,628 Z")
+BRIM_FLAT = ("M 200,640 C 320,612 414,602 512,602 C 610,602 704,612 824,640 "
+             "C 834,656 826,676 806,676 C 704,654 610,646 512,646 C 414,646 320,654 218,676 "
+             "C 198,676 190,656 200,640 Z")
+BRIM_FLAT_EDGE = "M 208,642 C 324,616 416,606 512,606 C 608,606 700,616 816,642"
+# Flatter crown: 54 lower at the top, with steeper sides.
+DOME_FLAT = ("M 250,640 C 244,440 292,316 512,316 C 732,316 780,440 774,640 "
+             "C 700,604 610,590 512,590 C 414,590 324,604 250,640 Z")
+DOME_FLAT_LOWRIM = ("M 250,628 C 244,440 292,316 512,316 C 732,316 780,440 774,628 "
+                    "C 700,614 610,608 512,608 C 414,608 324,614 250,628 Z")
+HIGHLIGHT_FLAT = "M 312,470 C 316,394 362,342 452,332 C 396,360 358,404 346,472 Z"
+# Geometric: a flat-topped dome on a straight brim bar.
+DOME_GEO = "M 268,612 C 268,420 352,330 512,330 C 672,330 756,420 756,612 Z"
+BRIM_GEO = "M 222,600 H 802 A 28 28 0 0 1 802,656 H 222 A 28 28 0 0 1 222,600 Z"
+BRIM_GEO_EDGE = "M 222,604 H 802"
+HIGHLIGHT_GEO = "M 318,500 C 320,420 362,368 446,350 C 394,382 360,428 350,502 Z"
+
+symbols["a2"] = helmet_tile(DOME_LOWRIM, BRIM_FLAT, BRIM_FLAT_EDGE, HIGHLIGHT, 43, 440, 700)
+symbols["a3"] = helmet_tile(DOME_FLAT, BRIM, BRIM_EDGE, HIGHLIGHT_FLAT, 4, 466, 722)
+symbols["a4"] = helmet_tile(DOME_FLAT_LOWRIM, BRIM_FLAT, BRIM_FLAT_EDGE, HIGHLIGHT_FLAT, 16, 466, 700)
+symbols["a5"] = helmet_tile(DOME_GEO, BRIM_GEO, BRIM_GEO_EDGE, HIGHLIGHT_GEO, 22, 480, 682)
 
 # B — Three stars
 defs = lg("pb-bg", "#5C6941", "#2D361F", 0, 0, 0.6, 1)
