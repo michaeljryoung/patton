@@ -182,7 +182,7 @@
 /* Where a dragged tab will land (24 Nov 2026, Chrome-like slots, docs/tab-groups.md):
    a 2 px line, the tab's full height, at the edge of the tab under the pointer
    (drop-before: its left edge; drop-after: its right edge), straddling the
-   hairline between tabs. tab-bar.ts sets --drop-line to --focus when the drop
+   hairline between tabs (inside the strip's two ends). tab-bar.ts sets --drop-line to --focus when the drop
    joins a group (the group's own line colour was only 1.5:1 on its fill in light), or
    --ink when it joins none (and marks the joining group's chip .drag-over). A pseudo-element, so no box-shadow of the tab (its
    ink bar, its group's top line, a selection outline) is touched. */
@@ -197,8 +197,17 @@
   pointer-events: none;
   z-index: 3;
 }
-.tab-bar-tab.drop-before::after { left: -1px; }
+/* One canonical place for a slot: the two pixels either side of the boundary
+   between two strip items, whichever side's half produced it. The boundary's
+   right-hand pixel is the next item's 1px border-left, which sits outside this
+   tab's padding box (the box a pseudo-element is placed in), so drop-before
+   reaches 2px out and drop-after 1px. The strip's first tab has no border-left
+   and the strip scrolls (clips) at its outer edges, so at the ends the line is
+   drawn just inside the edge instead of half outside it. */
+.tab-bar-tab.drop-before::after { left: -2px; }
 .tab-bar-tab.drop-after::after { right: -1px; }
+.tab-bar-tab:first-child.drop-before::after { left: 0; }
+.tab-bar-tab:last-child.drop-after::after { right: 0; }
 
 /* --- Tab groups ---
  * 19 Nov 2026, the approved sketch's look A, "ink": a grey chip sits

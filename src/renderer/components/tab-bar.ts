@@ -267,9 +267,6 @@ export class TabBar {
   /** The tabs the drag from this strip carries: the grip's tab alone, or the
    *  whole selection in strip order when the grip's tab is in it. */
   private draggedIds: string[] = [];
-  /** Each group's shade (1-3) as last drawn: the colour of the drop line for
-   *  a drop that joins it. */
-  private shadeOfGroup = new Map<string, number>();
   /** Esc clears the selection when it comes from the strip or the page body,
    *  never from a terminal, where it must reach Claude (it interrupts a turn). */
   private readonly onEscapeKey = (e: KeyboardEvent): void => {
@@ -712,7 +709,6 @@ export class TabBar {
     const membersOf = (groupId: string) => tabs.filter((t) => t.groupId === groupId);
     // A group's shade (1-3, cycling) is its place among the groups on the strip.
     const shadeOf = new Map<string, number>();
-    this.shadeOfGroup = shadeOf;
     // The strip scrolls sideways (hidden scrollbar) and is rebuilt on every
     // update, which empties it and resets scrollLeft: keep the position, and
     // bring the active tab into view when it is a different tab or the count
@@ -791,8 +787,11 @@ export class TabBar {
         const fromId = e.dataTransfer!.getData('text/plain');
         if (!fromId || fromId !== this.draggedId) return;
         const ids = this.draggedIds.slice();
+        // The half is read before the drag ends: endTabDrag applies a rebuild held
+        // during the drag, which detaches this element (a detached box is all zeros).
+        const target: TabDropTarget = { kind: 'tab', id: tab.id, half: TabBar.halfOf(el, e) };
         this.endTabDrag();
-        this.callbacks.onDropTabs?.(ids, { kind: 'tab', id: tab.id, half: TabBar.halfOf(el, e) });
+        this.callbacks.onDropTabs?.(ids, target);
       });
 
       // One dot slot, several sources, in this order. A user-set flag wins and
@@ -1091,9 +1090,10 @@ export class TabBar {
   }
 
   /** The drop cue for the pointer's place (docs/tab-groups.md, 24 Nov 2026):
-   *  over a tab, a 2 px line at the slot's edge, in the joining group's line
-   *  colour (else ink), and that group's chip marked too; over a chip, the chip.
-   *  Nothing where the drop would change nothing. From the same rule the drop
+   *  over a tab, a 2 px line at the slot's edge, --focus blue (and that group's
+   *  chip marked) when the drop changes the group of at least one dragged tab
+   *  into a group, else ink (a move inside its own group, or out to no group);
+   *  over a chip, the chip. Nothing where the drop would change nothing. From the same rule the drop
    *  follows (dropPlacement), on the tabs as last handed to update(). */
   private showDropCue(over: TabDropTarget): void {
     this.clearDropCues();
@@ -1106,13 +1106,15 @@ export class TabBar {
     const placement = dropPlacement(tabs, moving, over.kind === 'tab' ? { kind: 'tab', item: item!, half: over.half } : over,
       (t) => t.groupId ?? null, (g) => folded.has(g));
     if (!placement) return;
-    if (placement.group !== null) this.chipEl(placement.group)?.classList.add('drag-over');
+    // "Joins" = some dragged tab is not yet in that group: a reorder inside its own group only gets the ink line.
+    const joins = placement.group !== null && moving.some((t) => (t.groupId ?? null) !== placement.group);
+    if (joins) this.chipEl(placement.group!)?.classList.add('drag-over');
     if (placement.kind === 'chip' || over.kind !== 'tab') return;
     const el = this.tabElement(over.id);
     if (!el) return;
     el.classList.add(over.half === 'left' ? 'drop-before' : 'drop-after');
     // --focus (the chip's own drop mark, 3:1 or better on every group fill) for a line that joins a group, ink for one that does not.
-    el.style.setProperty('--drop-line', placement.group !== null ? 'var(--focus)' : 'var(--ink)');
+    el.style.setProperty('--drop-line', joins ? 'var(--focus)' : 'var(--ink)');
   }
 
   /** Every drop cue off: slot lines, chip marks, the end line. */

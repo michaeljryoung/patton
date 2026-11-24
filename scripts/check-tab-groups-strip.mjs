@@ -579,6 +579,8 @@ await section('10. Drop on a chip', 9, async () => {
 await section('10b. Drop slots and their cue', 30, async () => {
   const realRect = w.Element.prototype.getBoundingClientRect;
   w.Element.prototype.getBoundingClientRect = function () {
+    // As a browser does: an element no longer in the document has no box.
+    if (!this.isConnected) return { left: 0, right: 0, width: 0, top: 0, bottom: 0, height: 0, x: 0, y: 0 };
     if (this.classList?.contains('tab-bar-tab') || this.classList?.contains('tab-bar-group-chip')) {
       const at = [...this.parentElement.children].indexOf(this) * 100;
       return { left: at, right: at + 100, width: 100, top: 0, bottom: 30, height: 30, x: at, y: 0 };
@@ -636,6 +638,25 @@ await section('10b. Drop slots and their cue', 30, async () => {
     check('...a joins Games at its end', order() === 'g1a@g1 g1b@g1 a@g1 b g2a@g2 g2b@g2 g2c@g2', order());
     check('...and no cue is left after the drop', cue() === '- | -' && !doc.querySelector('.dragging'), cue());
 
+    // A drop on a chip after a held rebuild still delivers (the chip's id is read before the strip is rebuilt).
+    draw();
+    clear();
+    startDrag('a');
+    bar.update(baseTabs().map((t) => (t.id === 'b' ? { ...t, title: 'bravo, busy' } : t)), baseGroups());
+    chip('g2').dispatchEvent(ev('drop'));
+    check('a rebuild held mid-drag: a drop on a chip still delivers that chip', JSON.stringify(callsOf('dropTabs').at(-1)) === JSON.stringify(['dropTabs', ['a'], { kind: 'chip', groupId: 'g2' }]), calls);
+
+    // A rebuild held during the drag (a title or dot update while Claude works) is applied when the
+    // drop ends the drag, which detaches every tab element: the half must be read before that.
+    draw();
+    clear();
+    startDrag('a');
+    over('b', 'left');
+    bar.update(baseTabs().map((t) => (t.id === 'b' ? { ...t, title: 'bravo, busy' } : t)), baseGroups());
+    const bBefore = tabEl('b');
+    dropOn('b', 'left');
+    check('a rebuild held mid-drag: the left-half drop at Games\' right edge still reports the left half', JSON.stringify(callsOf('dropTabs').at(-1)) === JSON.stringify(['dropTabs', ['a'], { kind: 'tab', id: 'b', half: 'left' }]) && !bBefore.isConnected, calls);
+    check('...and a joins Games', order() === 'g1a@g1 g1b@g1 a@g1 b g2a@g2 g2b@g2 g2c@g2', order());
     // Out past the edge again: g1's last tab (a) onto b's far half leaves the group; its near half is its own edge.
     startDrag('a');
     over('b', 'left');
@@ -644,6 +665,14 @@ await section('10b. Drop slots and their cue', 30, async () => {
     check('...over its far half: an ink line after b (it will leave the group)', cue() === 'b:after:var(--ink) | -', cue());
     dropOn('b', 'right');
     check('...dropped there, a leaves Games', order() === 'g1a@g1 g1b@g1 b a g2a@g2 g2b@g2 g2c@g2', order());
+
+    // A reorder inside the tab's own group joins nothing: the ink line, no chip mark; into another group is blue with that chip.
+    startDrag('g1a');
+    over('g1b', 'right');
+    check('a tab moved inside its own group: an ink line after the neighbour, no chip mark', cue() === 'g1b:after:var(--ink) | -', cue());
+    over('g2a', 'left');
+    check('...into another group: --focus and that group\'s chip', cue() === 'g2a:before:var(--focus) | g2', cue());
+    tabEl('g1a').querySelector('.tab-bar-tab-grip').dispatchEvent(ev('dragend'));
 
     // dragend clears the cue.
     startDrag('a');

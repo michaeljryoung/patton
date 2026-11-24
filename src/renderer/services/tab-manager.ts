@@ -486,6 +486,8 @@ export class TabManager {
     }
     const to = placement.group;
     const from = new Map(moving.map((t) => [t, this.groupOf(t)] as const));
+    // Read before the drop: a group the tab was the last of may be gone by the announcement.
+    const leftGroup = moving.length === 1 && from.get(moving[0]) != null ? this.groups.get(from.get(moving[0])!) : undefined;
     for (const tab of moving) {
       if (to === null) this.groupOfTab.delete(tab.id);
       else this.groupOfTab.set(tab.id, to);
@@ -493,14 +495,21 @@ export class TabManager {
     this.setTabOrder(placement.list);
     const changed = moving.filter((t) => from.get(t) !== to);
     if (moving.length === 1) {
-      if (changed.length === 1) rlog('info', '[GROUP] tab moved between groups', { tabId: moving[0].id, from: from.get(moving[0]), to, by: 'drag' });
+      const tab = moving[0];
+      if (changed.length === 1) {
+        rlog('info', '[GROUP] tab moved between groups', { tabId: tab.id, from: from.get(tab), to, by: 'drag' });
+        // As moveTabStep announces it: into the group it joined, else out of the one it left.
+        const joined = to !== null ? this.groups.get(to) : undefined;
+        if (joined) announce(`${tab.title} moved into ${this.groupLabel(joined)}`);
+        else announce(`${tab.title} moved out of ${leftGroup ? this.groupLabel(leftGroup) : 'its group'}`);
+      } else {
+        announce(`${tab.title} moved`);
+      }
     } else {
       rlog('info', '[TAB] moved together', { count: moving.length, to: over.kind === 'tab' ? over.id : 'end' });
       if (changed.length > 0) rlog('info', '[GROUP] tabs moved between groups', { count: changed.length, to, by: 'drag' });
       announce(`${TabManager.tabsWord(moving.length)} moved`);
     }
-    // Never expected (a slot's group is open), but the tab you're on never hides.
-    this.unfoldForActive(to, moving);
     this.updateTabBar();
   }
 
@@ -793,14 +802,6 @@ export class TabManager {
   private tabsInOrder(ids: readonly string[]): Tab[] {
     const want = new Set(ids);
     return this.tabs.filter((t) => want.has(t.id));
-  }
-
-  /** The tab you're on never hides in a folded group: moved into one (a drop
-   *  target hidden by a fold, never one the strip offers), that group unfolds,
-   *  as Add to Group does. */
-  private unfoldForActive(groupId: string | null, moved: readonly Tab[]): void {
-    const group = groupId !== null ? this.groups.get(groupId) : undefined;
-    if (group?.folded && this.activeTab && moved.includes(this.activeTab)) this.unfoldGroup(group, 'add');
   }
 
   /** How many groups would have no tabs left if these tabs all left them. */

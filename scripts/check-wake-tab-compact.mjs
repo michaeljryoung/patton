@@ -56,7 +56,7 @@ w.eval(bundle.outputFiles[0].text);
 
 const noop = () => {};
 const bar = new w.TB.TabBar(doc.getElementById('bar'), {
-  onSelect: noop, onClose: noop, onNew: noop, onReorder: noop, onSettings: noop,
+  onSelect: noop, onClose: noop, onNew: noop, onSettings: noop,
   onSetFlag: noop, onRename: noop, onRenameProject: noop,
   onNewGroup: () => 'gnew', onAddToGroup: noop, onRemoveFromGroup: noop, onRenameGroup: noop,
   onToggleGroup: noop, onNewTabInGroup: noop, onUngroup: noop, onCloseGroup: noop,

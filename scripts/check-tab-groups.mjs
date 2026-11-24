@@ -1026,6 +1026,54 @@ await section(async () => {
   }
 });
 
+// The real TabBar and TabManager with a strip rebuild held mid-drag (a flag or title updates while Claude works):
+// the drop ends the drag, which applies the rebuild and detaches every tab element, so the half is read before that.
+await section(async () => {
+  const tm = await makeWindow(['A', 'B', 'C', 'D', 'E']);
+  repairMark = logs.length;
+  const g = tm.addTabToNewGroup(idOf(tm, 'B'));
+  tm.addTabToGroup(idOf(tm, 'C'), g);
+  const tabEl = (name) => tm.bar.querySelector(`.tab-bar-tab[data-tab-id="${idOf(tm, name)}"]`);
+  const realRect = w.Element.prototype.getBoundingClientRect;
+  w.Element.prototype.getBoundingClientRect = function () {
+    // As a browser does: an element no longer in the document has no box.
+    if (!this.isConnected) return { left: 0, right: 0, width: 0, top: 0, bottom: 0, height: 0, x: 0, y: 0 };
+    if (this.classList?.contains('tab-bar-tab')) {
+      const at = [...this.parentElement.children].indexOf(this);
+      return { left: at * 100, right: at * 100 + 100, width: 100, top: 0, bottom: 30, height: 30, x: at * 100, y: 0 };
+    }
+    return realRect.call(this);
+  };
+  try {
+    const dt = { data: {}, setData(k, v) { this.data[k] = v; }, getData(k) { return this.data[k] ?? ''; }, effectAllowed: '', dropEffect: '', setDragImage() {} };
+    const ev = (type, x) => { const e = new w.Event(type, { bubbles: true, cancelable: true }); Object.defineProperty(e, 'dataTransfer', { value: dt }); Object.defineProperty(e, 'clientX', { value: x }); return e; };
+    // A | [B C] | D E, E dragged to D's near half with a rebuild held between the dragover and the drop.
+    tabEl('E').querySelector('.tab-bar-tab-grip').dispatchEvent(ev('dragstart', 0));
+    const d = tabEl('D');
+    const dLeft = [...d.parentElement.children].indexOf(d) * 100;
+    d.dispatchEvent(ev('dragover', dLeft + 20));
+    tm.setTabFlag(idOf(tm, 'A'), 'red'); // redraws the strip: held while the drag lasts
+    check('a flag set mid-drag is held, not drawn (the dragged tab is still on the strip)', d.isConnected && !!tm.bar.querySelector('.dragging'), d.isConnected);
+    const n = announced.length;
+    d.dispatchEvent(ev('drop', dLeft + 20));
+    check('held rebuild: the drop applied it (the tab element it read is gone)', !d.isConnected && !!tabEl('A')?.querySelector('.flag-red'), d.isConnected);
+    check('held rebuild: the near-half drop at the group\'s right edge still joins the group (the half was read before the rebuild)', order(tm) === 'A B C E D' && groups(tm)[0].tabs === 'B C E', { order: order(tm), groups: groups(tm) });
+    invariant(tm, 'held rebuild edge drop');
+    await tick(40);
+    check('a single tab dropped into a group is announced as moved into it', announced.slice(n).some((t) => /^E moved into /.test(t)), announced.slice(n));
+    // And out again: E onto D's far half.
+    const m = announced.length;
+    tabEl('E').querySelector('.tab-bar-tab-grip').dispatchEvent(ev('dragstart', 0));
+    const d2 = tabEl('D');
+    const d2Left = [...d2.parentElement.children].indexOf(d2) * 100;
+    d2.dispatchEvent(ev('drop', d2Left + 80));
+    await tick(40);
+    check('...and out of it onto the next tab\'s far half is announced as moved out of it', order(tm) === 'A B C D E' && announced.slice(m).some((t) => /^E moved out of /.test(t)), { order: order(tm), said: announced.slice(m) });
+  } finally {
+    w.Element.prototype.getBoundingClientRect = realRect;
+  }
+});
+
 // SECTIONS
 
 check('script reached its end', true);

@@ -45,7 +45,7 @@ w.Element.prototype.scrollIntoView = noopFn;
 w.eval(bundle.outputFiles[0].text);
 const noop = () => {};
 const bar = new w.TB.TabBar(w.document.getElementById('bar'), {
-  onSelect: (id) => { calls.selects.push(id); }, onClose: noop, onNew: noop, onReorder: noop, onSettings: noop, onRename: noop,
+  onSelect: (id) => { calls.selects.push(id); }, onClose: noop, onNew: noop, onSettings: noop, onRename: noop,
   onRenameProject: noop, onSetFlag: noop,
 });
 bar.update([{ id: 't1', title: 'one', active: true }, { id: 't2', title: 'two', active: false }]);

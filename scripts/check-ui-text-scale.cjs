@@ -325,7 +325,7 @@ async function pageRun(BIG) {
     { id: 't6', title: 'six', active: false },
   ];
   const tabBar = new U.TabBar(byId('tab-bar'), {
-    onSelect: noop, onClose: noop, onNew: noop, onReorder: noop, onSettings: noop, onRename: noop, onRenameProject: noop, onSetFlag: noop,
+    onSelect: noop, onClose: noop, onNew: noop, onSettings: noop, onRename: noop, onRenameProject: noop, onSetFlag: noop,
     describeTab: (id) => (id === 't2' ? [{ label: 'Pane 1 · focused', title: 'Claude Code', place: '~/projects/alpha', state: 'Blocked: question · 4 min', activity: 'blocked', detail: 'Which file should I edit?', tasks: [], checkpoint: 'Checkpoint 10:10 · 12% since' }] : null),
   });
   tabBar.update(tabs);
@@ -1304,10 +1304,36 @@ async function pageRun(BIG) {
         el.style.setProperty('--drop-line', `var(${varName})`);
         await frame();
         const ls = getComputedStyle(el, '::after');
-        check(`${tag}: the ${cls} slot line on ${el.dataset.tabId} is 2 px wide, the tab's full height, straddles its ${side} edge, and is ${varName}`,
-          ls.width === '2px' && ls[side] === '-1px' && Math.abs(parseFloat(ls.height) - el.getBoundingClientRect().height) < 0.5 && ls.backgroundColor === colourOf(varName), { width: ls.width, edge: ls[side], height: ls.height, tabH: el.getBoundingClientRect().height, bg: ls.backgroundColor, want: colourOf(varName) });
+        check(`${tag}: the ${cls} slot line on ${el.dataset.tabId} is 2 px wide, the tab's full height, straddles its ${side} edge (the border-left's pixel counted), and is ${varName}`,
+          ls.width === '2px' && ls[side] === (cls === 'drop-before' ? '-2px' : '-1px') && Math.abs(parseFloat(ls.height) - el.getBoundingClientRect().height) < 0.5 && ls.backgroundColor === colourOf(varName), { width: ls.width, edge: ls[side], height: ls.height, tabH: el.getBoundingClientRect().height, bg: ls.backgroundColor, want: colourOf(varName) });
         el.classList.remove(cls);
         el.style.removeProperty('--drop-line');
+      }
+      // One slot, one set of pixels: the line a slot draws is the same two pixels whether the tab before it (drop-after) or
+      // the tab after it (drop-before) produced it, and at the strip's two ends it lies wholly inside the strip (24 Nov 2026).
+      {
+        const span = async (el, cls) => {
+          el.classList.add(cls);
+          await frame();
+          const ls = getComputedStyle(el, '::after');
+          const r = el.getBoundingClientRect();
+          const width = parseFloat(ls.width);
+          const x0 = cls === 'drop-before' ? r.left + parseFloat(getComputedStyle(el).borderLeftWidth) + parseFloat(ls.left) : r.right - parseFloat(ls.right) - width;
+          el.classList.remove(cls);
+          return [+x0.toFixed(2), +(x0 + width).toFixed(2)];
+        };
+        const t = (id) => strip.querySelector(`.tab-bar-tab[data-tab-id="${id}"]`);
+        const sr = strip.getBoundingClientRect();
+        const sameSlot = [[t('g1'), 'drop-after', t('g2'), 'drop-before'], [t('g2'), 'drop-after', t('p2'), 'drop-before']];
+        for (const [a, ca, b, cb] of sameSlot) {
+          const [sa, sb] = [await span(a, ca), await span(b, cb)];
+          check(`${tag}: the slot between ${a.dataset.tabId} and ${b.dataset.tabId} is the same two pixels from either side`, sa[0] === sb[0] && sa[1] === sb[1], { sa, sb });
+        }
+        const first = await span(t('p1'), 'drop-before');
+        const last = await span(t('p2'), 'drop-after');
+        // (clientWidth is a whole number and the tabs' widths are not: 1 px of slack.)
+        check(`${tag}: the slot lines at the strip's first tab's left edge and last tab's right edge lie inside the strip (not clipped)`,
+          first[0] >= sr.left - 0.01 && last[1] <= sr.left + strip.clientWidth + 1, { first, last, stripLeft: sr.left, stripRight: sr.left + strip.clientWidth });
       }
       const nameEl = chip && chip.querySelector('.tab-bar-group-name');
       const place = { chipRight: +cr.right.toFixed(1), firstLeft: +firstR.left.toFixed(1), chipH: +cr.height.toFixed(1), stripH, tabH: +firstR.height.toFixed(1), next: chip && chip.nextElementSibling && chip.nextElementSibling.dataset.tabId };
