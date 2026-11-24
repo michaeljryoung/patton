@@ -18,10 +18,11 @@ export function shownPct(pct: number): number {
   return Math.max(0, Math.min(FULL_PCT - 1, Math.round(pct)));
 }
 
-/** 'full' at 100%, 'warn' from 80%, else ''. */
+/** 'full' at 100%, 'warn' from 80%, else ''. Follows the percent as shown: 79.5 shows 80% and is amber. */
 export function usageLevel(pct: number): '' | 'warn' | 'full' {
-  if (pct >= FULL_PCT) return 'full';
-  if (pct >= WARN_PCT) return 'warn';
+  const shown = shownPct(pct);
+  if (shown >= FULL_PCT) return 'full';
+  if (shown >= WARN_PCT) return 'warn';
   return '';
 }
 

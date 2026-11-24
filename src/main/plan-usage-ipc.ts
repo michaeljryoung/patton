@@ -8,7 +8,7 @@
 import { BrowserWindow, ipcMain } from 'electron';
 import { IPC } from '../shared/constants';
 import { EMPTY_PLAN_USAGE, type PlanUsage } from '../shared/plan-usage';
-import { planUsagePath, readPlanUsage, statPlanUsage, type PlanUsageProblem } from './plan-usage-file';
+import { isFailedRead, planUsagePath, readPlanUsage, statPlanUsage, type PlanUsageProblem } from './plan-usage-file';
 import { RateLimiter } from './rate-limiter';
 
 const POLL_MS = 10 * 1000;
@@ -31,11 +31,14 @@ async function refreshOnce(): Promise<void> {
   const st = await statPlanUsage(path);
   if (st.key === readKey) return;
   const read = await readPlanUsage(path, nowSeconds());
-  readKey = read.key;
   if (read.problem !== lastProblem) {
     lastProblem = read.problem;
     if (read.problem) console.warn('[USAGE] no data', { reason: read.problem });
   }
+  // A failed read (unreadable, half-written) keeps the last good reading and is
+  // tried again next poll: its key is not remembered, nothing is pushed.
+  if (isFailedRead(read)) return;
+  readKey = read.key;
   const content = JSON.stringify(read.usage);
   if (content === lastContent) return;
   lastContent = content;
@@ -46,8 +49,8 @@ async function refreshOnce(): Promise<void> {
   }
 }
 
-/** One refresh at a time; a caller during one waits for it. */
-function refresh(): Promise<void> {
+/** One refresh at a time; a caller during one waits for it. Exported for the check, which drives polls by hand. */
+export function pollPlanUsageOnce(): Promise<void> {
   if (!inFlight) {
     inFlight = refreshOnce()
       .catch((err) => console.warn('[USAGE] refresh failed', { code: (err as { code?: unknown } | null)?.code ?? null }))
@@ -70,11 +73,11 @@ export function registerPlanUsageHandlers(): void {
       console.warn('[SECURITY] Rate limit exceeded', { channel: IPC.PLAN_USAGE_GET });
       return null;
     }
-    await refresh();
+    await pollPlanUsageOnce();
     return current;
   });
 
-  refresh().catch(() => { /* logged in refresh */ });
-  pollTimer = setInterval(() => { refresh().catch(() => { /* logged in refresh */ }); }, POLL_MS);
+  pollPlanUsageOnce().catch(() => { /* logged in pollPlanUsageOnce */ });
+  pollTimer = setInterval(() => { pollPlanUsageOnce().catch(() => { /* logged in pollPlanUsageOnce */ }); }, POLL_MS);
   pollTimer.unref?.();
 }

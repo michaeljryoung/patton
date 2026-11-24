@@ -46,6 +46,15 @@ export const EMPTY_PLAN_USAGE: PlanUsage = { liveId: null, accounts: [] };
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const MAX_EMAIL = 254;
 const MAX_PLAN = 40;
+const DAY_S = 24 * 60 * 60;
+/** A reset further back than this is not a window we can show (a stale or wrong time). */
+const RESET_PAST_S = 30 * DAY_S;
+/** A weekly window resets within 7 days; a reset further ahead than this is wrong (e.g. milliseconds). */
+const RESET_AHEAD_S = 8 * DAY_S;
+/** No reading was taken before this (1 Jan 2020, epoch seconds) ... */
+const READ_FLOOR_S = 1577836800;
+/** ... or more than a day from now. */
+const READ_AHEAD_S = DAY_S;
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -65,13 +74,17 @@ function parseWindow(v: unknown, now: number): UsageWindow | null {
   if (!isRecord(v)) return null;
   const used = finite(v.used_percentage);
   const resetsAt = finite(v.resets_at);
-  if (used === null || resetsAt === null || resetsAt <= 0) return null;
-  const readAt = finite(v.read_at);
+  if (used === null || resetsAt === null) return null;
+  // A time outside the plausible range (a millisecond epoch, 1e15) is a bad window: drop it,
+  // so no NaN or absurd date ever reaches the formatting.
+  if (resetsAt < now - RESET_PAST_S || resetsAt > now + RESET_AHEAD_S) return null;
+  const rawRead = finite(v.read_at);
+  const readAt = rawRead !== null && rawRead >= READ_FLOOR_S && rawRead <= now + READ_AHEAD_S ? rawRead : null;
   const passed = resetsAt <= now;
   return {
     pct: passed ? 0 : Math.min(100, Math.max(0, used)),
     resetsAt,
-    readAt: readAt !== null && readAt > 0 ? readAt : null,
+    readAt,
     passed,
   };
 }
@@ -90,7 +103,7 @@ export function parsePlanUsage(json: unknown, now: number): PlanUsage | null {
 
   const liveRaw = isRecord(json.live) ? json.live.account : null;
   const accountsRaw = json.accounts;
-  const liveId = typeof liveRaw === 'string' && ID_RE.test(liveRaw) && isRecord(accountsRaw[liveRaw]) ? liveRaw : null;
+  const liveId = typeof liveRaw === 'string' && ID_RE.test(liveRaw) && Object.hasOwn(accountsRaw, liveRaw) && isRecord(accountsRaw[liveRaw]) ? liveRaw : null;
 
   const accounts: PlanUsageAccount[] = [];
   for (const id of Object.keys(accountsRaw)) {
@@ -119,7 +132,21 @@ export function parsePlanUsage(json: unknown, now: number): PlanUsage | null {
     return x.id < y.id ? -1 : x.id > y.id ? 1 : 0;
   });
 
-  return { liveId, accounts: accounts.slice(0, MAX_ACCOUNTS) };
+  const shown = accounts.slice(0, MAX_ACCOUNTS);
+  disambiguateNames(shown);
+  return { liveId, accounts: shown };
+}
+
+/** Two shown logins with the same email local part would read alike: those (only
+ *  those) are named `local@domain`. */
+function disambiguateNames(accounts: PlanUsageAccount[]): void {
+  const count = new Map<string, number>();
+  for (const a of accounts) {
+    if (a.email) count.set(a.name.toLowerCase(), (count.get(a.name.toLowerCase()) ?? 0) + 1);
+  }
+  for (const a of accounts) {
+    if (a.email && (count.get(a.name.toLowerCase()) ?? 0) > 1) a.name = a.email;
+  }
 }
 
 function windowAt(w: UsageWindow | null, now: number): UsageWindow | null {

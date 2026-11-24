@@ -647,9 +647,12 @@ html, body {
  * ink meters, amber from 80%, red at 100%. */
 .usage-panel {
   flex-shrink: 0;
+  /* The bookmarks keep priority: many logins scroll inside the panel. */
+  max-height: 40%;
+  overflow-y: auto;
   display: grid;
   gap: calc(9px * var(--ui-scale));
-  padding: calc(8px * var(--ui-scale)) 12px calc(10px * var(--ui-scale));
+  padding: calc(8px * var(--ui-scale)) 10px calc(10px * var(--ui-scale));
   border-top: 1px solid var(--hairline);
   line-height: 1.3;
   user-select: none;
@@ -680,7 +683,6 @@ html, body {
 
 .usage-acct-top {
   display: flex;
-  justify-content: space-between;
   align-items: baseline;
   gap: 6px;
   min-width: 0;
@@ -688,6 +690,7 @@ html, body {
 }
 
 .usage-name {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -698,7 +701,7 @@ html, body {
 }
 
 .usage-tag {
-  margin-left: 5px;
+  flex-shrink: 0;
   font-size: calc(9.5px * var(--ui-scale));
   font-weight: 400;
   letter-spacing: var(--head-ls);
@@ -707,6 +710,8 @@ html, body {
 }
 
 .usage-pct {
+  margin-left: auto;
+  flex-shrink: 0;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }

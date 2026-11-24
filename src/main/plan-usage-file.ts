@@ -17,7 +17,7 @@ export function planUsagePath(): string {
 }
 
 export interface PlanUsageStat {
-  /** `<mtimeMs>:<size>`, or 'none' when there is no file. Changes when the file is replaced. */
+  /** `<mtimeMs>:<ctimeMs>:<ino>:<size>`, or 'none' when there is no file. Changes when the file is replaced. */
   key: string;
   size: number;
 }
@@ -26,16 +26,23 @@ export interface PlanUsageStat {
 export type PlanUsageProblem = 'too-large' | 'not-json' | 'wrong-shape' | 'unreadable' | null;
 
 export interface PlanUsageRead {
+  /** The stat key to remember as read; '' after a failed read, so the next poll reads again. */
   key: string;
   usage: PlanUsage;
   problem: PlanUsageProblem;
+}
+
+/** A read that failed in a way that may mend itself (permissions, a half-written
+ *  file): the caller keeps its last good reading and reads again next poll. */
+export function isFailedRead(read: PlanUsageRead): boolean {
+  return read.problem === 'unreadable' || read.problem === 'not-json';
 }
 
 export async function statPlanUsage(path: string): Promise<PlanUsageStat> {
   try {
     const st = await fs.stat(path);
     if (!st.isFile()) return { key: 'none', size: 0 };
-    return { key: `${st.mtimeMs}:${st.size}`, size: st.size };
+    return { key: `${st.mtimeMs}:${st.ctimeMs}:${st.ino}:${st.size}`, size: st.size };
   } catch {
     return { key: 'none', size: 0 };
   }
@@ -55,13 +62,13 @@ export async function readPlanUsage(path: string, now: number): Promise<PlanUsag
   } catch (err) {
     // Gone between the stat and the read (a rename in flight): no data this time.
     if ((err as { code?: unknown } | null)?.code === 'ENOENT') return { key: 'none', usage: EMPTY_PLAN_USAGE, problem: null };
-    return { key: st.key, usage: EMPTY_PLAN_USAGE, problem: 'unreadable' };
+    return { key: '', usage: EMPTY_PLAN_USAGE, problem: 'unreadable' };
   }
   let json: unknown;
   try {
     json = JSON.parse(text);
   } catch {
-    return { key: st.key, usage: EMPTY_PLAN_USAGE, problem: 'not-json' };
+    return { key: '', usage: EMPTY_PLAN_USAGE, problem: 'not-json' };
   }
   const usage = parsePlanUsage(json, now);
   return usage ? { key: st.key, usage, problem: null } : { key: st.key, usage: EMPTY_PLAN_USAGE, problem: 'wrong-shape' };

@@ -12,11 +12,16 @@
 //     amber at 85, red with "back" at 100, a passed week at 0% with "reset",
 //     the 5-hour line only where present, the minute's re-draw, the rail's bars
 //     and tooltip, a refused first answer asked again, a push, text never HTML;
-// (d) wiring: channels, preload, registration, the poll stopped on quit.
+// (d) wiring: channels, preload, registration, the poll stopped on quit;
+// (e) main's IPC module BEHAVIOURALLY (bundled with an electron stub, polled by
+//     hand on a temp file): one push per content change, none for an unchanged
+//     poll, an unreadable or corrupt file keeps the last good reading and is read
+//     again, the rate-limited get answers null, stop clears the timer;
+// (f) the panel's timers: the minute redraw, a late answer after dispose.
 // Run: JSDOM_DIR=<a folder whose node_modules has jsdom> node scripts/check-usage-panel.mjs
 import { build } from 'esbuild';
 import { createRequire } from 'node:module';
-import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, promises as fsp, readFileSync, renameSync, rmSync, statSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -136,7 +141,34 @@ try {
     check('planUsageAt: leaves the input alone', u.accounts[0].week.pct === 63 && !u.accounts[0].week.passed);
 
     check('format: 99.6 shows 99, 100 shows 100, 12.4 shows 12', M.shownPct(99.6) === 99 && M.shownPct(100) === 100 && M.shownPct(12.4) === 12);
-    check('format: levels', M.usageLevel(79.9) === '' && M.usageLevel(80) === 'warn' && M.usageLevel(99) === 'warn' && M.usageLevel(100) === 'full');
+    check('format: levels', M.usageLevel(79.4) === '' && M.usageLevel(80) === 'warn' && M.usageLevel(99) === 'warn' && M.usageLevel(100) === 'full');
+    check('format: the colour follows the percent as shown (79.5 shows 80% and is amber; 99.6 shows 99 and is not red)',
+      M.shownPct(79.5) === 80 && M.usageLevel(79.5) === 'warn' && M.usageLevel(79.49) === '' && M.usageLevel(99.6) === 'warn' && M.usageLevel(100.2) === 'full');
+
+    // Out-of-range times (finding: 1e15 printed NaN, a millisecond epoch showed a reset 56,000 years away).
+    const odd = (extra) => P({ accounts: { aaaa: { email: 'a@x', ...extra } } }).accounts[0];
+    check('parser: a resets_at of 1e15 or in milliseconds drops the window', odd({ seven_day: win(50, 1e15) }).week === null && odd({ seven_day: win(50, NOW * 1000) }).week === null && odd({ five_hour: win(50, 1.795e12) }).fiveHour === null);
+    check('parser: a resets_at beyond now + 8 days or before now - 30 days drops the window',
+      odd({ seven_day: win(50, NOW + 8 * 86400 + 60) }).week === null && odd({ seven_day: win(50, NOW - 30 * 86400 - 60) }).week === null);
+    check('parser: a resets_at just inside the range is kept (7 days ahead, 29 days back)',
+      odd({ seven_day: win(50, NOW + 7 * 86400) }).week?.passed === false && odd({ seven_day: win(50, NOW - 29 * 86400) }).week?.passed === true);
+    check('parser: a resets_at of 0 or a negative one is dropped', odd({ seven_day: win(50, 0) }).week === null && odd({ seven_day: win(50, -5) }).week === null);
+    check('parser: a read_at before 2020 or over a day ahead is absent, not NaN',
+      odd({ seven_day: win(50, at(28, 1), 5) }).week.readAt === null && odd({ seven_day: win(50, at(28, 1), NOW + 86400 + 60) }).week.readAt === null && odd({ seven_day: win(50, at(28, 1), 1e15) }).week.readAt === null);
+    check('parser: a read_at in range is kept', odd({ seven_day: win(50, at(28, 1), NOW - 3600) }).week.readAt === NOW - 3600 && odd({ seven_day: win(50, at(28, 1), NOW + 3600) }).week.readAt === NOW + 3600);
+
+    const protoLive = JSON.parse(`{"live":{"account":"__proto__"},"accounts":{"aaaa1111":{"last_live":5,"seven_day":{"used_percentage":5,"resets_at":${at(28, 1)}}}}}`);
+    const pl = P(protoLive);
+    check('parser: "__proto__" as the live id is no live login', pl.liveId === null && pl.accounts.every((a) => !a.live), pl.liveId);
+    check('parser: "constructor" and "toString" as the live id are no live login too', ['constructor', 'toString', 'hasOwnProperty'].every((id) => P({ ...protoLive, live: { account: id } }).liveId === null));
+
+    const twins = P({ accounts: {
+      a1: { email: 'sam@one.com', last_live: 9 }, a2: { email: 'Sam@two.org', last_live: 8 },
+      a3: { email: 'kim@one.com', last_live: 7 }, a4: { email: 'sam@one.com', last_live: 6 }, a5: { last_live: 5 },
+    } });
+    check('parser: equal email local parts show local@domain, only those',
+      twins.accounts.map((a) => a.name).join('|') === 'sam@one.com|Sam@two.org|kim|sam@one.com|Login a5', twins.accounts.map((a) => a.name));
+    check('parser: distinct local parts stay short', u.accounts.map((a) => a.name).join('|') === 'michaeljrrushworth|third|Login aaaa|d');
     check('format: day and time', M.dayTime(at(28, 12)) === 'Sat 12:00' && M.clockTime(at(24, 9, 5)) === '09:05', [M.dayTime(at(28, 12)), M.clockTime(at(24, 9, 5))]);
   });
 
@@ -164,6 +196,22 @@ try {
     writeFileSync(file, ' '.repeat(M.PLAN_USAGE_SIZE_CAP + 1));
     r = await M.readPlanUsage(file, NOW);
     check('reader: over 256 KB is no data, "too-large"', r.problem === 'too-large' && r.usage.accounts.length === 0 && M.PLAN_USAGE_SIZE_CAP === 256 * 1024);
+    // A same-size replacement with the old mtime copied is still a new file (ctime, inode).
+    writeFileSync(file, '{"accounts":{"a":{}}}');
+    const stA = statSync(file);
+    const keyA = (await M.statPlanUsage(file)).key;
+    writeFileSync(join(dir, 'same.tmp'), '{"accounts":{"b":{}}}');
+    utimesSync(join(dir, 'same.tmp'), stA.atimeMs / 1000, stA.mtimeMs / 1000);
+    renameSync(join(dir, 'same.tmp'), file);
+    const stB = statSync(file);
+    check('reader: the stat key moves for a same-size replacement with the mtime copied',
+      stB.size === stA.size && Math.abs(stB.mtimeMs - stA.mtimeMs) < 1 && (await M.statPlanUsage(file)).key !== keyA, [keyA, (await M.statPlanUsage(file)).key]);
+    check('reader: a failed read (not-json, unreadable) records no key; a missing or wrong-shape file does',
+      M.isFailedRead({ key: '', usage: M.EMPTY_PLAN_USAGE, problem: 'not-json' }) && M.isFailedRead({ key: '', usage: M.EMPTY_PLAN_USAGE, problem: 'unreadable' })
+      && !M.isFailedRead({ key: 'k', usage: M.EMPTY_PLAN_USAGE, problem: 'wrong-shape' }) && !M.isFailedRead({ key: 'none', usage: M.EMPTY_PLAN_USAGE, problem: null }));
+    writeFileSync(file, '{"accounts": NaN}');
+    r = await M.readPlanUsage(file, NOW);
+    check('reader: a bare NaN is not JSON and gives no key', r.problem === 'not-json' && r.key === '', r);
     check('reader: a folder at the path is no file', (await M.readPlanUsage(dir, NOW)).key === 'none');
     const before = process.env.PATTON_PLAN_USAGE_FILE;
     process.env.PATTON_PLAN_USAGE_FILE = file;
@@ -222,11 +270,15 @@ try {
     const blocks = () => [...sec.querySelectorAll('.usage-acct')];
     const txt = (b, s) => b.querySelector(s)?.textContent ?? null;
     check('panel: shown with logins', sec.hidden === false);
-    check('panel: head "Usage" with the newest reading time', txt(sec, '.usage-head .usage-title') === 'Usage' && txt(sec, '.usage-head .usage-time') === '20:23', sec.querySelector('.usage-head')?.textContent);
+    check('panel: head "Usage this week" with the newest reading time', txt(sec, '.usage-head .usage-title') === 'Usage this week' && txt(sec, '.usage-head .usage-time') === '20:23', sec.querySelector('.usage-head')?.textContent);
     const b = blocks();
     check('panel: four logins in order', JSON.stringify(b.map((x) => x.dataset.account)) === JSON.stringify(['38e237e1', 'bbbb2222', 'aaaa1111', 'cccc3333']), b.map((x) => x.dataset.account));
     check('panel: the live login alone is bold-classed with a "live" tag',
       b[0].classList.contains('live') && txt(b[0], '.usage-tag') === 'live' && b.slice(1).every((x) => !x.classList.contains('live') && !x.querySelector('.usage-tag')));
+    const tagEl = b[0].querySelector('.usage-tag');
+    check('panel: the live tag is a sibling of the name, not inside it',
+      tagEl && tagEl.parentElement === b[0].querySelector('.usage-acct-top') && !b[0].querySelector('.usage-name .usage-tag') && b[0].querySelector('.usage-name').children.length === 0
+      && tagEl.previousElementSibling === b[0].querySelector('.usage-name'));
     check('panel: names', b.map((x) => x.querySelector('.usage-name').firstChild.textContent).join('|') === 'michaeljrrushworth|third|Login aaaa|d');
     check('panel: percents', b.map((x) => txt(x, '.usage-pct')).join('|') === '63%|85%|100%|0%', b.map((x) => txt(x, '.usage-pct')));
     check('panel: 63% is plain ink', !b[0].classList.contains('warn') && !b[0].classList.contains('full'));
@@ -322,9 +374,14 @@ try {
     check('wiring: the poll stops on quit', /before-quit[\s\S]*stopPlanUsagePoll\(\)/.test(main));
     const ipc = read('src/main/plan-usage-ipc.ts');
     check('wiring: the get is rate-limited and answers null when refused', /getLimiter\.allow\(\)[\s\S]*?return null/.test(ipc));
+    check('wiring: a failed read neither records its key nor pushes', /isFailedRead\(read\)\) return;\s*readKey = read\.key/.test(ipc));
     check('wiring: polled by stat every 10 s', ipc.includes('POLL_MS = 10 * 1000') && ipc.includes('setInterval'));
     const css = read('src/renderer/styles/main.css');
     const rule = (sel) => { const i = css.indexOf(`${sel} {`); return i < 0 ? '' : css.slice(i, css.indexOf('}', i)); };
+    check('css: the panel yields to the bookmarks (max-height 40%, scrolls) and uses the mock\'s 10 px sides',
+      /max-height: 40%/.test(rule('.usage-panel')) && /overflow-y: auto/.test(rule('.usage-panel')) && /var\(--ui-scale\)\) 10px calc/.test(rule('.usage-panel')), rule('.usage-panel'));
+    check('css: only the name truncates (the tag and percent do not shrink)',
+      /overflow: hidden/.test(rule('.usage-name')) && /min-width: 0/.test(rule('.usage-name')) && /flex-shrink: 0/.test(rule('.usage-tag')) && /flex-shrink: 0/.test(rule('.usage-pct')));
     check('css: a hairline above the panel', rule('.usage-panel').includes('border-top: 1px solid var(--hairline)'));
     check('css: ink meters, amber and red fills', rule('.usage-meter > i').includes('var(--ink)') && /\.usage-acct\.warn > \.usage-meter > i,[^{]*{\s*background: var\(--amber\)/.test(css) && /\.usage-acct\.full > \.usage-meter > i,[^{]*{\s*background: var\(--red\)/.test(css));
     check('css: amber and red percents use the text tokens', /\.usage-acct\.warn \.usage-pct,[^{]*{\s*color: var\(--amber-text\)/.test(css) && /\.usage-acct\.full \.usage-pct,[^{]*{\s*color: var\(--error-text\)/.test(css));
@@ -332,6 +389,247 @@ try {
     check('css: sizes follow --ui-scale', rule('.usage-panel').includes('var(--ui-scale)') && rule('.usage-tag').includes('var(--ui-scale)'));
     const block = css.slice(css.indexOf('--- Plan usage'), css.indexOf('/* Drag handle'));
     check('css: no colour literals in the usage styles (tokens only)', !/#[0-9a-fA-F]{3,8}\b|rgba?\(/.test(block));
+  });
+  // ── (e) main's IPC module, behaviourally: bundled with an electron stub, polled by hand
+  await section('ipc', async () => {
+    writeFileSync(join(tmp, 'electron-stub.mjs'), `
+      const g = (globalThis.__electronStub ??= { handlers: new Map(), windows: [] });
+      export const ipcMain = { handle: (ch, fn) => { g.handlers.set(ch, fn); } };
+      export const BrowserWindow = { getAllWindows: () => g.windows };
+    `);
+    const ipcBundle = await build({
+      stdin: {
+        resolveDir: repo, loader: 'ts',
+        contents: `export * from './src/main/plan-usage-ipc'; export { IPC } from './src/shared/constants';`,
+      },
+      bundle: true, format: 'esm', platform: 'node', write: false, logLevel: 'silent',
+      alias: { electron: join(tmp, 'electron-stub.mjs') },
+    });
+    writeFileSync(join(tmp, 'ipc.mjs'), ipcBundle.outputFiles[0].text);
+    const stub = (globalThis.__electronStub ??= { handlers: new Map(), windows: [] });
+    let loads = 0;
+    const loadFresh = async () => { stub.handlers.clear(); return import(`${pathToFileURL(join(tmp, 'ipc.mjs')).href}?v=${++loads}`); };
+
+    const sent = [];
+    const fakeWin = (destroyed = false) => ({ isDestroyed: () => destroyed, webContents: { isDestroyed: () => false, send: (ch, data) => sent.push({ ch, data }) } });
+    stub.windows = [fakeWin(), fakeWin(), fakeWin(true)];
+
+    const logsMain = [];
+    const realInfo = console.info, realWarn = console.warn;
+    console.info = (...a) => logsMain.push(['info', ...a]);
+    console.warn = (...a) => logsMain.push(['warn', ...a]);
+    const realSI = globalThis.setInterval, realCI = globalThis.clearInterval;
+    const realReadFile = fsp.readFile;
+    let reads = 0;
+    fsp.readFile = (...a) => { reads++; return realReadFile.apply(fsp, a); };
+    const timers = { fn: null, ms: null, handle: null, cleared: [] };
+    globalThis.setInterval = (fn, ms) => { timers.fn = fn; timers.ms = ms; timers.handle = { unref() {} }; return timers.handle; };
+    globalThis.clearInterval = (h) => { timers.cleared.push(h); };
+    const dir = join(tmp, 'ipc-usage');
+    const file = join(dir, 'accounts.json');
+    const before = process.env.PATTON_PLAN_USAGE_FILE;
+    process.env.PATTON_PLAN_USAGE_FILE = file;
+    const replace = (text, mode) => { const t = `${file}.tmp`; writeFileSync(t, text); if (mode !== undefined) chmodSync(t, mode); renameSync(t, file); };
+    try {
+      mkdirSync(dir);
+      writeFileSync(file, JSON.stringify(fixture()));
+      const I = await loadFresh();
+      I.registerPlanUsageHandlers();
+      await I.pollPlanUsageOnce();
+      const get = stub.handlers.get(I.IPC.PLAN_USAGE_GET);
+      const pushes = () => sent.filter((x) => x.ch === I.IPC.PLAN_USAGE_CHANGED);
+      const marks = () => ({ pushes: pushes().length, logs: logsMain.length, reads });
+
+      check('ipc: the get handler and a 10 s poll timer are registered', typeof get === 'function' && timers.ms === 10000 && timers.fn !== null, timers.ms);
+      check('ipc: the first poll pushes once to each live window (not the destroyed one) and logs one "[USAGE] read"',
+        pushes().length === 2 && pushes()[0].data.accounts.length === 4 && logsMain.filter((l) => l[1] === '[USAGE] read').length === 1, marks());
+      let m = marks();
+      await I.pollPlanUsageOnce();
+      await I.pollPlanUsageOnce();
+      check('ipc: unchanged polls push nothing, log nothing and do not read the file', JSON.stringify(marks()) === JSON.stringify(m), [m, marks()]);
+
+      // A changed file, polled through the real timer callback.
+      const next = fixture();
+      next.live = { account: 'aaaa1111' };
+      replace(JSON.stringify(next));
+      m = marks();
+      timers.fn();
+      await I.pollPlanUsageOnce();
+      check('ipc: a changed file pushes once to each window (through the timer callback)', pushes().length === m.pushes + 2 && pushes().at(-1).data.liveId === 'aaaa1111' && marks().reads === m.reads + 1, [m, marks()]);
+      const good = (await get()).liveId;
+      check('ipc: the get answers the last reading', good === 'aaaa1111', good);
+
+      // Same content, new file (a rewrite): read, but no push and no log.
+      replace(JSON.stringify(next));
+      m = marks();
+      await I.pollPlanUsageOnce();
+      check('ipc: a rewrite with the same content is read but pushes and logs nothing', marks().reads === m.reads + 1 && marks().pushes === m.pushes && marks().logs === m.logs, [m, marks()]);
+
+      // Unreadable (chmod 000): keeps the reading, reads again each poll, mended on chmod.
+      if (process.getuid && process.getuid() !== 0) {
+        chmodSync(file, 0o000);
+        m = marks();
+        await I.pollPlanUsageOnce();
+        const afterFirst = marks();
+        await I.pollPlanUsageOnce();
+        await I.pollPlanUsageOnce();
+        const afterThree = marks();
+        check('ipc: an unreadable file pushes nothing and the get still answers the last good reading', marks().pushes === m.pushes && (await get()).liveId === 'aaaa1111' && (await get()).accounts.length === 4);
+        check('ipc: an unreadable file is tried again on every poll (its key is not remembered)', afterFirst.reads === m.reads + 1 && afterThree.reads === m.reads + 3, [m, afterFirst, afterThree]);
+        check('ipc: the "no data" warning is logged once for the unreadable file', logsMain.filter((l) => l[0] === 'warn' && l[1] === '[USAGE] no data' && l[2]?.reason === 'unreadable').length === 1, logsMain.filter((l) => l[0] === 'warn'));
+        chmodSync(file, 0o644);
+        m = marks();
+        await I.pollPlanUsageOnce();
+        check('ipc: mended permissions are read again (same content: no push)', marks().reads === m.reads + 1 && marks().pushes === m.pushes && (await get()).liveId === 'aaaa1111', [m, marks()]);
+        await I.pollPlanUsageOnce();
+        check('ipc: ... and then it is quiet again', marks().reads === m.reads + 1);
+      } else {
+        console.log('skip ipc: unreadable file (running as root)');
+      }
+
+      // Corrupt (a bare NaN, as Python's json.dumps can write): keeps the last good reading.
+      replace('{"version": 1, "accounts": {"x": {"seven_day": {"used_percentage": NaN}}}}');
+      m = marks();
+      await I.pollPlanUsageOnce();
+      await I.pollPlanUsageOnce();
+      const afterCorrupt = marks();
+      const kept = await get();
+      check('ipc: a corrupt file pushes nothing and keeps the last good reading', afterCorrupt.pushes === m.pushes && kept.liveId === 'aaaa1111' && kept.accounts.length === 4, [m, marks()]);
+      check('ipc: a corrupt file is read again each poll', afterCorrupt.reads === m.reads + 2, [m, afterCorrupt]);
+      check('ipc: ... with one "not-json" warning', logsMain.filter((l) => l[0] === 'warn' && l[2]?.reason === 'not-json').length === 1);
+      const fixed = fixture();
+      fixed.live = { account: 'bbbb2222' };
+      replace(JSON.stringify(fixed));
+      m = marks();
+      await I.pollPlanUsageOnce();
+      check('ipc: the repaired file is read and pushed', marks().pushes === m.pushes + 2 && pushes().at(-1).data.liveId === 'bbbb2222', [m, marks()]);
+
+      // Missing file: no data, an empty list.
+      unlinkSync(file);
+      m = marks();
+      await I.pollPlanUsageOnce();
+      check('ipc: a missing file pushes an empty list', marks().pushes === m.pushes + 2 && pushes().at(-1).data.accounts.length === 0 && (await get()).accounts.length === 0);
+
+      // Stop clears the timer, and only once.
+      const clearedBefore = timers.cleared.length;
+      I.stopPlanUsagePoll();
+      I.stopPlanUsagePoll();
+      check('ipc: stop clears the poll timer once', timers.cleared.length === clearedBefore + 1 && timers.cleared.at(-1) === timers.handle, timers.cleared.length - clearedBefore);
+
+      // Rate limit, in a fresh module instance.
+      writeFileSync(file, JSON.stringify(fixture()));
+      const R = await loadFresh();
+      R.registerPlanUsageHandlers();
+      await R.pollPlanUsageOnce();
+      const rget = stub.handlers.get(R.IPC.PLAN_USAGE_GET);
+      const answers = [];
+      for (let i = 0; i < 24; i++) answers.push(await rget());
+      check('ipc: the first 20 gets in a second are answered, the rest null',
+        answers.slice(0, 20).every((a) => a && a.accounts.length === 4) && answers.slice(20).every((a) => a === null), answers.map((a) => (a ? 1 : 0)).join(''));
+      check('ipc: the refusal is logged as a security warning', logsMain.some((l) => l[0] === 'warn' && String(l[1]).startsWith('[SECURITY]')));
+      R.stopPlanUsagePoll();
+    } finally {
+      console.info = realInfo; console.warn = realWarn;
+      globalThis.setInterval = realSI; globalThis.clearInterval = realCI;
+      fsp.readFile = realReadFile;
+      if (before === undefined) delete process.env.PATTON_PLAN_USAGE_FILE; else process.env.PATTON_PLAN_USAGE_FILE = before;
+    }
+  });
+
+  // ── (f) the panel's timers and late answers
+  await section('panel-timers', async () => {
+    const side = doc.getElementById('side');
+    const rail = doc.getElementById('rail');
+    const realSI = w.setInterval, realCI = w.clearInterval, realST = w.setTimeout, realCT = w.clearTimeout;
+    const savedApi = w.patton.planUsage;
+    const intervals = [];
+    const cleared = [];
+    const timeouts = [];
+    w.setInterval = (fn, ms) => { const h = { fn, ms }; intervals.push(h); return h; };
+    w.clearInterval = (h) => { cleared.push(h); };
+    w.setTimeout = (fn, ms) => { const h = { fn, ms }; timeouts.push(h); return h; };
+    w.clearTimeout = (h) => { cleared.push(h); };
+    try {
+      // The minute redraw, with no new reading.
+      w.patton.planUsage = { get: async () => parsed, onChanged: () => () => {} };
+      let now = NOW;
+      const p = new w.UP.UsagePanel({ parent: side, before: side.querySelector('.bookmarks-resizer'), rail, railTitle: rail.title, now: () => now });
+      await sleep(10);
+      const sec = side.querySelector('section.usage-panel');
+      const reset0 = sec.querySelector('.usage-acct .usage-reset').textContent;
+      check('timers: the panel redraws every 60 s', intervals.length === 1 && intervals[0].ms === 60000, intervals.map((i) => i.ms));
+      const logsBefore = panelLogs().length;
+      now = at(28, 11, 59);
+      intervals[0].fn();
+      check('timers: a tick before the reset changes nothing', sec.querySelector('.usage-acct .usage-reset').textContent === reset0 && reset0 === 'resets Sat 12:00');
+      now = at(28, 12, 1);
+      intervals[0].fn();
+      const live = sec.querySelector('.usage-acct');
+      check('timers: a reset passing between ticks flips the line to "reset" at 0% with no new reading',
+        live.querySelector('.usage-reset').textContent === 'reset Sat 12:00' && live.querySelector('.usage-pct').textContent === '0%' && panelLogs().length === logsBefore, [live.querySelector('.usage-reset').textContent, live.querySelector('.usage-pct').textContent]);
+      p.dispose();
+      check('timers: dispose clears the minute timer', cleared.includes(intervals[0]));
+      now = at(29, 12);
+      const kids = sec.children.length;
+      intervals[0].fn();
+      check('timers: a tick after dispose draws nothing', sec.children.length === kids && !sec.isConnected);
+
+      // Out-of-range times and "__proto__" through the real panel: no NaN, no undefined, no live tag.
+      const weird = JSON.parse(`{"live":{"account":"__proto__"},"accounts":{
+        "aaaa1111":{"email":"a@x.com","last_live":3,"seven_day":{"used_percentage":50,"resets_at":1e15,"read_at":1e15},"five_hour":{"used_percentage":10,"resets_at":${NOW * 1000}}},
+        "bbbb2222":{"email":"b@x.com","last_live":2,"seven_day":{"used_percentage":40,"resets_at":${at(28, 12)},"read_at":7}}}}`);
+      const p2 = new w.UP.UsagePanel({ parent: side, before: side.querySelector('.bookmarks-resizer'), rail, railTitle: rail.title, now: () => NOW });
+      w.patton.planUsage = savedApi;
+      p2.setUsage(M.parsePlanUsage(weird, NOW));
+      const sec2 = side.querySelector('section.usage-panel');
+      const bw = [...sec2.querySelectorAll('.usage-acct')];
+      check('timers: bad times show no window and never NaN or undefined',
+        bw.length === 2 && !/NaN|undefined|Invalid/.test(sec2.textContent + sec2.innerHTML + rail.title) && bw[0].querySelector('.usage-pct').textContent === '–' && bw[0].querySelector('.usage-reset').textContent === 'no reading yet' && !bw[0].querySelector('.usage-five'), sec2.textContent);
+      check('timers: "__proto__" as the live id marks nobody live', !sec2.querySelector('.usage-tag') && !sec2.querySelector('.usage-acct.live'));
+      check('timers: a read_at before 2020 is not shown as a time', !/read /.test(bw[1].title) && !/read /.test(sec2.querySelector('.usage-head')?.textContent ?? ''), bw[1].title);
+      p2.dispose();
+
+      // A long name: the tag is not inside the ellipsizing span.
+      const long = fixture();
+      long.accounts['38e237e1'].email = `${'x'.repeat(120)}@example.com`;
+      const p3 = new w.UP.UsagePanel({ parent: side, before: side.querySelector('.bookmarks-resizer'), rail, railTitle: rail.title, now: () => NOW });
+      p3.setUsage(M.parsePlanUsage(long, NOW));
+      const top = side.querySelector('.usage-acct .usage-acct-top');
+      check('timers: a long name keeps its tag as a sibling (only the name can ellipsize)',
+        top.children.length === 3 && top.children[0].classList.contains('usage-name') && top.children[0].textContent.length === 120 && top.children[1].classList.contains('usage-tag') && top.children[2].classList.contains('usage-pct'));
+      p3.dispose();
+
+      // Late answers after dispose: nothing drawn, logged or scheduled.
+      for (const late of ['usage', 'null', 'reject']) {
+        let resolve, reject;
+        const deferred = new Promise((res, rej) => { resolve = res; reject = rej; });
+        w.patton.planUsage = { get: () => deferred, onChanged: () => () => {} };
+        const timeoutsBefore = timeouts.length;
+        const logsBeforeLate = logs.length;
+        const p4 = new w.UP.UsagePanel({ parent: side, before: side.querySelector('.bookmarks-resizer'), rail, railTitle: rail.title, now: () => NOW });
+        p4.dispose();
+        if (late === 'usage') resolve(parsed); else if (late === 'null') resolve(null); else reject(new Error('late'));
+        await sleep(10);
+        check(`late: a ${late} answer after dispose draws, logs and schedules nothing`,
+          logs.length === logsBeforeLate && timeouts.length === timeoutsBefore && !doc.querySelector('.usage-panel') && !rail.querySelector('.usage-rail'), [logs.length - logsBeforeLate, timeouts.length - timeoutsBefore]);
+      }
+      // A refused answer before dispose does schedule the retry, which dispose then clears and which does nothing if fired.
+      {
+        let calls = 0;
+        w.patton.planUsage = { get: async () => { calls++; return null; }, onChanged: () => () => {} };
+        const p5 = new w.UP.UsagePanel({ parent: side, before: side.querySelector('.bookmarks-resizer'), rail, railTitle: rail.title, now: () => NOW });
+        await sleep(10);
+        const retry = timeouts.at(-1);
+        check('late: a refused first answer schedules one retry after 2 s', calls === 1 && retry.ms === 2000);
+        p5.dispose();
+        retry.fn();
+        await sleep(10);
+        check('late: a retry that fires after dispose asks nothing', calls === 1 && cleared.includes(retry), calls);
+      }
+    } finally {
+      w.setInterval = realSI; w.clearInterval = realCI; w.setTimeout = realST; w.clearTimeout = realCT;
+      w.patton.planUsage = savedApi;
+    }
   });
 } finally {
   rmSync(tmp, { recursive: true, force: true });

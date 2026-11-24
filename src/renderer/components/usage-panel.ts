@@ -71,6 +71,8 @@ export class UsagePanel {
   private lastDrawn = '';
   private timer: ReturnType<typeof setInterval> | null = null;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Set by dispose(): a late answer or timer then does nothing. */
+  private disposed = false;
   private disposables: (() => void)[] = [];
 
   constructor(opts: UsagePanelOptions) {
@@ -88,7 +90,7 @@ export class UsagePanel {
     this.railBars.hidden = true;
     this.rail.appendChild(this.railBars);
 
-    this.timer = setInterval(() => this.render(), REDRAW_MS);
+    this.timer = setInterval(() => { if (!this.disposed) this.render(); }, REDRAW_MS);
     this.start();
   }
 
@@ -97,21 +99,33 @@ export class UsagePanel {
     const api = (window.patton as Partial<PattonAPI> | undefined)?.planUsage;
     if (!api) return;
     let pushed = false;
-    this.disposables.push(api.onChanged((usage) => { pushed = true; this.setUsage(usage); }));
+    this.disposables.push(api.onChanged((usage) => {
+      if (this.disposed) return;
+      pushed = true;
+      this.setUsage(usage);
+    }));
     const ask = (retry: boolean): void => {
       api.get()
         .then((usage) => {
-          if (pushed) return;
+          if (this.disposed || pushed) return;
           if (usage) this.setUsage(usage);
-          else if (!retry) this.retryTimer = setTimeout(() => { this.retryTimer = null; if (!pushed) ask(true); }, RETRY_DELAY_MS);
+          else if (!retry) {
+            this.retryTimer = setTimeout(() => {
+              this.retryTimer = null;
+              if (!this.disposed && !pushed) ask(true);
+            }, RETRY_DELAY_MS);
+          }
         })
-        .catch((err) => rlog('warn', '[USAGE] could not load', { error: (err as Error)?.name ?? 'unknown' }));
+        .catch((err) => {
+          if (!this.disposed) rlog('warn', '[USAGE] could not load', { error: (err as Error)?.name ?? 'unknown' });
+        });
     };
     ask(false);
   }
 
   /** A reading from main (or a check). Logs and re-draws only when its content changed. */
   setUsage(usage: PlanUsage | null | undefined): void {
+    if (this.disposed) return;
     const next = usage && Array.isArray(usage.accounts) ? usage : EMPTY_PLAN_USAGE;
     const content = JSON.stringify(next);
     if (content === this.lastContent) return;
@@ -122,6 +136,7 @@ export class UsagePanel {
   }
 
   render(): void {
+    if (this.disposed) return;
     const usage = planUsageAt(this.usage, this.now());
     const drawn = JSON.stringify(usage);
     if (drawn === this.lastDrawn) return;
@@ -139,7 +154,7 @@ export class UsagePanel {
     this.el.hidden = false;
 
     const head = el('div', 'usage-head');
-    head.appendChild(el('span', 'usage-title', 'Usage'));
+    head.appendChild(el('span', 'usage-title', 'Usage this week'));
     const newest = newestRead(usage);
     if (newest !== null) {
       const time = el('span', 'usage-time', clockTime(newest));
@@ -162,9 +177,9 @@ export class UsagePanel {
     block.title = full;
 
     const top = el('div', 'usage-acct-top');
-    const name = el('span', 'usage-name', a.name);
-    if (a.live) name.appendChild(el('span', 'usage-tag', 'live'));
-    top.appendChild(name);
+    // The tag is the name's sibling, so a long name clips alone and the tag stays.
+    top.appendChild(el('span', 'usage-name', a.name));
+    if (a.live) top.appendChild(el('span', 'usage-tag', 'live'));
     top.appendChild(el('span', 'usage-pct', week ? `${shownPct(week.pct)}%` : '–'));
     block.appendChild(top);
 
@@ -207,6 +222,7 @@ export class UsagePanel {
   }
 
   dispose(): void {
+    this.disposed = true;
     if (this.timer) clearInterval(this.timer);
     if (this.retryTimer) clearTimeout(this.retryTimer);
     this.timer = null;
