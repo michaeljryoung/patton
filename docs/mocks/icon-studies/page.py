@@ -9,16 +9,22 @@ import icons
 
 from pathlib import Path
 
-ICONSET = str(Path(__file__).resolve().parents[3] / "build" / "icon.iconset") + "/"
+
+
+REPO = str(Path(__file__).resolve().parents[3])
 
 
 def png(name):
-    return "data:image/png;base64," + base64.b64encode(open(ICONSET + name, "rb").read()).decode()
+    """The icon as it was before the A2 change: v1.39.0, the last release with the pen portrait."""
+    import subprocess
+    data = subprocess.run(["git", "-C", REPO, "show", f"v1.39.0:build/icon.iconset/{name}"],
+                          capture_output=True, check=True).stdout
+    return "data:image/png;base64," + base64.b64encode(data).decode()
 
 
 # Display order: the figure first, then general-meets-terminal, then his marks.
 OPTIONS = [
-    ("a", "Helmet", "Today's helmet and three stars, without the face. The nearest to what you have now.", "the helmet, the three stars"),
+    ("a", "Helmet", "The old icon's helmet and three stars, without the face.", "the helmet, the three stars"),
     ("h", "Silhouette", "The general in profile as one solid shape, like the head on a medal.", "the portrait, the helmet, the stars"),
     ("c", "Under the brim", "The helmet drawn as a single line, with a terminal prompt where the face was.", "the helmet, the stars, the terminal"),
     ("d", "Star cursor", "A terminal prompt whose cursor is a general's star.", "a star, the terminal"),
@@ -66,6 +72,14 @@ for i, (sym, name, desc, keeps) in enumerate(OPTIONS):
         f'{sizes_row(lambda px, s=sym: use(s, px))}</div></article>')
 
 
+# Round 3: his "matrix numbers falling but making the shape of [the] helmet with the stars subtly" (24 Nov).
+ROUND3 = [
+    ("n1", "N1", "Green rain", "Falling digits across the whole tile, packed bright inside the helmet; the stars are dark cut-outs."),
+    ("n2", "N2", "Helmet only", "The digits fall only inside the helmet, on plain black."),
+    ("n3", "N3", "Amber rain", "N1 in amber, the colour of Patton's typing box and the brass stars."),
+    ("n4", "N4", "A2 in digits", "Your A2 as it is, with faint falling digits worked into the helmet's surface."),
+]
+
 round2 = []
 for sym, label, name, desc in ROUND2:
     round2.append(
@@ -74,10 +88,18 @@ for sym, label, name, desc in ROUND2:
         f'{sizes_row(lambda px, s=sym: use(s, px))}</div></article>')
 
 
+round3 = []
+for sym, label, name, desc in ROUND3:
+    round3.append(
+        f'<article class="variant" aria-labelledby="h-{sym}">{use(sym, 150, "big")}'
+        f'<div class="meta"><h3 id="h-{sym}"><span class="letter wide">{label}</span>{name}</h3><p>{desc}</p>'
+        f'{sizes_row(lambda px, s=sym: use(s, px))}</div></article>')
+
+
 def dock(theme, entries=None):
     if entries is None:
         entries = [(sym, name, LETTERS[i]) for i, (sym, name, _, _) in enumerate(OPTIONS)]
-    items = [f'<li><img src="{TODAY[64]}" width="64" height="64" alt="Today\'s icon"><span>Now</span></li>']
+    items = [f'<li><img src="{TODAY[64]}" width="64" height="64" alt="The icon before"><span>Before</span></li>']
     for sym, name, label in entries:
         items.append(f'<li title="{name}">{use(sym, 64)}<span>{label}</span></li>')
     return f'<div class="wall wall-{theme}"><ul class="dock" aria-label="{theme} Dock">' + "".join(items) + '</ul></div>'
@@ -167,6 +189,7 @@ figcaption {{ font-size: 11px; color: var(--muted); font-variant-numeric: tabula
 
 .round2 {{ display: grid; gap: 16px; }}
 .variants {{ display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }}
+.variants.four {{ grid-template-columns: repeat(4, minmax(0, 1fr)); }}
 .variant {{ display: grid; grid-template-rows: auto 1fr; gap: 12px; background: var(--surface); border: 1px solid var(--line);
   border-radius: 14px; padding: 16px; }}
 .variant .meta {{ grid-template-rows: auto 1fr auto; }}
@@ -181,7 +204,7 @@ h3 {{ margin: 0; font-size: 16px; font-weight: 600; display: flex; align-items: 
 
 @media (max-width: 860px) {{
   .grid {{ grid-template-columns: minmax(0, 1fr); }}
-  .variants {{ grid-template-columns: minmax(0, 1fr); }}
+  .variants, .variants.four {{ grid-template-columns: minmax(0, 1fr); }}
   .variant {{ grid-template-columns: 120px minmax(0, 1fr); grid-template-rows: none; align-items: start; }}
   .variant .big {{ width: 120px; height: 120px; }}
 }}
@@ -198,6 +221,16 @@ h3 {{ margin: 0; font-size: 16px; font-weight: 600; display: flex; align-items: 
     <p class="dek">Ten directions for a sleeker icon that keeps the reference to the general: his helmet, his three stars, his name, and the tank named after him. Each sits on the rounded tile that current Mac apps use, shown full size and at 64, 32 and 16 pixels, three of the sizes Patton's icon file carries.</p>
   </header>
 
+  <section class="round2" aria-labelledby="r3-head">
+    <div class="section-head">
+      <h2 id="r3-head">Round 3 · Falling numbers</h2>
+      <p>Your A2 helmet, now in the app, drawn from falling digits with the three stars showing faintly. Each is beside A2 in the Docks below.</p>
+    </div>
+    <div class="variants four">{"".join(round3)}</div>
+    {dock("light", [("a2", "A2", "A2")] + [(sym, name, label) for sym, label, name, _ in ROUND3])}
+    {dock("dark", [("a2", "A2", "A2")] + [(sym, name, label) for sym, label, name, _ in ROUND3])}
+  </section>
+
   <section class="round2" aria-labelledby="r2-head">
     <div class="section-head">
       <h2 id="r2-head">Round 2 · A, less curved</h2>
@@ -208,10 +241,10 @@ h3 {{ margin: 0; font-size: 16px; font-weight: 600; display: flex; align-items: 
     {dock("dark", [(sym, name, label) for sym, label, name, _ in ROUND2])}
   </section>
 
-  <section class="today" aria-label="Today's icon">
-    <img class="art" src="{TODAY['big']}" width="128" height="128" alt="Today's Patton icon: a pen portrait of a general in a helmet">
+  <section class="today" aria-label="The icon before">
+    <img class="art" src="{TODAY['big']}" width="128" height="128" alt="Patton's icon before: a pen portrait of a general in a helmet">
     <div class="text">
-      <span class="label">Today</span>
+      <span class="label">Before</span>
       <p>A fine-line pen portrait on a plain white square, which macOS 26 clips into its rounded tile. Its thin lines fade at small sizes.</p>
     </div>
     <div class="sizes">
@@ -228,15 +261,15 @@ h3 {{ margin: 0; font-size: 16px; font-weight: 600; display: flex; align-items: 
   <section class="docks" aria-labelledby="dock-head">
     <div class="section-head">
       <h2 id="dock-head">In the Dock</h2>
-      <p>All ten at Dock size beside today's icon, on a light and a dark desktop.</p>
+      <p>All ten at Dock size beside the icon before, on a light and a dark desktop.</p>
     </div>
     {dock("light")}
     {dock("dark")}
   </section>
 
   <section class="reply" aria-label="How to choose">
-    <p><strong>Reply with A1 to A5,</strong> or a part of one on another, such as A5's brim under A1's crown.</p>
-    <p>The one you pick becomes Patton's icon file in every size, and ships with the fixes from the walk-through, so it arrives in the same install.</p>
+    <p><strong>Reply with N1 to N4</strong> to swap one in, or keep A2.</p>
+    <p>A pick goes into the release that carries the Stop hook fix and the compact wake tab, so it arrives in the same install.</p>
   </section>
 </div>
 """

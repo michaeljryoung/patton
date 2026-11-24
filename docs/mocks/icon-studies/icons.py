@@ -275,3 +275,90 @@ if __name__ == "__main__":
             'div{display:flex;flex-direction:column;align-items:center;gap:4px}</style>'
             + sprite() + '<main>' + cells + '</main>')
     open(sys.argv[1], "w").write(html)
+
+
+# Round 3 (his 24 Nov ask: "something like the matrix numbers falling but making the shape of [Patton] helmet
+# with the stars subtly"): A2's helmet made of falling digits.
+import random
+
+A2_SHIFT = 43
+# clipPath ignores <g>, so each path carries the shift itself.
+A2_CLIP = (f'<path transform="translate(0,{A2_SHIFT})" d="{DOME_LOWRIM}"/>'
+           f'<path transform="translate(0,{A2_SHIFT})" d="{BRIM_FLAT}"/>')
+A2_DOME_CLIP = f'<path transform="translate(0,{A2_SHIFT})" d="{DOME_LOWRIM}"/>'
+A2_STARS = [(402, 440 + A2_SHIFT), (512, 440 + A2_SHIFT), (622, 440 + A2_SHIFT)]
+RAIN_FONT = 'font-family="IBM Plex Mono, Menlo, ui-monospace, monospace" font-weight="600" text-anchor="middle"'
+CELL_W, CELL_H = 34, 40
+COLS = list(range(117, 924, CELL_W))   # column centres across the tile
+ROWS = list(range(136, 924, CELL_H))   # baselines down the tile
+
+
+def rain(seed, head, trail, base_opacity, fill_all, x_range=None, y_range=None, size=34):
+    """Columns of digits: a bright head and a fading trail above it. fill_all puts a faint digit in every
+    other cell too, so a clipped region reads as a dense mass."""
+    rng = random.Random(seed)
+    out = [f'<g {RAIN_FONT} font-size="{size}">']
+    for x in COLS:
+        head_row = rng.randint(2, len(ROWS) + 4)
+        length = rng.randint(5, 13)
+        for r, y in enumerate(ROWS):
+            if x_range and not (x_range[0] <= x <= x_range[1]):
+                continue
+            if y_range and not (y_range[0] <= y <= y_range[1]):
+                continue
+            d = head_row - r
+            digit = rng.choice("0123456789")
+            if d == 0:
+                out.append(f'<text x="{x}" y="{y}" fill="{head}">{digit}</text>')
+            elif 0 < d < length:
+                a = base_opacity * max(0.25, 1 - d / length)
+                out.append(f'<text x="{x}" y="{y}" fill="{trail}" fill-opacity="{a:.2f}">{digit}</text>')
+            elif fill_all:
+                out.append(f'<text x="{x}" y="{y}" fill="{trail}" fill-opacity="{base_opacity * 0.38:.2f}">{digit}</text>')
+    out.append('</g>')
+    return "".join(out)
+
+
+def rain_tile(key, bg1, bg2, head, trail, outside, star_mode):
+    clip_id = f"p{key}-helm"
+    defs = lg(f"p{key}-bg", bg1, bg2) + f'<clipPath id="{clip_id}">{A2_CLIP}</clipPath>'
+    inner = f'<rect x="100" y="100" width="824" height="824" fill="url(#p{key}-bg)"/>'
+    if outside:
+        inner += rain(11, trail, trail, 0.30, False)
+    inner += f'<g clip-path="url(#{clip_id})">'
+    inner += f'<rect x="100" y="100" width="824" height="824" fill="{trail}" fill-opacity="0.07"/>'
+    inner += rain(23, head, trail, 1.0, True, (180, 844), (280, 740))
+    inner += '</g>'
+    # A faint outline keeps the helmet's shape at Dock size.
+    for d in (DOME_LOWRIM, BRIM_FLAT):
+        inner += (f'<path transform="translate(0,{A2_SHIFT})" d="{d}" fill="none" stroke="{trail}" '
+                  'stroke-opacity="0.35" stroke-width="6"/>')
+    if star_mode == "holes":
+        for x, y in A2_STARS:
+            inner += star_el(x, y, 46, bg2, 'fill-opacity="0.88" stroke-opacity="0.88"')
+            inner += (f'<polygon points="{star(x, y + 0.095 * 46, 46)}" fill="none" stroke="{head}" '
+                      'stroke-opacity="0.4" stroke-width="3" stroke-linejoin="round"/>')
+    elif star_mode == "bright":
+        for x, y in A2_STARS:
+            inner += star_el(x, y, 46, head, 'fill-opacity="0.55" stroke-opacity="0.55"')
+    return defs + tile(f"p{key}-bg", inner)
+
+
+symbols["n1"] = rain_tile("n1", "#07110A", "#020503", "#B8FFC8", "#33D46A", True, "holes")
+symbols["n2"] = rain_tile("n2", "#07110A", "#020503", "#B8FFC8", "#33D46A", False, "holes")
+symbols["n3"] = rain_tile("n3", "#140F05", "#060402", "#FFE3A3", "#F2B23A", True, "holes")
+
+# N4: his A2 as it is, the helmet's surface made of faint falling digits, the stars on top.
+inner = '<rect x="100" y="100" width="824" height="824" fill="url(#pa-bg)"/>'
+inner += f'<g transform="translate(0,{A2_SHIFT})">'
+inner += '<ellipse cx="512" cy="700" rx="290" ry="24" fill="#3a3320" opacity="0.28" filter="url(#pi-soft)"/>'
+inner += f'<path d="{DOME_LOWRIM}" fill="url(#pa-shell)"/></g>'
+inner += f'<defs><clipPath id="pn4-dome">{A2_DOME_CLIP}</clipPath></defs>'
+inner += f'<g clip-path="url(#pn4-dome)">{rain(31, "#C9D79A", "#1E2611", 0.55, True, (180, 844), (280, 680))}</g>'
+inner += f'<g transform="translate(0,{A2_SHIFT})"><path d="{HIGHLIGHT}" fill="#ffffff" opacity="0.16"/>'
+for x in (402, 512, 622):
+    inner += star_el(x, 440, 46, "#F4F0E3")
+inner += f'<path d="{BRIM_FLAT}" fill="url(#pa-brim)"/>'
+inner += (f'<path d="{BRIM_FLAT_EDGE}" fill="none" stroke="#ffffff" stroke-opacity="0.2" stroke-width="6" '
+          'stroke-linecap="round"/></g>')
+symbols["n4"] = tile("pa-bg", inner)
