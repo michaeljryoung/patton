@@ -35,7 +35,7 @@ def portrait_ink():
     return [[small.getpixel((c, r)) / 255 for c in range(GRID)] for r in range(GRID)]
 
 
-def digits(seed, ink, strength, trail_max, base, rain_col, face_col, head_col):
+def digits(seed, ink, strength, trail_max, base, rain_col, face_col, head_col, boost=3.2, head_alpha=0.95):
     rng = random.Random(seed)
     heads = [rng.randint(-4, GRID + 10) for _ in range(GRID)]
     lengths = [rng.randint(8, 24) for _ in range(GRID)]
@@ -46,12 +46,12 @@ def digits(seed, ink, strength, trail_max, base, rain_col, face_col, head_col):
             x = 100 + CELL * c + CELL / 2
             d = heads[c] - r
             if d == 0:
-                bg = 0.95
+                bg = head_alpha
             elif 0 < d < lengths[c]:
                 bg = trail_max * (1 - d / lengths[c]) + base
             else:
                 bg = base * rng.uniform(0.6, 1.3)
-            p = min(1.0, ink[r][c] * 3.2) ** 0.8 * strength
+            p = min(1.0, ink[r][c] * boost) ** 0.8 * strength
             ch = rng.choice("0123456789")
             if p > bg:
                 face_out.append(f'<text x="{x:.1f}" y="{y:.1f}" fill="{face_col}" fill-opacity="{p:.2f}">{ch}</text>')
@@ -62,13 +62,13 @@ def digits(seed, ink, strength, trail_max, base, rain_col, face_col, head_col):
     return f'<g {FONT} {size}>{"".join(rain_out)}</g>', f'<g {FONT} {size}>{"".join(face_out)}</g>'
 
 
-def tile_svg(key, ink, strength, trail_max, base, bg1, bg2, rain_col, face_col, head_col):
-    rain_g, face_g = digits(7, ink, strength, trail_max, base, rain_col, face_col, head_col)
+def tile_svg(key, ink, strength, trail_max, base, bg1, bg2, rain_col, face_col, head_col, boost=3.2, head_alpha=0.95, glow=0.55):
+    rain_g, face_g = digits(7, ink, strength, trail_max, base, rain_col, face_col, head_col, boost, head_alpha)
     defs = (icons.SHARED_DEFS + icons.lg(f"{key}-bg", bg1, bg2)
             + f'<filter id="{key}-glow" x="-5%" y="-5%" width="110%" height="110%"><feGaussianBlur stdDeviation="6"/></filter>')
     inner = f'<rect x="100" y="100" width="824" height="824" fill="url(#{key}-bg)"/>'
     inner += rain_g
-    inner += f'<g filter="url(#{key}-glow)" opacity="0.55">{face_g}</g>'
+    inner += f'<g filter="url(#{key}-glow)" opacity="{glow}">{face_g}</g>'
     inner += face_g
     return ('<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">'
             f'<defs>{defs}</defs>{icons.tile(f"{key}-bg", inner)}</svg>')
@@ -79,6 +79,11 @@ VARIANTS = {
     "p1": (0.95, 0.42, 0.10, "#07110A", "#020503", "#2FCB62", "#8DFFAE", "#D8FFE2"),
     "p2": (0.72, 0.52, 0.13, "#07110A", "#020503", "#2FCB62", "#8DFFAE", "#D8FFE2"),
     "p3": (0.95, 0.42, 0.10, "#140F05", "#060402", "#E0A231", "#FFD27A", "#FFF0CC"),
+    # Round 5 (24 Nov 16:14, P1 in his Dock: "background green isnt clear enough, just looks like the icon,
+    # needs to be more subtle"): quieter rain so the portrait stands out.
+    "q1": (0.95, 0.20, 0.05, "#07110A", "#020503", "#2FCB62", "#8DFFAE", "#D8FFE2", 3.2, 0.45, 0.55),
+    "q2": (0.95, 0.11, 0.03, "#07110A", "#020503", "#2FCB62", "#8DFFAE", "#D8FFE2", 3.2, 0.30, 0.55),
+    "q3": (1.00, 0.14, 0.035, "#07110A", "#020503", "#2FCB62", "#A8FFC2", "#D8FFE2", 4.6, 0.35, 0.85),
 }
 
 if __name__ == "__main__":

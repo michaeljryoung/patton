@@ -92,6 +92,23 @@ for k, _, _, _ in ROUND4:
     data = base64.b64encode(open(f"{REPO}/docs/mocks/icon-studies/round4/{k}-512.png", "rb").read()).decode()
     icons.symbols[k] = f'<image href="data:image/png;base64,{data}" x="0" y="0" width="1024" height="1024"/>'
 
+# Round 5: P1 in his Dock, "background green isnt clear enough, just looks like the icon, needs to be more
+# subtle" (24 Nov 16:14): quieter falling digits so the portrait stands out.
+ROUND5 = [
+    ("q1", "Q1", "Quieter rain", "The falling digits at about half P1's strength."),
+    ("q2", "Q2", "Faint rain", "The falling digits barely there; the portrait carries the icon."),
+    ("q3", "Q3", "Faint rain, brighter face", "Q2's quiet background with a brighter, bolder portrait."),
+]
+for k, _, _, _ in ROUND5:
+    data = base64.b64encode(open(f"{REPO}/docs/mocks/icon-studies/round5/{k}-512.png", "rb").read()).decode()
+    icons.symbols[k] = f'<image href="data:image/png;base64,{data}" x="0" y="0" width="1024" height="1024"/>'
+round5 = []
+for key, label, name, desc in ROUND5:
+    round5.append(
+        f'<article class="variant" aria-labelledby="h-{key}">{use(key, 150, "big")}'
+        f'<div class="meta"><h3 id="h-{key}"><span class="letter wide">{label}</span>{name}</h3><p>{desc}</p>'
+        f'{sizes_row(lambda px, k=key: use(k, px))}</div></article>')
+
 round4 = []
 for key, label, name, desc in ROUND4:
     round4.append(
@@ -241,6 +258,16 @@ h3 {{ margin: 0; font-size: 16px; font-weight: 600; display: flex; align-items: 
     <p class="dek">Ten directions for a sleeker icon that keeps the reference to the general: his helmet, his three stars, his name, and the tank named after him. Each sits on the rounded tile that current Mac apps use, shown full size and at 64, 32 and 16 pixels, three of the sizes Patton's icon file carries.</p>
   </header>
 
+  <section class="round2" aria-labelledby="r5-head">
+    <div class="section-head">
+      <h2 id="r5-head">Round 5 · A quieter background</h2>
+      <p>You said P1's green background competes with the face in the Dock. These keep the portrait and calm the falling digits behind it. P1, as installed now, is first in the Docks below.</p>
+    </div>
+    <div class="variants three">{"".join(round5)}</div>
+    {dock("light", [("p1", "P1", "P1")] + [(k, name, label) for k, label, name, _ in ROUND5])}
+    {dock("dark", [("p1", "P1", "P1")] + [(k, name, label) for k, label, name, _ in ROUND5])}
+  </section>
+
   <section class="round2" aria-labelledby="r4-head">
     <div class="section-head">
       <h2 id="r4-head">Round 4 · The portrait in falling digits</h2>
@@ -298,7 +325,7 @@ h3 {{ margin: 0; font-size: 16px; font-weight: 600; display: flex; align-items: 
   </section>
 
   <section class="reply" aria-label="How to choose">
-    <p><strong>Reply with P1, P2 or P3</strong> (or any earlier letter) to swap it in, or keep A2.</p>
+    <p><strong>Reply with Q1, Q2 or Q3</strong> to swap it in, or keep P1.</p>
     <p>A pick goes into the release that carries the Stop hook fix and the compact wake tab, so it arrives in the same install.</p>
   </section>
 </div>
