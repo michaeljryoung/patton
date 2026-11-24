@@ -1440,7 +1440,7 @@ export class TabManager {
           tab.setRegistrationCallbacks(
             (pane) => this.registerPane(pane),
             (pane) => this.unregisterPane(pane),
-            () => this.updateTabBar(),
+            () => { this.moveWakeTabFirst(tab); this.updateTabBar(); },
             () => this.onCommandDone?.(tab.id, tab.title),
             () => { if (tab === this.activeTab) this.updateCheckpoint(); this.tabBar.refreshHoverCard(); },
             () => { this.tabBar.refreshHoverCard(); this.onTabsChanged?.(); },
@@ -1521,8 +1521,10 @@ export class TabManager {
     const state: ClosedPaneState = {
       cwd: pane.getCwd() || '',
       scrollback,
-      // A title Claude set names Claude's topic, not the shell that reopens.
-      title: pane.isClaudePane ? SHELL_TITLE : pane.shownTitle,
+      // A title Claude set names Claude's topic, not the shell that reopens;
+      // WAKE died with the closed shell, and replaying it would bring back a
+      // compact, first-placed tab with no wake running.
+      title: pane.isClaudePane || pane.title === WAKE_TITLE || pane.shownTitle === WAKE_TITLE ? SHELL_TITLE : pane.shownTitle,
     };
     this.closedPanes.push(state);
     if (this.closedPanes.length > TabManager.MAX_CLOSED) {
@@ -1544,7 +1546,7 @@ export class TabManager {
         `\x1b[2m${state.scrollback.replace(/\n/g, '\r\n')}\x1b[0m\r\n`
       );
     }
-    if (state.title && state.title !== SHELL_TITLE) {
+    if (state.title && state.title !== SHELL_TITLE && state.title !== WAKE_TITLE) {
       // The closed pane's last program title, at the program title's usual
       // rank: a project's name still wins, and the next title the program
       // sets replaces it — rather than pinning it as a user-chosen name.
