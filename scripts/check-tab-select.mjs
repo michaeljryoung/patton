@@ -447,6 +447,7 @@ await section(async () => {
 
 // ── 9. Review fixes (S63): a drop on the strip's end, Ctrl-click, the rename rule,
 //       selection from the menu, the group limit ──
+const titleShown = (tm, id) => tm.bar.querySelector(`.tab-bar-tab[data-tab-id="${id}"] .tab-bar-tab-title`)?.textContent;
 const dragFrom = (tm, name) => { const dt = makeDt(); tabEl(tm, name).querySelector('.tab-bar-tab-grip').dispatchEvent(dragEv('dragstart', dt)); return dt; };
 const endDrag = (tm, name, dt) => tabEl(tm, name)?.querySelector('.tab-bar-tab-grip')?.dispatchEvent(dragEv('dragend', dt));
 const stripEl = (tm) => tm.bar.querySelector('.tab-bar-tabs');
@@ -626,9 +627,13 @@ await section(async () => {
   const { tm } = await fourSpanningGroup();
   const mark = logs.length;
   const dt = dragFrom(tm, 'C');
-  tm.renameTab(idOf(tm, 'F'), 'F2');
-  check('a rebuild mid-drag keeps the four carried tabs drawn dragging', tm.bar.querySelectorAll('.tab-bar-tab.dragging').length === 4);
+  const gripC = tabEl(tm, 'C').querySelector('.tab-bar-tab-grip');
+  const fId = idOf(tm, 'F');
+  tm.renameTab(fId, 'F2');
+  check('a rebuild requested mid-drag is held: the four carried tabs stay drawn dragging, the dragged grip stays', tm.bar.querySelectorAll('.tab-bar-tab.dragging').length === 4 && gripC === tabEl(tm, 'C').querySelector('.tab-bar-tab-grip'));
+  check('…and the strip still shows the old title', titleShown(tm, fId) === 'F', String(titleShown(tm, fId)));
   tabEl(tm, 'G').dispatchEvent(dragEv('drop', dt));
+  check('…the drop applies the held rebuild', titleShown(tm, fId) === 'F2', titleShown(tm, fId));
   check('…and the drop on the rebuilt strip still moves them all', order(tm) === 'A F2 G@Other B@Other C@Other D@Other E@Other', order(tm));
   runsSound(tm, 'drop after rebuild', mark);
   // One carried tab closed mid-drag: the rest move, no repair.
@@ -685,6 +690,30 @@ await section(async () => {
   escKey(box);
   check('Esc in the compose box keeps the selection', selected(tm) === 'A B C', selected(tm));
   box.remove();
+});
+
+await section(async () => {
+  // A drag whose dragend was lost: the held rebuild and the dimmed tabs are freed by
+  // the dragend, or by a press anywhere (a tab, +, the drag space, the page).
+  const presses = {
+    'a dragend': (tm) => tabEl(tm, 'C').querySelector('.tab-bar-tab-grip').dispatchEvent(dragEv('dragend', makeDt())),
+    'a press on +': (tm) => fire(tm.bar.querySelector('.tab-bar-new'), 'mousedown'),
+    'a press on the drag space': (tm) => fire(tm.bar.querySelector('.tab-bar-drag-space'), 'mousedown'),
+    'a press on the empty strip': (tm) => fire(stripEl(tm), 'mousedown'),
+    'a press on a tab': (tm) => fire(tabEl(tm, 'A').querySelector('.tab-bar-tab-title'), 'mousedown'),
+    'a press elsewhere in the window': () => fire(doc.body, 'mousedown'),
+  };
+  for (const [label, press] of Object.entries(presses)) {
+    const { tm } = await fourSpanningGroup();
+    dragFrom(tm, 'C');
+    const fId = idOf(tm, 'F');
+    tm.renameTab(fId, 'F3');
+    const held = titleShown(tm, fId) === 'F';
+    press(tm);
+    fire(doc, 'mouseup');
+    const dimmed = tm.bar.querySelectorAll('.tab-bar-tab.dragging').length;
+    check(`a lost dragend: ${label} ends the drag and applies the held rebuild`, held && dimmed === 0 && titleShown(tm, fId) === 'F3', { held, dimmed, shown: titleShown(tm, fId) });
+  }
 });
 
 finish();

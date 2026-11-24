@@ -180,12 +180,12 @@
 }
 
 .tab-bar-tab.drag-over {
-  box-shadow: inset 2px 0 0 var(--accent);
+  box-shadow: inset 2px 0 0 var(--focus);
 }
 
 /* Dragging over the selected tab keeps its bar alongside the drop line. */
 .tab-bar-tab.active.drag-over {
-  box-shadow: inset 2px 0 0 var(--accent), inset 0 -3px 0 var(--ink);
+  box-shadow: inset 2px 0 0 var(--focus), inset 0 -3px 0 var(--ink);
 }
 
 /* --- Tab groups ---
@@ -379,9 +379,11 @@
 }
 
 /* A drag over the empty strip, + or the drag space: a line at the strip's
-   right edge, where the tabs will land (D2, the page's drag-over-end). */
-.tab-bar-tabs.drag-over-end {
-  box-shadow: inset -2px 0 0 var(--focus);
+   right edge, where the tabs will land (D2, the page's drag-over-end). Drawn on
+   + 's left edge, not as a shadow on the strip: that paints under the tabs, so
+   a last tab with a fill (active, grouped, selected) covered it. */
+.tab-bar-tabs.drag-over-end + .tab-bar-new {
+  box-shadow: inset 2px 0 0 var(--focus);
 }
 
 .tab-bar-tab.multi.in-group.drag-over {

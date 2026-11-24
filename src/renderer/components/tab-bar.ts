@@ -316,10 +316,13 @@ export class TabBar {
     this.tabsContainer.addEventListener('keydown', () => { this.keyboardModality = true; }, true);
     this.tabsContainer.addEventListener('mousedown', () => {
       this.keyboardModality = false;
-      // No drag from here is live while a button is pressed: a drag whose
-      // dragend never came (its grip rebuilt away) is over.
-      if (this.draggedId) this.endTabDrag();
     }, true);
+    // No drag from this strip is live while a button is pressed anywhere (a
+    // press on a tab, +, the drag space or the page): a drag whose dragend was
+    // lost is over. update() holds rebuilds while draggedId is set, so this
+    // is also what frees them.
+    document.addEventListener('mousedown', this.onDocumentMouseDown, true);
+    document.addEventListener('dragend', this.onDocumentDragEnd, true);
     this.tabsContainer.addEventListener('keydown', (e) => {
       const target = e.target as HTMLElement;
       const isChip = target.classList.contains('tab-bar-group-chip');
@@ -445,8 +448,8 @@ export class TabBar {
     // On a Mac a Ctrl-click is a right-click: Chromium sends this press as well
     // as the contextmenu, so it must not also click (open a tab, clear the
     // selection under the open menu, fold a group) or drag the window.
-    if (e.ctrlKey && !e.metaKey) return;
     this.dragMoved = false;
+    if (e.ctrlKey && !e.metaKey) return;
     let dragging = false;
     let lastX = e.screenX;
     let lastY = e.screenY;
@@ -685,7 +688,10 @@ export class TabBar {
   update(tabs: TabHeaderInfo[], groups: TabGroupHeader[] = []): void {
     this.latestTabs = tabs;
     this.latestGroups = groups;
-    if (this.renameOpen) {
+    // Held while a rename box is open, and while a tab is dragged from this
+    // strip: the grip being dragged must not be rebuilt away (its dragend would
+    // be lost and the carried tabs left dimmed). endTabDrag flushes it.
+    if (this.renameOpen || this.draggedId) {
       this.heldUpdate = tabs;
       this.heldGroups = groups;
       return;
@@ -729,8 +735,6 @@ export class TabBar {
       // One of several selected tabs (not the active one, which keeps its look): S1, tabs.css `.multi`.
       const multi = !tab.active && this.selectedExtra.has(tab.id);
       el.className = `tab-bar-tab${tab.active ? ' active' : ''}${group ? ` in-group group-shade-${shadeOf.get(group.id)}` : ''}${multi ? ' multi' : ''}`;
-      // A rebuild during a drag from this strip (a title tick) keeps the carried tabs' look.
-      if (this.draggedIds.includes(tab.id)) el.classList.add('dragging');
       // Michael, 24 Nov: wake's tab "always just this size even if other tabs
       // open": as wide as its own label and dot, grouped or not (tabs.css).
       if (tab.wake) el.classList.add('wake-compact');
@@ -1069,7 +1073,17 @@ export class TabBar {
     this.draggedIds = [];
     this.tabsContainer.querySelectorAll('.dragging, .drag-over').forEach((x) => x.classList.remove('dragging', 'drag-over'));
     this.tabsContainer.classList.remove('drag-over-end');
+    // The update held back while it lasted (a title tick, a tab opened).
+    this.applyHeldUpdate();
   }
+
+  private onDocumentMouseDown = (): void => {
+    if (this.draggedId) this.endTabDrag();
+  };
+
+  private onDocumentDragEnd = (): void => {
+    if (this.draggedId) this.endTabDrag();
+  };
 
   /** `el` takes a drag from this strip's grip as a move to the strip's end
    *  (D2, the page's kind 'end'), with the end line on the strip while over it.
@@ -1468,6 +1482,8 @@ export class TabBar {
 
   dispose(): void {
     document.removeEventListener('keydown', this.onEscapeKey);
+    document.removeEventListener('mousedown', this.onDocumentMouseDown, true);
+    document.removeEventListener('dragend', this.onDocumentDragEnd, true);
     this.stopScaleWatch?.();
     this.stopScaleWatch = null;
     if (this.pauseResultTimer) clearTimeout(this.pauseResultTimer);
