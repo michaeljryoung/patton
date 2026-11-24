@@ -504,6 +504,48 @@ async function pageRun(SCALES) {
       }
       check(`${at} strip failures box: hidden again (display none) once both are dismissed`, !!nf() && nf().hidden && getComputedStyle(nf()).display === 'none' && rowsIn('failures').length === 0, nf() && nf().outerHTML);
 
+      // "Dismiss all failures": a × in the Failures header (24 Nov 2026), only while the section is shown.
+      {
+        const allX = () => barEl().querySelector('.sb-sec-failures .sb-x-all');
+        check(`${at} dismiss all: no failures, no header ×`, !allX() && !barEl().querySelector('.sb-x-all'), barEl().querySelector('.sb-x-all')?.outerHTML);
+        for (const n of [1, 2, 3]) {
+          await feed(pane, { type: 'task-start', id: `${fid}-a${n}`, kind: 'shell', description: `all ${n}`, at: Date.now() });
+          await feed(pane, { type: 'task-end', id: `${fid}-a${n}`, status: 'failed', exitCode: 3, at: Date.now() });
+        }
+        const hx = allX();
+        const rx = barEl().querySelector('.sb-sec-failures .sb-item .sb-x');
+        const hcs = hx && getComputedStyle(hx);
+        const rcs = rx && getComputedStyle(rx);
+        check(`${at} dismiss all: three failures show one header ×, labelled and titled "Dismiss all failures", glyph ×, inside the section header beside the count`,
+          !!hx && barEl().querySelectorAll('.sb-x-all').length === 1 && hx.textContent === '×' && hx.getAttribute('aria-label') === 'Dismiss all failures' && hx.title === 'Dismiss all failures' && hx.tagName === 'BUTTON' && !!hx.closest('.sb-sec-head') && !!hx.closest('.sb-sec-head').querySelector('.sb-count'), hx && hx.outerHTML);
+        check(`${at} dismiss all: the header × has the row × look (font size, family, colour, cursor)`,
+          !!hcs && !!rcs && hcs.fontSize === rcs.fontSize && hcs.fontFamily === rcs.fontFamily && hcs.color === rcs.color && hcs.cursor === rcs.cursor && hcs.backgroundColor === rcs.backgroundColor, hcs && rcs && { h: [hcs.fontSize, hcs.color], r: [rcs.fontSize, rcs.color] });
+        const hr = hx && hx.getBoundingClientRect();
+        const cr = barEl().querySelector('.sb-sec-failures .sb-count').getBoundingClientRect();
+        const br = barEl().getBoundingClientRect();
+        check(`${at} dismiss all: the header × is right of the count and inside the bar`, !!hr && hr.width > 0 && hr.left >= cr.right - 0.5 && hr.right <= br.right + 0.5, hr && { x: [r1(hr.left), r1(hr.right)], count: r1(cr.right), bar: r1(br.right) });
+        const ringRule = [...document.styleSheets].some((ss) => { try { return [...ss.cssRules].some((r) => r.selectorText && r.selectorText.includes('.sb-x-all:focus-visible') && /outline/.test(r.cssText)); } catch { return false; } });
+        check(`${at} dismiss all: the header × has a focus-visible ring rule and is in the tab order`, ringRule && hx && hx.tabIndex === 0, { ringRule });
+        // A row's × still dismisses just its row, and the header × stays.
+        rx.click();
+        await frame();
+        check(`${at} dismiss all: a row × still removes only its row (2 left, "!2", the header × stays)`, rowsIn('failures').length === 2 && !!allX() && nf().textContent === '!2' && barEl().querySelector('.sb-sec-failures .sb-count').textContent === '2', rowsIn('failures').length);
+        // The header × empties the section, hides the strip's box, focus stays in the bar, one log line.
+        const logs = [];
+        const origInfo = console.info;
+        console.info = (...a) => { if (String(a[0]).startsWith('[BAR] failures dismissed')) logs.push(a); return origInfo.apply(console, a); };
+        allX().focus();
+        allX().click();
+        await frame();
+        console.info = origInfo;
+        check(`${at} dismiss all: the header × empties the Failures section and the strip's "!N" box hides`, rowsIn('failures').length === 0 && !barEl().querySelector('.sb-sec-failures') && !barEl().querySelector('.sb-x-all') && nf().hidden && getComputedStyle(nf()).display === 'none' && nf().textContent === '', { rows: rowsIn('failures').length, box: nf() && nf().outerHTML });
+        check(`${at} dismiss all: one log line "[BAR] failures dismissed" with the pane and count 2`, logs.length === 1 && logs[0][1] && logs[0][1].count === 2 && !!logs[0][1].pane, logs);
+        check(`${at} dismiss all: focus moved to a control in the bar, not lost to the page`, barEl().contains(document.activeElement) && document.activeElement.tagName === 'BUTTON', document.activeElement && document.activeElement.outerHTML.slice(0, 120));
+        // Dismissed stays dismissed: the next age tick or rebuild does not bring them back.
+        await feed(pane, { type: 'link', url: `https://github.com/example/repo/pull/${Math.round(S * 10) + 7}`, label: 'after dismiss', at: Date.now() });
+        check(`${at} dismiss all: dismissed failures stay dismissed after another event`, rowsIn('failures').length === 0 && nf().hidden, rowsIn('failures').length);
+      }
+
       // A long failure: the reason first, 3 lines at most, the × beside it inside the row.
       {
         const lid = `bl${String(S).replace('.', '')}`;

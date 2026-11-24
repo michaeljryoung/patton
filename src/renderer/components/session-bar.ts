@@ -423,6 +423,21 @@ export class SessionBar {
     return { sec, list };
   }
 
+  /** The Failures section's "dismiss all" ×, in its header beside the count: same glyph and look as a row's ×. */
+  private addDismissAll(sec: HTMLElement): void {
+    const h = sec.querySelector('.sb-h');
+    if (!h) return;
+    const head = el('div', 'sb-sec-head');
+    const x = el('button', 'sb-x-all', '×');
+    x.type = 'button';
+    x.setAttribute('aria-label', 'Dismiss all failures');
+    x.title = 'Dismiss all failures';
+    x.dataset.dismissAll = '1';
+    x.dataset.focusKey = 'x:all';
+    h.replaceWith(head);
+    head.append(h, x);
+  }
+
   private item(kind: string, what: HTMLElement, when: string, cls = ''): HTMLLIElement {
     const li = el('li', `sb-item${cls ? ' ' + cls : ''}`);
     li.append(el('span', 'sb-kind', kind), what, el('span', 'sb-t', when));
@@ -473,6 +488,7 @@ export class SessionBar {
         li.append(x);
         list.append(li);
       }
+      this.addDismissAll(sec);
       out.push(sec);
     }
     if (view.links.length > 0) {
@@ -494,9 +510,20 @@ export class SessionBar {
   }
 
   private onListClick(e: MouseEvent): void {
-    const t = (e.target as HTMLElement | null)?.closest<HTMLElement>('[data-dismiss], [data-link]');
+    const t = (e.target as HTMLElement | null)?.closest<HTMLElement>('[data-dismiss], [data-dismiss-all], [data-link]');
     if (!t || !this.target) return;
     const model = this.target.model;
+    if (t.dataset.dismissAll) {
+      const hadFocus = document.activeElement === t;
+      const count = model.dismissAllFailures();
+      if (count > 0) rlog('info', '[BAR] failures dismissed', { pane: this.target.paneId, count });
+      // The section is gone: the keyboard goes to the next section's first button, else the bar's own ⇥.
+      if (hadFocus) {
+        const next = this.listsEl.querySelector<HTMLElement>('.sb-sec button') ?? this.element.querySelector<HTMLElement>('.sb-min');
+        next?.focus();
+      }
+      return;
+    }
     if (t.dataset.dismiss) {
       model.dismissFailure(t.dataset.dismiss);
       return;

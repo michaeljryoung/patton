@@ -444,6 +444,15 @@ export class SessionBarModel {
     return true;
   }
 
+  /** Dismiss every failure listed, as dismissFailure does one: one change. Returns how many went. */
+  dismissAllFailures(): number {
+    const n = this.failures.length;
+    if (n === 0) return 0;
+    this.failures = [];
+    this.changed();
+    return n;
+  }
+
   /** Claude left the pane: everything goes. */
   reset(): void {
     const had = this.runs.size + this.crons.length + this.wakes.length + this.failures.length + this.links.length > 0;

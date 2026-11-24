@@ -180,6 +180,20 @@ if (process.env.TZ === 'Europe/London') {
   check('7501 root error: one Claude failure with its msg (once per spell)', v.failures.filter((f) => f.kind === 'Claude').length === 1 && v.failures[0].text === 'API error 529, overloaded', v.failures);
   check('failures kept long after (not lingering)', m.view(T0 + 5 * 60 * MIN).failures.length === 3);
   check('dismiss removes one', m.dismissFailure(v.failures[0].key) && m.view(T0).failures.length === 2);
+  {
+    let changes = 0;
+    const off = m.onChange(() => { changes++; });
+    const n = m.dismissAllFailures();
+    check('dismiss all: returns how many went, empties the list, one change', n === 2 && m.view(T0).failures.length === 0 && changes === 1, { n, changes });
+    check('dismiss all: with none left it returns 0 and changes nothing', m.dismissAllFailures() === 0 && changes === 1, changes);
+    m.applyFeed({ type: 'task-end', id: 'again', status: 'failed', exitCode: 9, at: T0 + 20 * MIN }, T0 + 20 * MIN);
+    const again = m.view(T0 + 20 * MIN).failures;
+    check('dismiss all: a later failure is listed, and a per-row dismiss still works', again.length === 1 && m.dismissFailure(again[0].key) && m.view(T0 + 20 * MIN).failures.length === 0);
+    off();
+    // put two back for the next check, as before
+    m.applyFeed({ type: 'task-end', id: 'bk1', status: 'failed', exitCode: 1, at: T0 + 21 * MIN }, T0 + 21 * MIN);
+    m.applyFeed({ type: 'task-end', id: 'bk2', status: 'failed', exitCode: 2, at: T0 + 21 * MIN }, T0 + 21 * MIN);
+  }
   for (let i = 0; i < 15; i++) m.applyFeed({ type: 'task-end', id: `x${i}`, status: 'failed', exitCode: i, at: T0 + i }, T0 + 10 * MIN);
   v = m.view(T0 + 10 * MIN);
   check('at most 10 failures, the oldest dropped, newest first', v.failures.length === 10 && v.failures[0].text === 'exit 14: x14' && v.failures[9].text === 'exit 5: x5', v.failures.map((f) => f.text));

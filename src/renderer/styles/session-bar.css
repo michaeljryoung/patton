@@ -65,6 +65,7 @@
 
 .sb-btn:focus-visible,
 .sb-x:focus-visible,
+.sb-x-all:focus-visible,
 .sb-link:focus-visible {
   outline: 2px solid var(--sb-focus);
   outline-offset: 1px;
@@ -245,7 +246,8 @@
   color: var(--sb-fail);
 }
 
-.sb-x {
+.sb-x,
+.sb-x-all {
   font-family: var(--font-ui);
   font-size: calc(13px * var(--ui-scale));
   line-height: 1;
@@ -256,8 +258,21 @@
   cursor: pointer;
 }
 
-.sb-x:hover {
+.sb-x:hover,
+.sb-x-all:hover {
   color: var(--sb-ink);
+}
+
+/* The Failures header: the title and count, then the dismiss-all ×. */
+.sb-sec-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.sb-sec-head .sb-h {
+  flex: 1;
+  min-width: 0;
 }
 
 /* Links: a button that reads as a link. */
