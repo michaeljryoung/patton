@@ -21,7 +21,7 @@
 // until the tab is seen (then only a newer cpd raises it); the 13 Nov sequence
 // (red at a parked Stop, tab selected, green at the real finish) now ends red;
 // an interrupted checkpoint (cpt, never cpd) never rises; a finish held back by
-// background work is logged once per cpt; a second-boundary slack at the session start; the CSS variable
+// background work is logged once per cpt; a Stop with only older tasks running (cpd sent) raises it; a second-boundary slack at the session start; the CSS variable
 // is defined in :root.
 // Run: JSDOM_DIR=<a folder whose node_modules has jsdom> node scripts/check-checkpoint-done.mjs
 import { build } from 'esbuild';
@@ -377,6 +377,22 @@ tm.switchToId(t3.id);
   reading(pH, T0 + 93, 2);
   check('held: a newer cpt is logged once more', held() === 2, held());
   tm.switchToId(tH.id);
+  tm.switchToId(t3.id);
+}
+
+// ── 11b5. Older background work doesn't hold the finish (24 Nov 2026) ──
+// The hook sends `cpd` at a Stop whose running tasks all began before the
+// checkpoint; the renderer must raise the mark on it whatever `tasks` says.
+{
+  const tU = await tm.createTab();
+  const pU = tU.panes[0];
+  tm.switchToId(t3.id);
+  turnDone(pU);
+  const heldBefore = countFor('[CKPT] finish held', pU);
+  reading(pU, T0 + 95, 1, T0 + 95); // an older monitor still running, cpd sent
+  check('older task: a Stop with tasks=1 and cpd raises the mark', pU.checkpointDone === true && countFinished(pU) === 1, countFinished(pU));
+  check('older task: no finish-held line for it', countFor('[CKPT] finish held', pU) === heldBefore);
+  tm.switchToId(tU.id);
   tm.switchToId(t3.id);
 }
 

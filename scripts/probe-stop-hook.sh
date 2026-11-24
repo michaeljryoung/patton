@@ -220,6 +220,57 @@ check "cpd: same file, Stop with no task: cpd" \
   "$(stopwant ";ctx=400000;since=0;cpt=$CPT;cpd=$CPT")" "$(ctxjson "$TD/current.jsonl" "$BOTH")"
 check "cpd: a cron alone doesn't hold it back" \
   "$(stopwantN 0 1 ";ctx=400000;since=0;cpt=$CPT;cpd=$CPT")" "$(ctxjson "$TD/current.jsonl" "$CRON")"
+# Own tasks (24 Nov 2026): only work launched in the checkpoint's turn holds cpd.
+# Launch lines as Claude Code 2.1.321 writes them: a background Bash, an async Agent.
+LBASH() { printf '{"type":"user","isSidechain":false,"message":{"role":"user","content":[{"tool_use_id":"tb%s","type":"tool_result","content":"Command running in background with ID: %s."}]},"timestamp":"2026-10-11T04:40:00.000Z","toolUseResult":{"stdout":"","backgroundTaskId":"%s"}}\n' "$1" "$1" "$1"; }
+LAGENT() { printf '{"type":"user","isSidechain":false,"message":{"role":"user","content":[{"tool_use_id":"ta%s","type":"tool_result","content":[{"type":"text","text":"Async agent launched successfully.\\nagentId: %s"}]}]},"timestamp":"2026-10-11T04:40:00.000Z","toolUseResult":{"isAsync":true,"status":"async_launched","agentId":"%s"}}\n' "$1" "$1" "$1"; }
+TN() { printf '{"type":"user","message":{"role":"user","content":"<task-notification>\\n<task-id>%s</task-id>\\n<status>completed</status>\\n</task-notification>"},"origin":{"kind":"task-notification"}}\n' "$1"; }
+RUN() { local s='' x; for x in "$@"; do s="$s${s:+,}{\"id\":\"$x\",\"type\":\"shell\",\"status\":\"running\",\"description\":\"d\"}"; done
+  printf ',"background_tasks":[%s],"session_crons":[]' "$s"; }
+{ human hi; LBASH bmon0old1; u 0 300000 0; echo "$CKPT"; u 0 400000 0; } > "$TD/own-old.jsonl"
+check "own: a task launched before the checkpoint doesn't hold cpd" \
+  "$(stopwantN 1 0 ";ctx=400000;since=0;cpt=$CPT;cpd=$CPT")" "$(ctxjson "$TD/own-old.jsonl" "$(RUN bmon0old1)")"
+{ human hi; LBASH bmon0old1; echo "$CKPT"; LBASH bckpt0own; u 0 400000 0; } > "$TD/own-new.jsonl"
+check "own: its own background job still running: no cpd" \
+  "$(stopwantN 1 0 ";ctx=400000;since=0;cpt=$CPT")" "$(ctxjson "$TD/own-new.jsonl" "$(RUN bckpt0own)")"
+check "own: its own job and an older one running: no cpd" \
+  "$(stopwantN 2 0 ";ctx=400000;since=0;cpt=$CPT")" "$(ctxjson "$TD/own-new.jsonl" "$(RUN bmon0old1 bckpt0own)")"
+{ cat "$TD/own-new.jsonl"; TN bckpt0own; u 0 410000 0; } > "$TD/own-done.jsonl"
+check "own: its job ended (notification turn), the older one still running: cpd" \
+  "$(stopwantN 1 0 ";ctx=410000;since=10000;cpt=$CPT;cpd=$CPT")" "$(ctxjson "$TD/own-done.jsonl" "$(RUN bmon0old1)")"
+{ echo "$CKPT"; u 0 400000 0; TN x; LAGENT a0123456789abcdef; u 0 410000 0; } > "$TD/own-taskn.jsonl"
+check "own: an agent launched in a task-notification turn of the checkpoint holds it" \
+  "$(stopwantN 1 0 ";ctx=410000;since=10000;cpt=$CPT")" "$(ctxjson "$TD/own-taskn.jsonl" "$(RUN a0123456789abcdef)")"
+{ echo "$CKPT"; u 0 400000 0; human next; LBASH blater000; u 0 410000 0; } > "$TD/own-later.jsonl"
+check "own: a task launched after his next prompt doesn't hold it" \
+  "$(stopwantN 1 0 ";ctx=410000;since=10000;cpt=$CPT;cpd=$CPT")" "$(ctxjson "$TD/own-later.jsonl" "$(RUN blater000)")"
+check "own: an id never launched in the transcript holds it (unknown, as before)" \
+  "$(stopwantN 1 0 ";ctx=400000;since=0;cpt=$CPT")" "$(ctxjson "$TD/own-old.jsonl" "$(RUN bnowhere0)")"
+check "own: an empty id holds it" \
+  "$(stopwantN 1 0 ";ctx=400000;since=0;cpt=$CPT")" "$(ctxjson "$TD/own-old.jsonl" ',"background_tasks":[{"type":"shell","status":"running"}],"session_crons":[]')"
+check "own: an id must match whole (bmon0old1 launched, bmon0old running): holds" \
+  "$(stopwantN 1 0 ";ctx=400000;since=0;cpt=$CPT")" "$(ctxjson "$TD/own-old.jsonl" "$(RUN bmon0old)")"
+# A shell a subagent launched: dated by the agent's own launch in the main transcript.
+mkdir -p "$TD/sub/subagents"
+{ human hi; LAGENT aold000000000000a; echo "$CKPT"; LAGENT anew000000000000b; u 0 400000 0; } > "$TD/sub.jsonl"
+{ LBASH bbyold000 | sed 's/"isSidechain":false/"isSidechain":true,"agentId":"aold000000000000a"/'; } > "$TD/sub/subagents/agent-aold000000000000a.jsonl"
+{ LBASH bbynew000 | sed 's/"isSidechain":false/"isSidechain":true,"agentId":"anew000000000000b"/'; } > "$TD/sub/subagents/agent-anew000000000000b.jsonl"
+check "own: a shell from an agent launched before the checkpoint doesn't hold it" \
+  "$(stopwantN 1 0 ";ctx=400000;since=0;cpt=$CPT;cpd=$CPT")" "$(ctxjson "$TD/sub.jsonl" "$(RUN bbyold000)")"
+check "own: a shell from the checkpoint's own agent holds it" \
+  "$(stopwantN 1 0 ";ctx=400000;since=0;cpt=$CPT")" "$(ctxjson "$TD/sub.jsonl" "$(RUN bbynew000)")"
+{ LAGENT anest00000000000c | sed 's/"isSidechain":false/"isSidechain":true,"agentId":"anew000000000000b"/'; } >> "$TD/sub/subagents/agent-anew000000000000b.jsonl"
+{ LBASH bnested00 | sed 's/"isSidechain":false/"isSidechain":true,"agentId":"anest00000000000c"/'; } > "$TD/sub/subagents/agent-anest00000000000c.jsonl"
+check "own: two levels down (agent in the checkpoint's agent) holds it" \
+  "$(stopwantN 1 0 ";ctx=400000;since=0;cpt=$CPT")" "$(ctxjson "$TD/sub.jsonl" "$(RUN bnested00)")"
+rm -f "$TD"/sub/subagents/*.jsonl && rmdir "$TD/sub/subagents" "$TD/sub"
+# The interrupt and commit-rescue rules are unchanged with tasks in flight.
+{ human hi; LBASH bmon0old1; echo "$CKPT"; u 0 400000 0; echo "$INTR"; human next; u 0 450000 0; } > "$TD/own-cut.jsonl"
+check "own: an interrupted checkpoint with an older task running: no cpt, no cpd" \
+  "$(stopwantN 1 0 ";ctx=450000;since=450000")" "$(ctxjson "$TD/own-cut.jsonl" "$(RUN bmon0old1)")"
+{ human hi; LBASH bmon0old1; echo "$CKPT"; u 0 400000 0; echo "$INTR"; human "go on"; echo "$COMMIT1"; echo "$COMMITOK"; u 0 450000 0; } > "$TD/own-rescued.jsonl"
+check "own: interrupted then committed, an older task running: cpd" \
+  "$(stopwantN 1 0 ";ctx=450000;since=50000;cpt=$CPT;cpd=$CPT")" "$(ctxjson "$TD/own-rescued.jsonl" "$(RUN bmon0old1)")"
 { echo "$CKPT"; u 0 400000 0; echo "$INTR"; human next; u 0 450000 0; } > "$TD/cut.jsonl"
 check "cut off: start then interrupt, no earlier checkpoint: no cpt, no cpd" \
   "$(stopwant ";ctx=450000;since=450000")" "$(ctxjson "$TD/cut.jsonl" "$BOTH")"
