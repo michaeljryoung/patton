@@ -79,11 +79,12 @@ VARIANTS = {
     "p1": (0.95, 0.42, 0.10, "#07110A", "#020503", "#2FCB62", "#8DFFAE", "#D8FFE2"),
     "p2": (0.72, 0.52, 0.13, "#07110A", "#020503", "#2FCB62", "#8DFFAE", "#D8FFE2"),
     "p3": (0.95, 0.42, 0.10, "#140F05", "#060402", "#E0A231", "#FFD27A", "#FFF0CC"),
-    # Round 5 (24 Nov 16:14, P1 in his Dock: "background green isnt clear enough, just looks like the icon,
-    # needs to be more subtle"): quieter rain so the portrait stands out.
-    "q1": (0.95, 0.20, 0.05, "#07110A", "#020503", "#2FCB62", "#8DFFAE", "#D8FFE2", 3.2, 0.45, 0.55),
-    "q2": (0.95, 0.11, 0.03, "#07110A", "#020503", "#2FCB62", "#8DFFAE", "#D8FFE2", 3.2, 0.30, 0.55),
-    "q3": (1.00, 0.14, 0.035, "#07110A", "#020503", "#2FCB62", "#A8FFC2", "#D8FFE2", 4.6, 0.35, 0.85),
+    # Round 5 (24 Nov 16:14 and 16:17, P1 in his Dock: "background green isnt clear enough, just looks like the
+    # icon, needs to be more subtle", then of P2 "even further than this with more background"): stronger falling
+    # digits, a fainter portrait, each step past P2.
+    "r1": (0.58, 0.62, 0.17, "#07110A", "#020503", "#2FCB62", "#8DFFAE", "#D8FFE2", 3.2, 0.95, 0.45),
+    "r2": (0.48, 0.72, 0.21, "#07110A", "#020503", "#2FCB62", "#8DFFAE", "#D8FFE2", 3.2, 0.95, 0.35),
+    "r3": (0.40, 0.82, 0.25, "#07110A", "#020503", "#2FCB62", "#8DFFAE", "#D8FFE2", 3.2, 0.95, 0.25),
 }
 
 if __name__ == "__main__":
