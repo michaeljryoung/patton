@@ -61,6 +61,18 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: 
   return e;
 }
 
+/** A section's rows without their times, classes and labels: what must match for an in-place patch. */
+function shapeOf(sec: HTMLElement): string {
+  const rows = Array.from(sec.querySelectorAll('li'), (li) => [
+    li.dataset.id ?? '',
+    li.querySelector('.sb-kind')?.textContent ?? '',
+    li.querySelector('.sb-what')?.textContent ?? '',
+    li.querySelector<HTMLElement>('[data-focus-key]')?.dataset.focusKey ?? '',
+    li.querySelector('.sb-x') ? 'x' : '',
+  ].join('\u0001'));
+  return `${sec.className}\u0002${sec.querySelector('.sb-count')?.textContent ?? ''}\u0002${rows.join('\u0002')}`;
+}
+
 export class SessionBar {
   readonly element: HTMLElement;
   private readonly callbacks: SessionBarCallbacks;
@@ -85,6 +97,8 @@ export class SessionBar {
   private tickTimer: ReturnType<typeof setInterval> | null = null;
   private foldTimer: ReturnType<typeof setTimeout> | null = null;
   private lastListsKey = '';
+  /** What the shown rows are, apart from their times (see renderLists). */
+  private lastShape = '';
   private readonly disposables: (() => void)[] = [];
 
   constructor(contentEl: HTMLElement, callbacks: SessionBarCallbacks) {
@@ -140,7 +154,8 @@ export class SessionBar {
     openBtn.addEventListener('click', () => this.setMinimizedByButton(false));
     this.stripRunning = el('span', 'sb-n sb-n-running', '0');
     this.stripRunning.setAttribute('role', 'img');
-    this.stripFailures = el('span', 'sb-n sb-n-failures', '0');
+    this.stripFailures = el('span', 'sb-n sb-n-failures', '');
+    this.stripFailures.hidden = true;
     this.stripFailures.setAttribute('role', 'img');
     this.stripCkpt = el('button', 'sb-btn sb-icon sb-strip-ckpt', '✓');
     this.stripCkpt.type = 'button';
@@ -192,6 +207,7 @@ export class SessionBar {
       this.offModel = null;
       this.target = target;
       this.lastListsKey = '';
+      this.lastShape = '';
       if (target) this.offModel = target.model.onChange(() => this.renderLists());
     }
     if (target) {
@@ -331,16 +347,47 @@ export class SessionBar {
     this.renderStrip(view);
     if (this.shown !== 'open') {
       this.lastListsKey = '';
+      this.lastShape = '';
       return;
     }
     const key = JSON.stringify(view);
     if (key === this.lastListsKey) return;
     this.lastListsKey = key;
+    const sections = this.buildSections(view);
+    // Only a row's time, class or labels changed (an age ticked): patch the rows in place,
+    // so a native tooltip being read and the keyboard focus are not dismissed every 10 s.
+    const shape = sections.map(shapeOf).join('\u0003');
+    if (shape === this.lastShape && this.patchRows(sections)) return;
+    this.lastShape = shape;
     // Keep the keyboard where it was across the rebuild.
     const focused = document.activeElement as HTMLElement | null;
     const focusKey = focused && this.listsEl.contains(focused) ? focused.dataset.focusKey ?? null : null;
-    this.listsEl.replaceChildren(...this.buildSections(view));
+    this.listsEl.replaceChildren(...sections);
     if (focusKey) this.listsEl.querySelector<HTMLElement>(`[data-focus-key="${CSS.escape(focusKey)}"]`)?.focus();
+  }
+
+  /** Copy the time text, class, title and label of each freshly built row onto the row
+   *  already shown (same shape, checked by the caller). False when the rows don't line up. */
+  private patchRows(fresh: HTMLElement[]): boolean {
+    const old = Array.from(this.listsEl.querySelectorAll<HTMLElement>('li'));
+    const next = fresh.flatMap((sec) => Array.from(sec.querySelectorAll<HTMLElement>('li')));
+    if (old.length !== next.length) return false;
+    for (let i = 0; i < old.length; i++) {
+      const o = old[i];
+      const n = next[i];
+      if (o.className !== n.className) o.className = n.className;
+      for (const a of ['title', 'aria-label']) {
+        const v = n.getAttribute(a);
+        if (v !== o.getAttribute(a)) {
+          if (v === null) o.removeAttribute(a);
+          else o.setAttribute(a, v);
+        }
+      }
+      const ot = o.querySelector('.sb-t');
+      const nt = n.querySelector('.sb-t');
+      if (ot && nt && ot.textContent !== nt.textContent) ot.textContent = nt.textContent;
+    }
+    return true;
   }
 
   private renderStrip(view: BarView): void {
@@ -348,7 +395,10 @@ export class SessionBar {
     this.stripRunning.setAttribute('aria-label', `${view.liveCount} running`);
     this.stripRunning.title = `${view.liveCount} running`;
     const f = view.failures.length;
-    this.stripFailures.textContent = String(f);
+    // No failures: no box, so the strip's one number is plainly the running count.
+    // Failures: "!N" in the failure colour, never mistaken for it.
+    this.stripFailures.hidden = f === 0;
+    this.stripFailures.textContent = f > 0 ? `!${f}` : '';
     this.stripFailures.classList.toggle('some', f > 0);
     const fl = `${f} failure${f === 1 ? '' : 's'}`;
     this.stripFailures.setAttribute('aria-label', fl);
@@ -382,7 +432,7 @@ export class SessionBar {
         list.append(el('li', 'sb-empty', 'Nothing in the background'));
       }
       for (const r of view.running) {
-        const what = el(r.kind === 'Shell' ? 'code' : 'span', 'sb-what', r.description);
+        const what = el('span', 'sb-what', r.description);
         const when = r.ended ? (r.endLabel ?? 'done') : r.age;
         const li = this.item(r.kind, what, when, `${r.long ? 'long' : ''}${r.ended ? ' done' : ''}`.trim());
         li.title = r.tooltip;
@@ -426,7 +476,9 @@ export class SessionBar {
         btn.type = 'button';
         btn.dataset.link = l.key;
         btn.dataset.focusKey = `l:${l.key}`;
-        btn.title = l.url ?? l.path ?? l.label;
+        // The label (clamped in the row), then where it goes on a second line.
+        const target = l.url ?? l.path;
+        btn.title = target && target !== l.label ? `${l.label}\n${target}` : l.label;
         btn.setAttribute('aria-label', `Open ${l.label} (${l.kind}, ${l.when})`);
         list.append(this.item(l.kind, btn, l.when, 'link'));
       }

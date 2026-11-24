@@ -165,13 +165,13 @@ if (process.env.TZ === 'Europe/London') {
   m.applyFeed({ type: 'task-start', id: 's1', kind: 'shell', description: 'npm run check', at: T0 }, T0);
   const notes = m.applyFeed({ type: 'task-end', id: 's1', status: 'failed', exitCode: 1, at: T0 + MIN }, T0 + MIN);
   let v = m.view(T0 + MIN);
-  check('task-end failed: a failure "npm run check: exit 1" (Shell)', v.failures.length === 1 && v.failures[0].text === 'npm run check: exit 1' && v.failures[0].kind === 'Shell', v.failures);
+  check('task-end failed: a failure "exit 1: npm run check" (Shell)', v.failures.length === 1 && v.failures[0].text === 'exit 1: npm run check' && v.failures[0].kind === 'Shell', v.failures);
   check('task-end failed: a failure note for the log', notes.length === 1 && notes[0].note === 'failure' && notes[0].kind === 'Shell', notes);
   check('task-end failed: the row ends "failed"', v.running[0].ended && v.running[0].endLabel === 'failed', v.running[0]);
   m.applyFeed({ type: 'task-end', id: 's1', status: 'failed', exitCode: 1, at: T0 + MIN }, T0 + MIN);
   check('the same task\'s end twice: one failure', m.view(T0 + MIN).failures.length === 1);
   m.applyFeed({ type: 'task-end', id: 'zz', status: 'killed', at: T0 + MIN }, T0 + MIN);
-  check('killed, never seen started: a failure', m.view(T0 + MIN).failures.some((f) => f.text.endsWith('killed')));
+  check('killed, never seen started: a failure', m.view(T0 + MIN).failures.some((f) => f.text.startsWith('killed: ')));
   m.applyFeed({ type: 'task-end', id: 'st', status: 'stopped', at: T0 + MIN }, T0 + MIN);
   check('stopped: not a failure', m.view(T0 + MIN).failures.length === 2);
   m.applyProgramRecords(rec('error', null, 'API error 529, overloaded'), [], T0 + 2 * MIN);
@@ -182,7 +182,7 @@ if (process.env.TZ === 'Europe/London') {
   check('dismiss removes one', m.dismissFailure(v.failures[0].key) && m.view(T0).failures.length === 2);
   for (let i = 0; i < 15; i++) m.applyFeed({ type: 'task-end', id: `x${i}`, status: 'failed', exitCode: i, at: T0 + i }, T0 + 10 * MIN);
   v = m.view(T0 + 10 * MIN);
-  check('at most 10 failures, the oldest dropped, newest first', v.failures.length === 10 && v.failures[0].text === 'x14: exit 14' && v.failures[9].text === 'x5: exit 5', v.failures.map((f) => f.text));
+  check('at most 10 failures, the oldest dropped, newest first', v.failures.length === 10 && v.failures[0].text === 'exit 14: x14' && v.failures[9].text === 'exit 5: x5', v.failures.map((f) => f.text));
 }
 
 // ── 5. Links ──
