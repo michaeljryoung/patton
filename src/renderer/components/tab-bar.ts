@@ -797,17 +797,19 @@ export class TabBar {
       // One dot slot, several sources, in this order. A user-set flag wins and
       // shows even on the active tab — it's a deliberate marker, so hiding it
       // on the tab you're looking at would defeat the point. The automatic
-      // "awaiting input" dot comes next (inactive tabs only, pulsing), so a
+      // "awaiting input" dot comes next (pulsing; the selected tab holds it
+      // only while its window is behind, see Tab.raiseAwaitingInput), so a
       // pane that needs you is never hidden behind an automatic flag (a
       // `WAKE` title in a split pane), which uses the flag styles otherwise.
       // A flag is static, so at a glance you can tell "something just
       // happened here" from "I marked this". A hollow ring means Claude Code
       // is parked on its own background work: nothing for you yet.
       // A finished checkpoint is a red circle (automatic, so a circle), ahead
-      // of the green dot, the ring and an automatic flag; inactive tabs only,
-      // like the green dot. A manual flag's square shows beside it.
-      const needsYou = tab.awaitingInput && !tab.active;
-      const ckpt = !!tab.checkpointDone && !tab.active;
+      // of the green dot, the ring and an automatic flag; on the selected tab
+      // only while its window is behind, like the green dot. A manual flag's
+      // square shows beside it.
+      const needsYou = tab.awaitingInput;
+      const ckpt = !!tab.checkpointDone;
       const shownFlag = tab.flag ?? (needsYou || ckpt ? null : tab.autoFlag) ?? null;
       if (shownFlag) {
         const dot = document.createElement('span');

@@ -48,6 +48,11 @@ export * as tabGroups from './services/tab-groups';`,
   globalThis.document = doc;
   w.matchMedia ||= () => ({ matches: false, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} });
   globalThis.matchMedia = w.matchMedia;
+  // jsdom's document.hasFocus() is always false; the app asks it whether this
+  // window is the one in front (Tab.windowInFront). Default: in front, as when
+  // he works in it; a check sets `windowFocus.inFront = false` for a window behind.
+  const windowFocus = { inFront: true };
+  doc.hasFocus = () => windowFocus.inFront;
   class RO { observe() {} unobserve() {} disconnect() {} }
   w.ResizeObserver = globalThis.ResizeObserver = RO;
   w.HTMLCanvasElement.prototype.getContext = () => null;
@@ -107,7 +112,7 @@ export * as tabGroups from './services/tab-groups';`,
     return tm;
   }
 
-  return { w, doc, emit, feed, logs, makeWindow, TabManager, repairRuns, tabGroups };
+  return { w, doc, emit, feed, logs, makeWindow, windowFocus, TabManager, repairRuns, tabGroups };
 }
 
 /** check(), section() and the exit guard every check uses. */

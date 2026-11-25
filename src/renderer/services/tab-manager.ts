@@ -191,6 +191,12 @@ export class TabManager {
       }),
     );
 
+    // This window coming to the front: the selected tab's green dot and
+    // checkpoint circle, raised while it was behind, are seen now and clear.
+    const onWindowFocus = () => this.activeTab?.windowFocused();
+    window.addEventListener('focus', onWindowFocus);
+    this.disposables.push(() => window.removeEventListener('focus', onWindowFocus));
+
     // Listen for PTY exit — route via panesByPtyId
     this.disposables.push(
       window.patton.pty.onExit((id) => {
