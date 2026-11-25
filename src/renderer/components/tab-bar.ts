@@ -1093,7 +1093,8 @@ export class TabBar {
    *  over a tab, a 2 px line at the slot's edge, --focus blue (and that group's
    *  chip marked) when the drop changes the group of at least one dragged tab
    *  into a group, else ink (a move inside its own group, or out to no group);
-   *  over a chip, the chip. Nothing where the drop would change nothing. From the same rule the drop
+   *  over a chip's right half, the chip; over its left half, an ink line on the
+   *  chip's left edge (the slot before the group, outside it). Nothing where the drop would change nothing. From the same rule the drop
    *  follows (dropPlacement), on the tabs as last handed to update(). */
   private showDropCue(over: TabDropTarget): void {
     this.clearDropCues();
@@ -1109,8 +1110,9 @@ export class TabBar {
     // "Joins" = some dragged tab is not yet in that group: a reorder inside its own group only gets the ink line.
     const joins = placement.group !== null && moving.some((t) => (t.groupId ?? null) !== placement.group);
     if (joins) this.chipEl(placement.group!)?.classList.add('drag-over');
-    if (placement.kind === 'chip' || over.kind !== 'tab') return;
-    const el = this.tabElement(over.id);
+    if (placement.kind === 'chip') return;
+    // A tab's own half, or a chip's left half (the slot before its group, ink: it joins none).
+    const el = over.kind === 'tab' ? this.tabElement(over.id) : over.half === 'left' ? this.chipEl(over.groupId) : null;
     if (!el) return;
     el.classList.add(over.half === 'left' ? 'drop-before' : 'drop-after');
     // --focus (the chip's own drop mark, 3:1 or better on every group fill) for a line that joins a group, ink for one that does not.
@@ -1244,16 +1246,17 @@ export class TabBar {
     chip.addEventListener('dragover', (e) => {
       e.preventDefault();
       if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
-      this.showDropCue({ kind: 'chip', groupId: group.id });
+      this.showDropCue({ kind: 'chip', groupId: group.id, half: TabBar.halfOf(chip, e) });
     });
     chip.addEventListener('drop', (e) => {
       e.preventDefault();
       this.clearDropCues();
       const fromId = e.dataTransfer?.getData('text/plain');
       if (!fromId || fromId !== this.draggedId) return; // a drag from another window or plain text
+      const half = TabBar.halfOf(chip, e);
       const ids = this.draggedIds.slice();
       this.endTabDrag();
-      this.callbacks.onDropTabs?.(ids, { kind: 'chip', groupId: group.id });
+      this.callbacks.onDropTabs?.(ids, { kind: 'chip', groupId: group.id, half });
     });
 
     // The list of a folded group's tabs: on hover, and on keyboard focus (focus-visible: a click's focus doesn't count).

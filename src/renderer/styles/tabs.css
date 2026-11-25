@@ -187,7 +187,8 @@
    --ink when it joins none (and marks the joining group's chip .drag-over). A pseudo-element, so no box-shadow of the tab (its
    ink bar, its group's top line, a selection outline) is touched. */
 .tab-bar-tab.drop-before::after,
-.tab-bar-tab.drop-after::after {
+.tab-bar-tab.drop-after::after,
+.tab-bar-group-chip.drop-before::after {
   content: '';
   position: absolute;
   top: 0;
@@ -208,6 +209,10 @@
 .tab-bar-tab.drop-after::after { right: -1px; }
 .tab-bar-tab:first-child.drop-before::after { left: 0; }
 .tab-bar-tab:last-child.drop-after::after { right: 0; }
+/* A chip's left half (25 Nov): the slot before its group, outside it. The same
+   line on the chip's left edge; the strip's first item has no border-left. */
+.tab-bar-group-chip.drop-before::after { left: -2px; }
+.tab-bar-group-chip:first-child.drop-before::after { left: 0; }
 
 /* --- Tab groups ---
  * 19 Nov 2026, the approved sketch's look A, "ink": a grey chip sits

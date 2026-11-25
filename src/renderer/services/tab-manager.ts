@@ -472,7 +472,7 @@ export class TabManager {
       : null;
     rlog('info', '[GROUP] drop', {
       tabs: moving.length,
-      over: over.kind === 'tab' ? { tabId: over.id, half: over.half } : { groupId: over.groupId },
+      over: over.kind === 'tab' ? { tabId: over.id, half: over.half } : { groupId: over.groupId, half: over.half },
       result: placement === null ? 'none' : placement.kind === 'chip' ? 'chip' : placement.why,
       slot: placement?.kind === 'slot' ? placement.index : null,
       before: placement?.kind === 'slot' ? placement.before?.id ?? 'end' : null,

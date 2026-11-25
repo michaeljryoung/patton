@@ -533,7 +533,7 @@ await section('10. Drop on a chip', 9, async () => {
   chip('g2').dispatchEvent(dragEv('dragover'));
   check('dragging a tab over a chip marks it as a drop target', chip('g2').classList.contains('drag-over'));
   chip('g2').dispatchEvent(dragEv('drop'));
-  check('a tab dropped on a chip calls onDropTabs([tab], that chip)', JSON.stringify(callsOf('dropTabs')) === JSON.stringify([['dropTabs', ['a'], { kind: 'chip', groupId: 'g2' }]]), calls);
+  check('a tab dropped on a chip calls onDropTabs([tab], that chip)', JSON.stringify(callsOf('dropTabs')) === JSON.stringify([['dropTabs', ['a'], { kind: 'chip', groupId: 'g2', half: 'right' }]]), calls);
   check('...and no cue is left', !doc.querySelector('.drag-over, .drop-before, .drop-after'), calls);
   grip.dispatchEvent(dragEv('dragend'));
   clear();
@@ -576,7 +576,7 @@ await section('10. Drop on a chip', 9, async () => {
 // Michael: "in Google Chrome, you can drag a tab to the edge of the tab group, and it will include it,
 // whereas in this, that doesn't work. You have to drag it into the middle of it." Every strip item is
 // 100 px wide here (stubbed rects), so x = 20 is a tab's left half and 80 its right.
-await section('10b. Drop slots and their cue', 30, async () => {
+await section('10b. Drop slots and their cue', 50, async () => {
   const realRect = w.Element.prototype.getBoundingClientRect;
   w.Element.prototype.getBoundingClientRect = function () {
     // As a browser does: an element no longer in the document has no box.
@@ -603,7 +603,7 @@ await section('10b. Drop slots and their cue', 30, async () => {
     const startDrag = (id) => { dt.data = {}; tabEl(id).querySelector('.tab-bar-tab-grip').dispatchEvent(ev('dragstart')); };
     /** The cue now: which tab carries the line and on which side, its colour, the chips marked. */
     const cue = () => {
-      const lines = [...doc.querySelectorAll('.drop-before, .drop-after')].map((el) => `${el.dataset.tabId}:${el.classList.contains('drop-before') ? 'before' : 'after'}:${el.style.getPropertyValue('--drop-line')}`);
+      const lines = [...doc.querySelectorAll('.drop-before, .drop-after')].map((el) => `${el.dataset.tabId ?? `[${el.dataset.groupId}]`}:${el.classList.contains('drop-before') ? 'before' : 'after'}:${el.style.getPropertyValue('--drop-line')}`);
       const chips = [...doc.querySelectorAll('.tab-bar-group-chip.drag-over')].map((el) => el.dataset.groupId);
       return `${lines.join(',') || '-'} | ${chips.join(',') || '-'}`;
     };
@@ -625,7 +625,7 @@ await section('10b. Drop slots and their cue', 30, async () => {
     check('the second group\'s first tab, left half: its own shade (group2), its chip; the earlier cue gone', cue() === 'g2a:before:var(--focus) | g2', cue());
     over('a', 'right');
     check('over the dragged tab itself: no cue', cue() === '- | -', cue());
-    chip('g2').dispatchEvent(ev('dragover', 250));
+    chip('g2').dispatchEvent(ev('dragover', 580));
     check('over a chip: that chip marked, no slot line', cue() === '- | g2', cue());
     over('b', 'left');
     tabEl('b').dispatchEvent(ev('dragleave', 220, tabEl('g2a')));
@@ -643,8 +643,8 @@ await section('10b. Drop slots and their cue', 30, async () => {
     clear();
     startDrag('a');
     bar.update(baseTabs().map((t) => (t.id === 'b' ? { ...t, title: 'bravo, busy' } : t)), baseGroups());
-    chip('g2').dispatchEvent(ev('drop'));
-    check('a rebuild held mid-drag: a drop on a chip still delivers that chip', JSON.stringify(callsOf('dropTabs').at(-1)) === JSON.stringify(['dropTabs', ['a'], { kind: 'chip', groupId: 'g2' }]), calls);
+    chip('g2').dispatchEvent(ev('drop', 580));
+    check('a rebuild held mid-drag: a drop on a chip still delivers that chip and its half', JSON.stringify(callsOf('dropTabs').at(-1)) === JSON.stringify(['dropTabs', ['a'], { kind: 'chip', groupId: 'g2', half: 'right' }]), calls);
 
     // A rebuild held during the drag (a title or dot update while Claude works) is applied when the
     // drop ends the drag, which detaches every tab element: the half must be read before that.
@@ -686,7 +686,7 @@ await section('10b. Drop slots and their cue', 30, async () => {
     startDrag('a');
     over('b', 'left');
     check('folded Games: the slot after its chip is not a join (ink, no chip)', cue() === 'b:before:var(--ink) | -', cue());
-    chip('g1').dispatchEvent(ev('dragover', 50));
+    chip('g1').dispatchEvent(ev('dragover', 180));
     check('...its chip still takes the drop', cue() === '- | g1', cue());
     over('b', 'left');
     dropOn('b', 'left');
@@ -714,6 +714,80 @@ await section('10b. Drop slots and their cue', 30, async () => {
     check('...dropped: onDropTabs([a, g2b], b left)', JSON.stringify(callsOf('dropTabs').at(-1)) === JSON.stringify(['dropTabs', ['a', 'g2b'], { kind: 'tab', id: 'b', half: 'left' }]), calls);
     check('...both join Games at its end, in strip order, g2 still one run', order() === 'g1a@g1 g1b@g1 a@g1 g2b@g1 b g2a@g2 g2c@g2', order());
     check('...no cue left', cue() === '- | -', cue());
+    tabEl('a').querySelector('.tab-bar-tab-grip').dispatchEvent(ev('dragend'));
+
+    // The chip's two halves (25 Nov; "Wake is currently inside the low group ... drag it to the left of the low group
+    // so that it's outside it but on the far left"): [g1] g1a g1b | a | b ... Every item 100 px wide: chip at 0, x = 20 left, 80 right.
+    const chipOver = (id, x) => chip(id).dispatchEvent(ev('dragover', x));
+    const chipDrop = (id, x) => chip(id).dispatchEvent(ev('drop', x));
+    draw([{ id: 'g1a', title: 'chess', active: true, groupId: 'g1' }, { id: 'g1b', title: 'go', active: false, groupId: 'g1' }, { id: 'a', title: 'alpha', active: false }, { id: 'b', title: 'bravo', active: false }]);
+    clear();
+    startDrag('g1a');
+    chipOver('g1', 20);
+    check('chip-left, a group at the strip\'s start: an ink line on the chip\'s left edge, the chip not marked', cue() === '[g1]:before:var(--ink) | -', cue());
+    check('...the line is on the chip itself (first child), and the chip is not .drag-over', chip('g1').classList.contains('drop-before') && !chip('g1').classList.contains('drag-over') && chip('g1') === strip().firstElementChild);
+    chipOver('g1', 80);
+    check('chip-right with every dragged tab already in the group: no cue', cue() === '- | -', cue());
+    chipOver('g1', 20);
+    chipDrop('g1', 20);
+    check('...dropped on the left half: onDropTabs([g1a], chip g1, left)', JSON.stringify(callsOf('dropTabs').at(-1)) === JSON.stringify(['dropTabs', ['g1a'], { kind: 'chip', groupId: 'g1', half: 'left' }]), calls);
+    check('...his case: g1a is out of Games, still first, the group whole after it', order() === 'g1a g1b@g1 a b' && cue() === '- | -', { order: order(), cue: cue() });
+    tabEl('g1a').querySelector('.tab-bar-tab-grip').dispatchEvent(ev('dragend'));
+    // The same line over a tab elsewhere: a (ungrouped, right) onto g1's chip.
+    startDrag('a');
+    chipOver('g1', 120);
+    check('an ungrouped tab from the right over the chip\'s left half (the chip is the second item): ink line, no mark', cue() === '[g1]:before:var(--ink) | -', cue());
+    chipOver('g1', 180);
+    check('...over its right half: the chip marked, no line (it joins)', cue() === '- | g1', cue());
+    chipDrop('g1', 180);
+    check('...dropped there: onDropTabs([a], chip g1, right), delivered with its half', JSON.stringify(callsOf('dropTabs').at(-1)) === JSON.stringify(['dropTabs', ['a'], { kind: 'chip', groupId: 'g1', half: 'right' }]), calls);
+    tabEl('a').querySelector('.tab-bar-tab-grip').dispatchEvent(ev('dragend'));
+
+    // No-op: an ungrouped tab already just before the chip.
+    draw(baseTabs());
+    clear();
+    startDrag('a');
+    chipOver('g1', 120);
+    check('chip-left where the tab already is (a, just before Games): no cue', cue() === '- | -', cue());
+    chipDrop('g1', 120);
+    check('...and the drop changes nothing', order() === 'a g1a@g1 g1b@g1 b g2a@g2 g2b@g2 g2c@g2', order());
+    tabEl('a').querySelector('.tab-bar-tab-grip').dispatchEvent(ev('dragend'));
+
+    // Two adjacent groups: a | [g1] g1a g1b | [g2] g2a g2b g2c; chip g2 sits at 400.
+    draw(baseTabs().filter((t) => t.id !== 'b'));
+    startDrag('a');
+    chipOver('g2', 420);
+    check('two adjacent groups: over the second chip\'s left half, an ink line on that chip', cue() === '[g2]:before:var(--ink) | -', cue());
+    chipDrop('g2', 420);
+    check('...a lands ungrouped between the groups', order() === 'g1a@g1 g1b@g1 a g2a@g2 g2b@g2 g2c@g2', order());
+    tabEl('a').querySelector('.tab-bar-tab-grip').dispatchEvent(ev('dragend'));
+
+    // A folded group: left half out in front of it, right half joins.
+    fold('g1');
+    startDrag('b');
+    chipOver('g1', 120);
+    check('folded Games: the chip\'s left half is an ink line, the chip not marked', cue() === '[g1]:before:var(--ink) | -', cue());
+    chipOver('g1', 180);
+    check('...its right half marks the chip', cue() === '- | g1', cue());
+    chipOver('g1', 120);
+    chipDrop('g1', 120);
+    check('...dropped left: b sits ungrouped just before the folded group', order() === 'a b g1a@g1 g1b@g1 g2a@g2 g2b@g2 g2c@g2', order());
+    tabEl('b').querySelector('.tab-bar-tab-grip').dispatchEvent(ev('dragend'));
+
+    // A selection dropped on a chip's left half.
+    draw();
+    meta('g2b');
+    clear();
+    startDrag('g2b');
+    chipOver('g1', 120);
+    check('a selection over the chip\'s left half: an ink line (g2b leaves its group)', cue() === '[g1]:before:var(--ink) | -', cue());
+    chipDrop('g1', 120);
+    check('...dropped: onDropTabs([a, g2b], chip g1, left), both ungrouped before Games, g2 whole', JSON.stringify(callsOf('dropTabs').at(-1)) === JSON.stringify(['dropTabs', ['a', 'g2b'], { kind: 'chip', groupId: 'g1', half: 'left' }]) && order() === 'a g2b g1a@g1 g1b@g1 b g2a@g2 g2c@g2', { calls, order: order() });
+    check('...no cue left', cue() === '- | -', cue());
+    // The CSS draws the chip's line like a tab's, at its left edge.
+    const css = readFileSync(join(repo, 'src/renderer/styles/tabs.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    check('CSS: the chip\'s drop-before line is the tab\'s (--drop-line, ink), at its left edge, flush at the strip\'s start', /\.tab-bar-group-chip\.drop-before::after\s*\{\s*left:\s*-2px/.test(css) && /\.tab-bar-group-chip:first-child\.drop-before::after\s*\{\s*left:\s*0/.test(css), css.match(/[^}]*group-chip\.drop-before[^}]*}/g));
+    check('...and the chip is positioned (so the line anchors to it)', /\.tab-bar-group-chip\s*\{[^}]*position:\s*relative/.test(css));
   } finally {
     applyDrops = false;
     w.Element.prototype.getBoundingClientRect = realRect;
@@ -869,7 +943,7 @@ await section('12. The folded chip\'s list stays inside the window\'s right edge
   // The chip's drop line (a drop on it, or a slot that joins its group) and the slot line between
   // tabs (24 Nov 2026): --drop-line, which tab-bar.ts sets to --focus when the slot joins a group, else ink.
   const drops = { chip: dropVar('.tab-bar-group-chip.drag-over') };
-  const slotLine = /\.tab-bar-tab\.drop-before::after,\s*\.tab-bar-tab\.drop-after::after\s*\{[^}]*background:\s*var\(--drop-line, var\(--ink\)\)/.test(tabsCss.replace(/\/\*[\s\S]*?\*\//g, ''));
+  const slotLine = /\.tab-bar-tab\.drop-before::after,\s*\.tab-bar-tab\.drop-after::after,\s*\.tab-bar-group-chip\.drop-before::after\s*\{[^}]*background:\s*var\(--drop-line, var\(--ink\)\)/.test(tabsCss.replace(/\/\*[\s\S]*?\*\//g, ''));
   check('shades: the chip\'s drop line names a colour token, and the slot line is --drop-line falling back to ink', !!drops.chip && slotLine, { drops, slotLine });
   for (const mode of ['light', 'dark']) {
     const T = (n) => colourIn(mode, n);
