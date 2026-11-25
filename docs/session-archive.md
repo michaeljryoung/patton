@@ -960,3 +960,31 @@ _Earlier entries archived → `docs/session-archive.md` (latest trim 2026-11-24,
 - His "This is taking a very long time" and "I think minor things are worth fixing": memory `patton-fix-minors-fast-loop`. About 2–3% of his week.
 
 _Earlier entries archived → `docs/session-archive.md` (latest trim 2026-11-24, S63)._
+
+## Session Log (S65 trim 2026-11-25)
+
+### 2026-11-22 (Session 61 — tried with him before shipping; page titles, the review tab, clean copy, the Esc restore, the ring; v1.36.1 → v1.38.0 released, not installed)
+- His "you didn't even test the notification charm with me ... Did you just build them all without testing anything?": a try-out page playing the real `notification-sound.ts` (https://claude.ai/code/artifact/f74647ea-0491-4524-b765-4046100061bf) gave "low marimba" and box fill B, v1.36.1. The global rule on taste decisions now names looks and sounds (provenance in central-claude-md `35eaaa1`).
+- Artifact bookmarks: Chrome's history showed every click opened the page; the failure was the claude.ai login, outside Patton ("not one to do here"). His "3 yes": page titles on artifact bookmarks and session-bar links (two reviews), v1.37.0, with the long-draft history log fix.
+- His later asks, each built in its own worktree, reviewed fresh, fixed, then merged on `integrate/s61`: group shades (B, picked on https://claude.ai/code/artifact/80e4187e-da0c-4482-90d9-46ac54ea1c36), clean copy, the Word-document review tab (`docs/review-tab.md`), the Esc double-send (D18; the joined message read in his outreach transcript), the House ring (Claude Code keeps its root `working` while a subagent runs), three long-draft fixes from his screenshot, no blue open dot in bookmarks. Reviews found two criticals in the review tab (a space in the soffice profile path; a .docx with tracked changes corrupted on save) and a Pause-all stash loss; all fixed.
+- Send to Drive tested once for real on his yes: personal account, the test doc deleted, an empty `Patton` folder left. Preview page https://claude.ai/code/artifact/ee7b5553-4a3f-4f2a-ac33-189f8f22c6b7; his "nice": main fast-forwarded to `1e270d6`, v1.38.0 released, cask `218b4a84…` equals the DMG's digest. /Applications untouched (20 Nov build).
+
+_Earlier entries archived → `docs/session-archive.md` (latest trim 2026-11-24, S64)._
+
+## Decisions (S65 trim 2026-11-25)
+
+- **2026-11-23 (S62) — Pause all errs toward sending.** A Stop verdict saying tasks or timers remain is kept until a newer verdict or Claude leaves, never cleared when a turn starts: an Esc or an API error ends a turn with no Stop, and forgetting a `/loop` leaves it running on a shut lid. At worst a quiet chat gets one extra "pause" after an interrupted turn.
+
+- **2026-11-23 (S62) — A shell tab shows the command running now, else "Terminal".** Rejected after reviews: rewriting `pane.title` when Claude leaves (a 2 s timing guess missed titles) and remembering Claude's last title (a second session with the same or no title brought the old topic back). Prompt marks bound a title's life to its command; without OSC 133, titles set while Claude ran stay hidden.
+
+- **2026-11-24 (S63) — The checkpoint circle waits only for the checkpoint's own background work.** A task is dated by its launch key in the transcript or a subagent's file (a resume restarts the date); a rescued checkpoint adds only the turn of its first `--message` commit step; anything undatable holds. It errs toward red later, never early, S54's complaint.
+
+- **2026-11-24 (S63) — With Patton quit and the release run queued, install from the merged commit.** The build reads the previous tag plus commits (1.42.0+1); the tag lands later on the same sha, so only the number differs until the next install.
+
+## Gotchas (S65 trim 2026-11-25)
+
+- **Patton writes Ctrl+C to Claude only on an `idle` root, 2 s after the last Enter, over a bar that provably holds the expected text** (S61). Ctrl+C on Claude's empty bar or on a working Claude interrupts the turn, and `working` can come 763 ms after a send; D18's restore waits out the 2 s and otherwise leaves the text in Claude's bar with the note (`ctrlCRefusal` in `pane.ts`, `docs/compose-box.md` D18).
+
+- **After Patton resizes a terminal, Claude's bar is unreadable until Claude redraws** (S60). xterm's shrink drops the lines below the cursor first, which takes Claude's lower rule and footer; Claude repaints only the visible screen on any resize. Anything keyed on the bar's row waits for the first fresh reading after Patton's own resize (the compose box's "settling", D15), never for a fixed delay.
+
+- **The icon's source draws its digits as SVG text in Menlo** (S63, `build/icon.svg` = F3 from `docs/mocks/icon-studies/portrait_rain.py`): re-render it with headless Chrome on this Mac, transparent ground, and note an SVG `clipPath` ignores a `<g>` child.
