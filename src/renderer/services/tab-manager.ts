@@ -199,19 +199,22 @@ export class TabManager {
     this.disposables.push(
       window.patton.pty.onExit((id) => {
         const pane = this.panesByPtyId.get(id);
-        if (pane) {
-          // Find the tab that owns this pane
-          const tab = this.tabs.find(t => t.panes.includes(pane));
-          if (tab) {
-            if (tab.panes.length <= 1) {
-              this.closeById(tab.id).catch(console.error);
-            } else {
-              tab.closePane(pane);
-            }
-          }
-        }
+        // The old shell of a pane being respawned: its end is not the pane's
+        // (respawnTab closes it afterwards if the respawn failed).
+        if (pane && !pane.replacingShell) this.closeEndedPane(pane);
       }),
     );
+  }
+
+  /** A pane's shell ended: close its pane, or its tab when it was the only one. */
+  private closeEndedPane(pane: Pane): void {
+    const tab = this.tabs.find(t => t.panes.includes(pane));
+    if (!tab) return;
+    if (tab.panes.length <= 1) {
+      this.closeById(tab.id).catch(console.error);
+    } else {
+      tab.closePane(pane);
+    }
   }
 
   registerPane(pane: Pane): void {
@@ -227,9 +230,18 @@ export class TabManager {
    * exit of the NEW shell closes the tab as usual and the old one's end does
    * nothing. Throws, with the old shell and its registration intact, on failure.
    */
-  async respawnTab(tab: Tab, opts: { cwd?: string; projectDir?: boolean; hyperlinks?: boolean; allowSplit?: boolean }): Promise<void> {
+  async respawnTab(tab: Tab, opts: { cwd?: string; projectDir?: boolean; hyperlinks?: boolean; allowSplit?: boolean; keepName?: boolean }): Promise<void> {
     const pane = tab.focusedPane;
-    const { oldId, newId } = await tab.respawnShell(opts);
+    let ids: { oldId: number; newId: number };
+    try {
+      ids = await tab.respawnShell(opts);
+    } catch (err) {
+      // The old shell ended while main was starting the new one, which failed:
+      // the pane is dead, so close it as its exit would have.
+      if (pane.shellExited && this.tabs.includes(tab)) this.closeEndedPane(pane);
+      throw err;
+    }
+    const { oldId, newId } = ids;
     this.panesByPtyId.delete(oldId);
     // The tab may have been closed while main started the shell (the pane then
     // destroyed the new one itself and threw above), so only a live pane counts.
@@ -271,8 +283,9 @@ export class TabManager {
     const split = tab.panes.length > 1;
     let asked: string | null = null;
     let answer: boolean | null = null;
+    let pane: Pane | null = null;
     try {
-      const pane = this.reloadPaneOf(tab);
+      pane = this.reloadPaneOf(tab);
       const state = await pane.readInputState();
       const input = pane.pauseInput(state);
       let message: string | null = null;
@@ -285,6 +298,17 @@ export class TabManager {
       } else if (input.draft) {
         asked = state === null ? 'unknown' : 'draft';
         message = 'It has text you haven\'t sent.';
+      } else if (input.stashed) {
+        // Claude Code's stash (his own Ctrl+S) lives in the session being ended.
+        asked = 'stashed';
+        message = 'It has text you stashed.';
+      } else if (!pane.isClaudePane && pane.shellAtPrompt !== true) {
+        // A plain shell: a command (npm run dev, ssh) is lost unless the shell
+        // is known to be at its prompt; with no shell integration it is unknown.
+        asked = pane.shellAtPrompt === false ? 'command' : 'unknown-shell';
+        message = pane.shellAtPrompt === false
+          ? 'A command is still running in it.'
+          : 'A command may still be running in it.';
       }
       if (message !== null) {
         const subject = tab.title?.trim() ? `“${tab.title.trim()}”` : 'this tab';
@@ -294,8 +318,9 @@ export class TabManager {
           confirmLabel: 'Close and Reload',
           cancelLabel: 'Cancel',
           defaultFocus: 'confirm',
-          // Opened from a menu: no shortcut confirms it, Enter waits out the dwell.
-          shortcutConfirms: false,
+          // Opened from a menu, not by ⌘W: a ⌘W while it is up is swallowed, so only
+          // its button (or Enter after the dwell) reloads.
+          shortcutIgnored: true,
           confirmDwellMs: CONFIRM_SHORTCUT_DWELL_MS,
         });
         answer = ok;
@@ -312,20 +337,31 @@ export class TabManager {
       }
       const settings = await window.patton.settings.get();
       const startup = Boolean(settings.startupCommand);
-      // runStartupCommand types into the focused pane, and so does respawnTab.
+      // respawnTab replaces the focused pane.
       if (tab.focusedPane !== pane) tab.focusPaneById(pane.id);
       await this.respawnTab(tab, {
         cwd: project.worktree?.path ?? project.root,
         projectDir: true,
         hyperlinks: startup,
         allowSplit: true,
+        keepName: true,
       });
       rlog('info', '[TAB] close and reload', { tabId, pane: pane.id, split, asked, answer, startup });
       if (!this.tabs.includes(tab)) return;
-      if (startup) runStartupCommand(tab, settings.startupCommand);
+      // Bound to the replaced pane: he may have clicked or split another one
+      // while main started the shell, and the command must not follow the focus.
+      if (startup && !runStartupCommand(tab, settings.startupCommand, undefined, { pane })) {
+        rlog('info', '[TAB] close and reload ignored', { tabId, reason: 'pane gone before the startup command' });
+      }
       announce(startup ? `Reloading ${name}` : `Reloading ${name}; no startup command is set`);
-      if (this.activeTab === tab) tab.focusedPane.focus();
+      // Focus goes to the new shell unless he has moved to another pane since.
+      if (this.activeTab === tab && tab.focusedPane === pane) pane.focus();
     } catch (err) {
+      // The tab or pane closed while main started the shell: nothing to report.
+      if (!this.tabs.includes(tab) || (pane !== null && !tab.panes.includes(pane))) {
+        rlog('info', '[TAB] close and reload ignored', { tabId, reason: 'tab or pane closed during the reload' });
+        return;
+      }
       rlog('error', '[TAB] close and reload failed', { tabId, error: String(err) });
       announce('Could not reload the tab; it is left as it was', 'assertive');
     } finally {

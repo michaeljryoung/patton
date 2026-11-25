@@ -13,12 +13,15 @@
 // tracker failing, and Cancel leaves the old pty alone; a split tab respawns
 // only the pane Claude runs in; a second press while one runs is ignored; the
 // tab or pane closing during the question; no startup command; a failed
-// respawn; the log lines.
+// respawn; the log lines; stash and plain-shell questions; the tab's own name
+// and flag kept (the board's cleared); the stale green dot cleared; the startup
+// command bound to the replaced pane; no failure announced for a closed tab or
+// pane; the old shell ending mid-respawn.
 // Run: JSDOM_DIR=<a folder whose node_modules has jsdom> node scripts/check-close-reload.mjs
 import { checker, setUpTabManager, until, tick } from './tab-manager-harness.mjs';
 
 const { check, section, finish } = checker();
-const { w, doc, emit, logs, makeWindow } = await setUpTabManager({ tags: ['TAB', 'GROUP', 'STARTUP'] });
+const { w, doc, emit, logs, makeWindow } = await setUpTabManager({ tags: ['TAB', 'GROUP', 'STARTUP', 'DOT'] });
 
 // ── A fake main on top of the harness's window.patton ──
 const state = {
@@ -29,7 +32,10 @@ const state = {
   respawnDelayMs: 0,
   nextPty: 1000,
   settingsCalls: 0,
+  inputOverride: null, // extra fields on main's unsent-input state (a stash)
 };
+const exitListeners = [];
+const exitPty = (id) => { for (const cb of exitListeners) cb(id); };
 const PROJECTS = {
   '/proj/alpha': { root: '/proj/alpha', defaultName: 'alpha' },
   '/proj/main': { root: '/proj/main', defaultName: 'main', worktree: { name: 'feature', path: '/proj/main-wt' } },
@@ -48,13 +54,14 @@ const ptyStub = new Proxy(basePty, {
       return id;
     };
     if (p === 'write') return (id, data) => { state.writes.push({ id, data }); };
+    if (p === 'onExit') return (cb) => { exitListeners.push(cb); return () => { const i = exitListeners.indexOf(cb); if (i >= 0) exitListeners.splice(i, 1); }; };
     if (p === 'destroy') return (id) => { state.destroyed.push(id); };
     if (p === 'getCwd') return async (id) => state.creates.find((c) => c.id === id)?.opts?.cwd ?? '';
     if (p === 'inputState') return async (ids) => {
       if (state.inputState === 'fail') throw new Error('no tracker');
       if (state.inputState === 'null') return ids.map(() => null);
       const dirty = state.inputState === 'dirty';
-      return ids.map(() => ({ dirty, length: dirty ? 4 : 0, lastInputAt: 0, slashSubmitAt: 0, userStashAt: 0, pattonStashAt: 0 }));
+      return ids.map(() => ({ dirty, length: dirty ? 4 : 0, lastInputAt: 0, slashSubmitAt: 0, userStashAt: 0, pattonStashAt: 0, ...(state.inputOverride ?? {}) }));
     };
     return t[p];
   },
@@ -76,6 +83,15 @@ console.error = (...args) => {
   else origError(...args);
 };
 
+// Every announcement (the announcer's live regions; their text clears itself).
+const announced = [];
+new w.MutationObserver((records) => {
+  for (const r of records) {
+    const el = r.target.nodeType === 1 ? r.target : r.target.parentElement;
+    if (el?.getAttribute?.('role') === 'status' && el.hasAttribute('aria-live') && el.textContent) announced.push({ text: el.textContent, live: el.getAttribute('aria-live') });
+  }
+}).observe(doc.body, { childList: true, characterData: true, subtree: true });
+
 const root = (st, extra = '') => `\x1b]7501;state=${st}:app=claude-code${extra}\x07`;
 const tabEl = (tm, id) => tm.bar.querySelector(`.tab-bar-tab[data-tab-id="${id}"]`);
 const fire = (el, type, init = {}) => el.dispatchEvent(new w.MouseEvent(type, { bubbles: true, cancelable: true, button: 0, screenX: 50, screenY: 50, ...init }));
@@ -91,7 +107,7 @@ const dialog = () => doc.querySelector('.confirm-dialog-overlay.visible');
 const dialogText = (sel) => dialog()?.querySelector(sel)?.textContent ?? '';
 const reset = () => {
   state.creates.length = 0; state.respawns.length = 0; state.writes.length = 0; state.destroyed.length = 0;
-  state.startupCommand = 'cc'; state.inputState = 'clean'; state.failRespawn = false; state.respawnDelayMs = 0;
+  state.startupCommand = 'cc'; state.inputState = 'clean'; state.failRespawn = false; state.respawnDelayMs = 0; state.inputOverride = null;
 };
 const logsSince = (mark, msg) => logs.slice(mark).filter((l) => l.msg === msg);
 /** Open a project tab and let its project lookup land. */
@@ -156,7 +172,12 @@ await section(async () => {
   tm.switchToId(tab.id);
   await claudeAtRest(tab.focusedPane);
   const oldPty = tab.focusedPane.ptyId;
-  tab.setFlag?.('red');
+  tab.setFlag('red');
+  tab.setCustomTitle('My name');
+  const pane0 = tab.focusedPane;
+  let focusCalls = 0;
+  const focusOrig = pane0.focus.bind(pane0);
+  pane0.focus = (...a) => { focusCalls++; return focusOrig(...a); };
   const mark = logs.length;
   openMenu(tm, tab.id);
   check('in place: the menu item runs', chooseItem('Close and Reload'));
@@ -174,7 +195,9 @@ await section(async () => {
   check('same strip index', tm.getTabs().indexOf(tab) === indexBefore, tm.getTabs().indexOf(tab));
   check('same group', JSON.stringify(tm.getTabGroups().map((g) => g.tabIds.join())) === JSON.stringify(groupBefore));
   check('other tabs untouched', first.ptyId !== null && last.ptyId !== null && state.respawns.length === 1);
-  check('a fresh session: the colour flag is cleared', !tab.flag, tab.flag);
+  check('the tab keeps its own colour flag', tab.flag === 'red', tab.flag);
+  check('the tab keeps its own name', tab.hasCustomTitle && tab.title === 'My name', tab.title);
+  check('the new shell\'s pane is focused after the reload', focusCalls >= 1 && tm.activeTab === tab, focusCalls);
   const l = logsSince(mark, '[TAB] close and reload');
   check('log: [TAB] close and reload {tabId, pane, split:false, asked:null, answer:null, startup:true}',
     l.length === 1 && l[0].data.tabId === tab.id && l[0].data.split === false && l[0].data.asked === null && l[0].data.answer === null && l[0].data.startup === true && typeof l[0].data.pane === 'string', l.map((x) => x.data));
@@ -195,6 +218,9 @@ await section(async () => {
 const reasons = [
   ['work running', async (tab) => { emit(tab.focusedPane.ptyId, root('working')); await until(() => tab.focusedPane.pauseInput(null).running); }, 'Claude is still working in it.', 'running', 'clean'],
   ['Claude waiting on him', async (tab) => { emit(tab.focusedPane.ptyId, root('blocked', ':kind=permission')); await until(() => tab.focusedPane.pauseInput(null).blocked); }, 'Claude is waiting on you in it.', 'blocked', 'clean'],
+  ['a working child over a finished turn', async (tab) => { emit(tab.focusedPane.ptyId, '\x1b]7501;state=working:id=bg1:app=claude-code\x07'); await until(() => tab.focusedPane.pauseInput(null).running); }, 'Claude is still working in it.', 'running', 'clean'],
+  ['a kept Stop verdict with tasks', async (tab) => { emit(tab.focusedPane.ptyId, '\x1b]777;patton;stop;tasks=2;crons=0\x07'); await until(() => tab.focusedPane.pauseInput(null).running); }, 'Claude is still working in it.', 'running', 'clean'],
+  ['a stash from his own Ctrl+S', async () => {}, 'It has text you stashed.', 'stashed', 'stashed'],
   ['unsent input', async () => {}, 'It has text you haven\'t sent.', 'draft', 'dirty'],
   ['the tracker failing', async () => {}, 'It has text you haven\'t sent.', 'unknown', 'fail'],
   ['the tracker answering null', async () => {}, 'It has text you haven\'t sent.', 'unknown', 'null'],
@@ -206,7 +232,7 @@ for (const [name, setUp, text, asked, tracker] of reasons) {
     const tab = await projectTab(tm, '/proj/alpha');
     await claudeAtRest(tab.focusedPane);
     await setUp(tab);
-    state.inputState = tracker;
+    if (tracker === 'stashed') { state.inputState = 'clean'; state.inputOverride = { userStashAt: Date.now() + 60_000 }; } else state.inputState = tracker;
     const oldPty = tab.focusedPane.ptyId;
     const mark = logs.length;
     const p = tm.closeAndReload(tab.id);
@@ -284,6 +310,7 @@ await section(async () => {
   const ign = logsSince(mark, '[TAB] close and reload ignored');
   check('second call: logged as ignored', ign.length === 1 && ign[0].data.tabId === tab.id && /under way/.test(ign[0].data.reason), ign.map((x) => x.data));
   state.respawnDelayMs = 0;
+  await claudeAtRest(tab.focusedPane); // the fresh shell is no Claude pane: Claude runs again
   await tm.closeAndReload(tab.id);
   check('after it finished a new call works again', state.respawns.length === 2);
 
@@ -325,6 +352,7 @@ await section(async () => {
 
   reset();
   state.failRespawn = true;
+  await claudeAtRest(tab.focusedPane);
   const oldPty = tab.focusedPane.ptyId;
   const mark2 = logs.length;
   await tm.closeAndReload(tab.id);
@@ -337,6 +365,176 @@ await section(async () => {
   const plain = await tm.createTab();
   await tm.closeAndReload(plain.id);
   check('a tab with no project: nothing happens', state.respawns.length === 0);
+});
+
+// ── 8. A plain shell tab: ask unless the shell is known to be at its prompt ──
+const OSC133 = (c) => `\x1b]133;${c}\x07`;
+for (const [name, marks, asks, text, asked] of [
+  ['a command running (OSC 133 C)', [OSC133('A'), OSC133('C')], true, 'A command is still running in it.', 'command'],
+  ['no shell integration (no marks)', [], true, 'A command may still be running in it.', 'unknown-shell'],
+  ['at its prompt (A)', [OSC133('A')], false, '', null],
+  ['a command finished (C then D)', [OSC133('C'), OSC133('D')], false, '', null],
+]) {
+  await section(async () => {
+    reset();
+    const tm = await makeWindow([]);
+    const tab = await projectTab(tm, '/proj/alpha');
+    const pane = tab.focusedPane;
+    for (const m of marks) emit(pane.ptyId, m);
+    await tick(30);
+    const oldPty = pane.ptyId;
+    const mark = logs.length;
+    const p = tm.closeAndReload(tab.id);
+    if (asks) {
+      check(`shell (${name}): a dialog opens`, await until(() => !!dialog()));
+      const msg = dialogText('.confirm-dialog-message');
+      check(`shell (${name}): says why`, msg.includes(text), msg);
+      await answer('cancel');
+      await p;
+      check(`shell (${name}): Cancel leaves the shell alone`, state.respawns.length === 0 && pane.ptyId === oldPty);
+      const l = logsSince(mark, '[TAB] close and reload');
+      check(`shell (${name}): cancel logged as asked:${asked}`, l.length === 1 && l[0].data.asked === asked && l[0].data.answer === false, l.map((x) => x.data));
+    } else {
+      await p;
+      check(`shell (${name}): no question, reloaded at once`, !dialog() && state.respawns.length === 1 && state.respawns[0].oldId === oldPty, state.respawns);
+      check(`shell (${name}): the fresh shell's prompt state starts unknown`, pane.shellAtPrompt === null, pane.shellAtPrompt);
+    }
+  });
+}
+
+// ── 9. The board's fresh tab still loses its own name and flag; Close and Reload keeps them ──
+await section(async () => {
+  reset();
+  const tm = await makeWindow([]);
+  const tab = await projectTab(tm, '/proj/alpha');
+  tab.setFlag('blue');
+  tab.setCustomTitle('Mine');
+  await tm.respawnTab(tab, { cwd: '/proj/alpha', projectDir: true });
+  check('board respawn (no keepName): the flag and the own name are cleared', tab.flag === null && !tab.hasCustomTitle, { flag: tab.flag, own: tab.hasCustomTitle });
+});
+
+// ── 10. A stale green dot goes with the old shell ──
+await section(async () => {
+  reset();
+  state.startupCommand = '';
+  const tm = await makeWindow([]);
+  const other = await tm.createTab();
+  const tab = await projectTab(tm, '/proj/alpha');
+  tm.switchToId(other.id);
+  await tick(10);
+  emit(tab.focusedPane.ptyId, root('working'));
+  await until(() => tab.focusedPane.pauseInput(null).running);
+  emit(tab.focusedPane.ptyId, root('done'));
+  check('dot: the finished turn on an inactive tab raises the green dot', await until(() => tab.awaitingInput === true, 3000));
+  const mark = logs.length;
+  await tm.closeAndReload(tab.id);
+  check('dot: Close and Reload clears it', tab.awaitingInput === false);
+  check('dot: logged green cleared with why respawn', logsSince(mark, '[DOT] green cleared').some((l) => l.data.why === 'respawn' && l.data.tabId === tab.id), logs.slice(mark).map((l) => l.msg));
+  // The board's respawn too.
+  emit(tab.focusedPane.ptyId, root('working'));
+  await until(() => tab.focusedPane.pauseInput(null).running);
+  emit(tab.focusedPane.ptyId, root('done'));
+  await until(() => tab.awaitingInput === true, 3000);
+  await tm.respawnTab(tab, { cwd: '/proj/alpha', projectDir: true });
+  check('dot: the board\'s respawn clears it too', tab.awaitingInput === false);
+});
+
+// ── 11. The startup command goes to the replaced pane's new pty only ──
+await section(async () => {
+  reset();
+  const tm = await makeWindow([]);
+  const tab = await projectTab(tm, '/proj/alpha');
+  tm.switchToId(tab.id);
+  const claudePane = tab.focusedPane;
+  await claudeAtRest(claudePane);
+  await tab.splitVertical('/proj/alpha');
+  await tick(30);
+  const shellPane = tab.focusedPane;
+  const shellPty = shellPane.ptyId;
+  state.respawnDelayMs = 200;
+  const p = tm.closeAndReload(tab.id);
+  await tick(60);
+  tab.focusPaneById(shellPane.id); // he clicks the other pane while main starts the shell
+  await p;
+  await tick(1700);
+  const newId = claudePane.ptyId;
+  check('race: the command went to the replaced pane\'s new pty', state.writes.some((x) => x.id === newId && x.data === 'cc\r'), state.writes);
+  check('race: nothing was typed into the pane he clicked', !state.writes.some((x) => x.id === shellPty), state.writes);
+  check('race: his focus stays where he put it', tab.focusedPane === shellPane);
+});
+
+// ── 12. The pane or tab closing while main starts the shell: no failure announced ──
+await section(async () => {
+  reset();
+  const tm = await makeWindow([]);
+  const tab = await projectTab(tm, '/proj/alpha');
+  tm.switchToId(tab.id);
+  const claudePane = tab.focusedPane;
+  await claudeAtRest(claudePane);
+  await tab.splitVertical('/proj/alpha');
+  await tick(30);
+  state.respawnDelayMs = 150;
+  const mark = logs.length;
+  const a = announced.length;
+  const p = tm.closeAndReload(tab.id);
+  await tick(50);
+  tab.closePane(claudePane); // the pane closes while main starts the shell
+  await p;
+  const ign = logsSince(mark, '[TAB] close and reload ignored');
+  check('pane closed meanwhile: logged as ignored', ign.some((l) => /closed during the reload/.test(l.data.reason)), ign.map((x) => x.data));
+  check('pane closed meanwhile: no failure logged or announced', !errorLogs.some((x) => x.data?.tabId === tab.id && x.msg === '[TAB] close and reload failed') && !announced.slice(a).some((x) => /Could not reload/.test(x.text)), announced.slice(a));
+
+  reset();
+  const tm2 = await makeWindow([]);
+  await tm2.createTab();
+  const t2 = await projectTab(tm2, '/proj/alpha');
+  await claudeAtRest(t2.focusedPane);
+  state.respawnDelayMs = 150;
+  const a2 = announced.length;
+  const mark2 = logs.length;
+  const q = tm2.closeAndReload(t2.id);
+  await tick(50);
+  await tm2.closeById(t2.id);
+  await q;
+  check('tab closed meanwhile: no failure announced', !announced.slice(a2).some((x) => /Could not reload/.test(x.text)), announced.slice(a2));
+  check('tab closed meanwhile: logged as ignored', logsSince(mark2, '[TAB] close and reload ignored').length >= 1);
+});
+
+// ── 13. The old shell ending during the respawn does not close the tab ──
+await section(async () => {
+  reset();
+  const tm = await makeWindow([]);
+  await tm.createTab();
+  const tab = await projectTab(tm, '/proj/alpha');
+  tm.switchToId(tab.id);
+  const pane = tab.focusedPane;
+  await claudeAtRest(pane);
+  const oldPty = pane.ptyId;
+  state.respawnDelayMs = 150;
+  const p = tm.closeAndReload(tab.id);
+  await tick(60);
+  exitPty(oldPty); // the old shell ends while main starts the new one
+  await p;
+  check('old shell exit mid-respawn: the tab survives', tm.getTabs().includes(tab));
+  check('old shell exit mid-respawn: the pane runs the new shell', pane.ptyId === state.respawns[0]?.id && pane.ptyId !== oldPty, pane.ptyId);
+  exitPty(pane.ptyId); // the NEW shell ending closes the tab as usual
+  check('old shell exit mid-respawn: the new shell is registered (its exit closes the tab)', await until(() => !tm.getTabs().includes(tab), 3000));
+
+  // ...and when that respawn then fails, the dead pane closes as its exit would have.
+  reset();
+  const tm3 = await makeWindow([]);
+  await tm3.createTab();
+  const t3 = await projectTab(tm3, '/proj/alpha');
+  tm3.switchToId(t3.id);
+  await claudeAtRest(t3.focusedPane);
+  const old3 = t3.focusedPane.ptyId;
+  state.respawnDelayMs = 150;
+  state.failRespawn = true;
+  const q = tm3.closeAndReload(t3.id);
+  await tick(60);
+  exitPty(old3);
+  await q;
+  check('old shell exit, then the respawn fails: the dead tab closes', !tm3.getTabs().includes(t3), tm3.getTabs().length);
 });
 
 finish();

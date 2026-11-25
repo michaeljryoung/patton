@@ -146,10 +146,16 @@ export class Tab {
   /** Replace the shell of this tab's FOCUSED pane (see Pane.respawn). A tab
    *  with splits is refused unless the caller says `allowSplit` (Close and
    *  Reload, which focuses the pane Claude runs in first); the project board's
-   *  fresh tab never needs it. */
-  respawnShell(opts: { cwd?: string; projectDir?: boolean; hyperlinks?: boolean; allowSplit?: boolean }): Promise<{ oldId: number; newId: number }> {
+   *  fresh tab never needs it. `keepName`: the tab survives as itself (Close
+   *  and Reload), so its own name and colour flag stay; the board's fresh tab
+   *  clears both. */
+  respawnShell(opts: { cwd?: string; projectDir?: boolean; hyperlinks?: boolean; allowSplit?: boolean; keepName?: boolean }): Promise<{ oldId: number; newId: number }> {
     if (this._panes.length !== 1 && opts.allowSplit !== true) return Promise.reject(new Error('Only a one-pane tab can have its shell replaced'));
-    return this._focusedPane.respawn({ cwd: opts.cwd, projectDir: opts.projectDir, hyperlinks: opts.hyperlinks }).then((ids) => {
+    const pane = this._focusedPane;
+    return pane.respawn({ cwd: opts.cwd, projectDir: opts.projectDir, hyperlinks: opts.hyperlinks }).then((ids) => {
+      // The old shell's "needs you" dot is stale: nothing waits in the new one.
+      this.clearAwaitingInput(pane, 'respawn');
+      if (opts.keepName === true) return ids;
       // The new shell is a new start: a name or colour kept from a restored
       // tab is not this project's, so the tab takes the project's name again
       // (as a new project tab does).

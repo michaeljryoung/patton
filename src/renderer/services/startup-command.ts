@@ -1,3 +1,4 @@
+import type { Pane } from '../components/pane';
 import type { Tab } from '../components/tab';
 import { rlog } from './renderer-logger';
 
@@ -31,16 +32,20 @@ export interface PendingSend {
  * miss it.
  *
  * `opts.label` names the command in the log (default: "Startup command").
- * Returns null when nothing was armed (no command, or the tab has no PTY),
- * else a handle that cancels the send.
+ * `opts.pane` binds the send to one pane of the tab (default: the tab's
+ * focused pane, read now): its PTY and its prompt watch, whatever the focus
+ * does later. A pane that is not in the tab, or has no PTY, arms nothing.
+ * Returns null when nothing was armed (no command, or no PTY), else a handle
+ * that cancels the send.
  */
 export function runStartupCommand(
   tab: Tab,
   cmd: string,
   go: Promise<boolean> = Promise.resolve(true),
-  opts: { label?: string } = {},
+  opts: { label?: string; pane?: Pane } = {},
 ): PendingSend | null {
-  const ptyId = tab.ptyId;
+  const target = opts.pane ?? tab.focusedPane;
+  const ptyId = opts.pane ? (tab.panes.includes(opts.pane) ? opts.pane.ptyId : null) : tab.ptyId;
   const label = opts.label ?? 'Startup command';
   if (!cmd || ptyId === null) return null;
 
@@ -63,7 +68,7 @@ export function runStartupCommand(
     fireIfDue();
   };
 
-  disposePrompt = tab.focusedPane.terminalView.onPromptState((state) => {
+  disposePrompt = target.terminalView.onPromptState((state) => {
     if (state === 'prompt') ready('prompt');
   });
   timer = setTimeout(() => ready('fallback'), PROMPT_FALLBACK_MS);

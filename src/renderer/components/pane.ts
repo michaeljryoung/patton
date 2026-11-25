@@ -1,4 +1,4 @@
-import { TerminalView, type ProgramStatusEvent } from './terminal-view';
+import { TerminalView, type ProgramStatusEvent, type PromptState } from './terminal-view';
 import type { ContextReading, PattonState } from '../services/patton-osc';
 import { EditorInput, DEFAULT_COMPOSE_PLACEHOLDER } from './editor-input';
 import { SearchOverlay } from './search-overlay';
@@ -177,6 +177,9 @@ export class Pane {
   private shellStartedAt = 0;
   private shellSawSignal = false;
   private shellSawFirstPrompt = false;
+  // The last OSC 133 state this pane's shell reported (null: none yet, or no
+  // shell integration), for `shellAtPrompt`.
+  private shellPromptState: PromptState | null = null;
   private startedShell = '';
   private lastCwdCheckMs = 0;
   private static readonly CWD_POLL_MS = 2000;
@@ -1989,6 +1992,7 @@ export class Pane {
     this.shellStartedAt = performance.now();
     this.shellSawSignal = false;
     this.shellSawFirstPrompt = false;
+    this.shellPromptState = null;
     this.shellIntegrated = false;
     this.startedShell = '';
     window.patton.pty.getShell(newId).then((shell) => {
@@ -2024,6 +2028,25 @@ export class Pane {
    */
   get shellProgress(): { startedAt: number; sawSignal: boolean; sawFirstPrompt: boolean } {
     return { startedAt: this.shellStartedAt, sawSignal: this.shellSawSignal, sawFirstPrompt: this.shellSawFirstPrompt };
+  }
+
+  /** Main is starting this pane's replacement shell (respawn): an exit of the
+   *  old one is not the pane's end. */
+  get replacingShell(): boolean {
+    return this.replacingPtyId !== null;
+  }
+
+  /** The pane's shell has ended (its exit was seen and no new one replaced it). */
+  get shellExited(): boolean {
+    return this.ptyExited;
+  }
+
+  /** Whether the shell is at its prompt (OSC 133: the prompt shown or the
+   *  last command done), false while a command runs, null when it can't say
+   *  (no shell integration, or no mark yet). */
+  get shellAtPrompt(): boolean | null {
+    if (this.shellPromptState === null) return null;
+    return this.shellPromptState !== 'command';
   }
 
   async init(): Promise<void> {
@@ -2072,6 +2095,7 @@ export class Pane {
       this.terminalView.onPromptState((state) => {
         this.shellIntegrated = true;
         this.shellSawSignal = true;
+        this.shellPromptState = state;
         if (state === 'idle') this.shellSawFirstPrompt = true;
       }),
     );
