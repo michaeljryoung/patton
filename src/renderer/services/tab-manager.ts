@@ -460,8 +460,9 @@ export class TabManager {
   /** Tabs dragged on the strip (one, or a selection) dropped on a tab or a
    *  chip: services/tab-groups.ts dropPlacement decides the slot and the group
    *  (over a tab: its left half = before it, right half = after it; the slot
-   *  right after an open group's last tab joins that group; a chip adds, as Add
-   *  to does). The strip's cue while dragging comes from the same function.
+   *  right after an open group's last tab joins that group; a chip's right half
+   *  adds, as Add to does, and its left half is the slot just before the group,
+   *  outside it). The strip's cue while dragging comes from the same function.
    *  One `[GROUP] drop` line per drop, what was decided included. */
   dropTabs(ids: readonly string[], over: TabDropTarget): void {
     const moving = this.tabsInOrder(ids);
@@ -506,7 +507,7 @@ export class TabManager {
         announce(`${tab.title} moved`);
       }
     } else {
-      rlog('info', '[TAB] moved together', { count: moving.length, to: over.kind === 'tab' ? over.id : 'end' });
+      rlog('info', '[TAB] moved together', { count: moving.length, to: over.kind === 'tab' ? over.id : `chip ${over.groupId} ${over.half}` });
       if (changed.length > 0) rlog('info', '[GROUP] tabs moved between groups', { count: changed.length, to, by: 'drag' });
       announce(`${TabManager.tabsWord(moving.length)} moved`);
     }

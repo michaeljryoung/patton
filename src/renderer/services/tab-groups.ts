@@ -226,10 +226,13 @@ export function dropPlacement<T>(list: readonly T[], moving: readonly T[], over:
     if (!list.some((x) => groupOf(x) === over.groupId)) return null;
     const rest = list.filter((x) => !movingSet.has(x));
     const firstMember = rest.findIndex((x) => groupOf(x) === over.groupId);
-    const index = firstMember !== -1 ? firstMember : list.slice(0, list.indexOf(block[0])).filter((x) => !movingSet.has(x)).length;
-    const out = insertBlock(rest, block, index, (x) => (movingSet.has(x) ? null : groupOf(x)));
+    const wanted = firstMember !== -1 ? firstMember : list.slice(0, list.indexOf(block[0])).filter((x) => !movingSet.has(x)).length;
+    const out = insertBlock(rest, block, wanted, (x) => (movingSet.has(x) ? null : groupOf(x)));
     const same = out.every((x, i) => x === list[i]) && block.every((x) => groupOf(x) === null);
     if (same) return null;
+    // Where the block landed, not where it was asked for: insertBlock moves a place inside another
+    // group's run to that run's end (the case of a group whose every member moves).
+    const index = out.indexOf(block[0]);
     return { kind: 'slot', list: out, index, before: rest[index] ?? null, group: null, why: 'before-group' };
   }
   const target = over.item;

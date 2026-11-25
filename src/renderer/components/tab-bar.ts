@@ -1242,7 +1242,8 @@ export class TabBar {
       showMenu(e.clientX, e.clientY, false);
     });
 
-    // A tab dropped on the chip joins the group (as "Add to"), open or folded.
+    // A tab dropped on the chip's right half joins the group (as "Add to"), open or folded; on its left half it lands just
+    // before the group, outside it. The half is read before the drag ends: endTabDrag applies a held rebuild that detaches the chip.
     chip.addEventListener('dragover', (e) => {
       e.preventDefault();
       if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';

@@ -974,7 +974,7 @@ await section(async () => {
   check('dropPlacement: chip-left results are ungrouped slots (group null, why before-group)', leftCases.length === 11 && leftCases.every((c) => c[1].group === null && c[1].why === 'before-group'), leftCases.length);
   // Exhaustive: every group, every non-empty subset of up to 3 tabs, chip-left: runs whole, moved tabs ungrouped, never the same list with the same groups.
   {
-    let bad = 0, n = 0;
+    let bad = 0, n = 0, landedBad = 0;
     const ids = items.slice();
     for (const gid of ['G1', 'G2', 'G3', 'G4', 'G5']) {
       for (let m = 1; m < 1 << ids.length; m++) {
@@ -985,9 +985,37 @@ await section(async () => {
         if (p === null) continue;
         const after = (x) => (mv.includes(x) ? null : member[x] ?? null);
         if (p.kind !== 'slot' || p.group !== null || !G.runsAreSound(p.list, after) || [...p.list].sort().join() !== [...items].sort().join()) bad++;
+        // The reported slot (the [GROUP] drop line's index and before) is where the block landed: at `index` of the list without
+        // the moved tabs, just before `before`. When every member moves and the block starts inside another group's run, insertBlock
+        // shifts it past that run, and index/before once still named the place asked for (25 Nov review: 1,917 of 341,753 cases).
+        const rest = p.list.filter((x) => !mv.includes(x));
+        if (p.kind === 'slot' && (p.list.indexOf(items.find((x) => mv.includes(x))) !== p.index || p.before !== (rest[p.index] ?? null) || p.list[p.index + mv.length] !== (p.before ?? undefined))) landedBad++;
       }
     }
     check(`dropPlacement: chip-left over every group x every block of up to 3 tabs (${n}) keeps every item once, every group whole, the block ungrouped`, bad === 0 && n > 500, { bad, n });
+    check(`dropPlacement: chip-left's index and before say where the block landed (in the list without it, just before \`before\`), over the same ${n} cases`, landedBad === 0, { landedBad, n });
+  }
+  // The case that fixture lacks (no group has 3 members): the target group moves whole and a moving tab of another group sits
+  // inside that group's run, so insertBlock shifts the block past the run. a | [Y] b c d | e | [T] f | [U] g h
+  {
+    const list2 = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+    const m2 = { b: 'Y', c: 'Y', d: 'Y', f: 'T', g: 'U', h: 'U' };
+    const one = G.dropPlacement(list2, ['c', 'f'], chipL('T'), gOf(m2), () => false);
+    check('dropPlacement: chip-left, the whole target group and a tab from inside another group move: the block lands past that group, and index/before say so',
+      one && one.list.join('') === 'abdcfegh' && one.index === 3 && one.before === 'e' && one.group === null, one && { list: one.list.join(''), index: one.index, before: one.before });
+    let n2 = 0, bad2 = 0;
+    for (const gid of ['Y', 'T', 'U']) {
+      for (let m = 1; m < 1 << list2.length; m++) {
+        const mv = list2.filter((_, i) => m & (1 << i));
+        if (mv.length > 4) continue;
+        const p = G.dropPlacement(list2, mv, chipL(gid), gOf(m2), () => false);
+        n2++;
+        if (p === null) continue;
+        const rest = p.list.filter((x) => !mv.includes(x));
+        if (p.list.indexOf(mv[0]) !== p.index || p.before !== (rest[p.index] ?? null) || p.list[p.index + mv.length] !== (p.before ?? undefined)) bad2++;
+      }
+    }
+    check(`dropPlacement: chip-left index/before name the landing over every block of up to 4 tabs on a list with a 3-member group (${n2} cases)`, bad2 === 0 && n2 > 300, { bad2, n2 });
   }
   check('dropPlacement: every slot result keeps every item once', slotResults.every((p) => p.list.length === items.length && [...p.list].sort().join() === [...items].sort().join()));
   // The left half of a tab and the right half of its left neighbour are one slot (same order, same group)
