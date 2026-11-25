@@ -1005,3 +1005,14 @@ _Earlier entries archived → `docs/session-archive.md` (latest trim 2026-11-25,
 - **2026-11-24 (S65) — A dropped tab goes into a slot, and a group's right edge joins it** (his Chrome comparison): the half of the tab under the pointer picks before or after; the slot after an open group's last tab joins it; left of a chip is outside (S66: the chip's left half is that slot). Replaces "takes the target tab's group" (`docs/tab-groups.md`).
 
 - **2026-11-25 (S65) — `f3_install` superseded:** the F3 icon arrives with the one install of the latest release (`s65_install`), not an install of its own.
+
+## Session Log (S66 trim 2026-11-25)
+
+### 2026-11-24 (Session 63 — v1.39.0 → v1.42.1 installed and walked through; wake compact, bar rows, the checkpoint's own work, busy dot, multi-select, dismiss-all; icon F3 pushed, not installed)
+- v1.39.0 (06:41) then v1.40.0 (07:06) installed from their tags with Patton quit; the walk-through ended on his "all looks good" (07:12); typescript-eslint 8.73.0 (`6258da4`, full audit 10 → 4, prod 0). Memory: a walk-through list goes in the reply, no page ("we didnt need that artifact").
+- His asks, each in its own worktree, reviewed fresh two or three times and every finding fixed: the wake tab always compact; session bar rows in one font clamped to 3 lines, the folded strip's "!N", then a dismiss-all × (`37344b6`); the Stop hook holds `cpd` only for the checkpoint's own background work (`99c74bf`, 156 probe cases, 260 of 262 real tasks agree with an independent oracle); a still grey dot on busy Claude tabs (W1) and multi-select tabs (S1), both picked on a try-out page.
+- v1.41.0, v1.42.0 and v1.42.1 released; with Patton quit and the run queued, `37344b6` installed at 16:10:11 (Info.plist 1.42.0+1; the v1.42.1 tag later landed on the same sha, cask `0af658f6…` equals the DMG's digest).
+- The icon: ten studies, then A2 (v1.40.0, "a bowler hat" in his Dock), P1 (installed), and from his words ("mostly falling background with subtle face", "the face ... made up of falling numbers") round 6's F3, the portrait drawn by the falling streams (`84564e7`, run queued). His pages now go to https://mjy-pages.vercel.app/ (icon studies: /p/patton-icon-studies/).
+- His Dock tab looked blank mid-turn: by design then, now the W1 dot. The macOS Dock itself belongs to his other session: one change was made here (the Downloads stack removed) and handed over.
+
+_Earlier entries archived → `docs/session-archive.md` (latest trim 2026-11-25, S66)._
