@@ -26,7 +26,8 @@ export async function setUpTabManager({ tags }) {
     stdin: {
       contents: `export { TabManager, WINDOW_FOCUS_SETTLE_MS } from './services/tab-manager';
 export { repairRuns } from './services/tab-groups';
-export * as tabGroups from './services/tab-groups';`,
+export * as tabGroups from './services/tab-groups';
+export * as sessions from './services/sessions';`,
       resolveDir: join(repo, 'src', 'renderer'), loader: 'ts',
     },
     bundle: true, format: 'cjs', platform: 'browser', outfile: join(work, 'renderer.cjs'),
@@ -94,7 +95,7 @@ export * as tabGroups from './services/tab-groups';`,
   }
 
   const R = await import(pathToFileURL(join(work, 'renderer.cjs')).href);
-  const { TabManager, WINDOW_FOCUS_SETTLE_MS, repairRuns, tabGroups } = R.default ?? R;
+  const { TabManager, WINDOW_FOCUS_SETTLE_MS, repairRuns, tabGroups, sessions } = R.default ?? R;
 
   /** A window: its own strip and content, a TabManager, a tab per name (the last selected). */
   async function makeWindow(names) {
@@ -112,7 +113,7 @@ export * as tabGroups from './services/tab-groups';`,
     return tm;
   }
 
-  return { w, doc, emit, feed, logs, makeWindow, windowFocus, TabManager, WINDOW_FOCUS_SETTLE_MS, repairRuns, tabGroups };
+  return { w, doc, emit, feed, logs, makeWindow, windowFocus, TabManager, WINDOW_FOCUS_SETTLE_MS, repairRuns, tabGroups, sessions };
 }
 
 /** check(), section() and the exit guard every check uses. */

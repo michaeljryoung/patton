@@ -78,8 +78,9 @@ interface TabHeaderInfo {
    *  pane's. Its current and automatic names. */
   project?: { name: string; defaultName: string } | null;
   /** The name on the tab comes from its project (Claude runs in it, and no
-   *  name was typed): such a tab is renamed through the project's default
-   *  name, not "Rename Tab…". */
+   *  name was typed). Its menu offers both "Rename Tab…" (a one-off name for
+   *  this tab alone, which wins while set) and "Set Default Tab Name for
+   *  Project…" (the project's name on every tab in it). */
   namedForProject?: boolean;
   active: boolean;
   awaitingInput?: boolean;
@@ -653,20 +654,20 @@ export class TabBar {
       items.push({ separator: true });
       items.push({ label: 'Remove Tab from Selection', action: () => this.removeFromSelection(tabId) });
     }
-    // As the single-tab menu: a tab named for its project gets no Rename Tab…
-    // (its project's default name is set from the single-tab menu).
-    if (!clicked?.namedForProject) {
-      items.push({ separator: true });
-      items.push({
-        label: 'Rename Tab…',
-        shortcut: 'this tab only',
-        action: () => {
-          const liveTitle = this.liveTitleSpan(tabId);
-          const info = this.currentTabInfo(tabId);
-          if (liveTitle && info) this.startTabRename(liveTitle, info);
-        },
-      });
-    }
+    // As the single-tab menu: every tab gets Rename Tab… (a one-off name for
+    // the clicked tab alone), a tab named for its project included (25 Nov:
+    // "you can't rename it as a one-off"); the project's default name is set
+    // from the single-tab menu.
+    items.push({ separator: true });
+    items.push({
+      label: 'Rename Tab…',
+      shortcut: 'this tab only',
+      action: () => {
+        const liveTitle = this.liveTitleSpan(tabId);
+        const info = this.currentTabInfo(tabId);
+        if (liveTitle && info) this.startTabRename(liveTitle, info);
+      },
+    });
     return items;
   }
 
@@ -931,28 +932,30 @@ export class TabBar {
           // --- end bookmarks ---
           // Double-click renames a tab too, but the menu is the way in from the
           // keyboard, and Michael: "should be a rename option on tabs that arent
-          // projects when right click". A tab named for its project (Claude
-          // runs in it; the entry below renames that) gets no entry of its
-          // own; a plain shell in a project folder does, as its name is
-          // "Terminal" or its program's title.
-          ...(!tab.namedForProject ? [
-            { separator: true as const },
-            {
-              label: 'Rename Tab…',
-              action: () => {
-                // The bar may have been rebuilt while the menu was open: look again.
-                // Both the span and the title it prefills are read again: a rename
-                // from another route, or a new title, may have landed since.
-                const liveTitle = this.liveTitleSpan(tab.id);
-                if (!liveTitle) return; // the tab closed meanwhile
-                this.startTabRename(liveTitle, this.currentTabInfo(tab.id) ?? tab);
-              },
+          // projects when right click". 25 Nov, a tab named for its project had
+          // none: "if something is a live project with a default name, you can't
+          // rename it as a one-off. There should be a set default rename and an
+          // adjust rename, because sometimes I just want to know what I'm working
+          // on in that project right now rather than renaming the whole thing."
+          // So every tab has Rename Tab… (this tab alone; an empty name brings
+          // the automatic one back), and on a project's tab it sits directly above
+          // Set Default Tab Name for Project… (every tab in the project, now and
+          // later), in one section.
+          { separator: true as const },
+          {
+            label: 'Rename Tab…',
+            action: () => {
+              // The bar may have been rebuilt while the menu was open: look again.
+              // Both the span and the title it prefills are read again: a rename
+              // from another route, or a new title, may have landed since.
+              const liveTitle = this.liveTitleSpan(tab.id);
+              if (!liveTitle) return; // the tab closed meanwhile
+              this.startTabRename(liveTitle, this.currentTabInfo(tab.id) ?? tab);
             },
-          ] : []),
+          },
           // Unlike double-click, this names every tab in the project, now and later;
           // on a tab in a linked worktree it names that worktree alone.
           ...(project ? [
-            { separator: true as const },
             {
               label: 'Set Default Tab Name for Project…',
               action: () => {

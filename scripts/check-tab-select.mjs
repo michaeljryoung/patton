@@ -555,19 +555,20 @@ await section(async () => {
   check('⌘-Ctrl-click still adds a tab', selected(tm) === 'B C D E F', selected(tm));
 });
 await section(async () => {
-  // A tab named for its project: no Rename Tab… on the selection menu, as on its own menu.
+  // A tab named for its project: Rename Tab… (a one-off name) on the selection menu
+  // too (25 Nov, Michael: "you can't rename it as a one-off"), as on its own menu.
   const { tm } = await fourSpanningGroup();
   const tabD = tm.getTabs().find((t) => t.title === 'D');
   Object.defineProperty(tabD, 'namedForProject', { get: () => true, configurable: true });
   tm.updateTabBar();
   const labels = tabMenu(tm, 'D').map(labelOf);
-  check('selection menu on a tab named for its project: no Rename Tab…', !labels.includes('Rename Tab…') && labels.includes('Remove Tab from Selection'), labels);
+  check('selection menu on a tab named for its project: Rename Tab… is there', labels.includes('Rename Tab…') && labels.includes('Remove Tab from Selection'), labels);
   const onE = tabMenu(tm, 'E').map(labelOf);
-  check('…another selected tab keeps it', onE.includes('Rename Tab…'), onE);
+  check('…and on another selected tab', onE.includes('Rename Tab…'), onE);
   closeMenus();
   tm.tabBar.clearSelection();
   const own = tabMenu(tm, 'D').map(labelOf);
-  check('…as its own single-tab menu (none there either)', !own.includes('Rename Tab…') && own.includes('Add Tab to Selection'), own);
+  check('…and on its own single-tab menu', own.includes('Rename Tab…') && own.includes('Add Tab to Selection'), own);
   closeMenus();
 });
 await section(async () => {

@@ -870,7 +870,7 @@ async function main() {
       tab.focusedPane.title = '✳ Fix x'; tab.focusedPane['trackClaudeState']('✳ Fix x');
       await tick(5);
       labels = menuLabels();
-      check('review P8: while Claude runs and the project names the tab, only the project\'s default name is offered', tab.namedForProject && !labels.includes('Rename Tab…') && labels.includes('Set Default Tab Name for Project…'), labels);
+      check('review P8: while Claude runs and the project names the tab, both the one-off Rename Tab… and the project\'s default name are offered, in that order', tab.namedForProject && labels.indexOf('Rename Tab…') >= 0 && labels.indexOf('Set Default Tab Name for Project…') === labels.indexOf('Rename Tab…') + 1, labels);
       await tm2.closeById(tab.id);
     }
     w.patton.projects.resolve = resolveWas2;

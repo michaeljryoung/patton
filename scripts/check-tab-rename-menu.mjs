@@ -1,16 +1,23 @@
 // Check of the tab right-click menu's "Rename Tab…" entry (12 Nov, Michael: "should
-// be a rename option on tabs that arent projects when right click"). Drives the REAL
-// TabBar in jsdom: the entry exists on a tab outside any project and not on a
-// project's tab; choosing it opens the rename box on THAT tab's title, holding its
+// be a rename option on tabs that arent projects when right click"; 25 Nov: "if
+// something is a live project with a default name, you can't rename it as a one-off.
+// There should be a set default rename and an adjust rename"). Drives the REAL
+// TabBar in jsdom: the entry exists on every tab, a project's included, where it sits
+// directly above "Set Default Tab Name for Project…"; choosing it opens the rename box on THAT tab's title, holding its
 // full current name; Enter calls onRename(tabId, newName); an emptied box commits
 // "" (back to the automatic name); Escape commits nothing; the bar rebuilt while the
 // menu is open still finds the tab, and a tab closed meanwhile is a quiet no-op;
 // double-click renames exactly as before; and the project tab's own entry stays.
+// Second half, the REAL TabManager (scripts/tab-manager-harness.mjs): a one-off name
+// wins on the strip and in the palette's name while set, a later project-default rename
+// leaves it alone (and changes the other tabs of the project), and an emptied or
+// whitespace box clears it, so the project's name (its default, once set) is back.
 // Run: JSDOM_DIR=<a folder whose node_modules has jsdom> node scripts/check-tab-rename-menu.mjs
 import { build } from 'esbuild';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { setUpTabManager, until, tick } from './tab-manager-harness.mjs';
 
 const jsdomDir = process.env.JSDOM_DIR || process.argv[2];
 if (!jsdomDir) {
@@ -70,13 +77,15 @@ let items = openMenu('plain');
 check('a tab outside any project has "Rename Tab…" in its menu', labels(items).includes('Rename Tab…'), labels(items));
 closeMenu();
 items = openMenu('proj');
-check('a project\'s tab has no "Rename Tab…"', !labels(items).some((l) => l.startsWith('Rename Tab')), labels(items));
+const at = (l) => labels(items).indexOf(l);
+check('a project\'s tab has "Rename Tab…" too (a one-off name)', labels(items).includes('Rename Tab…'), labels(items));
 check('...and keeps "Set Default Tab Name for Project…"', labels(items).includes('Set Default Tab Name for Project…'), labels(items));
+check('...Rename Tab… sits directly above Set Default Tab Name for Project…, no separator between', at('Rename Tab…') >= 0 && at('Set Default Tab Name for Project…') === at('Rename Tab…') + 1, labels(items));
 closeMenu();
 // a plain shell in a project folder reads "Terminal": the tab's name isn't the project's
 items = openMenu('shellproj');
 check('a shell tab in a project folder (not named for it) has "Rename Tab…"', labels(items).includes('Rename Tab…'), labels(items));
-check('...and keeps "Set Default Tab Name for Project…"', labels(items).includes('Set Default Tab Name for Project…'), labels(items));
+check('...and keeps "Set Default Tab Name for Project…", right below it', labels(items).includes('Set Default Tab Name for Project…') && at('Set Default Tab Name for Project…') === at('Rename Tab…') + 1, labels(items));
 closeMenu();
 
 // choosing it opens the box on THAT tab, with the full current name (not the short one on show)
@@ -208,6 +217,17 @@ check('the box prefills from the title as it is now', !!box && box.value === 're
 reset();
 bar.update(tabs);
 
+// a project's tab renames as a one-off through the same box: its full name, the automatic one as placeholder
+items = openMenu('proj');
+choose(items, 'Rename Tab').click();
+box = boxes()[0];
+check('a project tab: Rename Tab… opens the box on it, holding its name, the automatic name as placeholder', !!box && tabEl('proj').contains(box) && box.value === 'patton' && box.placeholder === 'patton' && box.getAttribute('aria-label') === 'Rename tab', box && [box.value, box.placeholder]);
+box.value = 'fixing the login bug';
+key(box, 'Enter');
+check('...Enter calls onRename (a one-off), not onRenameProject', renames.length === 1 && renames[0][0] === 'proj' && renames[0][1] === 'fixing the login bug' && projectRenames.length === 0, { renames, projectRenames });
+reset();
+bar.update(tabs);
+
 // the project's own entry still works
 items = openMenu('proj');
 choose(items, 'Set Default Tab Name for Project').click();
@@ -215,6 +235,112 @@ box = boxes()[0];
 box.value = 'renamed';
 key(box, 'Enter');
 check('a project\'s "Set Default Tab Name" still calls onRenameProject', projectRenames.length === 1 && projectRenames[0][0] === 'proj' && projectRenames[0][1] === 'renamed' && renames.length === 0, { projectRenames, renames });
+
+
+// ── The real TabManager: what a one-off name does to a project tab ──
+// A project tab (Claude runs in /proj/alpha) and a second tab in the same project.
+const root = (st) => `\x1b]7501;state=${st}:app=claude-code\x07`;
+const tm0 = await setUpTabManager({ tags: ['TAB'] });
+const { doc: mdoc, w: mw, emit } = tm0;
+const projectsNow = {}; // root -> name, as main's store
+let namesCb = null;
+const baseApi = mw.patton;
+mw.patton = new Proxy(baseApi, {
+  get: (t, p) => {
+    if (p === 'projects') {
+      return {
+        getNames: async () => ({ ...projectsNow }),
+        onNamesChanged: (cb) => { namesCb = cb; return () => {}; },
+        resolve: async (cwd) => (cwd === '/proj/alpha' ? { root: '/proj/alpha', defaultName: 'alpha' } : null),
+        // Main's store: an empty name deletes, then it broadcasts to every window.
+        setName: async (key, name) => { if (name) projectsNow[key] = name; else delete projectsNow[key]; namesCb?.({ ...projectsNow }); },
+      };
+    }
+    return t[p];
+  },
+});
+const tm = await tm0.makeWindow([]);
+const mk = async () => {
+  const tab = await tm.createTab('/proj/alpha', { forProject: true });
+  await until(() => tab.menuProject !== null);
+  emit(tab.focusedPane.ptyId, root('done'));
+  await until(() => tab.focusedPane.isClaudePane);
+  return tab;
+};
+const tA = await mk();
+const tB = await mk();
+const mEl = (tab) => tm.bar.querySelector(`.tab-bar-tab[data-tab-id="${tab.id}"]`);
+const shown = (tab) => mEl(tab)?.querySelector('.tab-bar-tab-title')?.textContent;
+const mfire = (el, type, init = {}) => el.dispatchEvent(new mw.MouseEvent(type, { bubbles: true, cancelable: true, button: 0, ...init }));
+const mkey = (el, k) => el.dispatchEvent(new mw.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
+const mItems = () => [...mdoc.querySelectorAll('.context-menu-overlay.visible .context-menu-item')];
+const mLabel = (i) => (i.querySelector('span')?.textContent ?? i.textContent).trim();
+const mClose = () => { for (const o of mdoc.querySelectorAll('.context-menu-overlay.visible')) mkey(o, 'Escape'); };
+const mPick = (tab, label) => {
+  mfire(mEl(tab), 'contextmenu', { clientX: 20, clientY: 20 });
+  const item = mItems().find((i) => mLabel(i) === label);
+  item?.click();
+  return !!item;
+};
+const mBox = () => tm.bar.querySelector('.tab-bar-tab-rename');
+const typeIn = async (value) => { const b = mBox(); b.value = value; mkey(b, 'Enter'); await tick(5); };
+const sessionOf = (tab) => {
+  const s = tm.listSessions().find((x) => x.tabId === tab.id);
+  return s;
+};
+check('set-up: two Claude tabs named for the project, both reading "alpha"', tA.namedForProject && tB.namedForProject && tA.title === 'alpha' && tB.title === 'alpha' && shown(tA) === 'alpha', { a: tA.title, b: tB.title, shown: shown(tA) });
+
+mfire(mEl(tA), 'contextmenu', { clientX: 20, clientY: 20 });
+const projLabels = mItems().map(mLabel);
+mClose();
+check('real manager, a project tab\'s menu: Rename Tab… directly above Set Default Tab Name for Project…', projLabels.indexOf('Rename Tab…') >= 0 && projLabels.indexOf('Set Default Tab Name for Project…') === projLabels.indexOf('Rename Tab…') + 1, projLabels);
+
+// one-off name: wins everywhere while set
+mPick(tA, 'Rename Tab…');
+check('the one-off box opens on the project tab with the project name in it', mBox()?.value === 'alpha' && mBox()?.placeholder === 'alpha', mBox() && [mBox().value, mBox().placeholder]);
+await typeIn('fixing the login bug');
+check('a one-off name wins on the strip', shown(tA) === 'fixing the login bug' && tA.title === 'fixing the login bug' && tA.hasCustomTitle && !tA.namedForProject, { shown: shown(tA), title: tA.title });
+{
+  const sa = sessionOf(tA);
+  const sb = sessionOf(tB);
+  const { sessionName } = tm0.sessions;
+  check('...and in the palette\'s name for the session', sa && sessionName(sa) === 'fixing the login bug' && sb && sessionName(sb) === 'alpha', { a: sa && sessionName(sa), b: sb && sessionName(sb) });
+}
+check('...and only on that tab: the other tab of the project still reads "alpha"', shown(tB) === 'alpha' && tB.title === 'alpha' && tB.namedForProject, shown(tB));
+mfire(mEl(tA), 'contextmenu', { clientX: 20, clientY: 20 });
+const afterLabels = mItems().map(mLabel);
+mClose();
+check('a tab with a one-off name still offers both Rename Tab… and Set Default Tab Name for Project…, in order', afterLabels.indexOf('Rename Tab…') >= 0 && afterLabels.indexOf('Set Default Tab Name for Project…') === afterLabels.indexOf('Rename Tab…') + 1, afterLabels);
+
+// a later project-default rename leaves the one-off alone and changes the others
+mPick(tA, 'Set Default Tab Name for Project…');
+check('Set Default opens the project box (the project\'s name, not the one-off)', mBox()?.value === 'alpha' && mBox()?.getAttribute('aria-label') === 'Default tab name for this project', mBox() && [mBox().value, mBox().getAttribute('aria-label')]);
+await typeIn('Atlas');
+await until(() => tB.title === 'Atlas');
+check('a project-default rename changes the project\'s other tab...', tB.title === 'Atlas' && shown(tB) === 'Atlas', { title: tB.title, shown: shown(tB) });
+check('...and does not overwrite the tab\'s one-off name', tA.title === 'fixing the login bug' && shown(tA) === 'fixing the login bug' && tA.hasCustomTitle, { title: tA.title, shown: shown(tA) });
+
+// clearing the one-off name brings the automatic name back: the project's name (its default, once set)
+mPick(tA, 'Rename Tab…');
+check('reopening the box on the one-off tab: it holds the one-off name, the project\'s name is the placeholder', mBox()?.value === 'fixing the login bug' && mBox()?.placeholder === 'Atlas', mBox() && [mBox().value, mBox().placeholder]);
+await typeIn('');
+check('an emptied box clears the one-off: the tab reads the project\'s name again', tA.title === 'Atlas' && shown(tA) === 'Atlas' && !tA.hasCustomTitle && tA.namedForProject, { title: tA.title, shown: shown(tA), custom: tA.hasCustomTitle });
+check('...and the palette\'s name is the project\'s', sessionOf(tA) && tm0.sessions.sessionName(sessionOf(tA)) === 'Atlas', sessionOf(tA) && tm0.sessions.sessionName(sessionOf(tA)));
+mPick(tA, 'Rename Tab…');
+await typeIn('second one-off');
+check('a new one-off after clearing works', tA.title === 'second one-off' && tA.hasCustomTitle, tA.title);
+mPick(tA, 'Rename Tab…');
+await typeIn('   ');
+check('a whitespace-only box clears it as well', tA.title === 'Atlas' && !tA.hasCustomTitle && tA.namedForProject && shown(tA) === 'Atlas', { title: tA.title, custom: tA.hasCustomTitle });
+// an unchanged Enter on an unnamed project tab must not turn the project's name into a one-off
+mPick(tA, 'Rename Tab…');
+await typeIn('Atlas');
+check('Enter with the project\'s name untouched makes no one-off name', !tA.hasCustomTitle && tA.namedForProject, tA.hasCustomTitle);
+// clear the default too: back to the automatic project name
+mPick(tB, 'Set Default Tab Name for Project…');
+await typeIn('');
+await until(() => tA.title === 'alpha');
+check('clearing the project default puts "alpha" back on every tab without a one-off', tA.title === 'alpha' && tB.title === 'alpha', { a: tA.title, b: tB.title });
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
