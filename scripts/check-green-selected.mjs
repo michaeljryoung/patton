@@ -237,6 +237,23 @@ await section(async () => {
   await focusWindow();
   check('then a real return clears', tabA.awaitingInput === false);
 
+  // The blur event itself cancels the pending clear, and so does a window found behind when it fires.
+  blurWindow();
+  await turnEnds(tabA);
+  focusEvent();
+  await tick(60);
+  w.dispatchEvent(new w.Event('blur')); // blur event, then back in front with no new focus event
+  windowFocus.inFront = true;
+  await tick(SETTLE + 60);
+  check('blur event inside the settle wait cancels the clear', tabA.awaitingInput === true);
+  focusEvent();
+  await tick(60);
+  windowFocus.inFront = false; // behind again, no blur event delivered
+  await tick(SETTLE + 60);
+  check('a window found behind when the settle wait ends clears nothing', tabA.awaitingInput === true);
+  await focusWindow();
+  check('and the next real return clears', tabA.awaitingInput === false);
+
   // Session counts follow the marks.
   const waiting = () => tm.listSessions().filter((s) => s.awaitingSince !== null).map((s) => s.tabId);
   blurWindow();
@@ -307,14 +324,17 @@ await section(async () => {
   check('ckpt select behind: kept on selecting it', pA.checkpointDone === true && marks(tabA).includes('checkpoint-done'), marks(tabA));
   await focusWindow();
   check('ckpt select behind: cleared on the window\'s return', pA.checkpointDone === false);
-  // A green entry left stale on a front window's selected tab goes when a checkpoint mark arrives there.
+  // A green entry left stale on a front window's selected tab (another pane's, since a pane's own turn clears its entry)
+  // goes when a checkpoint mark arrives there.
+  await tabA.splitVertical();
+  await until(() => tabA.panes.length === 2 && tabA.panes.every((p) => p.ptyId !== null));
+  const [p1, p2] = tabA.panes;
   blurWindow();
-  for (const p of tabA.panes) p.lastCommandDoneMs = 0;
-  await endTurns(tabA.panes);
-  check('ckpt stale: green held while behind', tabA.awaitingInput === true);
+  await endTurns([p1]);
+  check('ckpt stale: green held by one pane while behind', tabA.awaitingSince(p1) !== null);
   windowFocus.inFront = true; // missed focus
-  await finishes(tabA, T0 + 21);
-  check('ckpt stale: a checkpoint mark on a front window\'s selected tab drops the stale green too', tabA.awaitingInput === false && pA.checkpointDone === false && marks(tabA).length === 0, marks(tabA));
+  await finishes(p2, T0 + 21);
+  check('ckpt stale: a checkpoint mark on a front window\'s selected tab drops the stale green too', tabA.awaitingInput === false && p2.checkpointDone === false && marks(tabA).length === 0, marks(tabA));
   await focusWindow();
 });
 
