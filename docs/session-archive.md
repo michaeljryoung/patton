@@ -988,3 +988,20 @@ _Earlier entries archived → `docs/session-archive.md` (latest trim 2026-11-24,
 - **After Patton resizes a terminal, Claude's bar is unreadable until Claude redraws** (S60). xterm's shrink drops the lines below the cursor first, which takes Claude's lower rule and footer; Claude repaints only the visible screen on any resize. Anything keyed on the bar's row waits for the first fresh reading after Patton's own resize (the compose box's "settling", D15), never for a fixed delay.
 
 - **The icon's source draws its digits as SVG text in Menlo** (S63, `build/icon.svg` = F3 from `docs/mocks/icon-studies/portrait_rain.py`): re-render it with headless Chrome on this Mac, transparent ground, and note an SVG `clipPath` ignores a `<g>` child.
+
+## Session Log (S66 trim 2026-11-25)
+
+### 2026-11-23 (Session 62 — "Terminal" tab names, Pause all only where work runs, a reality check; v1.39.0 released, not installed)
+- His screenshot of a shell tab reading "AI-Brain" ("when a tab is terminal that ive had to do it should name terminal not the thing prompt is about"): a tab takes its project's name only while Claude runs in it; a shell shows the command running now, else "Terminal" (`Pane.shownTitle`, OSC 133 marks); the menu acts on `Tab.menuProject`. Three reviews: the first two designs (rewriting the title when Claude left, then remembering Claude's last title) each failed on probes, the second because a second session in one pane brought the old topic back.
+- His screenshot of a quiet chat answering a Pause all "pause" ("it should only do stuff where claude is working not pointlessly post to quiet chats"): `pauseInput().running` decides, from a turn, a working child, a parked pane or a kept Stop verdict. Three reviews: the dot's activity word had hidden an error root with work and drained children with a `/loop` left.
+- His "2 do this in parallel": a fresh auditor's `/reality-check` of all five maps, 47 done rows opened, one wrong (`okay_button` superseded); `bar_ship` done on the `[COMPOSE] place` lines; review-tab evidence made resolvable; the map's goal now the install and walk-through, with nodes for the unmapped S60–S61 work.
+- Verifier 54/54 with a no-install build on `276e1b0`; v1.39.0 released (run 45275722462, cask `dc2b68a9…` equals the DMG's digest); the notes commit `9b6e2a5` skipped release as meant. /Applications untouched (20 Nov build).
+- off-limits-guard (central-claude-md) falsely blocked `check-worktree-name.mjs`; fixed and hardened there at his "2 do it" and "2 ok" (its S117 entry); every step of tomorrow's install passes it.
+
+_Earlier entries archived → `docs/session-archive.md` (latest trim 2026-11-25, S65)._
+
+## Decisions (S66 trim 2026-11-25)
+
+- **2026-11-24 (S65) — A dropped tab goes into a slot, and a group's right edge joins it** (his Chrome comparison): the half of the tab under the pointer picks before or after; the slot after an open group's last tab joins it; left of a chip is outside (S66: the chip's left half is that slot). Replaces "takes the target tab's group" (`docs/tab-groups.md`).
+
+- **2026-11-25 (S65) — `f3_install` superseded:** the F3 icon arrives with the one install of the latest release (`s65_install`), not an install of its own.
