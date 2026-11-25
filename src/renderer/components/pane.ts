@@ -1985,6 +1985,11 @@ export class Pane {
     this.ptyId = newId;
     this.ptyExited = false;
     this.newClaudeSession();
+    // Input facts of the session that ended: Patton's stash (Claude Code held
+    // it), the wait for a stashed draft to come back, the bar-clear wait.
+    this.pattonStashOpen = false;
+    this.stashBack = null;
+    this.restoreClearPending = false;
     this.terminalView.setPtyId(newId);
     this.terminalView.resetForNewShell();
     if (opts.hyperlinks) this.hyperlinkEnv = true;

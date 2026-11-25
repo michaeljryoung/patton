@@ -6,7 +6,7 @@ import { ConfirmDialog } from '../components/confirm-dialog';
 import { HistoryManager } from './history-manager';
 import { CONFIRM_SHORTCUT_DWELL_MS, DEFAULTS } from '../../shared/constants';
 import { announce } from './announcer';
-import { runStartupCommand } from './startup-command';
+import { runStartupCommand, type PendingSend } from './startup-command';
 import { rlog } from './renderer-logger';
 import { WAKE_TITLE, isWakeTab } from './board-wake';
 import { onProjectNamesChanged, projectDisplay, projectName, projectNameKey, projectRenameFields, startProjectNames } from './project-names';
@@ -78,6 +78,8 @@ export class TabManager {
   private pausePressInFlight = false;
   /** Tabs with a Close and Reload under way (closeAndReload). */
   private readonly reloading = new Set<string>();
+  /** A reload's startup command still waiting for its pane's new shell. */
+  private readonly pendingReloadSends = new WeakMap<Pane, PendingSend>();
   /** Tabs where `wake` runs (a pane titled exactly WAKE), so a tab moves to
    *  the far left once when wake starts, not again on later title changes. */
   private wakeTabIds = new Set<string>();
@@ -336,8 +338,17 @@ export class TabManager {
         return;
       }
       const settings = await window.patton.settings.get();
+      // The tab or pane may have closed, or Claude moved, while settings were read:
+      // respawnTab replaces the focused pane, so a pane gone would swap a sibling.
+      if (!this.tabs.includes(tab) || !tab.panes.includes(pane) || pane.ptyId === null || this.reloadPaneOf(tab) !== pane) {
+        rlog('info', '[TAB] close and reload ignored', { tabId, reason: 'tab or pane changed' });
+        return;
+      }
       const startup = Boolean(settings.startupCommand);
-      // respawnTab replaces the focused pane.
+      // A startup command still waiting for the shell this reload replaces
+      // (an earlier reload's) must not reach the new one.
+      this.pendingReloadSends.get(pane)?.cancel('its shell was replaced');
+      this.pendingReloadSends.delete(pane);
       if (tab.focusedPane !== pane) tab.focusPaneById(pane.id);
       await this.respawnTab(tab, {
         cwd: project.worktree?.path ?? project.root,
@@ -350,8 +361,10 @@ export class TabManager {
       if (!this.tabs.includes(tab)) return;
       // Bound to the replaced pane: he may have clicked or split another one
       // while main started the shell, and the command must not follow the focus.
-      if (startup && !runStartupCommand(tab, settings.startupCommand, undefined, { pane })) {
-        rlog('info', '[TAB] close and reload ignored', { tabId, reason: 'pane gone before the startup command' });
+      if (startup) {
+        const pending = runStartupCommand(tab, settings.startupCommand, undefined, { pane });
+        if (pending) this.pendingReloadSends.set(pane, pending);
+        else rlog('info', '[TAB] close and reload ignored', { tabId, reason: 'pane gone before the startup command' });
       }
       announce(startup ? `Reloading ${name}` : `Reloading ${name}; no startup command is set`);
       // Focus goes to the new shell unless he has moved to another pane since.

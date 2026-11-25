@@ -19,6 +19,7 @@
 // pane; the old shell ending mid-respawn.
 // Run: JSDOM_DIR=<a folder whose node_modules has jsdom> node scripts/check-close-reload.mjs
 import { checker, setUpTabManager, until, tick } from './tab-manager-harness.mjs';
+const PROMPT_FALLBACK_MS = 1500; // services/startup-command.ts
 
 const { check, section, finish } = checker();
 const { w, doc, emit, logs, makeWindow } = await setUpTabManager({ tags: ['TAB', 'GROUP', 'STARTUP', 'DOT'] });
@@ -30,12 +31,14 @@ const state = {
   inputState: 'clean', // 'clean' | 'dirty' | 'fail' | 'null'
   failRespawn: false,
   respawnDelayMs: 0,
+  settingsDelayMs: 0,
   nextPty: 1000,
   settingsCalls: 0,
   inputOverride: null, // extra fields on main's unsent-input state (a stash)
 };
 const exitListeners = [];
-const exitPty = (id) => { for (const cb of exitListeners) cb(id); };
+const exitedPtys = new Set();
+const exitPty = (id) => { exitedPtys.add(id); for (const cb of exitListeners) cb(id); };
 const PROJECTS = {
   '/proj/alpha': { root: '/proj/alpha', defaultName: 'alpha' },
   '/proj/main': { root: '/proj/main', defaultName: 'main', worktree: { name: 'feature', path: '/proj/main-wt' } },
@@ -49,6 +52,8 @@ const ptyStub = new Proxy(basePty, {
     if (p === 'respawn') return async (oldId, opts) => {
       if (state.respawnDelayMs) await tick(state.respawnDelayMs);
       if (state.failRespawn) throw new Error('respawn refused');
+      // As PtyManager.respawn: a shell that has already exited is not this window's PTY any more.
+      if (exitedPtys.has(oldId)) throw new Error('PTY access denied');
       const id = state.nextPty++;
       state.respawns.push({ oldId, id, opts });
       return id;
@@ -69,7 +74,7 @@ const ptyStub = new Proxy(basePty, {
 w.patton = new Proxy(base, {
   get: (t, p) => {
     if (p === 'pty') return ptyStub;
-    if (p === 'settings') return { get: async () => { state.settingsCalls++; return { startupCommand: state.startupCommand }; }, set: async () => {} };
+    if (p === 'settings') return { get: async () => { state.settingsCalls++; if (state.settingsDelayMs) await tick(state.settingsDelayMs); return { startupCommand: state.startupCommand }; }, set: async () => {} };
     if (p === 'projects') return { getNames: async () => ({}), onNamesChanged: () => () => {}, resolve: async (cwd) => PROJECTS[cwd] ?? null, setName: async () => {} };
     return t[p];
   },
@@ -107,7 +112,7 @@ const dialog = () => doc.querySelector('.confirm-dialog-overlay.visible');
 const dialogText = (sel) => dialog()?.querySelector(sel)?.textContent ?? '';
 const reset = () => {
   state.creates.length = 0; state.respawns.length = 0; state.writes.length = 0; state.destroyed.length = 0;
-  state.startupCommand = 'cc'; state.inputState = 'clean'; state.failRespawn = false; state.respawnDelayMs = 0; state.inputOverride = null;
+  state.startupCommand = 'cc'; state.inputState = 'clean'; state.failRespawn = false; state.respawnDelayMs = 0; state.settingsDelayMs = 0; state.inputOverride = null;
 };
 const logsSince = (mark, msg) => logs.slice(mark).filter((l) => l.msg === msg);
 /** Open a project tab and let its project lookup land. */
@@ -516,11 +521,13 @@ await section(async () => {
   const p = tm.closeAndReload(tab.id);
   await tick(60);
   exitPty(oldPty); // the old shell ends while main starts the new one
+  const markOld = logs.length;
+  const annOld = announced.length;
   await p;
-  check('old shell exit mid-respawn: the tab survives', tm.getTabs().includes(tab));
-  check('old shell exit mid-respawn: the pane runs the new shell', pane.ptyId === state.respawns[0]?.id && pane.ptyId !== oldPty, pane.ptyId);
-  exitPty(pane.ptyId); // the NEW shell ending closes the tab as usual
-  check('old shell exit mid-respawn: the new shell is registered (its exit closes the tab)', await until(() => !tm.getTabs().includes(tab), 3000));
+  // PtyManager.respawn refuses a shell that has exited: the dead tab closes as its exit would have.
+  check('old shell exit mid-respawn: main refuses, so the dead tab closes', !tm.getTabs().includes(tab), tm.getTabs().length);
+  check('old shell exit mid-respawn: logged as ignored', logsSince(markOld, '[TAB] close and reload ignored').some((l) => /closed during the reload/.test(l.data.reason)), logs.slice(markOld).map((l) => l.msg));
+  check('old shell exit mid-respawn: no failure logged, nothing announced, no success line, no startup command', !errorLogs.some((x) => x.data?.tabId === tab.id && x.msg === '[TAB] close and reload failed') && announced.length === annOld && logsSince(markOld, '[TAB] close and reload').length === 0 && state.respawns.length === 0 && state.writes.length === 0, { ann: announced.slice(annOld), respawns: state.respawns, writes: state.writes });
 
   // ...and when that respawn then fails, the dead pane closes as its exit would have.
   reset();
@@ -563,6 +570,92 @@ await section(async () => {
   check('Claude moved while asking: nothing respawned', state.respawns.length === 0, state.respawns);
   const ign = logsSince(mark, '[TAB] close and reload ignored');
   check('Claude moved while asking: logged as ignored', ign.length === 1 && ign[0].data.reason === 'tab or pane changed', ign.map((x) => x.data));
+});
+
+// ── 15. The pane closing while the settings are read ──
+await section(async () => {
+  reset();
+  const tm = await makeWindow([]);
+  const tab = await projectTab(tm, '/proj/alpha');
+  tm.switchToId(tab.id);
+  const first = tab.focusedPane;
+  await claudeAtRest(first);
+  await tab.splitVertical('/proj/alpha');
+  await tick(30);
+  const second = tab.panes.find((x) => x !== first);
+  tab.focusPaneById(first.id);
+  state.settingsDelayMs = 120;
+  const mark = logs.length;
+  const a = announced.length;
+  const p = tm.closeAndReload(tab.id);
+  await tick(50); // past the guard, inside the settings read
+  tab.closePane(first); // the Claude pane goes away
+  await p;
+  check('pane closed while settings were read: the sibling shell was not replaced', state.respawns.length === 0 && second.ptyId !== null, state.respawns);
+  const ign = logsSince(mark, '[TAB] close and reload ignored');
+  check('pane closed while settings were read: logged as ignored', ign.length === 1 && ign[0].data.reason === 'tab or pane changed', ign.map((x) => x.data));
+  check('pane closed while settings were read: nothing announced, no success line', announced.length === a && logsSince(mark, '[TAB] close and reload').length === 0, announced.slice(a));
+});
+
+// ── 16. Patton's own stash does not outlive the session ──
+await section(async () => {
+  reset();
+  const tm = await makeWindow([]);
+  const tab = await projectTab(tm, '/proj/alpha');
+  tm.switchToId(tab.id);
+  const pane = tab.focusedPane;
+  await claudeAtRest(pane);
+  pane.pattonStashOpen = true; // Patton stashed a draft earlier; the line that followed was held
+  const p = tm.closeAndReload(tab.id);
+  check('stash: the question is asked', await until(() => !!dialog()));
+  await tick(330);
+  dialog().querySelector('.confirm-dialog-confirm').click();
+  await p;
+  check('stash: reloaded', state.respawns.length === 1, state.respawns);
+  const clean = { dirty: false, length: 0, lastInputAt: 0, slashSubmitAt: 0, userStashAt: 0, pattonStashAt: 0 };
+  check('stash: the fresh session reads no stash', pane.pauseInput({ ...clean }).stashed === false);
+});
+
+// ── 17. A reload's startup command is dropped when its pane closes or its shell is replaced ──
+await section(async () => {
+  reset();
+  const tm = await makeWindow([]);
+  const tab = await projectTab(tm, '/proj/alpha');
+  tm.switchToId(tab.id);
+  const claudePane = tab.focusedPane;
+  await claudeAtRest(claudePane);
+  await tab.splitVertical('/proj/alpha');
+  await tick(PROMPT_FALLBACK_MS + 100); // the tab's own opening command has been typed by now
+  const mark = logs.length;
+  await tm.closeAndReload(tab.id);
+  const newId = claudePane.ptyId;
+  tab.closePane(claudePane); // closed before the command is typed
+  await tick(1700);
+  check('pane closed before the command: nothing written to its dead pty', !state.writes.some((x) => x.id === newId), state.writes);
+  const ns = logsSince(mark, '[STARTUP] Startup command not sent');
+  check('pane closed before the command: logged not sent, "sent" never logged', ns.length === 1 && /pane closed/.test(ns[0].data.reason) && logsSince(mark, '[STARTUP] Startup command sent').length === 0, logs.slice(mark).map((x) => x.msg + JSON.stringify(x.data)));
+
+  // A second reload before the first command was typed.
+  reset();
+  const tm2 = await makeWindow([]);
+  const t2 = await projectTab(tm2, '/proj/alpha');
+  tm2.switchToId(t2.id);
+  const pane2 = t2.focusedPane;
+  await claudeAtRest(pane2);
+  await tick(PROMPT_FALLBACK_MS + 100);
+  const mark2 = logs.length;
+  await tm2.closeAndReload(t2.id);
+  const firstNew = pane2.ptyId;
+  const q = tm2.closeAndReload(t2.id); // the first command is still waiting
+  if (await until(() => !!dialog(), 400)) { await tick(330); dialog().querySelector('.confirm-dialog-confirm').click(); } // a shell not known to be at its prompt asks
+  await q;
+  const secondNew = pane2.ptyId;
+  await tick(1700);
+  check('second reload: two respawns', state.respawns.length === 2 && secondNew !== firstNew, state.respawns);
+  check('second reload: nothing typed into the replaced shell', !state.writes.some((x) => x.id === firstNew), state.writes);
+  check('second reload: the command typed once, into the newest shell', state.writes.filter((x) => x.id === secondNew && x.data === 'cc\r').length === 1, state.writes);
+  const ns2 = logsSince(mark2, '[STARTUP] Startup command not sent');
+  check('second reload: the first command logged not sent', ns2.length === 1 && /replaced/.test(ns2[0].data.reason), ns2.map((x) => x.data));
 });
 
 finish();

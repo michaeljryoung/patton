@@ -12,7 +12,9 @@ export const SLOW_SHELL_MS = 10_000;
 
 /** A pending send: `cancel` drops it (a tab that closed meanwhile). */
 export interface PendingSend {
-  cancel(): void;
+  /** `reason`, when given, is logged as the command not sent (a caller that
+   *  drops it on purpose); without one the drop is silent, as before. */
+  cancel(reason?: string): void;
 }
 
 /**
@@ -54,9 +56,22 @@ export function runStartupCommand(
   let allowed: boolean | null = null;
   let disposePrompt: (() => void) | null = null;
   let timer: ReturnType<typeof setTimeout> | null = null;
+  let removeDisposeHook: (() => void) | null = null;
+  const drop = (reason: string) => {
+    if (fired) return;
+    fired = true;
+    disposePrompt?.();
+    if (timer) clearTimeout(timer);
+    removeDisposeHook?.();
+    rlog('info', `[STARTUP] ${label} not sent`, { reason });
+  };
   const fireIfDue = () => {
     if (fired || shellReady === null || allowed !== true) return;
+    // A command bound to a pane goes only to the shell it was started for: the
+    // pane's pty may have been replaced (a second reload) since.
+    if (opts.pane && opts.pane.ptyId !== ptyId) { drop('its shell was replaced'); return; }
     fired = true;
+    removeDisposeHook?.();
     // Tagged so main's unsent-input tracker ignores it: Patton typed it, not the user.
     window.patton.pty.write(ptyId, cmd + '\r', 'startup');
     rlog('info', `[STARTUP] ${label} sent`, { via: shellReady });
@@ -68,6 +83,8 @@ export function runStartupCommand(
     fireIfDue();
   };
 
+  // A bound pane that closes before the command is typed: its pty is gone.
+  if (opts.pane) removeDisposeHook = opts.pane.onDispose(() => drop('its pane closed'));
   disposePrompt = target.terminalView.onPromptState((state) => {
     if (state === 'prompt') ready('prompt');
   });
@@ -84,10 +101,12 @@ export function runStartupCommand(
     () => { allowed = true; fireIfDue(); },
   );
   return {
-    cancel: () => {
+    cancel: (reason?: string) => {
+      if (reason !== undefined) { drop(reason); return; }
       fired = true;
       disposePrompt?.();
       if (timer) clearTimeout(timer);
+      removeDisposeHook?.();
     },
   };
 }
