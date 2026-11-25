@@ -14,6 +14,9 @@ export interface TabBarCallbacks {
   /** Tab menu → Move Left (-1) / Move Right (1): one step on the strip
    *  (services/tab-groups.ts stepMove), announced by the caller. */
   onMoveStep?: (id: string, dir: -1 | 1) => void;
+  /** Tab menu → Close and Reload (a project tab only): a fresh shell and
+   *  startup command in the same tab (TabManager.closeAndReload). */
+  onCloseAndReload?: (id: string) => void;
   onSettings: () => void;
   onRename: (id: string, name: string) => void;
   onRenameProject: (id: string, name: string) => void;
@@ -969,6 +972,11 @@ export class TabBar {
           ...(!tab.active ? [
             { separator: true as const },
             { label: 'Add Tab to Selection', action: () => this.addToSelection(tab.id) },
+          ] : []),
+          // --- Close and Reload: last, as it ends the session ---
+          ...(project && this.callbacks.onCloseAndReload ? [
+            { separator: true as const },
+            { label: 'Close and Reload', action: () => this.callbacks.onCloseAndReload?.(tab.id) },
           ] : []),
         ], el, viaKeyboard);
       };

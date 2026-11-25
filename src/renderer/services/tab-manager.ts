@@ -6,6 +6,7 @@ import { ConfirmDialog } from '../components/confirm-dialog';
 import { HistoryManager } from './history-manager';
 import { CONFIRM_SHORTCUT_DWELL_MS, DEFAULTS } from '../../shared/constants';
 import { announce } from './announcer';
+import { runStartupCommand } from './startup-command';
 import { rlog } from './renderer-logger';
 import { WAKE_TITLE, isWakeTab } from './board-wake';
 import { onProjectNamesChanged, projectDisplay, projectName, projectNameKey, projectRenameFields, startProjectNames } from './project-names';
@@ -75,6 +76,8 @@ export class TabManager {
   private checkpointNudgePct: number = DEFAULT_CHECKPOINT_NUDGE_PCT;
   /** A press is waiting on main: a second click does nothing until it answers. */
   private pausePressInFlight = false;
+  /** Tabs with a Close and Reload under way (closeAndReload). */
+  private readonly reloading = new Set<string>();
   /** Tabs where `wake` runs (a pane titled exactly WAKE), so a tab moves to
    *  the far left once when wake starts, not again on later title changes. */
   private wakeTabIds = new Set<string>();
@@ -122,6 +125,7 @@ export class TabManager {
       onClose: (id) => { this.confirmAndCloseTab(id).catch(console.error); },
       onNew: () => { this.userNewTab().catch(console.error); },
       onMoveStep: (id, dir) => this.moveTabStep(id, dir),
+      onCloseAndReload: (id) => { void this.closeAndReload(id); },
       onSettings: () => options?.onSettings?.(),
       onRename: (id, name) => this.renameTab(id, name),
       onRenameProject: (id, name) => this.renameProject(id, name),
@@ -223,13 +227,110 @@ export class TabManager {
    * exit of the NEW shell closes the tab as usual and the old one's end does
    * nothing. Throws, with the old shell and its registration intact, on failure.
    */
-  async respawnTab(tab: Tab, opts: { cwd?: string; projectDir?: boolean; hyperlinks?: boolean }): Promise<void> {
+  async respawnTab(tab: Tab, opts: { cwd?: string; projectDir?: boolean; hyperlinks?: boolean; allowSplit?: boolean }): Promise<void> {
     const pane = tab.focusedPane;
     const { oldId, newId } = await tab.respawnShell(opts);
     this.panesByPtyId.delete(oldId);
     // The tab may have been closed while main started the shell (the pane then
     // destroyed the new one itself and threw above), so only a live pane counts.
     if (this.tabs.includes(tab)) this.panesByPtyId.set(newId, pane);
+  }
+
+  /** The pane Close and Reload replaces: the focused one if Claude runs in it,
+   *  else the first pane Claude runs in, else the focused one. */
+  private reloadPaneOf(tab: Tab): Pane {
+    const focused = tab.focusedPane;
+    if (focused.isClaudePane) return focused;
+    return tab.panes.find((p) => p.isClaudePane) ?? focused;
+  }
+
+  /**
+   * Tab menu → Close and Reload (his ask, 25 Nov 2026: after a checkpoint he
+   * reopens the project fresh). In place, as the project board opens a project
+   * in its own tab: the tab keeps its id, place and group, and the pane Claude
+   * runs in gets a fresh shell in the project's folder (a worktree's own path,
+   * not its main repo) with the startup command typed in. Reloads at once
+   * unless something would be lost in that pane (work running, Claude waiting
+   * on him, unsent input, or main's tracker can't say): then it asks first.
+   * Never rejects; a failure leaves the old shell running.
+   */
+  async closeAndReload(tabId: string): Promise<void> {
+    const tab = this.tabs.find((t) => t.id === tabId);
+    if (!tab) return;
+    if (this.reloading.has(tabId)) {
+      rlog('info', '[TAB] close and reload ignored', { tabId, reason: 'already under way' });
+      return;
+    }
+    const project = tab.menuProject;
+    if (!project) {
+      rlog('info', '[TAB] close and reload ignored', { tabId, reason: 'no project' });
+      return;
+    }
+    this.reloading.add(tabId);
+    const name = projectName(project);
+    const split = tab.panes.length > 1;
+    let asked: string | null = null;
+    let answer: boolean | null = null;
+    try {
+      const pane = this.reloadPaneOf(tab);
+      const state = await pane.readInputState();
+      const input = pane.pauseInput(state);
+      let message: string | null = null;
+      if (input.running) {
+        asked = 'running';
+        message = 'Claude is still working in it.';
+      } else if (input.blocked || input.taskBlocked) {
+        asked = 'blocked';
+        message = 'Claude is waiting on you in it.';
+      } else if (input.draft) {
+        asked = state === null ? 'unknown' : 'draft';
+        message = 'It has text you haven\'t sent.';
+      }
+      if (message !== null) {
+        const subject = tab.title?.trim() ? `“${tab.title.trim()}”` : 'this tab';
+        const ok = await this.confirmDialog.confirm({
+          title: `Close and reload ${subject}?`,
+          message: `${message} Reloading ends this session and anything running in it, then starts a fresh one in ${name}.`,
+          confirmLabel: 'Close and Reload',
+          cancelLabel: 'Cancel',
+          defaultFocus: 'confirm',
+          // Opened from a menu: no shortcut confirms it, Enter waits out the dwell.
+          shortcutConfirms: false,
+          confirmDwellMs: CONFIRM_SHORTCUT_DWELL_MS,
+        });
+        answer = ok;
+        if (!ok) {
+          rlog('info', '[TAB] close and reload', { tabId, pane: pane.id, split, asked, answer, startup: false });
+          return;
+        }
+      }
+      // The tab or pane may have closed, or Claude moved to another pane, while
+      // the state was read or the question was up.
+      if (!this.tabs.includes(tab) || !tab.panes.includes(pane) || pane.ptyId === null || this.reloadPaneOf(tab) !== pane) {
+        rlog('info', '[TAB] close and reload ignored', { tabId, reason: 'tab or pane changed' });
+        return;
+      }
+      const settings = await window.patton.settings.get();
+      const startup = Boolean(settings.startupCommand);
+      // runStartupCommand types into the focused pane, and so does respawnTab.
+      if (tab.focusedPane !== pane) tab.focusPaneById(pane.id);
+      await this.respawnTab(tab, {
+        cwd: project.worktree?.path ?? project.root,
+        projectDir: true,
+        hyperlinks: startup,
+        allowSplit: true,
+      });
+      rlog('info', '[TAB] close and reload', { tabId, pane: pane.id, split, asked, answer, startup });
+      if (!this.tabs.includes(tab)) return;
+      if (startup) runStartupCommand(tab, settings.startupCommand);
+      announce(startup ? `Reloading ${name}` : `Reloading ${name}; no startup command is set`);
+      if (this.activeTab === tab) tab.focusedPane.focus();
+    } catch (err) {
+      rlog('error', '[TAB] close and reload failed', { tabId, error: String(err) });
+      announce('Could not reload the tab; it is left as it was', 'assertive');
+    } finally {
+      this.reloading.delete(tabId);
+    }
   }
 
   unregisterPane(pane: Pane): void {

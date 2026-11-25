@@ -143,11 +143,13 @@ export class Tab {
     });
   }
 
-  /** Replace the shell of this tab's only pane (see Pane.respawn). A tab with
-   *  splits is refused: this is for the project board's fresh tab. */
-  respawnShell(opts: { cwd?: string; projectDir?: boolean; hyperlinks?: boolean }): Promise<{ oldId: number; newId: number }> {
-    if (this._panes.length !== 1) return Promise.reject(new Error('Only a one-pane tab can have its shell replaced'));
-    return this._focusedPane.respawn(opts).then((ids) => {
+  /** Replace the shell of this tab's FOCUSED pane (see Pane.respawn). A tab
+   *  with splits is refused unless the caller says `allowSplit` (Close and
+   *  Reload, which focuses the pane Claude runs in first); the project board's
+   *  fresh tab never needs it. */
+  respawnShell(opts: { cwd?: string; projectDir?: boolean; hyperlinks?: boolean; allowSplit?: boolean }): Promise<{ oldId: number; newId: number }> {
+    if (this._panes.length !== 1 && opts.allowSplit !== true) return Promise.reject(new Error('Only a one-pane tab can have its shell replaced'));
+    return this._focusedPane.respawn({ cwd: opts.cwd, projectDir: opts.projectDir, hyperlinks: opts.hyperlinks }).then((ids) => {
       // The new shell is a new start: a name or colour kept from a restored
       // tab is not this project's, so the tab takes the project's name again
       // (as a new project tab does).
