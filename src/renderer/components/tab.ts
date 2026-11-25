@@ -240,7 +240,7 @@ export class Tab {
         // (windowFocused).
         if (p.checkpointDone && this._isActive && Tab.windowInFront()) {
           // Also any green entry a missed window `focus` event left here.
-          this.dropSeenMarks('in front');
+          this.dropSeenMarks('checkpoint in front');
           return;
         }
         this.onTitleChanged?.();
@@ -319,7 +319,7 @@ export class Tab {
     // A stale entry on the tab he is looking at (a window `focus` event missed:
     // Chromium sets page focus and the window's active state separately) is
     // dropped here, so nothing is drawn on it until the next tab switch.
-    if (selectedSeen) this.dropSeenMarks('in front');
+    if (selectedSeen) this.dropSeenMarks('selected tab in front');
     if (selectedSeen || this._panesNeedingYou.has(pane)) {
       rlog('info', '[DOT] green skipped', {
         tabId: this.id, pane: pane.id, why: selectedSeen ? 'selected tab' : 'already up', windowFocused: focused,
@@ -342,17 +342,18 @@ export class Tab {
 
   /** The selected tab of a window that is in front: whatever it still holds
    *  (green entries, red circles) is seen, so it goes. `why` is the log reason:
-   *  the window's return, or a raise or input that proves the window is in front. */
-  dropSeenMarks(why: 'window focused' | 'in front'): void {
+   *  the window's return, or the raise, checkpoint mark or input that proves
+   *  the window is in front. */
+  dropSeenMarks(why: 'window focused' | 'selected tab in front' | 'checkpoint in front' | 'input in front'): void {
     if (!this._isActive) return;
     let changed = false;
     for (const pane of [...this._panesNeedingYou.keys()]) {
       this._panesNeedingYou.delete(pane);
-      rlog('info', '[DOT] green cleared', { tabId: this.id, pane: pane.id, why: why === 'in front' ? 'selected tab in front' : why });
+      rlog('info', '[DOT] green cleared', { tabId: this.id, pane: pane.id, why });
       changed = true;
     }
     // clearCheckpointDone tells the tab through onCheckpointMark.
-    for (const pane of this._panes) pane.clearCheckpointDone(why === 'in front' ? 'active tab' : 'window focused');
+    for (const pane of this._panes) pane.clearCheckpointDone(why === 'window focused' ? 'window focused' : 'active tab');
     if (changed) this.onTitleChanged?.();
   }
 

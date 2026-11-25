@@ -14,13 +14,13 @@
 import { checker, setUpTabManager, until, tick } from './tab-manager-harness.mjs';
 
 const { check, section, finish } = checker();
-const { w, doc, emit, logs, makeWindow, windowFocus } = await setUpTabManager({ tags: ['DOT', 'CKPT', 'TAB'] });
+const { w, doc, emit, logs, makeWindow, windowFocus, WINDOW_FOCUS_SETTLE_MS } = await setUpTabManager({ tags: ['DOT', 'CKPT', 'TAB'] });
 
 const root = (state) => `\x1b]7501;state=${state}:app=claude-code\x07`;
 const T0 = Math.floor(Date.now() / 1000) + 1000;
 const stop = (cpd) => `\x1b]777;patton;stop;tasks=0;crons=0;ctx=50000;since=20000;cpt=${cpd};cpd=${cpd}\x07`;
 // The return clears after WINDOW_FOCUS_SETTLE_MS (a notification click focuses, then switches tabs).
-const SETTLE = 250;
+const SETTLE = WINDOW_FOCUS_SETTLE_MS;
 const focusEvent = () => { windowFocus.inFront = true; w.dispatchEvent(new w.Event('focus')); };
 const focusWindow = async () => { focusEvent(); await tick(SETTLE + 60); };
 const blurWindow = () => { windowFocus.inFront = false; w.dispatchEvent(new w.Event('blur')); };
@@ -184,23 +184,66 @@ await section(async () => {
   await endTurns([pC2]);
   check('stale: the next raise on the selected tab of a front window drops the stale entry', tabC.awaitingInput === false && marks(tabC).length === 0, marks(tabC));
   check('stale: logged as a clear, why "selected tab in front"', clearedWhy(tabC, 'selected tab in front') === 1);
-  // ...and a key press or click proves the window is in front, without any raise.
+  // ...and a key press or click proves the window is in front, without any raise (a tick later, so the
+  // strip is never rebuilt inside the gesture).
   blurWindow();
   await turnEnds(tabC);
   windowFocus.inFront = true;
-  const c1 = clearedWhy(tabC, 'selected tab in front');
+  const c1 = clearedWhy(tabC, 'input in front');
   doc.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'a', bubbles: true }));
-  check('stale: a key press in a front window clears the selected tab (both panes)', tabC.awaitingInput === false && clearedWhy(tabC, 'selected tab in front') === c1 + 2, clearedWhy(tabC, 'selected tab in front') - c1);
+  check('stale: a key press does not clear inside its own event', tabC.awaitingInput === true);
+  await tick(20);
+  check('stale: a key press in a front window clears the selected tab (both panes)', tabC.awaitingInput === false && clearedWhy(tabC, 'input in front') === c1 + 2, clearedWhy(tabC, 'input in front') - c1);
   blurWindow();
   await turnEnds(tabC);
   windowFocus.inFront = true;
-  const c2 = clearedWhy(tabC, 'selected tab in front');
-  doc.dispatchEvent(new w.MouseEvent('pointerdown', { bubbles: true }));
-  check('stale: a click in a front window clears the selected tab (both panes)', tabC.awaitingInput === false && clearedWhy(tabC, 'selected tab in front') === c2 + 2);
+  const c2 = clearedWhy(tabC, 'input in front');
+  doc.dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+  await tick(20);
+  check('stale: a click in a front window clears the selected tab (both panes)', tabC.awaitingInput === false && clearedWhy(tabC, 'input in front') === c2 + 2);
+  // Capture phase: a handler that stops the event on its way (a button's own click handler) can't hide it.
+  blurWindow();
+  await turnEnds(tabC);
+  windowFocus.inFront = true;
+  const stopper = doc.createElement('button');
+  stopper.addEventListener('click', (e) => e.stopPropagation());
+  stopper.addEventListener('keydown', (e) => e.stopPropagation());
+  doc.body.appendChild(stopper);
+  stopper.dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+  await tick(20);
+  check('stale: a click stopped by its target still clears (capture phase)', tabC.awaitingInput === false);
+  blurWindow();
+  await turnEnds(tabC);
+  windowFocus.inFront = true;
+  stopper.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'a', bubbles: true }));
+  await tick(20);
+  check('stale: a key stopped by its target still clears (capture phase)', tabC.awaitingInput === false);
+  stopper.remove();
+  // The red circle alone (no green) clears on input too.
+  const pC = tabC.panes[0];
+  blurWindow();
+  const ck0 = count('[CKPT] ctx');
+  emit(pC.ptyId, root('working')); emit(pC.ptyId, root('done')); emit(pC.ptyId, stop(T0 + 40));
+  await until(() => count('[CKPT] ctx') > ck0, 3000); await tick(20);
+  check('stale red: held while behind', pC.checkpointDone === true && tabC.awaitingInput === false);
+  windowFocus.inFront = true;
+  doc.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'a', bubbles: true }));
+  await tick(20);
+  check('stale red: a key press clears the red circle alone', pC.checkpointDone === false);
+  blurWindow();
+  const ck1 = count('[CKPT] ctx');
+  emit(pC.ptyId, root('working')); emit(pC.ptyId, root('done')); emit(pC.ptyId, stop(T0 + 41));
+  await until(() => count('[CKPT] ctx') > ck1, 3000); await tick(20);
+  check('stale red: held again while behind', pC.checkpointDone === true);
+  windowFocus.inFront = true;
+  doc.dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+  await tick(20);
+  check('stale red: a click clears the red circle alone', pC.checkpointDone === false);
   // Input while the window is behind (hasFocus false) clears nothing.
   blurWindow();
   await turnEnds(tabC);
   doc.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'a', bubbles: true }));
+  await tick(20);
   check('stale: input while the window is behind clears nothing', tabC.awaitingInput === true);
   await focusWindow();
 
@@ -251,6 +294,8 @@ await section(async () => {
   windowFocus.inFront = false; // behind again, no blur event delivered
   await tick(SETTLE + 60);
   check('a window found behind when the settle wait ends clears nothing', tabA.awaitingInput === true);
+  check('the cancel by a blur event is logged', count('[DOT] window focus settle cancelled', (d) => d.why === 'blur') >= 2);
+  check('the settle that finds the window behind is logged', count('[DOT] window focus settle skipped', (d) => d.why === 'window behind again') >= 1, logs.filter((l) => /settle/.test(l.msg)).map((l) => [l.msg, l.data]));
   await focusWindow();
   check('and the next real return clears', tabA.awaitingInput === false);
 
@@ -336,6 +381,89 @@ await section(async () => {
   await finishes(p2, T0 + 21);
   check('ckpt stale: a checkpoint mark on a front window\'s selected tab drops the stale green too', tabA.awaitingInput === false && p2.checkpointDone === false && marks(tabA).length === 0, marks(tabA));
   await focusWindow();
+});
+
+// Input while a mark is held never rebuilds the strip inside the gesture: a click, a double-click
+// rename or a drag that began on a tab element still lands (review 2, finding 1).
+await section(async () => {
+  const tm = await makeWindow(['A', 'B', 'C']);
+  const [tabA, , tabC] = tm.getTabs(); // C selected
+  const { turnEnds } = view(tm);
+  const stripEl = (tab) => tm.bar.querySelector(`.tab-bar-tab[data-tab-id="${tab.id}"]`);
+  const hold = async () => { blurWindow(); await turnEnds(tabC); windowFocus.inFront = true; }; // a missed focus event
+
+  // A press on a tab while a mark is held.
+  await hold();
+  let el = stripEl(tabA);
+  el.dispatchEvent(new w.MouseEvent('pointerdown', { bubbles: true }));
+  await tick(20);
+  check('press: the pressed tab element is not replaced by a press', el.isConnected && stripEl(tabA) === el);
+  check('press: a press alone clears nothing', tabC.awaitingInput === true);
+  el.dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
+  await tick(20);
+  check('press: the click clears the mark, a tick after it', tabC.awaitingInput === false);
+
+  // A double-click rename that starts while a mark is held.
+  await hold();
+  el = stripEl(tabA);
+  el.dispatchEvent(new w.MouseEvent('pointerdown', { bubbles: true }));
+  el.dispatchEvent(new w.MouseEvent('click', { bubbles: true, detail: 1 }));
+  el.dispatchEvent(new w.MouseEvent('pointerdown', { bubbles: true }));
+  el.dispatchEvent(new w.MouseEvent('click', { bubbles: true, detail: 2 }));
+  el.dispatchEvent(new w.MouseEvent('dblclick', { bubbles: true, detail: 2 }));
+  await tick(20);
+  const box = tm.bar.querySelector('.tab-bar-tab-rename');
+  check('rename: the double-click opens the rename box', !!box && box.isConnected);
+  check('rename: and the mark still cleared', tabC.awaitingInput === false);
+  box?.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  await tick(20);
+  check('rename: closed again', !tm.bar.querySelector('.tab-bar-tab-rename'));
+
+  // A drag that starts while a mark is held: the strip is not rebuilt under it.
+  await hold();
+  el = stripEl(tabA);
+  const grip = el.querySelector('.tab-bar-tab-grip');
+  el.dispatchEvent(new w.MouseEvent('pointerdown', { bubbles: true }));
+  const dragstart = new w.Event('dragstart', { bubbles: true });
+  dragstart.dataTransfer = { setData() {}, setDragImage() {}, effectAllowed: '' };
+  grip.dispatchEvent(dragstart);
+  doc.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'a', bubbles: true }));
+  await tick(20);
+  check('drag: the mark cleared in the model', tabC.awaitingInput === false);
+  check('drag: the dragged element survives the clear', el.isConnected && stripEl(tabA) === el && el.classList.contains('dragging'));
+  grip.dispatchEvent(new w.Event('dragend', { bubbles: true }));
+  await tick(20);
+  check('drag: the strip catches up after dragend', !!stripEl(tabA) && !tm.bar.querySelector('.dragging'));
+  await focusWindow();
+});
+
+// A window that is gone cancels its settle timer and its input timer.
+await section(async () => {
+  const tm = await makeWindow(['A', 'B']);
+  const tabB = tm.getActiveTab();
+  const { turnEnds } = view(tm);
+  let calls = 0;
+  const realFocused = tabB.windowFocused.bind(tabB);
+  tabB.windowFocused = () => { calls++; return realFocused(); };
+  blurWindow();
+  await turnEnds(tabB);
+  focusEvent();
+  await tick(60);
+  tm.dispose();
+  await tick(SETTLE + 60);
+  check('dispose: the pending settle clear never runs', calls === 0 && tabB.awaitingInput === true, calls);
+  check('dispose: the cancel is logged', count('[DOT] window focus settle cancelled', (d) => d.why === 'disposed') === 1);
+  // The input timer too.
+  const tm2 = await makeWindow(['A2', 'B2']);
+  const tabB2 = tm2.getActiveTab();
+  const { turnEnds: ends2 } = view(tm2);
+  blurWindow();
+  await ends2(tabB2);
+  windowFocus.inFront = true;
+  doc.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'a', bubbles: true }));
+  tm2.dispose();
+  await tick(30);
+  check('dispose: a pending input clear never runs', tabB2.awaitingInput === true);
 });
 
 finish();

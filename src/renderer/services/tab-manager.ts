@@ -24,11 +24,11 @@ import {
   placeAfterGroup, repairRuns, stepMove, takeBlockOutOfGroup, takeOutOfGroup, visibleItems, MAX_GROUPS, type TabDropTarget, type TabGroup,
 } from './tab-groups';
 
-/** Why a group unfolded, as the `[GROUP] unfolded` log line names it. */
 /** How long the window's return waits before clearing the selected tab's marks:
  *  a notification click switches tabs just after focusing the window. */
 export const WINDOW_FOCUS_SETTLE_MS = 250;
 
+/** Why a group unfolded, as the `[GROUP] unfolded` log line names it. */
 export type GroupUnfoldReason = 'click' | 'menu' | 'jump' | 'add' | 'new-tab' | 'restore';
 
 interface ClosedPaneState {
@@ -203,31 +203,52 @@ export class TabManager {
     // at it) and the one he lands on clears through Tab.show(). A blur in
     // between cancels it.
     let focusTimer: ReturnType<typeof setTimeout> | null = null;
-    const cancelFocusTimer = () => { if (focusTimer !== null) { clearTimeout(focusTimer); focusTimer = null; } };
+    const cancelFocusTimer = (why: string) => {
+      if (focusTimer === null) return;
+      clearTimeout(focusTimer);
+      focusTimer = null;
+      rlog('info', '[DOT] window focus settle cancelled', { why });
+    };
     const onWindowFocus = () => {
-      cancelFocusTimer();
+      cancelFocusTimer('focus again');
       focusTimer = setTimeout(() => {
         focusTimer = null;
-        if (document.hasFocus()) this.activeTab?.windowFocused();
+        if (!document.hasFocus()) {
+          rlog('info', '[DOT] window focus settle skipped', { why: 'window behind again' });
+          return;
+        }
+        this.activeTab?.windowFocused();
       }, WINDOW_FOCUS_SETTLE_MS);
     };
     // Any key or click in the window proves it is in front even when its
     // `focus` event was missed (Chromium sets page focus and the window's
     // active state separately): a mark still up on the selected tab goes.
+    // The clear redraws the strip, so it never runs inside the gesture it
+    // answers: a press that began on a tab element must still reach its click,
+    // double-click (rename) or drag. It runs a tick after the key or the click
+    // (so their own handlers go first), and the strip itself holds a redraw
+    // while a tab is dragged or a name box is open (TabBar.update).
+    let inputTimer: ReturnType<typeof setTimeout> | null = null;
     const onInput = () => {
-      const tab = this.activeTab;
-      if (tab?.holdsMarks && document.hasFocus()) tab.dropSeenMarks('in front');
+      if (inputTimer !== null) return;
+      inputTimer = setTimeout(() => {
+        inputTimer = null;
+        const tab = this.activeTab;
+        if (tab?.holdsMarks && document.hasFocus()) tab.dropSeenMarks('input in front');
+      }, 0);
     };
+    const onBlur = () => cancelFocusTimer('blur');
     window.addEventListener('focus', onWindowFocus);
-    window.addEventListener('blur', cancelFocusTimer);
+    window.addEventListener('blur', onBlur);
     window.addEventListener('keydown', onInput, true);
-    window.addEventListener('pointerdown', onInput, true);
+    window.addEventListener('click', onInput, true);
     this.disposables.push(() => {
-      cancelFocusTimer();
+      cancelFocusTimer('disposed');
+      if (inputTimer !== null) { clearTimeout(inputTimer); inputTimer = null; }
       window.removeEventListener('focus', onWindowFocus);
-      window.removeEventListener('blur', cancelFocusTimer);
+      window.removeEventListener('blur', onBlur);
       window.removeEventListener('keydown', onInput, true);
-      window.removeEventListener('pointerdown', onInput, true);
+      window.removeEventListener('click', onInput, true);
     });
 
     // Listen for PTY exit — route via panesByPtyId

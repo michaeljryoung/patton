@@ -24,7 +24,7 @@ export async function setUpTabManager({ tags }) {
 
   await build({
     stdin: {
-      contents: `export { TabManager } from './services/tab-manager';
+      contents: `export { TabManager, WINDOW_FOCUS_SETTLE_MS } from './services/tab-manager';
 export { repairRuns } from './services/tab-groups';
 export * as tabGroups from './services/tab-groups';`,
       resolveDir: join(repo, 'src', 'renderer'), loader: 'ts',
@@ -94,7 +94,7 @@ export * as tabGroups from './services/tab-groups';`,
   }
 
   const R = await import(pathToFileURL(join(work, 'renderer.cjs')).href);
-  const { TabManager, repairRuns, tabGroups } = R.default ?? R;
+  const { TabManager, WINDOW_FOCUS_SETTLE_MS, repairRuns, tabGroups } = R.default ?? R;
 
   /** A window: its own strip and content, a TabManager, a tab per name (the last selected). */
   async function makeWindow(names) {
@@ -112,7 +112,7 @@ export * as tabGroups from './services/tab-groups';`,
     return tm;
   }
 
-  return { w, doc, emit, feed, logs, makeWindow, windowFocus, TabManager, repairRuns, tabGroups };
+  return { w, doc, emit, feed, logs, makeWindow, windowFocus, TabManager, WINDOW_FOCUS_SETTLE_MS, repairRuns, tabGroups };
 }
 
 /** check(), section() and the exit guard every check uses. */
