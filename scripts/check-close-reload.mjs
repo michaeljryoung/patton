@@ -539,4 +539,30 @@ await section(async () => {
   check('old shell exit, then the respawn fails: the dead tab closes', !tm3.getTabs().includes(t3), tm3.getTabs().length);
 });
 
+// ── 14. Claude moves to another pane while the question is up ──
+await section(async () => {
+  reset();
+  const tm = await makeWindow([]);
+  const tab = await projectTab(tm, '/proj/alpha');
+  tm.switchToId(tab.id);
+  const first = tab.focusedPane;
+  await claudeAtRest(first);
+  await tab.splitVertical('/proj/alpha');
+  await tick(30);
+  const second = tab.focusedPane;
+  tab.focusPaneById(first.id);
+  emit(first.ptyId, root('working'));
+  await until(() => first.pauseInput(null).running);
+  const mark = logs.length;
+  const p = tm.closeAndReload(tab.id);
+  await until(() => !!dialog());
+  await claudeAtRest(second); // Claude now runs in the other pane too ...
+  tab.focusPaneById(second.id); // ... and he moved there: that pane would now be reloaded
+  await answer('confirm');
+  await p;
+  check('Claude moved while asking: nothing respawned', state.respawns.length === 0, state.respawns);
+  const ign = logsSince(mark, '[TAB] close and reload ignored');
+  check('Claude moved while asking: logged as ignored', ign.length === 1 && ign[0].data.reason === 'tab or pane changed', ign.map((x) => x.data));
+});
+
 finish();
