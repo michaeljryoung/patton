@@ -5,7 +5,10 @@
 // 44.7.0 left libEGL.dylib and libGLESv2.dylib behind. After the ditto,
 // pruneStale() finds every path in the installed bundle that the fresh build
 // doesn't have and removes it, unless Patton is running from there, and
-// verifySignature() reports whether the result still verifies.
+// verifySignature() reports whether the result still verifies. refreshIcon()
+// then bumps the bundle folder's mtime (ditto leaves it alone) and re-registers
+// the app with Launch Services, so a changed icon reaches the Dock; it never
+// restarts the Dock, which would flicker on his screen at every commit's install.
 // Plain CommonJS: forge.config.ts imports it and scripts/check-install-bundle.mjs
 // drives it with temp trees. dest and the is-running check are parameters.
 'use strict';
@@ -161,10 +164,35 @@ function verifySignature(dest, options = {}) {
   }
 }
 
+/** Launch Services' registration tool (not on PATH). */
+const LSREGISTER = '/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister';
+
 /**
- * What postPackage calls after the ditto: prune, then verify. Neither may fail
- * the build (Forge does not catch hook errors), so anything either throws is
- * reported as a warning and swallowed.
+ * Make the Dock and Finder notice a changed icon (S67): `ditto` overwrites in
+ * place and leaves the .app folder's own mtime alone, so after an install that
+ * changed the icon the bundle still carried the old date and the Dock kept the
+ * previous icon. Sets dest's atime and mtime to now, then `lsregister -f dest`.
+ * Never restarts the Dock (`killall Dock` is visible on screen, and the
+ * post-commit hook installs on commits too). Never throws: a failure is a warning.
+ */
+function refreshIcon(dest, options = {}) {
+  const log = options.log || console.log;
+  const warn = options.warn || console.warn;
+  const exec = options.exec || execFileSync;
+  try {
+    const now = new Date();
+    fs.utimesSync(dest, now, now);
+    exec(LSREGISTER, ['-f', dest], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    log(`🔄 Bumped ${dest}'s modified time and re-registered it with Launch Services (the Dock may need \`killall Dock\` to show a changed icon)`);
+  } catch (err) {
+    warn(`⚠️  Could not refresh the icon registration of ${dest}: ${err && err.message ? err.message : err}`);
+  }
+}
+
+/**
+ * What postPackage calls after the ditto: prune, verify, then refresh the icon.
+ * None of them may fail the build (Forge does not catch hook errors), so anything
+ * one throws is reported as a warning and swallowed.
  */
 function pruneAndVerify(source, dest, options = {}) {
   const warn = options.warn || console.warn;
@@ -178,6 +206,11 @@ function pruneAndVerify(source, dest, options = {}) {
   } catch (err) {
     warn(`⚠️  Signature check of ${dest} failed unexpectedly: ${err && err.message ? err.message : err}`);
   }
+  try {
+    refreshIcon(dest, options);
+  } catch (err) {
+    warn(`⚠️  Icon refresh of ${dest} failed unexpectedly: ${err && err.message ? err.message : err}`);
+  }
 }
 
-module.exports = { findStalePaths, isRunningFrom, pruneStale, codesignArgs, verifySignature, pruneAndVerify };
+module.exports = { findStalePaths, isRunningFrom, pruneStale, codesignArgs, verifySignature, refreshIcon, LSREGISTER, pruneAndVerify };

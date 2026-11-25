@@ -103,7 +103,10 @@ const config: ForgeConfig = {
         // ditto and break the signature (S46: Electron 44.9.3 dropped two
         // dylibs 44.7.0 shipped). scripts/install-prune.cjs removes them when
         // Patton isn't running from dest, else lists them and says to rerun
-        // `npm run install-app` with Patton quit, then verifies the signature.
+        // `npm run install-app` with Patton quit, then verifies the signature,
+        // then bumps the bundle's mtime and runs `lsregister -f` (ditto leaves the
+        // .app folder's mtime alone, so the Dock kept a changed icon's old copy, S67).
+        // It never restarts the Dock; `killall Dock` is his if the icon still lags.
         //
         // PATTON_NO_INSTALL=1 (exactly "1") stops here: built and signed in out/, the
         // installed app untouched — for verifying a change while Patton is in

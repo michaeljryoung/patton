@@ -12,12 +12,12 @@ import { tmpdir } from 'node:os';
 import { spawn, execFileSync } from 'node:child_process';
 import {
   chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync,
-  rmSync, symlinkSync, writeFileSync,
+  rmSync, symlinkSync, utimesSync, writeFileSync,
 } from 'node:fs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const {
-  findStalePaths, isRunningFrom, pruneStale, codesignArgs, verifySignature, pruneAndVerify,
+  findStalePaths, isRunningFrom, pruneStale, codesignArgs, verifySignature, refreshIcon, LSREGISTER, pruneAndVerify,
 } = createRequire(import.meta.url)(join(here, 'install-prune.cjs'));
 
 const SCRATCH = mkdtempSync(join(tmpdir(), 'patton-install-bundle-'));
@@ -356,6 +356,80 @@ function realisticCase(name) {
   const c = realisticCase('partial');
   const res = pruneStale(c.source, c.dest, { isRunning: () => false, log: () => {}, warn: () => {} });
   check('complete source: prune goes ahead', res.skipped === false && res.removed.length === 2, res);
+}
+
+// 14. refreshIcon (S67): the bundle's mtime moves to now and lsregister -f runs; never throws, never restarts the Dock.
+{
+  const OLD = new Date('2026-11-24T16:10:00Z');
+  const staleBundle = (name) => {
+    const c = makeCase(name);
+    utimesSync(c.dest, OLD, OLD);
+    return c;
+  };
+  const c = staleBundle('icon');
+  const out = quiet();
+  const calls = [];
+  const t0 = Date.now();
+  let threw = null;
+  try {
+    refreshIcon(c.dest, { exec: (cmd, a) => { calls.push({ cmd, a }); return ''; }, log: (m) => out.log(m), warn: (m) => out.warn(m) });
+  } catch (err) { threw = err; }
+  const mtime = lstatSync(c.dest).mtimeMs;
+  check('refreshIcon: does not throw', threw === null, threw && threw.message);
+  check("refreshIcon: the bundle folder's mtime moves to now", mtime >= t0 - 1000 && mtime <= Date.now() + 1000, { mtime, old: OLD.getTime() });
+  check('refreshIcon: runs lsregister -f on dest, and only that',
+    calls.length === 1 && calls[0].cmd === LSREGISTER && JSON.stringify(calls[0].a) === JSON.stringify(['-f', c.dest]), calls);
+  check("refreshIcon: the lsregister path is Launch Services' own tool",
+    LSREGISTER === '/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister', LSREGISTER);
+  check('refreshIcon: logs one line and warns nothing', out.lines.length === 1 && out.warnings.length === 0, out);
+  check('refreshIcon: never restarts the Dock', calls.every((x) => !/Dock/.test(x.cmd) && !x.a.some((y) => /Dock/.test(y))), calls);
+
+  const c2 = staleBundle('icon-throws');
+  const out2 = quiet();
+  let threw2 = null;
+  try {
+    refreshIcon(c2.dest, { exec: () => { throw new Error('lsregister exploded'); }, log: (m) => out2.log(m), warn: (m) => out2.warn(m) });
+  } catch (err) { threw2 = err; }
+  check('refreshIcon: an exec that throws does not throw out', threw2 === null, threw2 && threw2.message);
+  check('refreshIcon: a throwing exec gives one warning naming the error',
+    out2.warnings.length === 1 && out2.warnings[0].includes('lsregister exploded'), out2.warnings);
+
+  const c3 = makeCase('icon-missing');
+  const out3 = quiet();
+  let threw3 = null;
+  try {
+    refreshIcon(join(c3.root, 'no-such-app'), { exec: () => '', log: (m) => out3.log(m), warn: (m) => out3.warn(m) });
+  } catch (err) { threw3 = err; }
+  check('refreshIcon: a missing dest does not throw', threw3 === null, threw3 && threw3.message);
+  check('refreshIcon: a missing dest is warned about', out3.warnings.length === 1, out3.warnings);
+
+  // pruneAndVerify calls it, with the injected exec, on a temp tree.
+  const c4 = realisticCase('icon-prune');
+  utimesSync(c4.dest, OLD, OLD);
+  const execCalls = [];
+  const out4 = quiet();
+  const t4 = Date.now();
+  pruneAndVerify(c4.source, c4.dest, {
+    isRunning: () => false,
+    exec: (cmd, a) => { execCalls.push({ cmd, a }); return ''; },
+    log: (m) => out4.log(m), warn: (m) => out4.warn(m),
+  });
+  check('pruneAndVerify: calls refreshIcon (lsregister -f dest through the injected exec)',
+    execCalls.some((x) => x.cmd === LSREGISTER && JSON.stringify(x.a) === JSON.stringify(['-f', c4.dest])), execCalls);
+  check('pruneAndVerify: the refresh comes after the signature check',
+    execCalls.length === 2 && execCalls[0].cmd === 'codesign' && execCalls[1].cmd === LSREGISTER, execCalls);
+  check("pruneAndVerify: the bundle folder's mtime moved to now", lstatSync(c4.dest).mtimeMs >= t4 - 1000);
+  const out5 = quiet();
+  let threw5 = null;
+  try {
+    pruneAndVerify(c4.source, c4.dest, {
+      isRunning: () => false,
+      exec: (cmd) => { if (cmd === LSREGISTER) throw new Error('no lsregister'); return ''; },
+      log: (m) => out5.log(m), warn: (m) => out5.warn(m),
+    });
+  } catch (err) { threw5 = err; }
+  check('pruneAndVerify: a failing lsregister is a warning, not an escape',
+    threw5 === null && out5.warnings.some((w) => w.includes('no lsregister')), { threw5, w: out5.warnings });
 }
 
 // Tidy: the whole temp folder this run made.
