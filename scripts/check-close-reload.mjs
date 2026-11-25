@@ -241,9 +241,11 @@ for (const [name, setUp, text, asked, tracker] of reasons) {
     const msg = dialogText('.confirm-dialog-message');
     check(`ask (${name}): message gives the reason and the consequence`, msg.includes(text) && msg.includes('Reloading ends this session and anything running in it, then starts a fresh one in alpha.'), msg);
     check(`ask (${name}): confirm label Close and Reload, nothing reloaded yet`, dialog().querySelector('.confirm-dialog-confirm').textContent === 'Close and Reload' && state.respawns.length === 0);
+    await tick(330); // past the dwell: a ⌘W still must not confirm
+    check(`ask (${name}): ⌘W with the dialog up is swallowed, not a confirm`, tm.confirmDialog.confirmByShortcut() === true && !!dialog() && state.respawns.length === 0);
     await answer('cancel');
     await p;
-    check(`ask (${name}): Cancel leaves the old pty untouched`, state.respawns.length === 0 && state.destroyed.length === 0 && state.writes.length === 0 && tab.focusedPane.ptyId === oldPty);
+    check(`ask (${name}): Cancel leaves the old pty untouched`, state.respawns.length === 0 && state.destroyed.length === 0 && !state.writes.some((x) => x.id === oldPty) && tab.focusedPane.ptyId === oldPty, { respawns: state.respawns.length, destroyed: state.destroyed, writes: state.writes });
     const l = logsSince(mark, '[TAB] close and reload');
     check(`ask (${name}): cancel logged with the reason`, l.length === 1 && l[0].data.asked === asked && l[0].data.answer === false, l.map((x) => x.data));
     // Now the same, answered yes.
