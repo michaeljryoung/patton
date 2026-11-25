@@ -1016,3 +1016,16 @@ _Earlier entries archived → `docs/session-archive.md` (latest trim 2026-11-25,
 - His Dock tab looked blank mid-turn: by design then, now the W1 dot. The macOS Dock itself belongs to his other session: one change was made here (the Downloads stack removed) and handed over.
 
 _Earlier entries archived → `docs/session-archive.md` (latest trim 2026-11-25, S66)._
+
+## Session Log (S66 slimming 2026-11-25)
+
+### 2026-11-24 (Session 65 — usage panel with token counts, Chrome-like group edge drops, the green dot's log lines; released, not installed)
+- His ask: "I'm cycling between three Ultra accounts ... save the latest from each" and show names, percent and a token count bottom left. The status line now keeps each login's 5-hour and weekly reading and the live-login timeline (central-claude-md `c3cf681`); try-out page https://mjy-pages.vercel.app/p/patton-usage-panel/, his "2 u1"; the panel (`2d1576d`…`84f6518`, two reviews, 191 checks) released as v1.43.0; the raw token count on the default after his "3 no" to price-weighting (worker scan, `7e17f50`, `e6e83b7`, 102 checks).
+- His "in Google Chrome, you can drag a tab to the edge of the tab group, and it will include it": `dropPlacement` slots and edge joins with a blue line cue (`bf69980`…`1b1c1c9`); the review found a strip rebuild mid-drag read every drop as the right half (fixed, mutation-tested); v1.44.0.
+- His screenshot "it didn't flash green": Defence's turn ended 21:42:23 with the signal and marimba, and the log couldn't say why no dot; every dot raise, skip, clear and tab switch is now logged (`632220b`). His answer: probably on Defence; his "ok" to green on the selected tab when Patton isn't in front (next session).
+- Verifier 58–59/59 with a no-install build before each merge; `check-close-guard` was flaky between v1.43.0 and `e6e83b7` (it read the live accounts.json). Four worktrees removed after merging. /Applications untouched.
+
+### 2026-11-24 (Session 64 — from a Pages session: Pages links in the session bar; the two tab marks kept)
+- At his "1 yes": links to his Pages site (`https://mjy-pages.vercel.app/p/<slug>/`, where his pages go since 24 Nov) are Page rows in the session bar, labelled by their markdown text or the slug in words (`src/shared/pages-url.ts`, D6; `6ac0448`, built in a worktree, checks 57/57, release run passed, not installed). Reviewed inline, since the Sonnet reviewer was refused at the weekly limit.
+- D6's click line corrected: a web link opens through `web-open.ts` (`APP_OPEN_EXTERNAL`, http and https only), a file through `link-open-policy` (`95ad1bd`).
+- His "no reason why some things have a hollow circle and some a solid dot; both have agents running": by design, read in main.log and the sessions' records. Foot's turn ended 17:52 over a background job (ring); Defence was mid-turn launching four agents (dot) and turned to the ring at 17:55:34. He kept both marks ("1 ok").
