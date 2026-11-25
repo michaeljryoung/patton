@@ -324,6 +324,13 @@ await section(async () => {
   chipEl(tm, other).dispatchEvent(dragEv('drop', dt));
   check('drop on a group\'s chip adds them all to it', order(tm) === 'A F G@Other B@Other C@Other D@Other E@Other', order(tm));
   runsSound(tm, 'drop on chip', mark);
+  // The chip's left half (25 Nov): the selection goes out of the group, to just before it, in order.
+  const markL = logs.length;
+  tm.dropTabs(['B', 'C', 'D', 'E'].map((n) => idOf(tm, n)), { kind: 'chip', groupId: other, half: 'left' });
+  const movedL = logs.slice(markL).find((l) => l.msg === '[TAB] moved together');
+  check('…[TAB] moved together names the real target, the chip and its half (not "end")', movedL?.data?.count === 4 && movedL?.data?.to === `chip ${other} left`, movedL);
+  check('drop on a group\'s chip, left half: the selection leaves it, ungrouped, just before it, in order', order(tm) === 'A F B C D E G@Other', order(tm));
+  runsSound(tm, 'drop on chip left half', mark);
   // Into the middle of a group's run, the block stays in that group.
   const { tm: t2 } = await fourSpanningGroup();
   const m2 = logs.length;

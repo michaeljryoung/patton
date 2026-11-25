@@ -1289,6 +1289,45 @@ async function pageRun(BIG) {
       barEl.style.width = '1000px';
       barEl.style.flex = 'none';
 
+      // A chip's left half draws the slot line before its group (25 Nov 2026): painted 2 px wide, the chip's full height, ink,
+      // flush inside the strip when the chip is the strip's first item, and the same two pixels as the drop-after line of the tab
+      // before it when two groups touch.
+      {
+        const paintedChip = async (title, tabs, groups, chipIndex, before) => {
+          tabBar.update(tabs, groups);
+          await frame();
+          const c = strip.querySelectorAll('.tab-bar-group-chip')[chipIndex];
+          c.classList.add('drop-before');
+          c.style.setProperty('--drop-line', 'var(--ink)');
+          await frame();
+          const ls = getComputedStyle(c, '::after');
+          const r = c.getBoundingClientRect();
+          const sr = strip.getBoundingClientRect();
+          const width = parseFloat(ls.width);
+          const x0 = r.left + parseFloat(getComputedStyle(c).borderLeftWidth) + parseFloat(ls.left);
+          let want = null;
+          if (before) { // the tab just before the chip: its drop-after line is the same two pixels
+            before = strip.querySelector(`.tab-bar-tab[data-tab-id="${before}"]`);
+            before.classList.add('drop-after');
+            await frame();
+            const bs = getComputedStyle(before, '::after');
+            const bw = parseFloat(bs.width);
+            const bx = before.getBoundingClientRect().right - parseFloat(bs.right) - bw;
+            before.classList.remove('drop-after');
+            want = [+bx.toFixed(2), +(bx + bw).toFixed(2)];
+          }
+          const seen = { width: ls.width, left: ls.left, height: ls.height, chipH: r.height, bg: ls.backgroundColor, ink: inkColour, x0: +x0.toFixed(2), chipLeft: r.left, stripLeft: sr.left, want, content: ls.content };
+          check(`${tag}: the chip-left slot line (${title}) is painted, 2 px wide, the chip's full height, in ink`,
+            ls.content !== 'none' && ls.width === '2px' && Math.abs(parseFloat(ls.height) - r.height) < 0.5 && ls.backgroundColor === inkColour, seen);
+          check(`${tag}: ...${before ? 'the same two pixels as the drop-after line of the tab before the chip' : 'wholly inside the strip, flush at the chip\'s left edge'}`,
+            before ? want && Math.abs(x0 - want[0]) < 0.01 && Math.abs(x0 + width - want[1]) < 0.01 : ls.left === '0px' && x0 >= sr.left - 0.01 && Math.abs(x0 - r.left) < 0.01, seen);
+          c.classList.remove('drop-before');
+          c.style.removeProperty('--drop-line');
+        };
+        await paintedChip('chip at the strip\'s start', [{ id: 'k1', title: 'one', active: true, groupId: 'gA' }, { id: 'k2', title: 'two', active: false }], [{ id: 'gA', name: 'Games', folded: false }], 0, null);
+        await paintedChip('between two groups', [{ id: 'k1', title: 'one', active: true, groupId: 'gA' }, { id: 'k2', title: 'two', active: false, groupId: 'gB' }], [{ id: 'gA', name: 'Games', folded: false }, { id: 'gB', name: 'Work', folded: false }], 1, 'k1');
+      }
+
       // Open, short name.
       tabBar.update(gTabs(false), [{ id: 'gA', name: 'Games', folded: false }]);
       await frame();
@@ -1500,7 +1539,7 @@ async function pageRun(BIG) {
       check(`group shades (${mode}): painted lettering reaches 4.5:1 on its painted fill (tab, chip, folded chip's count, hovered, selected) (lowest ${Math.min(...painted.map((r) => r[1]))})`, painted.every((r) => r[1] >= r[2]), painted);
       // The drop cues, painted: the chip's own line (.drag-over, a drop on it or a slot that joins its group), and the 2 px slot line
       // (::after, --focus when it joins) on a grouped tab and on the selected grouped tab, each 3:1 on its own fill.
-      const dropLine = (el) => { const m = getComputedStyle(el).boxShadow.match(/(rgba?\([^)]*\)) 2px 0px 0px 0px inset/); return m ? m[1] : null; };
+      const dropLine = (el) => { const m = getComputedStyle(el).boxShadow.match(/(rgba?\([^)]*\)) 0px -2px 0px 0px inset/); return m ? m[1] : null; };
       const slotLine = (el) => getComputedStyle(el, '::after').backgroundColor;
       const dropRows = [];
       for (const [what, el, fill] of [['chip', chipFor('gS2'), chipBg[1]], ['tab', tabOf('s4'), tabBg.s4], ['selected tab', tabOf('s3'), bgNow]]) {
@@ -1512,7 +1551,7 @@ async function pageRun(BIG) {
         if (what === 'chip') el.classList.remove('drag-over');
         else { el.classList.remove('drop-before'); el.style.removeProperty('--drop-line'); }
       }
-      check(`group shades (${mode}): the painted drop cues (the chip's 2px line; the --focus slot line on a grouped tab and on the selected one) reach 3:1 on their fills (lowest ${Math.min(...dropRows.map((r) => r[2]))})`, dropRows.every((r) => r[1] && r[2] >= 3), dropRows);
+      check(`group shades (${mode}): the painted drop cues (the chip's 2px bottom bar; the --focus slot line on a grouped tab and on the selected one) reach 3:1 on their fills (lowest ${Math.min(...dropRows.map((r) => r[2]))})`, dropRows.every((r) => r[1] && r[2] >= 3), dropRows);
       await setScheme('light');
       await frame();
     }

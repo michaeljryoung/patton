@@ -178,19 +178,19 @@ export function takeBlockOutOfGroup<T>(list: readonly T[], items: readonly T[], 
  *  group's chip. What the strip hands TabManager on a drop. */
 export type TabDropTarget =
   | { kind: 'tab'; id: string; half: 'left' | 'right' }
-  | { kind: 'chip'; groupId: string };
+  | { kind: 'chip'; groupId: string; half: 'left' | 'right' };
 
 /** The same, with the tab itself (the pure rule's input). */
 export type DropOver<T> =
   | { kind: 'tab'; item: T; half: 'left' | 'right' }
-  | { kind: 'chip'; groupId: string };
+  | { kind: 'chip'; groupId: string; half: 'left' | 'right' };
 
 /** What a drop does. `slot`: the moving tabs, in strip order, land as one block
  *  at `index` of the list without them (before `before`, null = the end), all
  *  in `group` (null = ungrouped); `list` is the order after the drop. `why` is
  *  the rule that chose the group. `chip`: they join `group` as Add to does. */
 export type DropPlacement<T> =
-  | { kind: 'slot'; list: T[]; index: number; before: T | null; group: string | null; why: 'in-group' | 'group-edge' | 'ungrouped' }
+  | { kind: 'slot'; list: T[]; index: number; before: T | null; group: string | null; why: 'in-group' | 'group-edge' | 'ungrouped' | 'before-group' }
   | { kind: 'chip'; group: string };
 
 /** Where tabs dragged on the strip land, and in which group; null when the drop
@@ -203,7 +203,12 @@ export type DropPlacement<T> =
  *  3. Any other slot over an ungrouped tab: ungrouped there. A folded group's
  *     chip is not a tab, so the slot after it is ungrouped, and so is the slot
  *     before any chip (the chip marks where a group starts).
- *  4. Over a chip: joins that group as Add to does (after its last tab).
+ *  4. Over the right half of a chip: joins that group as Add to does (after
+ *     its last tab).
+ *  5. Over the left half of a chip (25 Nov): the slot just before that group,
+ *     outside every group, open or folded ('before-group'). It is the only way
+ *     out to the left of a group that starts the strip, or between two groups
+ *     that touch, where no ungrouped tab is under the pointer.
  *  A grouped tab follows the same rules, so dragging it past its group's edge
  *  onto the far half of the next ungrouped tab takes it out. Several tabs move
  *  as one block and every group stays one unbroken run. */
@@ -211,9 +216,24 @@ export function dropPlacement<T>(list: readonly T[], moving: readonly T[], over:
   const movingSet = new Set(moving.filter((x) => list.includes(x)));
   if (movingSet.size === 0) return null;
   const block = list.filter((x) => movingSet.has(x));
-  if (over.kind === 'chip') {
+  if (over.kind === 'chip' && over.half === 'right') {
     if (block.every((x) => groupOf(x) === over.groupId)) return null;
     return { kind: 'chip', group: over.groupId };
+  }
+  if (over.kind === 'chip') {
+    // Left half: ungrouped, at the group's start. The group's first remaining
+    // member marks the place; if every member is moving, the block's own place.
+    if (!list.some((x) => groupOf(x) === over.groupId)) return null;
+    const rest = list.filter((x) => !movingSet.has(x));
+    const firstMember = rest.findIndex((x) => groupOf(x) === over.groupId);
+    const wanted = firstMember !== -1 ? firstMember : list.slice(0, list.indexOf(block[0])).filter((x) => !movingSet.has(x)).length;
+    const out = insertBlock(rest, block, wanted, (x) => (movingSet.has(x) ? null : groupOf(x)));
+    const same = out.every((x, i) => x === list[i]) && block.every((x) => groupOf(x) === null);
+    if (same) return null;
+    // Where the block landed, not where it was asked for: insertBlock moves a place inside another
+    // group's run to that run's end (the case of a group whose every member moves).
+    const index = out.indexOf(block[0]);
+    return { kind: 'slot', list: out, index, before: rest[index] ?? null, group: null, why: 'before-group' };
   }
   const target = over.item;
   const at = list.indexOf(target);
