@@ -13,8 +13,8 @@
 // tracker failing, and Cancel leaves the old pty alone; a split tab respawns
 // only the pane Claude runs in; a second press while one runs is ignored; the
 // tab or pane closing during the question; no startup command; a failed
-// respawn; the log lines; stash and plain-shell questions; the tab's own name
-// and flag kept (the board's cleared); the stale green dot cleared; the startup
+// respawn; the log lines; stash and plain-shell questions; the tab's colour flag
+// kept and its one-off name dropped (the board's clears both); the stale green dot cleared; the startup
 // command bound to the replaced pane; no failure announced for a closed tab or
 // pane; the old shell ending mid-respawn.
 // Run: JSDOM_DIR=<a folder whose node_modules has jsdom> node scripts/check-close-reload.mjs
@@ -201,7 +201,7 @@ await section(async () => {
   check('same group', JSON.stringify(tm.getTabGroups().map((g) => g.tabIds.join())) === JSON.stringify(groupBefore));
   check('other tabs untouched', first.ptyId !== null && last.ptyId !== null && state.respawns.length === 1);
   check('the tab keeps its own colour flag', tab.flag === 'red', tab.flag);
-  check('the tab keeps its own name', tab.hasCustomTitle && tab.title === 'My name', tab.title);
+  check('the tab drops its one-off name (the fresh shell is no Claude yet, so it reads "Terminal")', !tab.hasCustomTitle && tab.title !== 'My name', { own: tab.hasCustomTitle, title: tab.title });
   check('the new shell\'s pane is focused after the reload', focusCalls >= 1 && tm.activeTab === tab, focusCalls);
   const l = logsSince(mark, '[TAB] close and reload');
   check('log: [TAB] close and reload {tabId, pane, split:false, asked:null, answer:null, startup:true}',
@@ -409,7 +409,7 @@ for (const [name, marks, asks, text, asked] of [
   });
 }
 
-// ── 9. The board's fresh tab still loses its own name and flag; Close and Reload keeps them ──
+// ── 9. The board's fresh tab loses its own name and flag; Close and Reload loses the name, keeps the flag ──
 await section(async () => {
   reset();
   const tm = await makeWindow([]);
@@ -417,7 +417,7 @@ await section(async () => {
   tab.setFlag('blue');
   tab.setCustomTitle('Mine');
   await tm.respawnTab(tab, { cwd: '/proj/alpha', projectDir: true });
-  check('board respawn (no keepName): the flag and the own name are cleared', tab.flag === null && !tab.hasCustomTitle, { flag: tab.flag, own: tab.hasCustomTitle });
+  check('board respawn (no keepFlag): the flag and the own name are cleared', tab.flag === null && !tab.hasCustomTitle, { flag: tab.flag, own: tab.hasCustomTitle });
 });
 
 // ── 10. A stale green dot goes with the old shell ──

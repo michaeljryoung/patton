@@ -77,11 +77,6 @@ interface TabHeaderInfo {
    *  after while Claude runs in it (`Tab.menuProject`), else the focused
    *  pane's. Its current and automatic names. */
   project?: { name: string; defaultName: string } | null;
-  /** The name on the tab comes from its project (Claude runs in it, and no
-   *  name was typed). Its menu offers both "Rename Tab…" (a one-off name for
-   *  this tab alone, which wins while set) and "Set Default Tab Name for
-   *  Project…" (the project's name on every tab in it). */
-  namedForProject?: boolean;
   active: boolean;
   awaitingInput?: boolean;
   /** A /checkpoint finished in this tab and it hasn't been selected since. */

@@ -57,8 +57,8 @@ const bar = new w.TB.TabBar(doc.getElementById('bar'), {
 });
 const tabs = [
   { id: 'plain', title: 'Repeated permission prompts', displayTitle: 'Repeated permi…', autoTitle: 'Repeated permission prompts', active: true },
-  { id: 'proj', title: 'patton', autoTitle: 'patton', project: { name: 'patton', defaultName: 'patton' }, namedForProject: true, active: false },
-  { id: 'shellproj', title: 'Terminal', autoTitle: 'Terminal', project: { name: 'patton', defaultName: 'patton' }, namedForProject: false, active: false },
+  { id: 'proj', title: 'patton', autoTitle: 'patton', project: { name: 'patton', defaultName: 'patton' }, active: false },
+  { id: 'shellproj', title: 'Terminal', autoTitle: 'Terminal', project: { name: 'patton', defaultName: 'patton' }, active: false },
   { id: 'third', title: 'third', active: false },
 ];
 bar.update(tabs);
@@ -80,12 +80,13 @@ items = openMenu('proj');
 const at = (l) => labels(items).indexOf(l);
 check('a project\'s tab has "Rename Tab…" too (a one-off name)', labels(items).includes('Rename Tab…'), labels(items));
 check('...and keeps "Set Default Tab Name for Project…"', labels(items).includes('Set Default Tab Name for Project…'), labels(items));
-check('...Rename Tab… sits directly above Set Default Tab Name for Project…, no separator between', at('Rename Tab…') >= 0 && at('Set Default Tab Name for Project…') === at('Rename Tab…') + 1, labels(items));
+// the next DOM sibling, so a separator between the two (a div that is no .context-menu-item) is seen
+check('...Rename Tab… sits directly above Set Default Tab Name for Project…, no separator between', at('Rename Tab…') >= 0 && choose(items, 'Rename Tab').nextElementSibling === choose(items, 'Set Default Tab Name'), labels(items));
 closeMenu();
 // a plain shell in a project folder reads "Terminal": the tab's name isn't the project's
 items = openMenu('shellproj');
 check('a shell tab in a project folder (not named for it) has "Rename Tab…"', labels(items).includes('Rename Tab…'), labels(items));
-check('...and keeps "Set Default Tab Name for Project…", right below it', labels(items).includes('Set Default Tab Name for Project…') && at('Set Default Tab Name for Project…') === at('Rename Tab…') + 1, labels(items));
+check('...and keeps "Set Default Tab Name for Project…", right below it', labels(items).includes('Set Default Tab Name for Project…') && choose(items, 'Rename Tab').nextElementSibling === choose(items, 'Set Default Tab Name'), labels(items));
 closeMenu();
 
 // choosing it opens the box on THAT tab, with the full current name (not the short one on show)
@@ -242,6 +243,10 @@ check('a project\'s "Set Default Tab Name" still calls onRenameProject', project
 const root = (st) => `\x1b]7501;state=${st}:app=claude-code\x07`;
 const tm0 = await setUpTabManager({ tags: ['TAB'] });
 const { doc: mdoc, w: mw, emit } = tm0;
+const PROJ = {
+  '/proj/alpha': { root: '/proj/alpha', defaultName: 'alpha' },
+  '/proj/alpha-feat-x': { root: '/proj/alpha', defaultName: 'alpha', worktree: { name: 'alpha-feat-x', path: '/proj/alpha-feat-x' } },
+};
 const projectsNow = {}; // root -> name, as main's store
 let namesCb = null;
 const baseApi = mw.patton;
@@ -251,7 +256,7 @@ mw.patton = new Proxy(baseApi, {
       return {
         getNames: async () => ({ ...projectsNow }),
         onNamesChanged: (cb) => { namesCb = cb; return () => {}; },
-        resolve: async (cwd) => (cwd === '/proj/alpha' ? { root: '/proj/alpha', defaultName: 'alpha' } : null),
+        resolve: async (cwd) => PROJ[cwd] ?? null,
         // Main's store: an empty name deletes, then it broadcasts to every window.
         setName: async (key, name) => { if (name) projectsNow[key] = name; else delete projectsNow[key]; namesCb?.({ ...projectsNow }); },
       };
@@ -260,8 +265,8 @@ mw.patton = new Proxy(baseApi, {
   },
 });
 const tm = await tm0.makeWindow([]);
-const mk = async () => {
-  const tab = await tm.createTab('/proj/alpha', { forProject: true });
+const mk = async (cwd = '/proj/alpha') => {
+  const tab = await tm.createTab(cwd, { forProject: true });
   await until(() => tab.menuProject !== null);
   emit(tab.focusedPane.ptyId, root('done'));
   await until(() => tab.focusedPane.isClaudePane);
@@ -292,8 +297,10 @@ check('set-up: two Claude tabs named for the project, both reading "alpha"', tA.
 
 mfire(mEl(tA), 'contextmenu', { clientX: 20, clientY: 20 });
 const projLabels = mItems().map(mLabel);
+const renameItem = mItems().find((i) => mLabel(i) === 'Rename Tab…');
+const defaultItem = mItems().find((i) => mLabel(i) === 'Set Default Tab Name for Project…');
 mClose();
-check('real manager, a project tab\'s menu: Rename Tab… directly above Set Default Tab Name for Project…', projLabels.indexOf('Rename Tab…') >= 0 && projLabels.indexOf('Set Default Tab Name for Project…') === projLabels.indexOf('Rename Tab…') + 1, projLabels);
+check('real manager, a project tab\'s menu: Rename Tab… directly above Set Default Tab Name for Project…, no separator between', !!renameItem && renameItem.nextElementSibling === defaultItem, projLabels);
 
 // one-off name: wins everywhere while set
 mPick(tA, 'Rename Tab…');
@@ -341,6 +348,20 @@ mPick(tB, 'Set Default Tab Name for Project…');
 await typeIn('');
 await until(() => tA.title === 'alpha');
 check('clearing the project default puts "alpha" back on every tab without a one-off', tA.title === 'alpha' && tB.title === 'alpha', { a: tA.title, b: tB.title });
+
+// ── A linked-worktree tab: the strip says "feat-x", the box the long form ──
+const tW = await mk('/proj/alpha-feat-x');
+check('worktree set-up: the strip reads the short name, the full title carries the project', shown(tW) === 'feat-x' && tW.title === 'alpha ⎇ alpha-feat-x' && !tW.hasCustomTitle, { shown: shown(tW), title: tW.title });
+mPick(tW, 'Rename Tab…');
+check('worktree: the box holds the full "alpha ⎇ alpha-feat-x", not the short strip name', mBox()?.value === 'alpha ⎇ alpha-feat-x' && mBox()?.placeholder === 'alpha ⎇ alpha-feat-x', mBox() && [mBox().value, mBox().placeholder]);
+await typeIn(mBox().value);
+check('worktree: Enter with the box unchanged freezes no one-off name', !tW.hasCustomTitle && shown(tW) === 'feat-x', { custom: tW.hasCustomTitle, shown: shown(tW) });
+mPick(tW, 'Rename Tab…');
+await typeIn('login spike');
+check('worktree: a typed name wins on the strip and as the title', tW.hasCustomTitle && tW.title === 'login spike' && shown(tW) === 'login spike', { title: tW.title, shown: shown(tW) });
+mPick(tW, 'Rename Tab…');
+await typeIn('');
+check('worktree: clearing returns the strip to "feat-x"', !tW.hasCustomTitle && tW.title === 'alpha ⎇ alpha-feat-x' && shown(tW) === 'feat-x', { title: tW.title, shown: shown(tW), custom: tW.hasCustomTitle });
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

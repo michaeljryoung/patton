@@ -292,7 +292,7 @@ export class TabManager {
    * exit of the NEW shell closes the tab as usual and the old one's end does
    * nothing. Throws, with the old shell and its registration intact, on failure.
    */
-  async respawnTab(tab: Tab, opts: { cwd?: string; projectDir?: boolean; hyperlinks?: boolean; allowSplit?: boolean; keepName?: boolean }): Promise<void> {
+  async respawnTab(tab: Tab, opts: { cwd?: string; projectDir?: boolean; hyperlinks?: boolean; allowSplit?: boolean; keepFlag?: boolean }): Promise<void> {
     const pane = tab.focusedPane;
     let ids: { oldId: number; newId: number };
     try {
@@ -415,7 +415,7 @@ export class TabManager {
         projectDir: true,
         hyperlinks: startup,
         allowSplit: true,
-        keepName: true,
+        keepFlag: true,
       });
       rlog('info', '[TAB] close and reload', { tabId, pane: pane.id, split, asked, answer, startup });
       if (!this.tabs.includes(tab)) return;
@@ -1948,7 +1948,6 @@ export class TabManager {
         displayTitle: t.displayTitle,
         autoTitle: t.autoTitle,
         project: t.menuProject ? projectRenameFields(t.menuProject) : null,
-        namedForProject: t.namedForProject,
         active: t.id === this.activeTab?.id,
         awaitingInput: t.awaitingInput,
         checkpointDone: t.checkpointDone,

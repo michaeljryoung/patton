@@ -558,8 +558,6 @@ await section(async () => {
   // A tab named for its project: Rename Tab… (a one-off name) on the selection menu
   // too (25 Nov, Michael: "you can't rename it as a one-off"), as on its own menu.
   const { tm } = await fourSpanningGroup();
-  const tabD = tm.getTabs().find((t) => t.title === 'D');
-  Object.defineProperty(tabD, 'namedForProject', { get: () => true, configurable: true });
   tm.updateTabBar();
   const labels = tabMenu(tm, 'D').map(labelOf);
   check('selection menu on a tab named for its project: Rename Tab… is there', labels.includes('Rename Tab…') && labels.includes('Remove Tab from Selection'), labels);
