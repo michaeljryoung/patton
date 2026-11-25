@@ -9,7 +9,7 @@ import { announce } from './announcer';
 import { runStartupCommand, type PendingSend } from './startup-command';
 import { rlog } from './renderer-logger';
 import { WAKE_TITLE, isWakeTab } from './board-wake';
-import { onProjectNamesChanged, projectDisplay, projectName, projectNameKey, projectRenameFields, startProjectNames } from './project-names';
+import { onProjectNamesChanged, projectDisplay, projectFolder, projectName, projectNameKey, projectRenameFields, startProjectNames } from './project-names';
 import { hoverBlocks, type HoverBlock, type HoverPaneInput } from './tab-hover';
 import type { SessionState, SessionTabState, RendererMode, TabFlag, WindowCloseInfo, ConfirmRequest, PauseAllReport } from '../../shared/types';
 import { runPause, emptyReport, pauseSummary, type PauseTarget } from './pause-all';
@@ -411,7 +411,7 @@ export class TabManager {
       this.pendingReloadSends.delete(pane);
       if (tab.focusedPane !== pane) tab.focusPaneById(pane.id);
       await this.respawnTab(tab, {
-        cwd: project.worktree?.path ?? project.root,
+        cwd: projectFolder(project),
         projectDir: true,
         hyperlinks: startup,
         allowSplit: true,

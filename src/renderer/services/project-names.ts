@@ -126,6 +126,12 @@ export function projectNameKey(project: ProjectInfo): string {
   return project.worktree?.path ?? project.root;
 }
 
+/** The folder a project's tab works in (Close and Reload starts its fresh
+ *  shell there): a linked worktree's own folder, else the project root. */
+export function projectFolder(project: ProjectInfo): string {
+  return project.worktree?.path ?? project.root;
+}
+
 /** Run `callback` whenever any project's name changes. Returns an unsubscribe function. */
 export function onProjectNamesChanged(callback: () => void): () => void {
   listeners.add(callback);
