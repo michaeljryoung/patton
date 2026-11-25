@@ -24,7 +24,7 @@ export async function setUpTabManager({ tags }) {
 
   await build({
     stdin: {
-      contents: `export { TabManager } from './services/tab-manager';
+      contents: `export { TabManager, WINDOW_FOCUS_SETTLE_MS } from './services/tab-manager';
 export { repairRuns } from './services/tab-groups';
 export * as tabGroups from './services/tab-groups';`,
       resolveDir: join(repo, 'src', 'renderer'), loader: 'ts',
@@ -48,6 +48,11 @@ export * as tabGroups from './services/tab-groups';`,
   globalThis.document = doc;
   w.matchMedia ||= () => ({ matches: false, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} });
   globalThis.matchMedia = w.matchMedia;
+  // jsdom's document.hasFocus() is always false; the app asks it whether this
+  // window is the one in front (Tab.windowInFront). Default: in front, as when
+  // he works in it; a check sets `windowFocus.inFront = false` for a window behind.
+  const windowFocus = { inFront: true };
+  doc.hasFocus = () => windowFocus.inFront;
   class RO { observe() {} unobserve() {} disconnect() {} }
   w.ResizeObserver = globalThis.ResizeObserver = RO;
   w.HTMLCanvasElement.prototype.getContext = () => null;
@@ -89,7 +94,7 @@ export * as tabGroups from './services/tab-groups';`,
   }
 
   const R = await import(pathToFileURL(join(work, 'renderer.cjs')).href);
-  const { TabManager, repairRuns, tabGroups } = R.default ?? R;
+  const { TabManager, WINDOW_FOCUS_SETTLE_MS, repairRuns, tabGroups } = R.default ?? R;
 
   /** A window: its own strip and content, a TabManager, a tab per name (the last selected). */
   async function makeWindow(names) {
@@ -107,7 +112,7 @@ export * as tabGroups from './services/tab-groups';`,
     return tm;
   }
 
-  return { w, doc, emit, feed, logs, makeWindow, TabManager, repairRuns, tabGroups };
+  return { w, doc, emit, feed, logs, makeWindow, windowFocus, TabManager, WINDOW_FOCUS_SETTLE_MS, repairRuns, tabGroups };
 }
 
 /** check(), section() and the exit guard every check uses. */

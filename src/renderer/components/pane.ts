@@ -1080,12 +1080,12 @@ export class Pane {
 
   /** Drop the red mark: the tab was selected, a new turn began, or the Claude
    *  session ended. A no-op when it isn't set. */
-  clearCheckpointDone(reason: 'selected' | 'new turn' | 'new session' | 'active tab'): void {
+  clearCheckpointDone(reason: 'selected' | 'new turn' | 'new session' | 'active tab' | 'window focused'): void {
     if (!this._checkpointDone) return;
     this._checkpointDone = false;
     // Seen: selecting the tab, or the mark landing on the tab he is on. A new
     // turn or session is not him looking, so the next Stop may raise it again.
-    if ((reason === 'selected' || reason === 'active tab') && this.markedCheckpointAt !== null) {
+    if ((reason === 'selected' || reason === 'active tab' || reason === 'window focused') && this.markedCheckpointAt !== null) {
       this.ackedCheckpointAt = Math.max(this.ackedCheckpointAt ?? -Infinity, this.markedCheckpointAt);
     }
     this.markedCheckpointAt = null;

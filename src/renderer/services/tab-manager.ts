@@ -25,6 +25,10 @@ import {
   placeAfterGroup, repairRuns, stepMove, takeBlockOutOfGroup, takeOutOfGroup, visibleItems, MAX_GROUPS, type TabDropTarget, type TabGroup,
 } from './tab-groups';
 
+/** How long the window's return waits before clearing the selected tab's marks:
+ *  a notification click switches tabs just after focusing the window. */
+export const WINDOW_FOCUS_SETTLE_MS = 250;
+
 /** Why a group unfolded, as the `[GROUP] unfolded` log line names it. */
 export type GroupUnfoldReason = 'click' | 'menu' | 'jump' | 'add' | 'new-tab' | 'restore';
 
@@ -196,6 +200,62 @@ export class TabManager {
         this.updateTabBar();
       }),
     );
+
+    // This window coming to the front: the selected tab's green dot and
+    // checkpoint circle, raised while it was behind, are seen now and clear.
+    // A notification click focuses the window and then switches tabs
+    // (ipc-handlers.ts), so the clear waits WINDOW_FOCUS_SETTLE_MS and takes the
+    // tab selected then: the tab he is leaving keeps its marks (he never looked
+    // at it) and the one he lands on clears through Tab.show(). A blur in
+    // between cancels it.
+    let focusTimer: ReturnType<typeof setTimeout> | null = null;
+    const cancelFocusTimer = (why: string) => {
+      if (focusTimer === null) return;
+      clearTimeout(focusTimer);
+      focusTimer = null;
+      rlog('info', '[DOT] window focus settle cancelled', { why });
+    };
+    const onWindowFocus = () => {
+      cancelFocusTimer('focus again');
+      focusTimer = setTimeout(() => {
+        focusTimer = null;
+        if (!document.hasFocus()) {
+          rlog('info', '[DOT] window focus settle skipped', { why: 'window behind again' });
+          return;
+        }
+        this.activeTab?.windowFocused();
+      }, WINDOW_FOCUS_SETTLE_MS);
+    };
+    // Any key or click in the window proves it is in front even when its
+    // `focus` event was missed (Chromium sets page focus and the window's
+    // active state separately): a mark still up on the selected tab goes.
+    // The clear redraws the strip, so it never runs inside the gesture it
+    // answers: a press that began on a tab element must still reach its click,
+    // double-click (rename) or drag. It runs a tick after the key or the click
+    // (so their own handlers go first), and the strip itself holds a redraw
+    // while a tab is dragged or a name box is open (TabBar.update).
+    let inputTimer: ReturnType<typeof setTimeout> | null = null;
+    const onInput = () => {
+      if (inputTimer !== null) return;
+      inputTimer = setTimeout(() => {
+        inputTimer = null;
+        const tab = this.activeTab;
+        if (tab?.holdsMarks && document.hasFocus()) tab.dropSeenMarks('input in front');
+      }, 0);
+    };
+    const onBlur = () => cancelFocusTimer('blur');
+    window.addEventListener('focus', onWindowFocus);
+    window.addEventListener('blur', onBlur);
+    window.addEventListener('keydown', onInput, true);
+    window.addEventListener('click', onInput, true);
+    this.disposables.push(() => {
+      cancelFocusTimer('disposed');
+      if (inputTimer !== null) { clearTimeout(inputTimer); inputTimer = null; }
+      window.removeEventListener('focus', onWindowFocus);
+      window.removeEventListener('blur', onBlur);
+      window.removeEventListener('keydown', onInput, true);
+      window.removeEventListener('click', onInput, true);
+    });
 
     // Listen for PTY exit — route via panesByPtyId
     this.disposables.push(
@@ -1605,8 +1665,8 @@ export class TabManager {
         let state: SessionStatus = claude.activity;
         if (dotSince !== null && (state === 'shell' || state === 'idle')) state = 'waiting';
         const needsYou = sessionNeedsYou({ state });
-        // Ordering only: the dot's time where it rose, else (the active tab,
-        // where it never does) when the pane's activity began.
+        // Ordering only: the dot's time where it rose, else (the selected tab
+        // of a window in front, where it never does) when the pane's activity began.
         const awaitingSince = needsYou ? (dotSince ?? claude.since) : null;
         sessions.push({
           tabId: tab.id,

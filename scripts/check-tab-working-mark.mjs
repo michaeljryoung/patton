@@ -42,9 +42,10 @@ await section(async () => {
   check('W1: the tab\'s own label says so', el('y').getAttribute('aria-label') === 'two, Claude working', el('y').getAttribute('aria-label'));
   draw([{ id: 'x', title: 'one', active: true, working: true }]);
   check('W1: shown on the active tab too', marks('x').join() === 'working', marks('x'));
-  // On the active tab the green dot and the circle are not drawn, so they don't hide it.
+  // The strip draws what the Tab holds; the Tab holds the green dot and the circle
+  // on the selected tab only while its window is behind (check-green-selected.mjs).
   draw([{ id: 'x', title: 'one', active: true, working: true, awaitingInput: true, checkpointDone: true }]);
-  check('W1: on the active tab, an undrawn green dot or circle doesn\'t hide it', marks('x').join() === 'working', marks('x'));
+  check('W1: on the active tab, a held green dot or circle outranks it as on any tab', marks('x').join() === 'checkpoint-done', marks('x'));
   draw([{ id: 'x', title: 'one', active: true, working: true, flag: 'red' }]);
   check('W1: on the active tab a flag still outranks it', marks('x').join() === 'flag-red', marks('x'));
   draw(base({ working: true, flag: 'green' }));

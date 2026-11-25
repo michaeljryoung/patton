@@ -537,8 +537,9 @@
   font-weight: 700;
 }
 
-/* "Awaiting input" indicator — small dot before the tab title when an
- * inactive tab needs the user (Claude Code stopped working, a shell command
+/* "Awaiting input" indicator — small dot before the tab title when a
+ * tab needs the user and he isn't looking at it (any tab but the selected one
+ * of a window in front: Claude Code stopped working, a shell command
  * finished, OSC 9 notification, bell). Uses the same green
  * token as the prompt-ready editor glow so the visual language stays
  * consistent. A halo plus a slow pulse lift it above the glyph Claude Code
@@ -564,7 +565,8 @@
 }
 
 /* A checkpoint just finished (a circle, so not the manual Red flag's square):
- * the pulsing dot's shape in red, until the tab is selected. */
+ * the pulsing dot's shape in red, until he sees it: the tab is selected, or its
+ * window comes to the front while the tab is selected. */
 .tab-bar-tab-indicator.checkpoint-done {
   background: var(--status-ckpt);
   box-shadow: 0 0 0 1px var(--dot-edge), 0 0 6px var(--status-ckpt);

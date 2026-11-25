@@ -136,6 +136,8 @@ w.patton = stubWith({
   log: { send: (_lvl, args) => logs.push(args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ')) },
 });
 w.eval(bundle.outputFiles[0].text);
+// jsdom's hasFocus() is always false; the app reads it as "this window is in front" (Tab.windowInFront).
+w.document.hasFocus = () => true;
 const PA = w.PA;
 const tm = new PA.TabManager(w.document.getElementById('bar'), w.document.getElementById('content'));
 

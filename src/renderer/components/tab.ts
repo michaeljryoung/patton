@@ -89,15 +89,17 @@ export class Tab {
   private _zoomed = false;
   private _shell: string | undefined;
   private _historyManager: HistoryManager | undefined;
-  // True when this tab is the currently-visible tab in the window.
+  // True when this tab is the currently-selected tab in the window.
   // Used to decide whether a prompt-ready signal should raise the
-  // "awaiting input" indicator — active tabs never show it (the user
-  // is already looking at them).
+  // "awaiting input" indicator: the selected tab of a window that is in front
+  // never shows it (the user is looking at it); in a window that is behind it
+  // does, and the mark clears when the window returns (windowFocused).
   private _isActive = false;
   // Panes that need the user (Claude stopped, a command finished, a bell or
-  // notification) while this tab was inactive; the green dot shows while any
-  // do. Tracked per pane so one pane resuming work can't clear a dot another
-  // pane raised. Emptied when the tab becomes active; a pane leaves the set
+  // notification) while this tab wasn't being looked at; the green dot shows
+  // while any do. Tracked per pane so one pane resuming work can't clear a dot
+  // another pane raised. Emptied when the tab is selected in a window that is in
+  // front (or its window comes to the front while it is selected); a pane leaves the set
   // when it starts working again or closes. The value is when it started
   // waiting (ms), so the palette and sidebar can go to the longest wait first.
   private _panesNeedingYou = new Map<Pane, number>();
@@ -240,9 +242,13 @@ export class Tab {
       },
       onParked: (p, info) => this.setPaneParked(p, info),
       onCheckpointMark: (p) => {
-        // Like the green dot, never on the tab being looked at.
-        if (p.checkpointDone && this._isActive) {
-          p.clearCheckpointDone('active tab');
+        // Like the green dot, never on the tab being looked at: the selected
+        // tab in a window that is in front. In a window that isn't, it is not
+        // being looked at, so the mark stays until the window comes back
+        // (windowFocused).
+        if (p.checkpointDone && this._isActive && Tab.windowInFront()) {
+          // Also any green entry a missed window `focus` event left here.
+          this.dropSeenMarks('checkpoint in front');
           return;
         }
         this.onTitleChanged?.();
@@ -302,22 +308,66 @@ export class Tab {
     return pane;
   }
 
+  /** Is this window the one in front (a dialog, the compose box or any element
+   *  inside it counts)? `document.hasFocus()`, never `document.hidden`, which
+   *  backgroundThrottling:false pins to visible (docs/reference/fonts-and-rendering.md). */
+  private static windowInFront(): boolean {
+    return typeof document !== 'undefined' && document.hasFocus();
+  }
+
   private raiseAwaitingInput(pane: Pane): void {
     // Logged either way (24 Nov 2026: a finished Defence turn "didn't flash
     // green" and main.log couldn't say whether the dot was skipped because the
-    // tab was the selected one, already up, or raised and lost).
-    const focused = typeof document !== 'undefined' && document.hasFocus();
-    if (this._isActive || this._panesNeedingYou.has(pane)) {
+    // tab was the selected one, already up, or raised and lost). The selected
+    // tab is skipped only while its window is in front: he is looking at it.
+    // In a window that isn't (another app or another Patton window in front)
+    // it goes green like any tab, and windowFocused clears it on return.
+    const focused = Tab.windowInFront();
+    const selectedSeen = this._isActive && focused;
+    // A stale entry on the tab he is looking at (a window `focus` event missed:
+    // Chromium sets page focus and the window's active state separately) is
+    // dropped here, so nothing is drawn on it until the next tab switch.
+    if (selectedSeen) this.dropSeenMarks('selected tab in front');
+    if (selectedSeen || this._panesNeedingYou.has(pane)) {
       rlog('info', '[DOT] green skipped', {
-        tabId: this.id, pane: pane.id, why: this._isActive ? 'selected tab' : 'already up', windowFocused: focused,
+        tabId: this.id, pane: pane.id, why: selectedSeen ? 'selected tab' : 'already up', windowFocused: focused,
       });
       return;
     }
     this._panesNeedingYou.set(pane, Date.now());
-    rlog('info', '[DOT] green raised', { tabId: this.id, pane: pane.id, windowFocused: focused });
+    rlog('info', '[DOT] green raised', { tabId: this.id, pane: pane.id, windowFocused: focused, selectedTab: this._isActive });
     // Every pane, not only the first: the tab's dot changes once, but the
     // sidebar's count follows each waiting pane.
     this.onTitleChanged?.();
+  }
+
+  /** This window came to the front: on the selected tab the green dot and the
+   *  checkpoint circle raised while it was behind are seen now, so they clear.
+   *  Other tabs keep theirs until selected. A no-op on a tab that isn't selected. */
+  windowFocused(): void {
+    this.dropSeenMarks('window focused');
+  }
+
+  /** The selected tab of a window that is in front: whatever it still holds
+   *  (green entries, red circles) is seen, so it goes. `why` is the log reason:
+   *  the window's return, or the raise, checkpoint mark or input that proves
+   *  the window is in front. */
+  dropSeenMarks(why: 'window focused' | 'selected tab in front' | 'checkpoint in front' | 'input in front'): void {
+    if (!this._isActive) return;
+    let changed = false;
+    for (const pane of [...this._panesNeedingYou.keys()]) {
+      this._panesNeedingYou.delete(pane);
+      rlog('info', '[DOT] green cleared', { tabId: this.id, pane: pane.id, why });
+      changed = true;
+    }
+    // clearCheckpointDone tells the tab through onCheckpointMark.
+    for (const pane of this._panes) pane.clearCheckpointDone(why === 'window focused' ? 'window focused' : 'active tab');
+    if (changed) this.onTitleChanged?.();
+  }
+
+  /** Does the selected tab hold a mark that no one has seen yet? */
+  get holdsMarks(): boolean {
+    return this._panesNeedingYou.size > 0 || this.checkpointDone;
   }
 
   private clearAwaitingInput(pane: Pane, why: string): void {
@@ -883,14 +933,17 @@ export class Tab {
 
   show(): void {
     this._isActive = true;
-    // Becoming active clears any pending "awaiting input" dot — user is
-    // now looking at this tab. Notify so the tab-bar drops the indicator.
-    const wasAwaiting = this._panesNeedingYou.size > 0;
+    // Becoming selected in a window that is in front clears any pending
+    // "awaiting input" dot and checkpoint circle: he is looking at the tab.
+    // In a window that is behind he is not, so they stay and clear when the
+    // window returns (windowFocused). Notify so the tab-bar drops the indicator.
+    const seen = Tab.windowInFront();
+    const wasAwaiting = seen && this._panesNeedingYou.size > 0;
     if (wasAwaiting) rlog('info', '[DOT] green cleared', { tabId: this.id, panes: this._panesNeedingYou.size, why: 'selected' });
-    this._panesNeedingYou.clear();
+    if (seen) this._panesNeedingYou.clear();
     this.element.style.display = 'flex';
     for (const pane of this._panes) {
-      pane.clearCheckpointDone('selected');
+      if (seen) pane.clearCheckpointDone('selected');
       pane.show();
     }
     // Deferred to ensure focus wins over xterm.js internal focus grabs from fit()
