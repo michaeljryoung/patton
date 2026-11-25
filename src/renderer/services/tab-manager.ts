@@ -25,6 +25,10 @@ import {
 } from './tab-groups';
 
 /** Why a group unfolded, as the `[GROUP] unfolded` log line names it. */
+/** How long the window's return waits before clearing the selected tab's marks:
+ *  a notification click switches tabs just after focusing the window. */
+export const WINDOW_FOCUS_SETTLE_MS = 250;
+
 export type GroupUnfoldReason = 'click' | 'menu' | 'jump' | 'add' | 'new-tab' | 'restore';
 
 interface ClosedPaneState {
@@ -193,9 +197,38 @@ export class TabManager {
 
     // This window coming to the front: the selected tab's green dot and
     // checkpoint circle, raised while it was behind, are seen now and clear.
-    const onWindowFocus = () => this.activeTab?.windowFocused();
+    // A notification click focuses the window and then switches tabs
+    // (ipc-handlers.ts), so the clear waits WINDOW_FOCUS_SETTLE_MS and takes the
+    // tab selected then: the tab he is leaving keeps its marks (he never looked
+    // at it) and the one he lands on clears through Tab.show(). A blur in
+    // between cancels it.
+    let focusTimer: ReturnType<typeof setTimeout> | null = null;
+    const cancelFocusTimer = () => { if (focusTimer !== null) { clearTimeout(focusTimer); focusTimer = null; } };
+    const onWindowFocus = () => {
+      cancelFocusTimer();
+      focusTimer = setTimeout(() => {
+        focusTimer = null;
+        if (document.hasFocus()) this.activeTab?.windowFocused();
+      }, WINDOW_FOCUS_SETTLE_MS);
+    };
+    // Any key or click in the window proves it is in front even when its
+    // `focus` event was missed (Chromium sets page focus and the window's
+    // active state separately): a mark still up on the selected tab goes.
+    const onInput = () => {
+      const tab = this.activeTab;
+      if (tab?.holdsMarks && document.hasFocus()) tab.dropSeenMarks('in front');
+    };
     window.addEventListener('focus', onWindowFocus);
-    this.disposables.push(() => window.removeEventListener('focus', onWindowFocus));
+    window.addEventListener('blur', cancelFocusTimer);
+    window.addEventListener('keydown', onInput, true);
+    window.addEventListener('pointerdown', onInput, true);
+    this.disposables.push(() => {
+      cancelFocusTimer();
+      window.removeEventListener('focus', onWindowFocus);
+      window.removeEventListener('blur', cancelFocusTimer);
+      window.removeEventListener('keydown', onInput, true);
+      window.removeEventListener('pointerdown', onInput, true);
+    });
 
     // Listen for PTY exit — route via panesByPtyId
     this.disposables.push(
@@ -1460,8 +1493,8 @@ export class TabManager {
         let state: SessionStatus = claude.activity;
         if (dotSince !== null && (state === 'shell' || state === 'idle')) state = 'waiting';
         const needsYou = sessionNeedsYou({ state });
-        // Ordering only: the dot's time where it rose, else (the active tab,
-        // where it never does) when the pane's activity began.
+        // Ordering only: the dot's time where it rose, else (the selected tab
+        // of a window in front, where it never does) when the pane's activity began.
         const awaitingSince = needsYou ? (dotSince ?? claude.since) : null;
         sessions.push({
           tabId: tab.id,

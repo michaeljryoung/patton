@@ -14,19 +14,25 @@
 import { checker, setUpTabManager, until, tick } from './tab-manager-harness.mjs';
 
 const { check, section, finish } = checker();
-const { w, emit, logs, makeWindow, windowFocus } = await setUpTabManager({ tags: ['DOT', 'CKPT', 'TAB'] });
+const { w, doc, emit, logs, makeWindow, windowFocus } = await setUpTabManager({ tags: ['DOT', 'CKPT', 'TAB'] });
 
 const root = (state) => `\x1b]7501;state=${state}:app=claude-code\x07`;
 const T0 = Math.floor(Date.now() / 1000) + 1000;
 const stop = (cpd) => `\x1b]777;patton;stop;tasks=0;crons=0;ctx=50000;since=20000;cpt=${cpd};cpd=${cpd}\x07`;
-const focusWindow = () => { windowFocus.inFront = true; w.dispatchEvent(new w.Event('focus')); };
+// The return clears after WINDOW_FOCUS_SETTLE_MS (a notification click focuses, then switches tabs).
+const SETTLE = 250;
+const focusEvent = () => { windowFocus.inFront = true; w.dispatchEvent(new w.Event('focus')); };
+const focusWindow = async () => { focusEvent(); await tick(SETTLE + 60); };
 const blurWindow = () => { windowFocus.inFront = false; w.dispatchEvent(new w.Event('blur')); };
 const count = (msg, pred = () => true) => logs.filter((l) => l.msg === msg && pred(l.data ?? {})).length;
 
 const endTurns = async (panes) => {
-  const n = count('[DOT] Needs-you signal');
+  // Only these panes' signals count: an earlier section's delayed one must not end the wait early.
+  const ids = new Set(panes.map((p) => p.id));
+  const mine = () => count('[DOT] Needs-you signal', (d) => ids.has(d.pane));
+  const n = mine();
   for (const p of panes) { emit(p.ptyId, root('working')); emit(p.ptyId, root('done')); }
-  await until(() => count('[DOT] Needs-you signal') >= n + panes.length, 8000);
+  await until(() => mine() >= n + panes.length, 8000);
   await tick(20);
 };
 
@@ -60,7 +66,7 @@ await section(async () => {
   blurWindow();
   await tick(150);
   check('blur alone raises nothing', tabB.awaitingInput === false && count('[DOT] green raised') === raisedBefore);
-  focusWindow();
+  await focusWindow();
   check('focus with nothing up logs no clear', count('[DOT] green cleared', (d) => d.why === 'window focused') === 0);
 
   // 2. Window behind: the selected tab goes green.
@@ -72,18 +78,18 @@ await section(async () => {
 
   // 3. Window returns: cleared, logged, drawn.
   const r0 = redraws;
-  focusWindow();
+  await focusWindow();
   check('focus: the selected tab\'s green clears', tabB.awaitingInput === false);
   check('focus: logged [DOT] green cleared why "window focused"', count('[DOT] green cleared', (d) => d.tabId === tabB.id && d.why === 'window focused') === 1);
   check('focus: the strip redraws and the dot is gone', redraws > r0 && marks(tabB).length === 0, [redraws - r0, marks(tabB)]);
-  focusWindow();
+  await focusWindow();
   check('a second focus logs nothing more', count('[DOT] green cleared', (d) => d.why === 'window focused') === 1);
 
   // 4. A tab that isn't selected: raised as ever, untouched by window focus, cleared by selecting it.
   blurWindow();
   await turnEnds(tabA);
   check('not selected: raised (selectedTab false)', tabA.awaitingInput === true && count('[DOT] green raised', (d) => d.tabId === tabA.id && d.selectedTab === false) === 1);
-  focusWindow();
+  await focusWindow();
   check('not selected: window focus leaves it up', tabA.awaitingInput === true && marks(tabA).join() === 'needs-you');
   tm.switchToId(tabA.id);
   check('not selected: selecting it clears it with why "selected"', tabA.awaitingInput === false && count('[DOT] green cleared', (d) => d.tabId === tabA.id && d.why === 'selected') === 1);
@@ -95,7 +101,7 @@ await section(async () => {
   for (const p of tabA.panes) p.lastCommandDoneMs = 0;
   await endTurns(tabA.panes);
   check('split: both panes of the selected tab wait while behind', tabA.panes.every((p) => tabA.awaitingSince(p) !== null), tabA.panes.map((p) => tabA.awaitingSince(p)));
-  focusWindow();
+  await focusWindow();
   check('split: window focus clears both', tabA.awaitingInput === false && count('[DOT] green cleared', (d) => d.tabId === tabA.id && d.why === 'window focused') === 2);
 });
 
@@ -129,7 +135,7 @@ await section(async () => {
   check('ckpt behind: the selected tab keeps the mark', pB.checkpointDone === true && tabB.checkpointDone === true);
   check('ckpt behind: the strip draws the red circle on the selected tab', marks(tabB).join() === 'checkpoint-done', marks(tabB));
   // Return: cleared with the new reason, drawn, and seen (not raised again by the same cpd).
-  focusWindow();
+  await focusWindow();
   check('ckpt focus: cleared', pB.checkpointDone === false && tabB.checkpointDone === false);
   check('ckpt focus: logged reason "window focused"', clearedLogs(pB, 'window focused') === 1);
   check('ckpt focus: the strip drops the circle', !marks(tabB).includes('checkpoint-done'), marks(tabB));
@@ -138,13 +144,13 @@ await section(async () => {
   check('ckpt focus: the same cpd seen on return does not raise again', pB.checkpointDone === false);
   await finishes(tabB, T0 + 3);
   check('ckpt: a newer cpd raises it again while behind', pB.checkpointDone === true);
-  focusWindow();
+  await focusWindow();
 
   // A tab that isn't selected: untouched by window focus; selecting it clears it.
   blurWindow();
   await finishes(tabA, T0 + 4);
   check('ckpt not selected: raised', pA.checkpointDone === true);
-  focusWindow();
+  await focusWindow();
   check('ckpt not selected: window focus leaves it', pA.checkpointDone === true && marks(tabA).includes('checkpoint-done'));
   tm.switchToId(tabA.id);
   check('ckpt not selected: selecting clears it ("selected")', pA.checkpointDone === false && clearedLogs(pA, 'selected') === 1);
@@ -155,7 +161,161 @@ await section(async () => {
   blurWindow();
   await tick(100);
   check('ckpt: losing focus raises nothing by itself', pA.checkpointDone === false);
-  focusWindow();
+  await focusWindow();
+});
+
+// ── Review findings (S66): stale marks, selecting while behind, the notification click, sessions, closing, two windows ──
+await section(async () => {
+  const tm = await makeWindow(['A', 'B', 'C']);
+  const [tabA, tabB, tabC] = tm.getTabs(); // C selected
+  const { marks, turnEnds } = view(tm);
+  const clearedWhy = (tab, why) => count('[DOT] green cleared', (d) => d.tabId === tab.id && d.why === why);
+
+  // 1. A missed `focus` event: the window is in front but the selected tab still holds an entry
+  // (another pane's: a pane's own new turn would clear its entry as "work started").
+  await tabC.splitVertical();
+  await until(() => tabC.panes.length === 2 && tabC.panes.every((p) => p.ptyId !== null));
+  const [pC1, pC2] = tabC.panes;
+  blurWindow();
+  await endTurns([pC1]);
+  check('stale: raised while behind', tabC.awaitingSince(pC1) !== null);
+  windowFocus.inFront = true; // no focus event delivered
+  pC2.lastCommandDoneMs = 0;
+  await endTurns([pC2]);
+  check('stale: the next raise on the selected tab of a front window drops the stale entry', tabC.awaitingInput === false && marks(tabC).length === 0, marks(tabC));
+  check('stale: logged as a clear, why "selected tab in front"', clearedWhy(tabC, 'selected tab in front') === 1);
+  // ...and a key press or click proves the window is in front, without any raise.
+  blurWindow();
+  await turnEnds(tabC);
+  windowFocus.inFront = true;
+  const c1 = clearedWhy(tabC, 'selected tab in front');
+  doc.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'a', bubbles: true }));
+  check('stale: a key press in a front window clears the selected tab (both panes)', tabC.awaitingInput === false && clearedWhy(tabC, 'selected tab in front') === c1 + 2, clearedWhy(tabC, 'selected tab in front') - c1);
+  blurWindow();
+  await turnEnds(tabC);
+  windowFocus.inFront = true;
+  const c2 = clearedWhy(tabC, 'selected tab in front');
+  doc.dispatchEvent(new w.MouseEvent('pointerdown', { bubbles: true }));
+  check('stale: a click in a front window clears the selected tab (both panes)', tabC.awaitingInput === false && clearedWhy(tabC, 'selected tab in front') === c2 + 2);
+  // Input while the window is behind (hasFocus false) clears nothing.
+  blurWindow();
+  await turnEnds(tabC);
+  doc.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'a', bubbles: true }));
+  check('stale: input while the window is behind clears nothing', tabC.awaitingInput === true);
+  await focusWindow();
+
+  // 2. A tab selected while the window is behind keeps its marks until the window returns.
+  blurWindow();
+  await turnEnds(tabA);
+  tm.switchToId(tabA.id);
+  check('select behind: the newly selected tab keeps its green', tabA.awaitingInput === true && marks(tabA).join() === 'needs-you', marks(tabA));
+  check('select behind: no "selected" clear logged', clearedWhy(tabA, 'selected') === 0);
+  await focusWindow();
+  check('select behind: the window\'s return clears it', tabA.awaitingInput === false && clearedWhy(tabA, 'window focused') === 1);
+
+  // 3. A notification click: focus first, then the tab switch. The old selected tab keeps its marks.
+  blurWindow();
+  await turnEnds(tabA); // A selected, green
+  await turnEnds(tabB); // B not selected, green
+  focusEvent();
+  await tick(60); // inside the settle wait
+  tm.switchToId(tabB.id);
+  await tick(SETTLE + 60);
+  check('click: the tab he lands on is cleared', tabB.awaitingInput === false && clearedWhy(tabB, 'selected') === 1);
+  check('click: the tab he left keeps its green (never seen)', tabA.awaitingInput === true && marks(tabA).join() === 'needs-you', marks(tabA));
+  tm.switchToId(tabA.id);
+  check('click: selecting it later clears it', tabA.awaitingInput === false);
+
+  // A blur inside the settle wait cancels the clear.
+  blurWindow();
+  await turnEnds(tabA);
+  focusEvent();
+  await tick(60);
+  blurWindow();
+  await tick(SETTLE + 60);
+  check('blur inside the settle wait: nothing cleared', tabA.awaitingInput === true);
+  await focusWindow();
+  check('then a real return clears', tabA.awaitingInput === false);
+
+  // Session counts follow the marks.
+  const waiting = () => tm.listSessions().filter((s) => s.awaitingSince !== null).map((s) => s.tabId);
+  blurWindow();
+  await turnEnds(tabA);
+  await turnEnds(tabB);
+  const sA = tm.listSessions().find((s) => s.tabId === tabA.id);
+  check('sessions: the selected tab\'s pane counts as waiting, with the dot\'s time', sA.awaitingSince === tabA.awaitingSince(tabA.panes[0]) && waiting().includes(tabA.id) && waiting().includes(tabB.id), waiting());
+  await focusWindow();
+  check('sessions: the return drops the selected tab\'s dot time, the other keeps its own', tabA.awaitingSince(tabA.panes[0]) === null && tabB.awaitingInput === true, [tabA.awaitingSince(tabA.panes[0])]);
+
+  // Closing a marked selected tab (window behind): its marks go with it; the neighbour that is selected keeps its own.
+  blurWindow();
+  await turnEnds(tabA);
+  await turnEnds(tabB);
+  const countBefore = tm.getTabs().length;
+  await tm.closeActiveTab();
+  await tick(50);
+  const left = tm.getTabs();
+  check('close: the marked tab is gone, the strip has no entry for it', left.length === countBefore - 1 && !tm.bar.querySelector(`.tab-bar-tab[data-tab-id="${tabA.id}"]`), left.map((t) => t.title));
+  check('close: no session of it remains', !tm.listSessions().some((s) => s.tabId === tabA.id));
+  const sel = tm.getActiveTab();
+  check('close: the neighbour that becomes selected while behind keeps its own mark', sel.awaitingInput === true && marks(sel).join() === 'needs-you', [sel.title, marks(sel)]);
+  await focusWindow();
+  check('close: its return clears the new selected tab', sel.awaitingInput === false);
+});
+
+// Two windows: each window's own selected tab. (One jsdom shares one `focus` event, so a window's
+// return is delivered to its tabs directly.)
+await section(async () => {
+  const tm1 = await makeWindow(['A1', 'B1']);
+  const tm2 = await makeWindow(['A2', 'B2']);
+  const s1 = tm1.getActiveTab();
+  const s2 = tm2.getActiveTab();
+  const u2 = tm2.getTabs()[0];
+  blurWindow();
+  await endTurns(s1.panes);
+  await endTurns(s2.panes);
+  for (const p of u2.panes) p.lastCommandDoneMs = 0;
+  await endTurns(u2.panes);
+  check('two windows: both selected tabs and the unselected one wait', s1.awaitingInput && s2.awaitingInput && u2.awaitingInput);
+  windowFocus.inFront = true;
+  s1.windowFocused(); // window 1 comes to the front
+  check('two windows: window 1\'s return clears only its own selected tab', !s1.awaitingInput && s2.awaitingInput && u2.awaitingInput);
+  s2.windowFocused();
+  check('two windows: window 2\'s return clears its selected tab, not its other tab', !s2.awaitingInput && u2.awaitingInput);
+  u2.windowFocused();
+  check('windowFocused on a tab that isn\'t selected is a no-op', u2.awaitingInput === true);
+});
+
+// The red circle: selecting while behind, and the stale-front case.
+await section(async () => {
+  const tm = await makeWindow(['A', 'B']);
+  const [tabA] = tm.getTabs();
+  const { marks } = view(tm);
+  const pA = tabA.panes[0];
+  const finishes = async (t, cpd) => {
+    const n = count('[CKPT] ctx');
+    emit(t.ptyId, root('working'));
+    emit(t.ptyId, root('done'));
+    emit(t.ptyId, stop(cpd));
+    await until(() => count('[CKPT] ctx') > n, 3000);
+    await tick(20);
+  };
+  blurWindow();
+  await finishes(tabA, T0 + 20);
+  check('ckpt select behind: raised on the unselected tab', pA.checkpointDone === true);
+  tm.switchToId(tabA.id);
+  check('ckpt select behind: kept on selecting it', pA.checkpointDone === true && marks(tabA).includes('checkpoint-done'), marks(tabA));
+  await focusWindow();
+  check('ckpt select behind: cleared on the window\'s return', pA.checkpointDone === false);
+  // A green entry left stale on a front window's selected tab goes when a checkpoint mark arrives there.
+  blurWindow();
+  for (const p of tabA.panes) p.lastCommandDoneMs = 0;
+  await endTurns(tabA.panes);
+  check('ckpt stale: green held while behind', tabA.awaitingInput === true);
+  windowFocus.inFront = true; // missed focus
+  await finishes(tabA, T0 + 21);
+  check('ckpt stale: a checkpoint mark on a front window\'s selected tab drops the stale green too', tabA.awaitingInput === false && pA.checkpointDone === false && marks(tabA).length === 0, marks(tabA));
+  await focusWindow();
 });
 
 finish();

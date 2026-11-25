@@ -307,7 +307,6 @@ export function visibleItems<T>(list: readonly T[], isVisible: (item: T) => bool
 
 /** The states a tab's indicator can show, as a folded chip ranks them. */
 export interface IndicatorInput {
-  active?: boolean;
   checkpointDone?: boolean;
   awaitingInput?: boolean;
   flag?: TabFlag | null;
@@ -329,7 +328,8 @@ const RANK: Record<StrongestState['kind'], number> = { checkpoint: 5, 'needs-you
 /** One tab's strongest state, by the rank a folded chip uses: the red
  *  checkpoint circle, then the green needs-you dot (the selected tab holds
  *  either only while its window is behind, so no active test here), then a
- *  flag (manual, else automatic), then the parked ring, then (lowest) the still grey working dot. */
+ *  flag (manual, else automatic), then the parked ring, then (lowest) the
+ *  still grey working dot. */
 export function stateOf(tab: IndicatorInput): StrongestState | null {
   if (tab.checkpointDone) return { kind: 'checkpoint' };
   if (tab.awaitingInput) return { kind: 'needs-you' };
