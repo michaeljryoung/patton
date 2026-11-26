@@ -1,6 +1,6 @@
 import type { AppSettings, ClaudeHookStatus } from '../../shared/types';
 import { driveAccountValid, driveFolderValid } from '../../shared/drive-settings';
-import { DEFAULTS, isNotificationSoundName, notificationVolumeOf, resolveNotificationSound, uiTextScaleOf } from '../../shared/constants';
+import { DEFAULTS, NOTIFICATION_VOLUME_MAX, isNotificationSoundName, notificationVolumeOf, resolveNotificationSound, uiTextScaleOf } from '../../shared/constants';
 import { settingsShortcuts, displayKeys, acceleratorToDisplay } from '../../shared/shortcuts';
 import { trapFocus } from '../services/focus-trap';
 import { rlog } from '../services/renderer-logger';
@@ -120,7 +120,7 @@ export class SettingsPanel {
           <div class="settings-group">
             <label class="settings-label" for="setting-notification-volume">Notification volume</label>
             <div class="settings-range-row">
-              <input class="settings-range" id="setting-notification-volume" type="range" min="0" max="100" step="5" />
+              <input class="settings-range" id="setting-notification-volume" type="range" min="0" max="${NOTIFICATION_VOLUME_MAX}" step="5" />
               <span class="settings-range-value" id="setting-notification-volume-value">100%</span>
             </div>
           </div>

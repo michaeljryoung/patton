@@ -162,9 +162,13 @@ export function resolveNotificationSound(s: {
   return DEFAULTS.NOTIFICATION_SOUND_NAME;
 }
 
-/** Volume is a whole number 0-100 (a percent of the sound's own level). */
+/** The loudest the notification volume goes, in percent (100 is the level of
+ *  the sound as written; above it a limiter keeps the peaks from clipping). */
+export const NOTIFICATION_VOLUME_MAX = 400;
+
+/** Volume is a whole number 0-NOTIFICATION_VOLUME_MAX (a percent of the sound's own level). */
 export function notificationVolumeOf(value: unknown): number {
-  if (typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 100) return Math.round(value);
+  if (typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= NOTIFICATION_VOLUME_MAX) return Math.round(value);
   return DEFAULTS.NOTIFICATION_SOUND_VOLUME;
 }
 

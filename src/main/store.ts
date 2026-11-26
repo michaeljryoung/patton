@@ -4,7 +4,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir, userInfo } from 'node:os';
-import { DEFAULTS, isNotificationSoundName } from '../shared/constants';
+import { DEFAULTS, NOTIFICATION_VOLUME_MAX, isNotificationSoundName } from '../shared/constants';
 import { ALLOWED_SHELLS } from './pty-manager';
 import { cleanProjectName, type ProjectNameTarget } from './projects';
 import { sanitiseSessionGroups } from './session-groups';
@@ -261,7 +261,7 @@ export function setSettings(partial: Partial<AppSettings>): void {
 
   if (partial.notificationSoundVolume !== undefined) {
     const v = partial.notificationSoundVolume;
-    if (typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 100) {
+    if (typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= NOTIFICATION_VOLUME_MAX) {
       validated.notificationSoundVolume = Math.round(v);
     }
   }

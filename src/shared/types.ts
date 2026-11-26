@@ -53,7 +53,7 @@ export interface AppSettings {
   /** The chosen sound. Absent in settings saved before the choice existed:
    *  read it through `resolveNotificationSound`. */
   notificationSoundName?: NotificationSoundName;
-  /** Volume 0-100; absent reads as 100 (`notificationVolumeOf`). */
+  /** Volume 0-400 (`NOTIFICATION_VOLUME_MAX`); absent reads as 100 (`notificationVolumeOf`). */
   notificationSoundVolume?: number;
   /** Legacy on/off flag and type, no longer written; only the resolver reads them. */
   notificationSound?: boolean;
