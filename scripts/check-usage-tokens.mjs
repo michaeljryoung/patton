@@ -337,7 +337,11 @@ try {
     check('estimate: partial with p0, allowance = tokens ÷ (pct − p0) × 100 and used = pct × allowance',
       r?.method === 'rate' && Math.abs(r.allowance - 2_064_000_000 / 0.36) < 1 && Math.abs(r.used - 0.97 * 2_064_000_000 / 0.36) < 1 && r.p0 === 61 && r.pct === 97, r);
     check('estimate: partial with no p0 (no reading at or before since) has none', M.weekEstimate(part, 97, null) === null);
-    check('estimate: partial with a rise under 5 points has none, from 5 points it has one', M.weekEstimate(part, 65.9, 61) === null && M.weekEstimate(part, 66, 61)?.method === 'rate', [M.weekEstimate(part, 65.9, 61), M.weekEstimate(part, 66, 61)]);
+    check('estimate: partial with a rise under 10 points has none, from exactly 10 points it has one (whole-percent readings make 5 up to 20% wrong)', M.weekEstimate(part, 70.9, 61) === null && M.weekEstimate(part, 66, 61) === null && M.weekEstimate(part, 71, 61)?.method === 'rate' && M.ESTIMATE_MIN_RISE === 10 && M.ESTIMATE_MIN_PCT === 5, [M.weekEstimate(part, 70.9, 61), M.weekEstimate(part, 71, 61)]);
+    const why = (t, pct, p0) => M.estimateWeek(t, pct, p0).why;
+    check('estimate: the reason for none: nothing counted, under 5% (complete), no reading, too little rise; none for an estimate',
+      why({ ...part, tokens: 0 }, 97, 61) === 'none-counted' && why({ ...full, tokens: 0 }, 63, null) === 'none-counted' && why(full, 4.4, null) === 'low-pct'
+      && why(part, 97, null) === 'no-reading' && why(part, 66, 61) === 'small-rise' && why(full, 63, null) === null && why(part, 97, 61) === null, [why(part, 97, null), why(part, 66, 61)]);
     check('estimate: partial with no tokens has none (a used-up login with nothing counted)', M.weekEstimate({ ...part, tokens: 0 }, 100, 61) === null);
   });
 
@@ -351,21 +355,24 @@ try {
       '1795548001 61 1795863600 38e237e1',
       '1795548001 x 1795863600',             // a bad percent
       '1795548002 62 1795863600 38e237e1 extra',
-      '1795548003 63 1795863600 not-an-id',
+      '1795548003 55 1795863600 not-an-id',  // the id column is never used: a malformed one is still a reading
       '-5 10 1795863600',
       '',
       '1795548187 62 1795863600 38e237e1',
       '1795597759 0 1796169600 e80ce726',
     ].join('\n') + '\n';
     const L = M.parseSevenDayLog(text);
-    check('log: good lines kept (with or without an id), bad ones skipped and counted, blanks not', L.readings.length === 6 && L.skipped === 5, L);
+    check('log: good lines kept (with or without an id), bad ones skipped and counted, blanks not', L.readings.length === 7 && L.skipped === 4, L);
     const since = 1795548179;
-    check('log: the percent at since is the latest reading at or before it, of that week', M.pctAt(L.readings, 1795863600, since) === 61, M.pctAt(L.readings, 1795863600, since));
+    check('log: the percent at since is the highest reading at or before it, of that week (61, not the 55 or 42 before it)', M.pctAt(L.readings, 1795863600, since) === 61, M.pctAt(L.readings, 1795863600, since));
+    check('log: a stale lower reading appended just before since cannot lower it (the highest wins, not the latest)', M.pctAt(M.parseSevenDayLog('100 40 900\n200 61 900\n299 55 900\n').readings, 900, 300) === 61);
+    check('log: a reading exactly at since counts, one a second later does not', M.pctAt(M.parseSevenDayLog('100 40 900\n300 61 900\n301 70 900\n').readings, 900, 300) === 61 && M.pctAt(M.parseSevenDayLog('100 40 900\n300 61 900\n').readings, 900, 299) === 40);
+    check('log: readings of another resets_at never count, however high', M.pctAt(M.parseSevenDayLog('100 40 900\n200 99 901 aaaaaaaa\n').readings, 900, 300) === 40);
     check('log: a reading tagged with another login\'s id still counts for its week (keyed by resets_at alone)', M.pctAt(L.readings, 1795863600, 1795537620) === 46);
     check('log: another week\'s readings never answer (98% of the week resetting earlier)', M.pctAt(L.readings, 1795849200, since) === 98 && M.pctAt(L.readings, 1795863600, 1795537630) === 46);
     check('log: no reading at or before since gives null', M.pctAt(L.readings, 1796169600, since) === null && M.pctAt(L.readings, 1795863600, 1795534621) === null);
     check('log: a reading at since itself counts', M.pctAt(L.readings, 1795863600, 1795548187) === 62);
-    check('log: a later line wins a tie of times', M.pctAt(M.parseSevenDayLog('100 5 900\n100 7 900\n').readings, 900, 100) === 7);
+    check('log: two readings at one time, the higher answers', M.pctAt(M.parseSevenDayLog('100 5 900\n100 7 900\n').readings, 900, 100) === 7 && M.pctAt(M.parseSevenDayLog('100 7 900\n100 5 900\n').readings, 900, 100) === 7);
 
     const dir = join(tmp, 'seven-day');
     mkdirSync(dir, { recursive: true });
@@ -382,7 +389,7 @@ try {
     check('reader: a missing log gives no readings, problem "missing"', missing.readings.length === 0 && missing.problem === 'missing' && missing.key === 'none', missing);
     writeFileSync(logFile, text);
     const good = await M.readSevenDayLog(logFile);
-    check('reader: a good log gives its readings and its stat key', good.readings.length === 6 && good.skipped === 5 && good.problem === null && good.key === await M.statSevenDayLog(logFile), good.key);
+    check('reader: a good log gives its readings and its stat key', good.readings.length === 7 && good.skipped === 4 && good.problem === null && good.key === await M.statSevenDayLog(logFile), good.key);
     writeFileSync(logFile, Buffer.alloc(M.SEVEN_DAY_LOG_SIZE_CAP + 1, 0x31));
     const big = await M.readSevenDayLog(logFile);
     check('reader: a log over 2 MB is refused whole (no readings, "too-large")', M.SEVEN_DAY_LOG_SIZE_CAP === 2 * 1024 * 1024 && big.readings.length === 0 && big.problem === 'too-large', { problem: big.problem, n: big.readings.length });
@@ -422,14 +429,21 @@ try {
     check('format: a passed week shows no tokens', M.weekSubLine({ ...week, pct: 0, passed: true }, full) === 'reset Sat 12:00');
     check('format: a count for another week shows nothing', M.weekSubLine(week, { ...full, resetsAt: sat - 7 * DAY }) === 'resets Sat 12:00');
     check('format: no count, the reset alone', M.weekSubLine(week, null) === 'resets Sat 12:00');
-    check('format: a full week keeps "back" after the tokens', M.weekSubLine({ ...week, pct: 100 }, full) === '2.9 of 4.6 bn · back Sat 12:00', M.weekSubLine({ ...week, pct: 100 }, full));
+    const full100 = { ...full, estimate: M.weekEstimate(full, 100, null) };
+    check('format: a full week keeps "back" after the tokens (the estimate drawn at 100%, as main sends it)', M.weekSubLine({ ...week, pct: 100 }, full100) === '2.9 of 2.9 bn · back Sat 12:00', M.weekSubLine({ ...week, pct: 100 }, full100));
     const d = M.tokenDetail(full);
     check('format: a complete detail says it is an estimate and from what, then what the count is',
       d.startsWith('about 2.9 of 4.6 bn tokens this week, estimated from 2.9 bn counted this week at 63%; the count is what Claude Code recorded while this login was live (from Sat 12:00)') && d.includes('approximate around switches') && d.includes('cached re-reads included'), d);
     const dp = M.tokenDetail(rate);
     check('format: a rate detail gives the count since the first switch and the rise', dp.startsWith('about 5.6 of 5.7 bn tokens this week, estimated from 2.1 bn counted since Tue 20:22 while the week rose from 61% to 97%') && dp.includes('from Tue 20:22, when the record of which login was live began') && dp.includes('approximate around switches'), dp);
-    const dn = M.tokenDetail(part);
-    check('format: with no estimate the detail gives the count and says it is too few', dn.startsWith('2,064,000,000 tokens counted, too few to estimate the week from'), dn);
+    const dd = (t) => M.tokenDetail(t).split('; the count is')[0];
+    const tuesday = 'Tue 20:22';
+    check('format: no estimate, the hover says why: no reading of this week at the count\'s start',
+      dd({ ...part, noEstimate: 'no-reading' }) === `2,064,000,000 tokens counted, but no reading of this week at or before ${tuesday}, so no rise to estimate from`, dd({ ...part, noEstimate: 'no-reading' }));
+    check('format: ... too little rise since the count began', dd({ ...part, noEstimate: 'small-rise' }) === `2,064,000,000 tokens counted, but the week has risen under 10 points since ${tuesday}, too little to estimate from`, dd({ ...part, noEstimate: 'small-rise' }));
+    check('format: ... under 5% used (complete count)', dd({ ...full, estimate: null, noEstimate: 'low-pct' }) === '2,912,345,678 tokens counted, but under 5% of the week is used, too little to estimate from', dd({ ...full, estimate: null, noEstimate: 'low-pct' }));
+    check('format: ... nothing counted since the login record began (partial), or this week (complete)', dd({ ...part, tokens: 0, noEstimate: 'none-counted' }) === `Not used since ${tuesday}, nothing counted` && dd({ ...full, estimate: null, tokens: 0, noEstimate: 'none-counted' }) === 'Not used this week, nothing counted', [dd({ ...part, tokens: 0, noEstimate: 'none-counted' })]);
+    check('format: ... and with no reason given, the count and no claim about why', dd(part) === '2,064,000,000 tokens counted, no estimate of the week yet' && !/few/.test(M.tokenDetail(part)), dd(part));
     check('format: a stale count names its time, a fresh one does not', M.tokenDetail({ ...full, countedAt: tue }).endsWith('; tokens counted at 20:22') && !d.includes('counted at'));
     check('format: the sub line is a token part ending in "·" and a reset part, so a wrap falls between them', JSON.stringify(M.weekSubParts(week, full)) === JSON.stringify({ tokens: '2.9 of 4.6 bn ·', reset: 'resets Sat 12:00' }) && M.weekSubParts(week, null).tokens === null && M.weekSubParts(week, part).tokens === null, M.weekSubParts(week, full));
   });
@@ -586,6 +600,41 @@ try {
       check('ipc: the bad line is skipped and logged once', logs.filter((l) => l[1] === '[USAGE] seven-day log lines skipped').length === 1);
       await I.pollPlanUsageOnce();
       check('ipc: an unchanged log is not re-read and logs nothing new', estLogs('aaaa1111').length === 2 && logs.filter((l) => l[1] === '[USAGE] seven-day log lines skipped').length === 1);
+      // The log is re-read only when its stat (mtime and size) changes: a same-size rewrite that keeps the mtime is not seen.
+      const sdOriginal = readFileSync(sevenDay, 'utf8');
+      const sdPinned = NOW - 1000;
+      const sdMark = (secs) => utimesSync(sevenDay, secs, secs);
+      sdMark(sdPinned);
+      await I.pollPlanUsageOnce();
+      check('ipc: the stat-keyed read: p0 is still 30 after the log was touched to a pinned time', acct('aaaa1111')?.weekTokens?.estimate?.p0 === 30, acct('aaaa1111')?.weekTokens?.estimate);
+      const sdChanged = sdOriginal.replace(`${firstSwitch - 100} 30 `, `${firstSwitch - 100} 31 `);
+      writeFileSync(sevenDay, sdChanged);
+      sdMark(sdPinned);
+      await I.pollPlanUsageOnce();
+      await I.pollPlanUsageOnce();
+      check('ipc: a log whose mtime and size are unchanged is not read again (a same-size rewrite is not seen: p0 stays 30)', sdChanged.length === sdOriginal.length && statSync(sevenDay).mtimeMs === sdPinned * 1000 && acct('aaaa1111')?.weekTokens?.estimate?.p0 === 30, [acct('aaaa1111')?.weekTokens?.estimate, statSync(sevenDay).mtimeMs]);
+      writeFileSync(sevenDay, sdOriginal);
+      sdMark(sdPinned + 5);
+      await I.pollPlanUsageOnce();
+      check('ipc: ... and a changed stat is read again (the original log back, p0 30, no new estimate line)', acct('aaaa1111')?.weekTokens?.estimate?.p0 === 30 && estLogs('aaaa1111').length === 2, estLogs('aaaa1111'));
+
+      // A count that stays while the percent moves keeps its estimate: the percent at the scan is what it is drawn with.
+      const bEst = () => JSON.stringify(acct('bbbb2222')?.weekTokens);
+      const bBefore = bEst();
+      accounts.accounts.bbbb2222.seven_day = { used_percentage: 60, resets_at: resetB, read_at: NOW };
+      writeFileSync(`${file}.tmp`, JSON.stringify(accounts));
+      renameSync(`${file}.tmp`, file);
+      await I.pollPlanUsageOnce();
+      await I.pollPlanUsageOnce();
+      const bMoved = acct('bbbb2222');
+      check('ipc: a frozen count with the percent moving (50 to 60) leaves the estimate unchanged (300M of 600M, not 300M of 500M)',
+        bMoved?.week?.pct === 60 && bEst() === bBefore && bMoved.weekTokens.estimate.pct === 50 && Math.abs(bMoved.weekTokens.estimate.allowance - 600_000_000) < 1 && estLogs('bbbb2222').length === 2, [bBefore, bEst()]);
+      accounts.accounts.bbbb2222.seven_day = { used_percentage: 50, resets_at: resetB, read_at: NOW };
+      writeFileSync(`${file}.tmp`, JSON.stringify(accounts));
+      renameSync(`${file}.tmp`, file);
+      await I.pollPlanUsageOnce();
+      check('ipc: ... and back at 50 it is the same again', acct('bbbb2222')?.week?.pct === 50 && bEst() === bBefore, bEst());
+
       if (process.getuid?.() !== 0) {
         appendFileSync(sevenDay, `${NOW} 41 ${resetA}\n`);
         chmodSync(sevenDay, 0o000);
@@ -675,6 +724,16 @@ try {
       I.setTokenWorkerScript(workerPath);
       await I.scanTokensOnce();
       check('ipc: after the next scan the new week has its own count', acct('bbbb2222')?.weekTokens?.resetsAt === movedReset && acct('bbbb2222').weekTokens.tokens === 0, acct('bbbb2222')?.weekTokens);
+      check('ipc: a count of nothing carries its reason (none-counted) with no estimate, and A\'s estimated count has no reason', acct('bbbb2222')?.weekTokens?.estimate === null && acct('bbbb2222').weekTokens.noEstimate === 'none-counted' && acct('aaaa1111')?.weekTokens?.noEstimate === null, [acct('bbbb2222')?.weekTokens, acct('aaaa1111')?.weekTokens]);
+      // The next good scan takes the percent as it then is: A at 40 becomes 45 and its rise 15 points (2.001M over 15 points).
+      accounts.accounts.aaaa1111.seven_day = { used_percentage: 45, resets_at: resetA, read_at: NOW };
+      writeFileSync(`${file}.tmp`, JSON.stringify(accounts));
+      renameSync(`${file}.tmp`, file);
+      await I.pollPlanUsageOnce();
+      check('ipc: a poll alone does not move A\'s estimate (drawn at 40%)', acct('aaaa1111')?.week?.pct === 45 && acct('aaaa1111').weekTokens.estimate?.pct === 40, acct('aaaa1111')?.weekTokens);
+      await I.scanTokensOnce();
+      const aRe = acct('aaaa1111')?.weekTokens?.estimate;
+      check('ipc: ... the next good scan draws it at 45% (a rise of 15 points: allowance = tokens ÷ 15 × 100)', aRe?.pct === 45 && aRe.p0 === 30 && Math.abs(aRe.allowance - 2_001_000 / 0.15) < 1e-3, aRe);
 
       // No transcripts folder: no count at all (not a 0).
       const keepDir = process.env.PATTON_CLAUDE_PROJECTS_DIR;
