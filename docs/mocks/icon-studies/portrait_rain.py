@@ -5,7 +5,7 @@ so see more background nos". The portrait's ink sets how bright each digit is; c
 run behind it everywhere.
 
 Run: python3 docs/mocks/icon-studies/portrait_rain.py <out dir>
-Writes the p, r, f (round 6) and g (round 7) SVGs (1024 grid, macOS tile); render them to PNG with headless
+Writes the p, r, f (round 6), g (round 7) and k (round 8) SVGs (1024 grid, macOS tile); render them to PNG with headless
 Chrome: python3 docs/mocks/icon-studies/render_round.py <svg dir> <round dir> g1 g2 g3 g4
 """
 import io
@@ -76,7 +76,7 @@ def tile_svg(key, ink, strength, trail_max, base, bg1, bg2, rain_col, face_col, 
 
 
 def face_in_rain(seed, ink, face_gain, floor, gap, boost, face_floor, rain_col, face_col, head_col, grid=GRID,
-                 rain_gain=0.30):
+                 rain_gain=0.30, keep=None):
     """Round 6 (his 24 Nov 16:24: "isnt the point that the face is part of the falling numbers, and is made up of
     falling numbers, not just behind numbers"): every digit belongs to a falling stream (two or three drops per
     column, each a bright head and a fading trail); the portrait only brightens and lightens the streams where they
@@ -103,6 +103,9 @@ def face_in_rain(seed, ink, face_gain, floor, gap, boost, face_floor, rain_col, 
             alpha = floor + level * (rain_gain + face_gain * f)
             alpha = min(1.0, alpha + face_floor * f)
             col = head_col if is_head else (face_col if f > 0.35 else rain_col)
+            if keep is not None and not keep(r, c):
+                rng.choice("0123456789")
+                continue
             out.append(f'<text x="{x:.1f}" y="{y:.1f}" fill="{col}" fill-opacity="{alpha:.2f}">{rng.choice("0123456789")}</text>')
     return f'<g {FONT} font-size="{cell * 0.98:.1f}">{"".join(out)}</g>'
 
@@ -128,6 +131,36 @@ FACE_VARIANTS = {
     "f3": (0.60, 0.04, 0.08, 3.2, 0.20),
 }
 
+def two_scale_tile_svg(key, fine_grid, coarse_grid, cut, face_gain, floor, gap, boost, face_floor, bg, rain_gain, glow):
+    """Round 8 (his 26 Nov "make the green in the background just bigger"): the background rain in big digits
+    (coarse_grid across), the face still drawn by fine falling digits (fine_grid across). A coarse cell is face when
+    any fine cell under it has ink above cut; the fine layer draws only the fine cells whose centre lies in a face
+    coarse cell, so the two layers meet without a gap."""
+    fine_ink, coarse_ink = portrait_ink(fine_grid), portrait_ink(coarse_grid)
+    fc, cc = 824 / fine_grid, 824 / coarse_grid
+
+    def coarse_of(r, c):
+        return min(coarse_grid - 1, int((r + 0.5) * fc / cc)), min(coarse_grid - 1, int((c + 0.5) * fc / cc))
+
+    face = set()
+    for r in range(fine_grid):
+        for c in range(fine_grid):
+            if fine_ink[r][c] > cut:
+                face.add(coarse_of(r, c))
+    defs = icons.SHARED_DEFS + icons.lg(f"{key}-bg", *bg)
+    inner = f'<rect x="100" y="100" width="824" height="824" fill="url(#{key}-bg)"/>'
+    rain = face_in_rain(11, coarse_ink, 0.0, floor, gap, boost, 0.0, "#2FCB62", "#9DFFB8", "#E2FFE9", coarse_grid,
+                        rain_gain, keep=lambda r, c: (r, c) not in face)
+    rain += face_in_rain(7, fine_ink, face_gain, floor, gap, boost, face_floor, "#2FCB62", "#9DFFB8", "#E2FFE9",
+                         fine_grid, rain_gain, keep=lambda r, c: coarse_of(r, c) in face)
+    if glow > 0:
+        defs += f'<filter id="{key}-glow" x="-5%" y="-5%" width="110%" height="110%"><feGaussianBlur stdDeviation="7"/></filter>'
+        inner += f'<g filter="url(#{key}-glow)" opacity="{glow}">{rain}</g>'
+    inner += rain
+    return ('<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">'
+            f'<defs>{defs}</defs>{icons.tile(f"{key}-bg", inner)}</svg>')
+
+
 # Round 7 (26 Nov, F3 in his Dock: "it just looks black"): F3's face drawn by the rain, the rain brighter
 # (rain_gain) and lit by a blurred copy of the digits under them (glow), each step brighter than the last.
 FACE_VARIANTS_R7 = {
@@ -137,6 +170,26 @@ FACE_VARIANTS_R7 = {
     "g3": (0.85, 0.08, 0.12, 3.4, 0.32, ("#0B2414", "#030A05"), GRID, 0.70, 0.8),
     "g4": (0.85, 0.10, 0.14, 3.4, 0.34, ("#0F2E1A", "#050F08"), GRID, 0.85, 0.9),
 }
+
+# Round 8 (26 Nov, "make the green in the background just bigger"): G3 with bigger digits. k1 and k2 enlarge every
+# digit (fewer across); k3 and k4 enlarge only the background rain and keep the face in G3's fine digits.
+# name: ("all", grid) or ("two", fine_grid, coarse_grid, cut); the rest of G3's settings stay.
+ROUND8 = {
+    "k1": ("all", 48),
+    "k2": ("all", 42),
+    "k3": ("two", GRID, 34, 0.10),
+    "k4": ("two", GRID, 28, 0.10),
+}
+
+
+def round8_svg(key):
+    face_gain, floor, gap, boost, face_floor, bg, _, rain_gain, glow = FACE_VARIANTS_R7["g3"]
+    kind = ROUND8[key]
+    if kind[0] == "all":
+        grid = kind[1]
+        return face_tile_svg(key, portrait_ink(grid), face_gain, floor, gap, boost, face_floor, bg, grid, rain_gain, glow)
+    _, fine, coarse, cut = kind
+    return two_scale_tile_svg(key, fine, coarse, cut, face_gain, floor, gap, boost, face_floor, bg, rain_gain, glow)
 
 VARIANTS = {
     # name: (strength, trail_max, base, bg1, bg2, rain, face, head)
@@ -162,4 +215,7 @@ if __name__ == "__main__":
         print(out / f"{key}.svg")
     for key, v in FACE_VARIANTS_R7.items():
         (out / f"{key}.svg").write_text(face_tile_svg(key, ink, *v))
+        print(out / f"{key}.svg")
+    for key in ROUND8:
+        (out / f"{key}.svg").write_text(round8_svg(key))
         print(out / f"{key}.svg")

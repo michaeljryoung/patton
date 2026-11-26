@@ -130,6 +130,24 @@ for key, label, name, desc in ROUND7:
         f'<div class="meta"><h3 id="h-{key}"><span class="letter wide">{label}</span>{name}</h3><p>{desc}</p>'
         f'{sizes_row(lambda px, k=key: use(k, px))}</div></article>')
 
+# Round 8: "I think we need to make the green in the background just bigger" (26 Nov): G3 with bigger digits
+# (portrait_rain.py ROUND8): K1 and K2 enlarge every digit, K3 and K4 only the background rain.
+ROUND8 = [
+    ("k1", "K1", "Bigger digits", "Every digit about a sixth bigger than G3's; the face a touch coarser."),
+    ("k2", "K2", "Bigger still", "Every digit a third bigger than G3's; the face coarser again."),
+    ("k3", "K3", "Big background", "Only the background rain bigger, its digits about two thirds bigger than G3's; the face keeps G3's fine digits."),
+    ("k4", "K4", "Biggest background", "The background rain in digits twice G3's size; the face keeps G3's fine digits."),
+]
+for k, _, _, _ in ROUND8:
+    data = base64.b64encode(open(f"{REPO}/docs/mocks/icon-studies/round8/{k}-512.png", "rb").read()).decode()
+    icons.symbols[k] = f'<image href="data:image/png;base64,{data}" x="0" y="0" width="1024" height="1024"/>'
+round8 = []
+for key, label, name, desc in ROUND8:
+    round8.append(
+        f'<article class="variant" aria-labelledby="h-{key}">{use(key, 150, "big")}'
+        f'<div class="meta"><h3 id="h-{key}"><span class="letter wide">{label}</span>{name}</h3><p>{desc}</p>'
+        f'{sizes_row(lambda px, k=key: use(k, px))}</div></article>')
+
 round6 = []
 for key, label, name, desc in ROUND6:
     round6.append(
@@ -293,6 +311,16 @@ h3 {{ margin: 0; font-size: 16px; font-weight: 600; display: flex; align-items: 
     <p class="dek">Ten directions for a sleeker icon that keeps the reference to the general: his helmet, his three stars, his name, and the tank named after him. Each sits on the rounded tile that current Mac apps use, shown full size and at 64, 32 and 16 pixels, three of the sizes Patton's icon file carries.</p>
   </header>
 
+  <section class="round2" aria-labelledby="r8-head">
+    <div class="section-head">
+      <h2 id="r8-head">Round 8 · G3, bigger green</h2>
+      <p>You asked for the green in the background to be bigger. K1 and K2 make every digit bigger, so the face gets coarser with them; K3 and K4 make only the background rain bigger and keep G3's fine face. G3 comes first in the Docks below.</p>
+    </div>
+    <div class="variants four">{"".join(round8)}</div>
+    {dock("light", [("g3", "G3", "G3")] + [(k, name, label) for k, label, name, _ in ROUND8])}
+    {dock("dark", [("g3", "G3", "G3")] + [(k, name, label) for k, label, name, _ in ROUND8])}
+  </section>
+
   <section class="round2" aria-labelledby="r7-head">
     <div class="section-head">
       <h2 id="r7-head">Round 7 · F3, lit up</h2>
@@ -380,7 +408,7 @@ h3 {{ margin: 0; font-size: 16px; font-weight: 600; display: flex; align-items: 
   </section>
 
   <section class="reply" aria-label="How to choose">
-    <p><strong>Reply with G1, G2, G3 or G4</strong> to swap it in, or keep F3.</p>
+    <p><strong>Reply with K1, K2, K3 or K4</strong> to swap it in, or keep G3.</p>
     <p>A pick ships as a release and reaches your Dock at the next install, with Patton quit.</p>
   </section>
 </div>
