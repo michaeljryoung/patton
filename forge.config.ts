@@ -118,7 +118,7 @@ const config: ForgeConfig = {
         }
         execSync(`ditto "${appPath}" "${dest}"`, { stdio: 'inherit' });
         console.log(`\n✅ Installed to ${dest}`);
-        // Neither step fails the build: the post-commit hook runs this on every commit.
+        // None of the three steps (prune, signature check, icon refresh) fails the build: the post-commit hook runs this on every commit.
         pruneAndVerify(appPath, dest);
       }
     },
