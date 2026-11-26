@@ -138,7 +138,7 @@ class FakeAudioContext {
     log.oscs.push(rec); return n;
   }
   createGain() { const n = new FakeNode(); const rec = { kind: 'gain', node: n }; n.gain = new FakeParam(rec); n.rec = rec; log.gains.push(rec); return n; }
-  createBiquadFilter() { const n = new FakeNode(); const rec = { kind: 'filter', node: n, type: 'allpass' }; n.frequency = new FakeParam(rec); n.q = new FakeParam({}); Object.defineProperty(n, 'type', { get: () => rec.type, set: (v) => { rec.type = v; } }); log.filters.push(rec); return n; }
+  createBiquadFilter() { const n = new FakeNode(); const rec = { kind: 'filter', node: n, type: 'allpass' }; n.rec = rec; n.frequency = new FakeParam(rec); n.q = new FakeParam({}); Object.defineProperty(n, 'type', { get: () => rec.type, set: (v) => { rec.type = v; } }); log.filters.push(rec); return n; }
   createWaveShaper() { const n = new FakeNode(); n.isShaper = true; n.curve = null; n.oversample = 'none'; log.shapers.push(n); return n; }
   createBuffer(_c, len) { return { getChannelData: () => new Float32Array(len) }; }
   createBufferSource() { const n = new FakeNode(); n.start = () => {}; n.stop = () => {}; return n; }
@@ -164,8 +164,8 @@ const peakOf = (osc) => {
   return g ? Math.max(...g.events.filter((e) => e[0] !== 'exp' || e[1] > 0.01).map((e) => e[1])) : null;
 };
 const freqsOf = (osc) => osc.events.filter((e) => e[0] === 'set' || e[0] === 'exp').map((e) => e[1]);
-// The master gain is the volume: the gain that feeds the limiter's pre-gain.
-const masterOf = () => log.gains.find((g) => g.node.to.some((n) => n.to.some((m) => m.isShaper)));
+// The master gain is the volume: the gain the 2 kHz low-pass feeds.
+const masterOf = () => { const f = log.filters[0]; return log.gains.find((g) => f.node.to.includes(g.node)); };
 const nowMs = { t: 1_000_000 };
 const realNow = w.Date.now;
 w.Date.now = () => nowMs.t;
@@ -247,16 +247,24 @@ await group('off and the volume', async () => {
 
 await group('the limiter after the master gain', async () => {
   const LS = NS.LIMITER_START, R = NS.LIMITER_RANGE;
-  for (const name of ['classic', 'bugle', 'bullet', 'soft', 'marimba', 'pop']) {
-    play(name, 300);
-    const lim = log.shapers[0];
-    const post = lim?.to[0];
-    const pre = masterOf()?.node.to[0];
-    check(`${name}: a limiter (waveshaper) is in the graph, master -> 1/${R} -> limiter -> x${R} -> speakers`, log.shapers.length === 1 && pre?.to[0] === lim && post?.to[0]?.isDestination && pre.rec.events[0][1] === 1 / R && post.rec.events[0][1] === R, { shapers: log.shapers.length });
-    check(`${name}: the limiter has a curve`, lim?.curve?.constructor.name === 'Float32Array' && lim.curve.length === 8193);
+  const ALL = ['classic', 'bugle', 'bullet', 'soft', 'marimba', 'pop'];
+  for (const name of ALL) {
+    for (const vol of [101, 300, 400]) {
+      play(name, vol);
+      const lim = log.shapers[0];
+      const post = lim?.to[0];
+      const pre = masterOf()?.node.to[0];
+      check(`${name} at ${vol}%: a limiter (waveshaper) is in the graph, master -> 1/${R} -> limiter -> x${R} -> speakers`, log.shapers.length === 1 && pre?.to[0] === lim && post?.to[0]?.isDestination && pre.rec.events[0][1] === 1 / R && post.rec.events[0][1] === R, { shapers: log.shapers.length });
+      check(`${name} at ${vol}%: the limiter has a curve`, lim?.curve?.constructor.name === 'Float32Array' && lim.curve.length === 8193);
+      check(`${name} at ${vol}%: nothing reaches the speakers except through the limiter`, log.gains.filter((g) => g.node.to.some((n) => n.isDestination)).length === 1 && masterOf().node.to.every((n) => !n.isDestination));
+    }
+    for (const vol of [100, 50, 1, 0]) {
+      play(name, vol);
+      const m = masterOf();
+      check(`${name} at ${vol}%: no limiter, master connects straight to the speakers`, log.shapers.length === 0 && m.node.to.length === 1 && m.node.to[0].isDestination && log.gains.every((g) => g === m || !g.node.to.some((n) => n.isDestination)), { shapers: log.shapers.length, to: m?.node.to.length });
+      check(`${name} at ${vol}%: the graph has no 1/${R} or x${R} gain`, log.gains.every((g) => g.events.every((e) => e[1] !== 1 / R && e[1] !== R)));
+    }
   }
-  play('soft', 300);
-  check('the master gain still feeds the volume into the limiter, and nothing reaches the speakers except through it', log.gains.filter((g) => g.node.to.some((n) => n.isDestination)).length === 1 && masterOf().node.to.every((n) => !n.isDestination));
   // the curve itself, read as the browser does (linear interpolation over [-R, R])
   const curve = NS.softLimitCurve();
   const at = (x) => { const p = ((Math.max(-R, Math.min(R, x)) / R + 1) / 2) * (curve.length - 1); const i = Math.min(curve.length - 2, Math.floor(p)); return (curve[i] + (curve[i + 1] - curve[i]) * (p - i)) * R; };
@@ -267,9 +275,10 @@ await group('the limiter after the master gain', async () => {
   for (let x = -R; x <= R; x += 0.001) { const y = at(x); if (Math.abs(y) > 1.0001) bounded = false; if (y < prev - 1e-9) mono = false; prev = y; }
   check('above it the output bends smoothly, rises with the input and never passes full scale', bounded && mono, { bounded, mono });
   check('a loud peak (4.0, 4.37) is rounded to just under full scale, not clipped at the knee', at(4) > 0.97 && at(4) <= 1 && at(0.9) > 0.85 && at(1.5) < 1, [at(0.9), at(1.5), at(4)]);
-  // Every sound at 100%: its peaks (the plain sum of every tone's peak, an
-  // upper bound) are under the knee, so the limiter does not touch them. Bullet
-  // is the exception, and only because its crack already reaches ~1.1 at 100%.
+  // A sound boosted above 100% is untouched by the limiter while its peaks
+  // (the plain sum of every tone's peak, an upper bound) stay under the knee.
+  // At 100% there is no limiter at all (checked above), so Bullet, whose crack
+  // already reaches ~1.1, plays as it always did.
   for (const name of ['classic', 'bugle', 'soft', 'marimba', 'pop']) {
     play(name, 100);
     const sum = log.oscs.map(peakOf).reduce((a, b) => a + b, 0);

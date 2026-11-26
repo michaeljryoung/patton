@@ -25,8 +25,10 @@ export const LIMITER_RANGE = NOTIFICATION_VOLUME_MAX / 100;
 /**
  * A transparent peak limiter as a WaveShaper curve over [-range, range]
  * (stored as [-1, 1], so the graph scales by 1/range before it and by range
- * after it). Up to `start` the output equals the input, exactly: a sound at
- * 100% (every one peaks under 0.16 except Bullet) passes untouched. Above it
+ * after it). Up to `start` the output equals the input, exactly: a sound
+ * boosted above 100% but peaking under the knee passes untouched. The graph
+ * only contains the limiter above 100%, so nothing at 100% or below goes
+ * through it. Above it
  * the output bends smoothly (tanh, same slope at the join) toward 1.0 and
  * never passes it, so a 400% sound is rounded off, not clipped flat.
  * (A DynamicsCompressorNode was not used: Chrome adds an automatic makeup
@@ -164,25 +166,35 @@ export class NotificationSound {
   private scheduleSound(ctx: AudioContext): void {
     // Everything goes through one master gain (the volume setting) and,
     // for the calm sounds, a 2 kHz low-pass that rounds off any edge.
-    // After it a limiter (see softLimitCurve) keeps a boosted sound from
-    // clipping: master -> /MAX -> shaper -> xMAX -> speakers.
-    const post = ctx.createGain();
-    post.gain.setValueAtTime(LIMITER_RANGE, ctx.currentTime);
-    post.connect(ctx.destination);
-    const limiter = ctx.createWaveShaper();
-    limiter.curve = LIMITER_CURVE;
-    limiter.connect(post);
-    const pre = ctx.createGain();
-    pre.gain.setValueAtTime(1 / LIMITER_RANGE, ctx.currentTime);
-    pre.connect(limiter);
+    // At 100% or below master goes straight to the speakers, exactly as
+    // before the volume could be boosted (Bullet already peaks near 1.09 at
+    // 100%, so a limiter there would change it). Above 100% a limiter (see
+    // softLimitCurve) keeps the boosted sound from clipping:
+    // master -> /MAX -> shaper -> xMAX -> speakers.
     const master = ctx.createGain();
     master.gain.setValueAtTime(this.volume, ctx.currentTime);
-    master.connect(pre);
+    const created: AudioNode[] = [master];
+    if (this.volume > 1) {
+      const post = ctx.createGain();
+      post.gain.setValueAtTime(LIMITER_RANGE, ctx.currentTime);
+      post.connect(ctx.destination);
+      const limiter = ctx.createWaveShaper();
+      limiter.curve = LIMITER_CURVE;
+      limiter.connect(post);
+      const pre = ctx.createGain();
+      pre.gain.setValueAtTime(1 / LIMITER_RANGE, ctx.currentTime);
+      pre.connect(limiter);
+      master.connect(pre);
+      created.push(pre, limiter, post);
+    } else {
+      master.connect(ctx.destination);
+    }
     const soft = ctx.createBiquadFilter();
     soft.type = 'lowpass';
     soft.frequency.setValueAtTime(2000, ctx.currentTime);
     soft.connect(master);
-    setTimeout(() => { soft.disconnect(); master.disconnect(); pre.disconnect(); limiter.disconnect(); post.disconnect(); }, 1000);
+    created.push(soft);
+    setTimeout(() => { for (const n of created) n.disconnect(); }, 1000);
 
     switch (this.type) {
       case 'soft':
