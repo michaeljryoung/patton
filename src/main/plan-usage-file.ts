@@ -6,8 +6,9 @@
  */
 import { promises as fs } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { EMPTY_PLAN_USAGE, parsePlanUsage, parseSwitches, type LoginSwitch, type PlanUsage } from '../shared/plan-usage';
+import { parseSevenDayLog, SEVEN_DAY_LOG_SIZE_CAP, type WeekReading } from '../shared/seven-day-log';
 
 export const PLAN_USAGE_SIZE_CAP = 256 * 1024;
 
@@ -79,4 +80,57 @@ export async function readPlanUsage(path: string, now: number): Promise<PlanUsag
   }
   const usage = parsePlanUsage(json, now);
   return usage ? { key: st.key, usage, switches: parseSwitches(json, now), problem: null } : { key: st.key, usage: EMPTY_PLAN_USAGE, switches: [], problem: 'wrong-shape' };
+}
+
+/** The status line's log of weekly readings, beside the plan-usage file (shared/seven-day-log.ts). */
+export function sevenDayLogPath(): string {
+  return join(dirname(planUsagePath()), 'seven-day.log');
+}
+
+/** Why the log gave no readings, for the log line (never a path or the file's text). */
+export type SevenDayLogProblem = 'missing' | 'too-large' | 'unreadable' | null;
+
+export interface SevenDayLogRead {
+  /** `<mtimeMs>:<size>` of the file read, 'none' with no file, '' after a failed stat or read (so it is read again). */
+  key: string;
+  readings: WeekReading[];
+  skipped: number;
+  problem: SevenDayLogProblem;
+}
+
+/** The log's stat key alone: `<mtimeMs>:<size>`, 'none' with no file, '' when the stat failed. */
+export async function statSevenDayLog(path: string): Promise<string> {
+  try {
+    const st = await fs.stat(path);
+    return st.isFile() ? `${st.mtimeMs}:${st.size}` : 'none';
+  } catch (err) {
+    return (err as { code?: unknown } | null)?.code === 'ENOENT' ? 'none' : '';
+  }
+}
+
+/** Read and parse the log as it is now. Any problem gives no readings, so no partial count gets an estimate. */
+export async function readSevenDayLog(path: string): Promise<SevenDayLogRead> {
+  let size: number;
+  let key: string;
+  try {
+    const st = await fs.stat(path);
+    if (!st.isFile()) return { key: 'none', readings: [], skipped: 0, problem: 'missing' };
+    size = st.size;
+    key = `${st.mtimeMs}:${st.size}`;
+  } catch (err) {
+    if ((err as { code?: unknown } | null)?.code === 'ENOENT') return { key: 'none', readings: [], skipped: 0, problem: 'missing' };
+    return { key: '', readings: [], skipped: 0, problem: 'unreadable' };
+  }
+  if (size > SEVEN_DAY_LOG_SIZE_CAP) return { key, readings: [], skipped: 0, problem: 'too-large' };
+  let buf: Buffer;
+  try {
+    buf = await fs.readFile(path);
+  } catch (err) {
+    if ((err as { code?: unknown } | null)?.code === 'ENOENT') return { key: 'none', readings: [], skipped: 0, problem: 'missing' };
+    return { key: '', readings: [], skipped: 0, problem: 'unreadable' };
+  }
+  // Grown past the cap between the stat and the read.
+  if (buf.length > SEVEN_DAY_LOG_SIZE_CAP) return { key, readings: [], skipped: 0, problem: 'too-large' };
+  const parsed = parseSevenDayLog(buf.toString('utf8'));
+  return { key, readings: parsed.readings, skipped: parsed.skipped, problem: null };
 }
