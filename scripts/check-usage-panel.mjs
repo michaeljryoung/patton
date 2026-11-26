@@ -1,7 +1,8 @@
 // Check of the usage panel (24 Nov 2026, Michael: every Claude login he has
 // used, bottom left, with its usage and reset time; layout U1 from
-// docs/mocks/usage-panel.html; the week's token count is drawn in section
-// panel-tokens here, and counted and credited in check-usage-tokens.mjs).
+// docs/mocks/usage-panel.html; the week's estimate in tokens, "1.9 of 5.7 bn",
+// is drawn in section panel-tokens here, with its tooltip and the rail's, and
+// counted, credited and estimated in check-usage-tokens.mjs).
 // (a) the pure parser of ~/.claude/plan-usage/accounts.json
 //     (src/shared/plan-usage.ts) on missing, garbage and bad input, null and
 //     absent windows, a passed window, ordering, name fallback, the 12 cap;
@@ -69,6 +70,7 @@ try {
     stdin: {
       resolveDir: repo, loader: 'ts',
       contents: `export * from './src/shared/plan-usage';
+                 export { weekEstimate } from './src/shared/token-credit';
                  export * from './src/main/plan-usage-file';
                  export * from './src/renderer/services/usage-format';`,
     },
@@ -394,33 +396,43 @@ try {
     };
     const live = (u) => u.accounts.find((a) => a.id === '38e237e1');
     const tue = at(24, 20, 22);
-    const u1 = withTokens((a) => a.id === '38e237e1' ? { tokens: 2_912_345_678, complete: true, since: null, resetsAt: a.week.resetsAt }
-      : a.id === 'bbbb2222' ? { tokens: 412_345_678, complete: false, since: tue, resetsAt: a.week.resetsAt }
-      : a.id === 'cccc3333' ? { tokens: 5, complete: true, since: null, resetsAt: a.week.resetsAt } : null);
+    // Main joins each count with its estimate (plan-usage-ipc.ts withTokens); here it is made the same way.
+    const est = (t, pct, p0 = null) => ({ ...t, estimate: M.weekEstimate(t, pct, p0) });
+    const u1 = withTokens((a) => a.id === '38e237e1' ? est({ tokens: 2_912_345_678, complete: true, since: null, resetsAt: a.week.resetsAt }, a.week.pct)
+      : a.id === 'bbbb2222' ? est({ tokens: 412_345_678, complete: false, since: tue, resetsAt: a.week.resetsAt }, a.week.pct, 60)
+      : a.id === 'aaaa1111' ? est({ tokens: 0, complete: false, since: tue, resetsAt: a.week.resetsAt }, a.week.pct, 61)
+      : a.id === 'cccc3333' ? est({ tokens: 5, complete: true, since: null, resetsAt: a.week.resetsAt }, a.week.pct) : null);
     p.setUsage(u1);
     const block = (id) => sec.querySelector(`.usage-acct[data-account="${id}"]`);
     const sub = (id) => block(id)?.querySelector('.usage-reset')?.textContent;
-    check('tokens: a complete count with its estimate before the reset', sub('38e237e1') === '2.9 bn of ~4.6 bn · resets Sat 12:00', sub('38e237e1'));
-    check('tokens: a partial count, "≥ … since"', sub('bbbb2222') === '≥ 412M since Tue 20:22 · resets Mon 09:00', sub('bbbb2222'));
-    check('tokens: a login with no count keeps the reset alone', sub('aaaa1111') === 'back Sat 08:00', sub('aaaa1111'));
+    check('tokens: a complete count, "<used> of <allowance> bn" before the reset', sub('38e237e1') === '2.9 of 4.6 bn · resets Sat 12:00', sub('38e237e1'));
+    check('tokens: a partial count from its rise (412M over 85 − 60 points: 1.4 of 1.6 bn)', sub('bbbb2222') === '1.4 of 1.6 bn · resets Mon 09:00', sub('bbbb2222'));
+    check('tokens: a used-up login with no tokens keeps the reset alone', sub('aaaa1111') === 'back Sat 08:00', sub('aaaa1111'));
     check('tokens: a passed week shows no count', sub('cccc3333') === 'reset Tue 08:00', sub('cccc3333'));
+    const subs = [...sec.querySelectorAll('.usage-reset')].map((x) => x.textContent);
+    check('tokens: no sub line holds "≥", "~" or "since"', subs.length === 4 && subs.every((t) => !/[≥~]|since/.test(t)), subs);
     const title = block('38e237e1').title;
-    check('tokens: the tooltip and accessible name say about how many tokens Claude Code recorded while this login was live, from the week start, approximate around switches',
-      title.includes('about 2,912,345,678 tokens Claude Code recorded while this login was live (from Sat 12:00)') && title.includes('approximate around switches') && title.includes('cached re-reads included') && block('38e237e1').getAttribute('aria-label') === title, title);
+    check('tokens: the tooltip and accessible name say the figures are an estimate and from what, then what the count is',
+      title.includes('about 2.9 of 4.6 bn tokens this week, estimated from 2.9 bn counted this week at 63%; the count is what Claude Code recorded while this login was live (from Sat 12:00)')
+      && title.includes('approximate around switches') && title.includes('cached re-reads included') && block('38e237e1').getAttribute('aria-label') === title, title);
     const partTitle = block('bbbb2222').title;
-    check('tokens: a partial tooltip gives the first switch as its start, still approximate', partTitle.includes('about 412,345,678 tokens') && partTitle.includes('from Tue 20:22, when the record of which login was live began') && partTitle.includes('approximate around switches'), partTitle);
+    check('tokens: a partial tooltip gives the count since the first switch and the week\'s rise', partTitle.includes('about 1.4 of 1.6 bn tokens this week, estimated from 412M counted since Tue 20:22 while the week rose from 60% to 85%') && partTitle.includes('approximate around switches'), partTitle);
     check('tokens: a fresh count names no count time', !title.includes('tokens counted at'), title);
+    check('rail: the hidden sidebar\'s tooltip gives each estimate and what it comes from, and none where there is none',
+      rail.title.includes('michaeljrrushworth 63% (about 2.9 of 4.6 bn tokens this week, estimated from 2.9 bn counted this week at 63%)')
+      && rail.title.includes('third 85% (about 1.4 of 1.6 bn tokens this week, estimated from 412M counted since Tue 20:22 while the week rose from 60% to 85%)')
+      && rail.title.includes('Login aaaa 100%, ') && !/Login aaaa 100% \(/.test(rail.title) && rail.title.endsWith('d 0%'), rail.title);
     // Two spans, each unbreakable by CSS, so a narrow sidebar wraps only between them.
     const spans = [...block('38e237e1').querySelectorAll('.usage-reset > span')].map((x) => [x.className, x.textContent]);
-    check('tokens: the sub line is a token span and a reset span', JSON.stringify(spans) === JSON.stringify([['usage-tokens', '2.9 bn of ~4.6 bn ·'], ['usage-when', 'resets Sat 12:00']]), spans);
-    check('tokens: a login with no count has the reset span alone', [...block('aaaa1111').querySelectorAll('.usage-reset > span')].map((x) => x.className).join() === 'usage-when');
+    check('tokens: the sub line is a token span and a reset span', JSON.stringify(spans) === JSON.stringify([['usage-tokens', '2.9 of 4.6 bn ·'], ['usage-when', 'resets Sat 12:00']]), spans);
+    check('tokens: a login with no estimate has the reset span alone', [...block('aaaa1111').querySelectorAll('.usage-reset > span')].map((x) => x.className).join() === 'usage-when');
     const css = readFileSync(join(repo, 'src/renderer/styles/main.css'), 'utf8');
     check('tokens: both spans are white-space: nowrap in the stylesheet', /\.usage-reset \.usage-tokens,\s*\.usage-reset \.usage-when\s*\{[^}]*white-space:\s*nowrap/.test(css));
     // A count more than 5 minutes old says when it was counted.
     const stale = JSON.parse(JSON.stringify(u1));
     live(stale).weekTokens.countedAt = at(24, 20, 5);
     p.setUsage(stale);
-    check('tokens: a stale count names its time in the tooltip, the sub line unchanged', block('38e237e1').title.includes('; tokens counted at 20:05') && sub('38e237e1') === '2.9 bn of ~4.6 bn · resets Sat 12:00', block('38e237e1').title);
+    check('tokens: a stale count names its time in the tooltip, the sub line unchanged', block('38e237e1').title.includes('; tokens counted at 20:05') && sub('38e237e1') === '2.9 of 4.6 bn · resets Sat 12:00', block('38e237e1').title);
     p.setUsage(u1);
 
     // A new count re-draws; the same count does not touch the DOM.
@@ -428,9 +440,9 @@ try {
     p.setUsage(JSON.parse(JSON.stringify(u1)));
     check('tokens: the same counts leave the DOM alone', sec.querySelector('.usage-acct') === before);
     const u2 = JSON.parse(JSON.stringify(u1));
-    live(u2).weekTokens.tokens = 3_012_345_678;
+    live(u2).weekTokens = est({ ...live(u2).weekTokens, tokens: 3_012_345_678 }, 63);
     p.setUsage(u2);
-    check('tokens: a new count re-draws', sub('38e237e1') === '3.0 bn of ~4.8 bn · resets Sat 12:00', sub('38e237e1'));
+    check('tokens: a new count re-draws', sub('38e237e1') === '3.0 of 4.8 bn · resets Sat 12:00', sub('38e237e1'));
     const u3 = JSON.parse(JSON.stringify(u2));
     live(u3).weekTokens.resetsAt -= 7 * 86400;
     p.setUsage(u3);

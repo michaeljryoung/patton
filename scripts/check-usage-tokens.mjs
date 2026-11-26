@@ -16,14 +16,22 @@
 //     unterminated is not read again), an unreadable file named once;
 // (c) crediting (src/shared/token-credit.ts): the last switch at or before each
 //     request, nothing before the first switch, two logins with a switch mid-week,
-//     window bounds, complete vs partial, the scan floor, the estimate rule;
-// (d) the words (src/renderer/services/usage-format.ts): k / M / bn, the sub line
-//     complete, without an estimate, partial, passed, for another week, the detail;
+//     window bounds, complete vs partial, the scan floor, the estimate (complete:
+//     tokens ÷ percent; partial: tokens ÷ (percent − p0), from a 5-point rise);
+// (c2) seven-day.log (src/shared/seven-day-log.ts, main's reader): bad lines
+//     skipped, the reading at since keyed by resets_at alone (a line tagged with
+//     the wrong login still counts), none before since, the 2 MB cap, unreadable;
+// (d) the words (src/renderer/services/usage-format.ts): k / M / bn, the pair
+//     "<used> of <allowance> bn" to 2 figures, the sub line complete, from a rise,
+//     with no estimate, used up, passed, for another week (never "≥", "~" or
+//     "since"), the detail saying it is an estimate and from what;
 // (e) the real worker (bundled here with esbuild as one CommonJS file, not by
 //     Forge's Vite; the Vite-built file is also run when .vite/build has one),
 //     run with eval through src/main/token-scan-host.ts: same totals as the
 //     scanner, state kept, a worker that dies is started again (and told);
-// (f) main's IPC module with the worker: counts joined into the push per login,
+// (f) main's IPC module with the worker: counts joined into the push per login
+//     with their estimates (a partial one only once seven-day.log gives p0), one
+//     "[USAGE] estimate" line per change, the log's problems logged once,
 //     one "[USAGE] tokens" line per scan whose rounded totals changed, a scan
 //     scheduled by the poll itself when switches or weeks change, a count never
 //     shown against another week, no count with no transcripts, a stale count
@@ -71,6 +79,8 @@ try {
                  export * from './src/shared/token-credit';
                  export * from './src/main/token-scan';
                  export * from './src/main/token-scan-host';
+                 export * from './src/shared/seven-day-log';
+                 export { readSevenDayLog, sevenDayLogPath, statSevenDayLog } from './src/main/plan-usage-file';
                  export * from './src/renderer/services/usage-format';`,
     },
     bundle: true, format: 'esm', platform: 'node', write: false, logLevel: 'silent',
@@ -317,10 +327,72 @@ try {
     check('credit: the floor is the latest of 8 days back, the first switch and the earliest week start', M.scanFloor(sw, windows, now) === T && M.scanFloor(sw, [windows[1]], now) === T + 1200 && M.scanFloor([[T - 20 * DAY, 'x']], [{ id: 'x', start: T - 20 * DAY, end: T }], now) === now - 8 * DAY);
     check('credit: no switches or no windows, no floor (nothing to read)', M.scanFloor([], windows, now) === null && M.scanFloor(sw, [], now) === null);
     const full = { tokens: 2_912_345_678, complete: true, since: null, resetsAt: T };
-    check('credit: the estimate is tokens ÷ percent × 100, to 2 significant figures', M.weekEstimate(full, 63, 63) === 4_600_000_000, M.weekEstimate(full, 63, 63));
-    check('credit: no estimate under 5% shown, for a partial count, or for no tokens',
-      M.weekEstimate(full, 4.4, 4) === null && M.weekEstimate({ ...full, complete: false, since: T }, 63, 63) === null && M.weekEstimate({ ...full, tokens: 0 }, 63, 63) === null);
-    check('credit: an estimate from 5% shown (4.6 rounds to 5)', M.weekEstimate(full, 4.6, 5) !== null);
+    const e = M.weekEstimate(full, 63, null);
+    check('estimate: complete, allowance = tokens ÷ percent × 100 and used = the count', e?.method === 'complete' && Math.abs(e.allowance - 2_912_345_678 / 0.63) < 1 && e.used === 2_912_345_678 && e.p0 === null, e);
+    check('estimate: complete ignores a p0 (the count is the whole week)', M.weekEstimate(full, 63, 40)?.allowance === e?.allowance);
+    check('estimate: complete, none under 5% shown or for no tokens', M.weekEstimate(full, 4.4, null) === null && M.weekEstimate({ ...full, tokens: 0 }, 63, null) === null);
+    check('estimate: complete from 5% shown (4.6 rounds to 5)', M.weekEstimate(full, 4.6, null) !== null);
+    const part = { tokens: 2_064_000_000, complete: false, since: T, resetsAt: T + 4 * DAY };
+    const r = M.weekEstimate(part, 97, 61);
+    check('estimate: partial with p0, allowance = tokens ÷ (pct − p0) × 100 and used = pct × allowance',
+      r?.method === 'rate' && Math.abs(r.allowance - 2_064_000_000 / 0.36) < 1 && Math.abs(r.used - 0.97 * 2_064_000_000 / 0.36) < 1 && r.p0 === 61 && r.pct === 97, r);
+    check('estimate: partial with no p0 (no reading at or before since) has none', M.weekEstimate(part, 97, null) === null);
+    check('estimate: partial with a rise under 5 points has none, from 5 points it has one', M.weekEstimate(part, 65.9, 61) === null && M.weekEstimate(part, 66, 61)?.method === 'rate', [M.weekEstimate(part, 65.9, 61), M.weekEstimate(part, 66, 61)]);
+    check('estimate: partial with no tokens has none (a used-up login with nothing counted)', M.weekEstimate({ ...part, tokens: 0 }, 100, 61) === null);
+  });
+
+  // ── (c2) the status line's seven-day.log: parser, the reading at since, main's reader
+  await section('seven-day', async () => {
+    const text = [
+      '1795534622 42 1795863600',            // an old line, no id
+      '1795537619 46 1795863600 17f8b6e1',   // tagged with the wrong login: still this week's reading
+      '1795537628 98 1795849200 17f8b6e1',   // another week
+      'garbage',
+      '1795548001 61 1795863600 38e237e1',
+      '1795548001 x 1795863600',             // a bad percent
+      '1795548002 62 1795863600 38e237e1 extra',
+      '1795548003 63 1795863600 not-an-id',
+      '-5 10 1795863600',
+      '',
+      '1795548187 62 1795863600 38e237e1',
+      '1795597759 0 1796169600 e80ce726',
+    ].join('\n') + '\n';
+    const L = M.parseSevenDayLog(text);
+    check('log: good lines kept (with or without an id), bad ones skipped and counted, blanks not', L.readings.length === 6 && L.skipped === 5, L);
+    const since = 1795548179;
+    check('log: the percent at since is the latest reading at or before it, of that week', M.pctAt(L.readings, 1795863600, since) === 61, M.pctAt(L.readings, 1795863600, since));
+    check('log: a reading tagged with another login\'s id still counts for its week (keyed by resets_at alone)', M.pctAt(L.readings, 1795863600, 1795537620) === 46);
+    check('log: another week\'s readings never answer (98% of the week resetting earlier)', M.pctAt(L.readings, 1795849200, since) === 98 && M.pctAt(L.readings, 1795863600, 1795537630) === 46);
+    check('log: no reading at or before since gives null', M.pctAt(L.readings, 1796169600, since) === null && M.pctAt(L.readings, 1795863600, 1795534621) === null);
+    check('log: a reading at since itself counts', M.pctAt(L.readings, 1795863600, 1795548187) === 62);
+    check('log: a later line wins a tie of times', M.pctAt(M.parseSevenDayLog('100 5 900\n100 7 900\n').readings, 900, 100) === 7);
+
+    const dir = join(tmp, 'seven-day');
+    mkdirSync(dir, { recursive: true });
+    const accountsFile = join(dir, 'accounts.json');
+    const before = process.env.PATTON_PLAN_USAGE_FILE;
+    process.env.PATTON_PLAN_USAGE_FILE = accountsFile;
+    try {
+      check('reader: seven-day.log sits beside accounts.json', M.sevenDayLogPath() === join(dir, 'seven-day.log'), M.sevenDayLogPath());
+    } finally {
+      if (before === undefined) delete process.env.PATTON_PLAN_USAGE_FILE; else process.env.PATTON_PLAN_USAGE_FILE = before;
+    }
+    const logFile = join(dir, 'seven-day.log');
+    const missing = await M.readSevenDayLog(logFile);
+    check('reader: a missing log gives no readings, problem "missing"', missing.readings.length === 0 && missing.problem === 'missing' && missing.key === 'none', missing);
+    writeFileSync(logFile, text);
+    const good = await M.readSevenDayLog(logFile);
+    check('reader: a good log gives its readings and its stat key', good.readings.length === 6 && good.skipped === 5 && good.problem === null && good.key === await M.statSevenDayLog(logFile), good.key);
+    writeFileSync(logFile, Buffer.alloc(M.SEVEN_DAY_LOG_SIZE_CAP + 1, 0x31));
+    const big = await M.readSevenDayLog(logFile);
+    check('reader: a log over 2 MB is refused whole (no readings, "too-large")', M.SEVEN_DAY_LOG_SIZE_CAP === 2 * 1024 * 1024 && big.readings.length === 0 && big.problem === 'too-large', { problem: big.problem, n: big.readings.length });
+    if (process.getuid?.() !== 0) {
+      writeFileSync(logFile, text);
+      chmodSync(logFile, 0o000);
+      const locked = await M.readSevenDayLog(logFile);
+      chmodSync(logFile, 0o644);
+      check('reader: an unreadable log gives no readings and no key (read again next poll)', locked.readings.length === 0 && locked.problem === 'unreadable' && locked.key === '', locked);
+    }
   });
 
   // ── (d) the words
@@ -335,21 +407,31 @@ try {
     const tue = new Date(2026, 10, 24, 20, 22).getTime() / 1000;
     const week = { pct: 63, resetsAt: sat, readAt: null, passed: false };
     const full = { tokens: 2_912_345_678, complete: true, since: null, resetsAt: sat };
-    check('format: complete with an estimate', M.weekSubLine(week, full) === '2.9 bn of ~4.6 bn · resets Sat 12:00', M.weekSubLine(week, full));
-    check('format: complete with no estimate (under 5%)', M.weekSubLine({ ...week, pct: 3 }, { ...full, tokens: 1_234_000_000 }) === '1.2 bn · resets Sat 12:00', M.weekSubLine({ ...week, pct: 3 }, { ...full, tokens: 1_234_000_000 }));
-    const part = { tokens: 412_345_678, complete: false, since: tue, resetsAt: sat };
-    check('format: partial', M.weekSubLine(week, part) === '≥ 412M since Tue 20:22 · resets Sat 12:00', M.weekSubLine(week, part));
+    full.estimate = M.weekEstimate(full, 63, null);
+    const part = { tokens: 2_064_000_000, complete: false, since: tue, resetsAt: sat };
+    const rate = { ...part, estimate: M.weekEstimate(part, 97, 61) };
+    const pairs = [[1.9e9, 5.733e9, '1.9 of 5.7 bn'], [412_345_678, 4.6e9, '0.41 of 4.6 bn'], [412e6, 800e6, '410 of 800M'], [5.56e9, 5.733e9, '5.6 of 5.7 bn'], [0, 5e9, '0 of 5.0 bn'], [9.96e9, 9.97e9, '10 of 10 bn'], [12e3, 999_600, '0.012 of 1.0M']];
+    const badPairs = pairs.filter(([u, a, want]) => M.tokenPair(u, a) !== want).map(([u, a, want]) => [u, a, want, M.tokenPair(u, a)]);
+    check('format: the pair is both figures in the allowance\'s unit, 2 significant figures', badPairs.length === 0, badPairs);
+    check('format: a complete count, "<used> of <allowance> bn"', M.weekSubLine(week, full) === '2.9 of 4.6 bn · resets Sat 12:00', M.weekSubLine(week, full));
+    check('format: a partial count with p0, used = pct × allowance', M.weekSubLine({ ...week, pct: 97 }, rate) === '5.6 of 5.7 bn · resets Sat 12:00', M.weekSubLine({ ...week, pct: 97 }, rate));
+    check('format: no estimate (no p0, a small rise, under 5%), the reset alone', M.weekSubLine(week, part) === 'resets Sat 12:00' && M.weekSubLine(week, { ...part, estimate: null }) === 'resets Sat 12:00', M.weekSubLine(week, part));
+    check('format: a used-up login with no tokens reads "back …" alone', M.weekSubLine({ ...week, pct: 100 }, { ...part, tokens: 0, estimate: M.weekEstimate({ ...part, tokens: 0 }, 100, 61) }) === 'back Sat 12:00');
+    const lines = [M.weekSubLine(week, full), M.weekSubLine({ ...week, pct: 97 }, rate), M.weekSubLine(week, part), M.weekSubLine({ ...week, pct: 100 }, full)];
+    check('format: no sub line holds "≥", "~" or "since"', lines.every((l) => !/[≥~]|since/.test(l)), lines);
     check('format: a passed week shows no tokens', M.weekSubLine({ ...week, pct: 0, passed: true }, full) === 'reset Sat 12:00');
     check('format: a count for another week shows nothing', M.weekSubLine(week, { ...full, resetsAt: sat - 7 * DAY }) === 'resets Sat 12:00');
     check('format: no count, the reset alone', M.weekSubLine(week, null) === 'resets Sat 12:00');
-    check('format: a full week keeps "back" after the tokens', M.weekSubLine({ ...week, pct: 100 }, full) === '2.9 bn of ~2.9 bn · back Sat 12:00', M.weekSubLine({ ...week, pct: 100 }, full));
-    const d = M.tokenDetail(full, 63);
-    check('format: the detail says about how many tokens Claude Code recorded while the login was live, from the week start, approximate around switches',
-      d.startsWith('about 2,912,345,678 tokens Claude Code recorded while this login was live (from Sat 12:00)') && d.includes('approximate around switches') && d.includes('cached re-reads included') && d.includes('~4,600,000,000'), d);
-    const dp = M.tokenDetail(part, 63);
-    check('format: a partial detail runs from the first switch, still approximate', dp.startsWith('about 412,345,678 tokens') && dp.includes('from Tue 20:22, when the record of which login was live began') && dp.includes('approximate around switches') && dp.includes('cached re-reads included'), dp);
-    check('format: a stale count names its time, a fresh one does not', M.tokenDetail({ ...full, countedAt: tue }, 63).endsWith('; tokens counted at 20:22') && !d.includes('counted at'));
-    check('format: the sub line is a token part ending in "·" and a reset part, so a wrap falls between them', JSON.stringify(M.weekSubParts(week, full)) === JSON.stringify({ tokens: '2.9 bn of ~4.6 bn ·', reset: 'resets Sat 12:00' }) && M.weekSubParts(week, null).tokens === null, M.weekSubParts(week, full));
+    check('format: a full week keeps "back" after the tokens', M.weekSubLine({ ...week, pct: 100 }, full) === '2.9 of 4.6 bn · back Sat 12:00', M.weekSubLine({ ...week, pct: 100 }, full));
+    const d = M.tokenDetail(full);
+    check('format: a complete detail says it is an estimate and from what, then what the count is',
+      d.startsWith('about 2.9 of 4.6 bn tokens this week, estimated from 2.9 bn counted this week at 63%; the count is what Claude Code recorded while this login was live (from Sat 12:00)') && d.includes('approximate around switches') && d.includes('cached re-reads included'), d);
+    const dp = M.tokenDetail(rate);
+    check('format: a rate detail gives the count since the first switch and the rise', dp.startsWith('about 5.6 of 5.7 bn tokens this week, estimated from 2.1 bn counted since Tue 20:22 while the week rose from 61% to 97%') && dp.includes('from Tue 20:22, when the record of which login was live began') && dp.includes('approximate around switches'), dp);
+    const dn = M.tokenDetail(part);
+    check('format: with no estimate the detail gives the count and says it is too few', dn.startsWith('2,064,000,000 tokens counted, too few to estimate the week from'), dn);
+    check('format: a stale count names its time, a fresh one does not', M.tokenDetail({ ...full, countedAt: tue }).endsWith('; tokens counted at 20:22') && !d.includes('counted at'));
+    check('format: the sub line is a token part ending in "·" and a reset part, so a wrap falls between them', JSON.stringify(M.weekSubParts(week, full)) === JSON.stringify({ tokens: '2.9 of 4.6 bn ·', reset: 'resets Sat 12:00' }) && M.weekSubParts(week, null).tokens === null && M.weekSubParts(week, part).tokens === null, M.weekSubParts(week, full));
   });
 
   // ── (e) the real worker through the host
@@ -478,6 +560,43 @@ try {
       const got = await get();
       check('ipc: the get answers the reading with its counts', got?.accounts.find((a) => a.id === 'bbbb2222')?.weekTokens?.tokens === 300_000_000);
 
+      // Estimates: B's complete count is tokens ÷ percent; A's partial count has none until seven-day.log gives
+      // A's week's percent at the first switch.
+      const estLogs = (id) => logs.filter((l) => l[1] === '[USAGE] estimate' && l[2]?.id === id).map((l) => l[2]);
+      const sdWarn = () => logs.filter((l) => l[1] === '[USAGE] seven-day log unusable, no partial estimates');
+      const eB = acct('bbbb2222')?.weekTokens?.estimate;
+      check('ipc: a complete count carries its estimate (300M at 50%: 300M of 600M)', eB?.method === 'complete' && eB.used === 300_000_000 && Math.abs(eB.allowance - 600_000_000) < 1, eB);
+      check('ipc: a partial count with no seven-day.log has no estimate', acct('aaaa1111')?.weekTokens?.estimate === null, acct('aaaa1111')?.weekTokens);
+      check('ipc: the missing log is logged once', sdWarn().length === 1 && sdWarn()[0][2]?.reason === 'missing', sdWarn());
+      check('ipc: an "[USAGE] estimate" line per change of a login\'s estimate: B none before the first scan, then complete; A none', estLogs('bbbb2222').length === 2 && estLogs('bbbb2222')[0].method === 'none' && JSON.stringify(estLogs('bbbb2222')[1]) === JSON.stringify({ id: 'bbbb2222', method: 'complete', usedB: 0.3, allowanceB: 0.6, dPct: 50 })
+        && estLogs('aaaa1111').length === 1 && estLogs('aaaa1111')[0].method === 'none', [estLogs('bbbb2222'), estLogs('aaaa1111')]);
+      const sevenDay = join(tmp, 'seven-day.log');
+      writeFileSync(sevenDay, [
+        `${firstSwitch - 5000} 20 ${resetA}`,
+        `${firstSwitch - 100} 30 ${resetA} bbbb2222`,   // tagged with B's id, but A's week: it counts for A
+        `${firstSwitch - 50} 99 ${resetB} aaaa1111`,     // tagged with A's id, B's week: never A's p0
+        'not a reading',
+        `${firstSwitch + 100} 35 ${resetA} aaaa1111`,    // after the first switch: not p0
+      ].join('\n') + '\n');
+      await I.pollPlanUsageOnce();
+      const eA = acct('aaaa1111')?.weekTokens?.estimate;
+      check('ipc: with the log, A\'s partial count is a rate from the week\'s percent at the first switch, keyed by resets_at (2M over 40 − 30 points: 8M of 20M)',
+        eA?.method === 'rate' && eA.p0 === 30 && Math.abs(eA.allowance - 20_000_000) < 1e-6 && Math.abs(eA.used - 8_000_000) < 1e-6, eA);
+      check('ipc: ... one new "[USAGE] estimate" line for A, none for B', estLogs('aaaa1111').length === 2 && JSON.stringify(estLogs('aaaa1111')[1]) === JSON.stringify({ id: 'aaaa1111', method: 'rate', usedB: 0.008, allowanceB: 0.02, dPct: 10 }) && estLogs('bbbb2222').length === 2, estLogs('aaaa1111'));
+      check('ipc: the bad line is skipped and logged once', logs.filter((l) => l[1] === '[USAGE] seven-day log lines skipped').length === 1);
+      await I.pollPlanUsageOnce();
+      check('ipc: an unchanged log is not re-read and logs nothing new', estLogs('aaaa1111').length === 2 && logs.filter((l) => l[1] === '[USAGE] seven-day log lines skipped').length === 1);
+      if (process.getuid?.() !== 0) {
+        appendFileSync(sevenDay, `${NOW} 41 ${resetA}\n`);
+        chmodSync(sevenDay, 0o000);
+        await I.pollPlanUsageOnce();
+        await I.pollPlanUsageOnce();
+        check('ipc: an unreadable log means no partial estimate, logged once over two polls', acct('aaaa1111')?.weekTokens?.estimate === null && sdWarn().length === 2 && sdWarn()[1][2]?.reason === 'unreadable' && acct('bbbb2222')?.weekTokens?.estimate?.method === 'complete', [sdWarn(), acct('aaaa1111')?.weekTokens]);
+        chmodSync(sevenDay, 0o644);
+        await I.pollPlanUsageOnce();
+        check('ipc: ... and once readable, A\'s estimate is back', acct('aaaa1111')?.weekTokens?.estimate?.p0 === 30 && estLogs('aaaa1111').map((e) => e.method).join() === 'none,rate,none,rate', estLogs('aaaa1111'));
+      }
+
       let marks = { pushes: pushes().length, logs: tokenLogs().length };
       await I.scanTokensOnce();
       check('ipc: an unchanged scan pushes nothing and logs nothing', pushes().length === marks.pushes && tokenLogs().length === marks.logs, [marks, pushes().length, tokenLogs().length]);
@@ -490,6 +609,7 @@ try {
       appendFileSync(tx, asst('m3b', 'r3b', NOW - 1800, { o: 2_000_000 }) + '\n');
       await I.scanTokensOnce();
       check('ipc: a total that crosses a rounded million is one push and one log line', pushes().length === marks.pushes + 2 && tokenLogs().length === marks.logs + 1 && tokenLogs().at(-1)[2]?.totalsM?.bbbb2222 === 302, [pushes().length, tokenLogs().length, tokenLogs().at(-1)]);
+      check('ipc: counts that leave the estimate the same to 2 figures (0.30 of 0.60 bn) log no new estimate line', estLogs('bbbb2222').length === 2 && acct('bbbb2222').weekTokens.estimate.used === 302_001_000, estLogs('bbbb2222'));
       marks = { pushes: pushes().length, logs: tokenLogs().length };
 
       // A transcript that cannot be read is logged once with its file name and code, and the others still count.

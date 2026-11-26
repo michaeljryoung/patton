@@ -6,15 +6,22 @@
  * file is replaced by rename, so a watch on it would break: it is polled by
  * stat every 10 s. Token counts come from the token worker
  * (main/token-scan-host.ts), scanned every 60 s and right after the file's
- * logins, weeks or switches change, and travel on the same push.
+ * logins, weeks or switches change, and travel on the same push. Each count
+ * carries its estimate of the week (shared/token-credit.ts weekEstimate); a
+ * partial count's needs the week's percent at the count's start, read from the
+ * status line's seven-day.log beside the file, re-read when its stat changes.
  */
 import { BrowserWindow, ipcMain } from 'electron';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { IPC } from '../shared/constants';
-import { EMPTY_PLAN_USAGE, usageIdentity, type LoginSwitch, type PlanUsage, type WeekTokens } from '../shared/plan-usage';
-import { scanFloor, WEEK_S, weekTokens, type TokenWindow } from '../shared/token-credit';
-import { isFailedRead, planUsagePath, readPlanUsage, statPlanUsage, type PlanUsageProblem } from './plan-usage-file';
+import { EMPTY_PLAN_USAGE, usageIdentity, type LoginSwitch, type PlanUsage, type PlanUsageAccount, type WeekTokens } from '../shared/plan-usage';
+import { pctAt, type WeekReading } from '../shared/seven-day-log';
+import { scanFloor, WEEK_S, weekEstimate, weekTokens, type TokenWindow } from '../shared/token-credit';
+import {
+  isFailedRead, planUsagePath, readPlanUsage, readSevenDayLog, sevenDayLogPath, statPlanUsage, statSevenDayLog,
+  type PlanUsageProblem, type SevenDayLogProblem,
+} from './plan-usage-file';
 import { RateLimiter } from './rate-limiter';
 import { TokenScanHost } from './token-scan-host';
 import type { TokenScanReply } from './token-scan-protocol';
@@ -40,6 +47,16 @@ let lastContent = JSON.stringify(EMPTY_PLAN_USAGE);
 let lastIdentity = '';
 let lastProblem: PlanUsageProblem = null;
 let inFlight: Promise<void> | null = null;
+
+/** The status line's weekly readings (seven-day.log), empty when it could not be used. */
+let weekReadings: WeekReading[] = [];
+/** The log's stat key last read; '' before the first read or after a failed one. */
+let sevenDayKey = '';
+/** The log's last problem and skipped-line count logged, so each is logged once. */
+let lastSevenDayProblem: SevenDayLogProblem | undefined;
+let lastSevenDaySkipped = 0;
+/** Each login's estimate as last logged (`[USAGE] estimate`), by login id. */
+const lastEstimates = new Map<string, string>();
 
 /** The last token count of each login's week, by login id. */
 let tokenFigures = new Map<string, WeekTokens>();
@@ -79,8 +96,28 @@ function nowSeconds(): number {
   return Date.now() / 1000;
 }
 
+/** Re-read seven-day.log when its mtime or size changed. Any problem leaves no readings
+ *  (so no partial count is estimated), logged once per distinct problem. */
+async function refreshSevenDayLog(): Promise<void> {
+  const path = sevenDayLogPath();
+  const key = await statSevenDayLog(path);
+  if (key !== '' && key === sevenDayKey) return;
+  const read = await readSevenDayLog(path);
+  sevenDayKey = read.key;
+  weekReadings = read.readings;
+  if (read.problem !== lastSevenDayProblem) {
+    lastSevenDayProblem = read.problem;
+    if (read.problem) console.warn('[USAGE] seven-day log unusable, no partial estimates', { reason: read.problem });
+  }
+  if (read.skipped !== lastSevenDaySkipped) {
+    lastSevenDaySkipped = read.skipped;
+    if (read.skipped > 0) console.warn('[USAGE] seven-day log lines skipped', { skipped: read.skipped, readings: read.readings.length });
+  }
+}
+
 /** Re-read the file when its mtime or size changed, and publish what it holds. */
 async function refreshOnce(): Promise<void> {
+  await refreshSevenDayLog();
   const path = planUsagePath();
   const st = await statPlanUsage(path);
   if (!st.failed && st.key === readKey) return;
@@ -107,11 +144,34 @@ function withTokens(usage: PlanUsage): PlanUsage {
     accounts: usage.accounts.map((a) => {
       const f = tokenFigures.get(a.id);
       const fits = f !== undefined && a.week !== null && !a.week.passed && f.resetsAt === a.week.resetsAt;
+      if (!fits || a.week === null) return { ...a, weekTokens: null };
       // Past 5 minutes with no good scan, the count says when it was counted.
       const stale = lastGoodScanAt > 0 && Date.now() - lastGoodScanAt > TOKEN_STALE_MS;
-      return { ...a, weekTokens: fits ? (stale ? { ...f, countedAt: Math.floor(lastGoodScanAt / 1000) } : f) : null };
+      // A partial count is estimated from the week's rise since its start: the percent then, by the week's reset alone.
+      const p0 = !f.complete && f.since !== null ? pctAt(weekReadings, f.resetsAt, f.since) : null;
+      const estimate = weekEstimate(f, a.week.pct, p0);
+      return { ...a, weekTokens: { ...f, estimate, ...(stale ? { countedAt: Math.floor(lastGoodScanAt / 1000) } : {}) } };
     }),
   };
+}
+
+/** Billions to 2 significant figures, for the log. */
+function billions(n: number): number {
+  return Number((n / 1e9).toPrecision(2));
+}
+
+/** One `[USAGE] estimate` line per login whose estimate, as the panel rounds it, changed. */
+function logEstimates(accounts: readonly PlanUsageAccount[]): void {
+  for (const a of accounts) {
+    const e = a.weekTokens?.estimate ?? null;
+    const line: { id: string; method: 'complete' | 'rate' | 'none'; usedB: number | null; allowanceB: number | null; dPct: number | null } = e === null
+      ? { id: a.id, method: 'none', usedB: null, allowanceB: null, dPct: null }
+      : { id: a.id, method: e.method, usedB: billions(e.used), allowanceB: billions(e.allowance), dPct: Math.round((e.p0 === null ? e.pct : e.pct - e.p0) * 10) / 10 };
+    const key = JSON.stringify(line);
+    if (lastEstimates.get(a.id) === key) continue;
+    lastEstimates.set(a.id, key);
+    console.info('[USAGE] estimate', line);
+  }
 }
 
 /** Push the reading when its content changed (a new read time or token count moves the panel), and log
@@ -127,6 +187,7 @@ function publish(): void {
     lastIdentity = identity;
     console.info('[USAGE] read', { accounts: current.accounts.length, live: current.liveId });
   }
+  logEstimates(current.accounts);
   for (const win of BrowserWindow.getAllWindows()) {
     if (!win.isDestroyed() && !win.webContents.isDestroyed()) win.webContents.send(IPC.PLAN_USAGE_CHANGED, current);
   }

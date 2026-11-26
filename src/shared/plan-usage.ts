@@ -6,6 +6,16 @@
  * here and a bad entry is dropped, never thrown on. Times are epoch seconds.
  */
 
+/** A window's percent at which its limit is reached ("back" in place of "resets", red). */
+export const FULL_PCT = 100;
+
+/** The percent shown: 100 only when the limit is truly reached (99.6 shows 99). Shared, so the
+ *  estimate's 5%-shown minimum (token-credit.ts) follows the same rounding the panel draws. */
+export function shownPct(pct: number): number {
+  if (pct >= FULL_PCT) return FULL_PCT;
+  return Math.max(0, Math.min(FULL_PCT - 1, Math.round(pct)));
+}
+
 /** One limit window of one login (the week, or the 5-hour window). */
 export interface UsageWindow {
   /** Used share, 0..100 (a reading above 100 is shown as 100). */
@@ -49,6 +59,24 @@ export interface WeekTokens {
   resetsAt: number;
   /** Set (epoch seconds) only when the count is more than 5 minutes old, because scans since have failed. */
   countedAt?: number | null;
+  /** The week's use and allowance guessed from this count (shared/token-credit.ts weekEstimate), set by
+   *  main when it joins the count in; null (or absent) when there is too little to guess from. */
+  estimate?: WeekEstimate | null;
+}
+
+/** A guess at a login's week in tokens, from the count and the percent Anthropic reports. */
+export interface WeekEstimate {
+  /** 'complete': the count covers the whole week, so allowance = tokens ÷ percent × 100.
+   *  'rate': the count runs from `since`, so allowance = tokens ÷ (percent now − percent at since) × 100. */
+  method: 'complete' | 'rate';
+  /** Tokens used this week (the count itself when complete; percent now × allowance when a rate). */
+  used: number;
+  /** The whole week's tokens. Neither figure is rounded here: the words round them. */
+  allowance: number;
+  /** The week's percent at `since` (from the status line's seven-day.log), for 'rate'; else null. */
+  p0: number | null;
+  /** The week's percent the estimate was drawn with. */
+  pct: number;
 }
 
 /** One entry of the file's `switches`: from `at` (epoch seconds), `account` was the live login. */

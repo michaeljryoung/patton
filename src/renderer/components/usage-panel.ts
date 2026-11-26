@@ -2,8 +2,9 @@
  * The usage panel at the foot of the bookmarks sidebar (layout U1, picked on
  * docs/mocks/usage-panel.html): every Claude login Michael has used, live one
  * first, each with its week's percent, a meter and its reset time, and a
- * 5-hour line where that login has a live 5-hour window, and the tokens
- * Claude Code recorded on it this week before the reset time. With the sidebar
+ * 5-hour line where that login has a live 5-hour window, and its week in
+ * tokens ("1.9 of 5.7 bn", an estimate from the count and the percent, worded
+ * as one in the tooltip) before the reset time. With the sidebar
  * hidden, the rail shows one small bar per login and the figures in its tooltip.
  *
  * The readings come from main (main/plan-usage-ipc.ts), which reads the file
@@ -12,7 +13,7 @@
 import { EMPTY_PLAN_USAGE, planUsageAt, usageIdentity, type PlanUsage, type PlanUsageAccount, type UsageWindow } from '../../shared/plan-usage';
 import type { PattonAPI } from '../../shared/types';
 import { rlog } from '../services/renderer-logger';
-import { clockTime, dayTime, newestRead, shownPct, shownTokens, tokenDetail, usageLevel, weekLine, weekSubParts } from '../services/usage-format';
+import { clockTime, dayTime, estimateDetail, newestRead, shownPct, shownTokens, tokenDetail, usageLevel, weekLine, weekSubParts } from '../services/usage-format';
 
 /** If main's first answer is null (rate-limited), ask once more after this (ms). */
 const RETRY_DELAY_MS = 2000;
@@ -57,7 +58,7 @@ function detail(a: PlanUsageAccount): string {
   if (a.week) parts.push(`week ${shownPct(a.week.pct)}%, ${weekLine(a.week)}`);
   else parts.push('no recent weekly reading');
   const tokens = shownTokens(a.week, a.weekTokens);
-  if (a.week && tokens) parts.push(tokenDetail(tokens, a.week.pct));
+  if (a.week && tokens) parts.push(tokenDetail(tokens));
   if (a.fiveHour && !a.fiveHour.passed) parts.push(`5-hour ${shownPct(a.fiveHour.pct)}%, resets ${clockTime(a.fiveHour.resetsAt)}`);
   const read = a.week?.readAt ?? a.fiveHour?.readAt ?? null;
   if (read !== null) parts.push(`read ${clockTime(read)}`);
@@ -245,7 +246,11 @@ export class UsagePanel {
 
   private railTitleFor(usage: PlanUsage): string {
     if (usage.accounts.length === 0) return this.railTitle;
-    const figures = usage.accounts.map((a) => `${a.name} ${a.week ? `${shownPct(a.week.pct)}%` : '–'}`).join(', ');
+    const figures = usage.accounts.map((a) => {
+      const tokens = shownTokens(a.week, a.weekTokens);
+      const estimate = tokens ? estimateDetail(tokens) : null;
+      return `${a.name} ${a.week ? `${shownPct(a.week.pct)}%` : '–'}${estimate ? ` (${estimate})` : ''}`;
+    }).join(', ');
     return `${this.railTitle} — ${figures}`;
   }
 

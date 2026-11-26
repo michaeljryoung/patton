@@ -3,21 +3,15 @@
  * Pure: no DOM, no window, so the check runs it under plain Node. Times are
  * epoch seconds, shown in local time, 24 h.
  */
-import type { PlanUsage, UsageWindow, WeekTokens } from '../../shared/plan-usage';
-import { weekEstimate, WEEK_S } from '../../shared/token-credit';
+import { FULL_PCT, shownPct, type PlanUsage, type UsageWindow, type WeekEstimate, type WeekTokens } from '../../shared/plan-usage';
+import { WEEK_S } from '../../shared/token-credit';
+
+export { FULL_PCT, shownPct };
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 /** Amber from here (Patton's colour-for-meaning rule). */
 export const WARN_PCT = 80;
-/** Red, and "back" in place of "resets", at this. */
-export const FULL_PCT = 100;
-
-/** The percent shown: 100 only when the limit is truly reached (99.6 shows 99). */
-export function shownPct(pct: number): number {
-  if (pct >= FULL_PCT) return FULL_PCT;
-  return Math.max(0, Math.min(FULL_PCT - 1, Math.round(pct)));
-}
 
 /** 'full' at 100%, 'warn' from 80%, else ''. Follows the percent as shown: 79.5 shows 80% and is amber. */
 export function usageLevel(pct: number): '' | 'warn' | 'full' {
@@ -56,13 +50,35 @@ export function newestRead(usage: PlanUsage): number | null {
   return newest;
 }
 
+/** The unit a token figure is shown in: as `formatTokens` picks it, by the figure's size. */
+function tokenUnit(n: number): { div: number; suffix: string } {
+  if (n < 999.5) return { div: 1, suffix: '' };
+  if (n < 999_500) return { div: 1e3, suffix: 'k' };
+  if (n < 999_500_000) return { div: 1e6, suffix: 'M' };
+  return { div: 1e9, suffix: ' bn' };
+}
+
 /** A token count, short: "640", "412k", "412M", "2.9 bn" (1 bn and up, one decimal). */
 export function formatTokens(n: number): string {
   const v = Math.max(0, n);
-  if (v < 1000) return String(Math.round(v));
-  if (v < 999_500) return `${Math.round(v / 1e3)}k`;
-  if (v < 999_500_000) return `${Math.round(v / 1e6)}M`;
-  return `${(v / 1e9).toFixed(1)} bn`;
+  const { div, suffix } = tokenUnit(v);
+  if (div === 1) return String(Math.round(v));
+  if (div < 1e9) return `${Math.round(v / div)}${suffix}`;
+  return `${(v / 1e9).toFixed(1)}${suffix}`;
+}
+
+/** `x` to 2 significant figures, written out: "5.7", "0.41", "410", "0". */
+function twoFigures(x: number): string {
+  const v = Number(Math.max(0, x).toPrecision(2));
+  if (v === 0) return '0';
+  return v.toFixed(Math.max(0, 1 - Math.floor(Math.log10(v))));
+}
+
+/** Used and allowance in the allowance's unit, both to 2 significant figures: "1.9 of 5.7 bn", "0.41 of 4.6 bn", "410 of 800M". */
+export function tokenPair(used: number, allowance: number): string {
+  const whole = Number(Math.max(0, allowance).toPrecision(2));
+  const { div, suffix } = tokenUnit(whole);
+  return `${twoFigures(used / div)} of ${twoFigures(whole / div)}${suffix}`;
 }
 
 /** The count with thousands separators: "2,912,345,678". */
@@ -76,36 +92,54 @@ export function shownTokens(w: UsageWindow | null, t: WeekTokens | null | undefi
   return t;
 }
 
-/** The token part of the week's line: "2.9 bn of ~4.6 bn", "1.2 bn" with no estimate, "≥ 412M since Tue 20:22" when partial. */
-export function tokenLine(t: WeekTokens, pct: number): string {
-  if (!t.complete) return `≥ ${formatTokens(t.tokens)}${t.since !== null ? ` since ${dayTime(t.since)}` : ''}`;
-  const estimate = weekEstimate(t, pct, shownPct(pct));
-  return estimate === null ? formatTokens(t.tokens) : `${formatTokens(t.tokens)} of ~${formatTokens(estimate)}`;
+/** The count's estimate, when it has one with figures worth drawing. */
+function shownEstimate(t: WeekTokens): WeekEstimate | null {
+  const e = t.estimate ?? null;
+  if (e === null || !Number.isFinite(e.used) || !Number.isFinite(e.allowance) || !(e.allowance > 0)) return null;
+  return e;
+}
+
+/** The token part of the week's line, "1.9 of 5.7 bn", or null with no estimate (the line is then the reset alone). */
+export function tokenLine(t: WeekTokens): string | null {
+  const e = shownEstimate(t);
+  return e === null ? null : tokenPair(e.used, e.allowance);
 }
 
 /** The week's sub line in its two parts, so a narrow sidebar wraps only between them: the token
- *  part with its "·" (null with no count to show), and the reset. */
+ *  part with its "·" (null with no estimate to show), and the reset. */
 export function weekSubParts(w: UsageWindow, t: WeekTokens | null | undefined): { tokens: string | null; reset: string } {
   const shown = shownTokens(w, t);
-  return { tokens: shown ? `${tokenLine(shown, w.pct)} ·` : null, reset: weekLine(w) };
+  const line = shown ? tokenLine(shown) : null;
+  return { tokens: line === null ? null : `${line} ·`, reset: weekLine(w) };
 }
 
-/** The week's whole sub line: "<tokens> · resets Sat 12:00", or the reset alone with no count. */
+/** The week's whole sub line: "1.9 of 5.7 bn · resets Sat 12:00", or the reset alone with no estimate. */
 export function weekSubLine(w: UsageWindow, t: WeekTokens | null | undefined): string {
   const { tokens, reset } = weekSubParts(w, t);
   return tokens === null ? reset : `${tokens} ${reset}`;
 }
 
-/** The count in full, for the tooltip and accessible name. Worded as what it is: the tokens Claude
- *  Code recorded while this login was live by the status line's login record, which can be off
- *  around a switch (see docs/reference/key-files.md, Plan usage). */
-export function tokenDetail(t: WeekTokens, pct: number): string {
-  const exact = `${exactTokens(t.tokens)} tokens`;
-  const from = t.complete
+/** The estimate in words, saying it is one and what it comes from: "about 5.6 of 5.7 bn tokens this
+ *  week, estimated from 2.1 bn counted since Tue 20:22 while the week rose from 61% to 97%". Null with none. */
+export function estimateDetail(t: WeekTokens): string | null {
+  const e = shownEstimate(t);
+  if (e === null) return null;
+  const from = e.method === 'rate' && e.p0 !== null
+    ? `counted since ${t.since !== null ? dayTime(t.since) : 'the record of which login was live began'} while the week rose from ${shownPct(e.p0)}% to ${shownPct(e.pct)}%`
+    : `counted this week at ${shownPct(e.pct)}%`;
+  return `about ${tokenPair(e.used, e.allowance)} tokens this week, estimated from ${formatTokens(t.tokens)} ${from}`;
+}
+
+/** The count in full, for the tooltip and accessible name: the estimate and what it comes from, or the
+ *  count alone when there is too little to estimate from. The count is the tokens Claude Code recorded
+ *  while this login was live by the status line's login record, which can be off around a switch (see
+ *  docs/reference/key-files.md, Plan usage). */
+export function tokenDetail(t: WeekTokens): string {
+  const counted = t.complete
     ? `from ${dayTime(t.resetsAt - WEEK_S)}`
     : t.since !== null ? `from ${dayTime(t.since)}, when the record of which login was live began` : 'from when the record of which login was live began';
-  const estimate = t.complete ? weekEstimate(t, pct, shownPct(pct)) : null;
-  const of = estimate === null ? '' : ` (a whole week ~${exactTokens(estimate)}, from the percent)`;
-  const counted = t.countedAt != null && Number.isFinite(t.countedAt) ? `; tokens counted at ${clockTime(t.countedAt)}` : '';
-  return `about ${exact} Claude Code recorded while this login was live (${from}); approximate around switches, cached re-reads included${of}${counted}`;
+  const head = estimateDetail(t)
+    ?? `${exactTokens(t.tokens)} tokens counted, too few to estimate the week from`;
+  const when = t.countedAt != null && Number.isFinite(t.countedAt) ? `; tokens counted at ${clockTime(t.countedAt)}` : '';
+  return `${head}; the count is what Claude Code recorded while this login was live (${counted}), approximate around switches, cached re-reads included${when}`;
 }

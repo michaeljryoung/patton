@@ -7,14 +7,14 @@
  * login live at its time, the last switch at or before it. Requests before the
  * first switch belong to no one. Times are epoch seconds.
  */
-import type { LoginSwitch, WeekTokens } from './plan-usage';
+import { shownPct, type LoginSwitch, type WeekEstimate, type WeekTokens } from './plan-usage';
 
 export const DAY_S = 24 * 60 * 60;
 /** A weekly window starts this long before its reset. */
 export const WEEK_S = 7 * DAY_S;
 /** Transcripts and requests older than this are never read or kept. */
 export const TOKEN_HORIZON_S = 8 * DAY_S;
-/** The estimate of a whole week is drawn only from this shown percent up (below, it is noise). */
+/** A complete count's estimate needs this percent shown, and a rate's this many points of rise (below, it is noise). */
 export const ESTIMATE_MIN_PCT = 5;
 
 /** One login's current week: requests at or after `start` and before `end` (its reset) count. */
@@ -85,9 +85,21 @@ export function scanFloor(switches: readonly LoginSwitch[], windows: readonly To
   return Math.max(now - TOKEN_HORIZON_S, switches[0][0], earliestStart);
 }
 
-/** The whole week's size, guessed from the count and the shown percent: only for a complete
- *  count with tokens, from 5% shown, rounded to 2 significant figures. Null otherwise. */
-export function weekEstimate(t: WeekTokens, pct: number, shown: number): number | null {
-  if (!t.complete || t.tokens <= 0 || shown < ESTIMATE_MIN_PCT || !(pct > 0)) return null;
-  return Number(((t.tokens / pct) * 100).toPrecision(2));
+/** The week's use and allowance, guessed from the count and the percent (`pct`, the week's
+ *  percent now). A complete count (the whole week): allowance = tokens ÷ pct × 100 and used =
+ *  tokens, from 5% shown. A partial count (from `since`): with `p0` the week's percent at
+ *  `since` (seven-day-log.ts pctAt), allowance = tokens ÷ (pct − p0) × 100 and used = pct × the
+ *  allowance, once the week rose at least 5 points since. Null with no tokens, no p0 or too
+ *  little rise. Not rounded: the words round both figures. */
+export function weekEstimate(t: WeekTokens, pct: number, p0: number | null): WeekEstimate | null {
+  if (!(t.tokens > 0) || !Number.isFinite(pct)) return null;
+  if (t.complete) {
+    if (shownPct(pct) < ESTIMATE_MIN_PCT || !(pct > 0)) return null;
+    return { method: 'complete', used: t.tokens, allowance: (t.tokens / pct) * 100, p0: null, pct };
+  }
+  if (p0 === null || !Number.isFinite(p0)) return null;
+  const rise = pct - p0;
+  if (!(rise >= ESTIMATE_MIN_PCT)) return null;
+  const allowance = (t.tokens / rise) * 100;
+  return { method: 'rate', used: (pct / 100) * allowance, allowance, p0, pct };
 }
