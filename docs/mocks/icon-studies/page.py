@@ -112,6 +112,24 @@ ROUND6 = [
 for k, _, _, _ in ROUND6:
     data = base64.b64encode(open(f"{REPO}/docs/mocks/icon-studies/round6/{k}-512.png", "rb").read()).decode()
     icons.symbols[k] = f'<image href="data:image/png;base64,{data}" x="0" y="0" width="1024" height="1024"/>'
+# Round 7: F3 in his Dock, "it just looks black" (26 Nov): the same face drawn by the rain, the rain brighter and lit
+# by a soft glow of the digits under them (portrait_rain.py FACE_VARIANTS_R7), each step brighter than the last.
+ROUND7 = [
+    ("g1", "G1", "Lit rain", "F3's face, with the falling digits about twice as bright and a soft green glow under them."),
+    ("g2", "G2", "Lit rain, clearer face", "G1 with the face a step clearer, about as strong as F2's."),
+    ("g3", "G3", "Brighter", "G2 on a dark green ground instead of near black, the rain and glow a step stronger."),
+    ("g4", "G4", "Brightest", "The rain and glow strongest, on a lighter green ground than G3."),
+]
+for k, _, _, _ in ROUND7:
+    data = base64.b64encode(open(f"{REPO}/docs/mocks/icon-studies/round7/{k}-512.png", "rb").read()).decode()
+    icons.symbols[k] = f'<image href="data:image/png;base64,{data}" x="0" y="0" width="1024" height="1024"/>'
+round7 = []
+for key, label, name, desc in ROUND7:
+    round7.append(
+        f'<article class="variant" aria-labelledby="h-{key}">{use(key, 150, "big")}'
+        f'<div class="meta"><h3 id="h-{key}"><span class="letter wide">{label}</span>{name}</h3><p>{desc}</p>'
+        f'{sizes_row(lambda px, k=key: use(k, px))}</div></article>')
+
 round6 = []
 for key, label, name, desc in ROUND6:
     round6.append(
@@ -204,7 +222,7 @@ h2 {{ margin: 0; font-size: 19px; font-weight: 600; display: flex; align-items: 
 .section-head h2 {{ font-size: 15px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-weight: 600; }}
 .section-head p {{ margin: 0; color: var(--muted); max-width: 68ch; }}
 
-.today {{ display: flex; gap: 28px; align-items: center; flex-wrap: wrap; padding-block: 24px; border-block: 1px solid var(--line); }}
+.today {{ display: flex; gap: 28px; align-items: center; flex-wrap: wrap; padding-block: 24px; }}
 .today .art {{ width: 128px; height: 128px; border-radius: 8px; }}
 .today .text {{ flex: 1 1 280px; display: grid; gap: 6px; max-width: 60ch; }}
 .today .label {{ font-size: 13px; letter-spacing: .12em; text-transform: uppercase; color: var(--brass); }}
@@ -212,7 +230,7 @@ h2 {{ margin: 0; font-size: 19px; font-weight: 600; display: flex; align-items: 
 
 .grid {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }}
 .option {{ display: grid; grid-template-columns: 168px minmax(0, 1fr); gap: 22px; align-items: start;
-  background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 20px; }}
+  background: var(--surface); border-radius: 14px; padding: 20px; }}
 .option .big {{ width: 168px; height: 168px; max-width: 100%; }}
 .meta {{ display: grid; gap: 8px; }}
 .meta p {{ margin: 0; }}
@@ -244,7 +262,7 @@ figcaption {{ font-size: 11px; color: var(--muted); font-variant-numeric: tabula
 .variants {{ display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }}
 .variants.three {{ grid-template-columns: repeat(3, minmax(0, 1fr)); }}
 .variants.four {{ grid-template-columns: repeat(4, minmax(0, 1fr)); }}
-.variant {{ display: grid; grid-template-rows: auto 1fr; gap: 12px; background: var(--surface); border: 1px solid var(--line);
+.variant {{ display: grid; grid-template-rows: auto 1fr; gap: 12px; background: var(--surface);
   border-radius: 14px; padding: 16px; }}
 .variant .meta {{ grid-template-rows: auto 1fr auto; }}
 .variant .big {{ width: 150px; height: 150px; max-width: 100%; justify-self: center; }}
@@ -252,7 +270,7 @@ h3 {{ margin: 0; font-size: 16px; font-weight: 600; display: flex; align-items: 
 .letter.wide {{ width: auto; padding-inline: 7px; }}
 .variant .sizes {{ gap: 12px; }}
 
-.reply {{ display: grid; gap: 6px; max-width: 68ch; border-top: 1px solid var(--line); padding-top: 24px; }}
+.reply {{ display: grid; gap: 6px; max-width: 68ch; padding-top: 24px; }}
 .reply p {{ margin: 0; }}
 .reply strong {{ font-weight: 600; }}
 
@@ -274,6 +292,16 @@ h3 {{ margin: 0; font-size: 16px; font-weight: 600; display: flex; align-items: 
     <h1>Ten icons for Patton</h1>
     <p class="dek">Ten directions for a sleeker icon that keeps the reference to the general: his helmet, his three stars, his name, and the tank named after him. Each sits on the rounded tile that current Mac apps use, shown full size and at 64, 32 and 16 pixels, three of the sizes Patton's icon file carries.</p>
   </header>
+
+  <section class="round2" aria-labelledby="r7-head">
+    <div class="section-head">
+      <h2 id="r7-head">Round 7 · F3, lit up</h2>
+      <p>F3 in your Dock looks black: its digits are thin and mostly faint, so at Dock size they average out to the dark ground. These keep F3's face drawn by the falling digits and make the rain brighter, with a soft glow under it, each a step brighter than the last. F3 as it is now comes first in the Docks below.</p>
+    </div>
+    <div class="variants four">{"".join(round7)}</div>
+    {dock("light", [("f3", "F3", "F3 now")] + [(k, name, label) for k, label, name, _ in ROUND7])}
+    {dock("dark", [("f3", "F3", "F3 now")] + [(k, name, label) for k, label, name, _ in ROUND7])}
+  </section>
 
   <section class="round2" aria-labelledby="r6-head">
     <div class="section-head">
@@ -352,8 +380,8 @@ h3 {{ margin: 0; font-size: 16px; font-weight: 600; display: flex; align-items: 
   </section>
 
   <section class="reply" aria-label="How to choose">
-    <p><strong>Reply with F1, F2 or F3</strong> (or R1–R3 from round 5) to swap it in, or keep P1.</p>
-    <p>A pick goes into the release that carries the Stop hook fix and the compact wake tab, so it arrives in the same install.</p>
+    <p><strong>Reply with G1, G2, G3 or G4</strong> to swap it in, or keep F3.</p>
+    <p>A pick ships as a release and reaches your Dock at the next install, with Patton quit.</p>
   </section>
 </div>
 """
