@@ -7,9 +7,12 @@
  * stat every 10 s. Token counts come from the token worker
  * (main/token-scan-host.ts), scanned every 60 s and right after the file's
  * logins, weeks or switches change, and travel on the same push. Each count
- * carries its estimate of the week (shared/token-credit.ts weekEstimate); a
- * partial count's needs the week's percent at the count's start, read from the
- * status line's seven-day.log beside the file, re-read when its stat changes.
+ * carries its estimate of the week (shared/token-credit.ts estimateWeek), drawn
+ * from the percent when the scan ended and held until the next good scan (a
+ * percent that moves between scans must not move the allowance), or the reason
+ * there is none; a partial count's needs the week's percent at the count's
+ * start, read from the status line's seven-day.log beside the file, re-read
+ * when its stat changes.
  */
 import { BrowserWindow, ipcMain } from 'electron';
 import { homedir } from 'node:os';
@@ -17,7 +20,7 @@ import { join } from 'node:path';
 import { IPC } from '../shared/constants';
 import { EMPTY_PLAN_USAGE, usageIdentity, type LoginSwitch, type PlanUsage, type PlanUsageAccount, type WeekTokens } from '../shared/plan-usage';
 import { pctAt, type WeekReading } from '../shared/seven-day-log';
-import { scanFloor, WEEK_S, weekEstimate, weekTokens, type TokenWindow } from '../shared/token-credit';
+import { estimateWeek, scanFloor, WEEK_S, weekTokens, type TokenWindow } from '../shared/token-credit';
 import {
   isFailedRead, planUsagePath, readPlanUsage, readSevenDayLog, sevenDayLogPath, statPlanUsage, statSevenDayLog,
   type PlanUsageProblem, type SevenDayLogProblem,
@@ -58,8 +61,15 @@ let lastSevenDaySkipped = 0;
 /** Each login's estimate as last logged (`[USAGE] estimate`), by login id. */
 const lastEstimates = new Map<string, string>();
 
-/** The last token count of each login's week, by login id. */
-let tokenFigures = new Map<string, WeekTokens>();
+/** One login's count as the last good scan left it, with the week's percent at that scan: the estimate is drawn
+ *  from both, so it stays as it was until the next good scan however the percent moves between scans. */
+interface ScannedWeek {
+  figure: WeekTokens;
+  /** The week's percent when the scan ended; null when the file no longer showed that week. */
+  pct: number | null;
+}
+/** The last count of each login's week, by login id. */
+let tokenFigures = new Map<string, ScannedWeek>();
 /** The worker's script; undefined until first asked (then beside this bundle, or null where there is none). */
 let tokenScript: string | null | undefined;
 let tokenHost: TokenScanHost | null = null;
@@ -142,15 +152,17 @@ function withTokens(usage: PlanUsage): PlanUsage {
   return {
     liveId: usage.liveId,
     accounts: usage.accounts.map((a) => {
-      const f = tokenFigures.get(a.id);
+      const scanned = tokenFigures.get(a.id);
+      const f = scanned?.figure;
       const fits = f !== undefined && a.week !== null && !a.week.passed && f.resetsAt === a.week.resetsAt;
       if (!fits || a.week === null) return { ...a, weekTokens: null };
       // Past 5 minutes with no good scan, the count says when it was counted.
       const stale = lastGoodScanAt > 0 && Date.now() - lastGoodScanAt > TOKEN_STALE_MS;
       // A partial count is estimated from the week's rise since its start: the percent then, by the week's reset alone.
       const p0 = !f.complete && f.since !== null ? pctAt(weekReadings, f.resetsAt, f.since) : null;
-      const estimate = weekEstimate(f, a.week.pct, p0);
-      return { ...a, weekTokens: { ...f, estimate, ...(stale ? { countedAt: Math.floor(lastGoodScanAt / 1000) } : {}) } };
+      // From the percent at the scan, never the live one: a count that stays while the percent climbs would drift.
+      const { estimate, why } = scanned?.pct == null ? { estimate: null, why: null } : estimateWeek(f, scanned.pct, p0);
+      return { ...a, weekTokens: { ...f, estimate, noEstimate: why, ...(stale ? { countedAt: Math.floor(lastGoodScanAt / 1000) } : {}) } };
     }),
   };
 }
@@ -216,7 +228,7 @@ async function scanTokens(): Promise<void> {
   const windows = tokenWindows(now);
   lastTokenInputs = JSON.stringify([windows, switches]);
   const floor = scanFloor(switches, windows, now);
-  let figures = new Map<string, WeekTokens>();
+  let figures = new Map<string, ScannedWeek>();
   let stats: { files: number; filesRead: number; ms: number; skipped: number; bytes: number; requests: number } | null = null;
   if (floor !== null) {
     tokenHost ??= new TokenScanHost(script, (n) => {
@@ -240,7 +252,11 @@ async function scanTokens(): Promise<void> {
     // No transcripts folder (or none in it): nothing was counted, so no count is shown, not a 0.
     if (reply.listed > 0) {
       const totals = new Map(reply.totals);
-      for (const w of windows) figures.set(w.id, weekTokens(totals.get(w.id) ?? 0, w, switches));
+      for (const w of windows) {
+        // The percent as the file shows it now, if it is still the week this window counted.
+        const week = fileUsage.accounts.find((a) => a.id === w.id)?.week;
+        figures.set(w.id, { figure: weekTokens(totals.get(w.id) ?? 0, w, switches), pct: week && week.resetsAt === w.end ? week.pct : null });
+      }
     }
     stats = { files: reply.files, filesRead: reply.filesRead, ms: reply.ms, skipped: reply.skipped, bytes: reply.bytes, requests: reply.requests };
   } else {
@@ -248,7 +264,7 @@ async function scanTokens(): Promise<void> {
   }
   // Logged when the accounts or a total in rounded millions change, not on every exact change.
   const millions: Record<string, number> = {};
-  for (const [id, f] of figures) millions[id] = Math.round(f.tokens / 1e6);
+  for (const [id, f] of figures) millions[id] = Math.round(f.figure.tokens / 1e6);
   const totalsKey = JSON.stringify(millions);
   if (totalsKey !== lastTokenTotals) {
     lastTokenTotals = totalsKey;
