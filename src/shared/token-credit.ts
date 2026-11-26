@@ -7,15 +7,17 @@
  * login live at its time, the last switch at or before it. Requests before the
  * first switch belong to no one. Times are epoch seconds.
  */
-import { shownPct, type LoginSwitch, type WeekEstimate, type WeekTokens } from './plan-usage';
+import { shownPct, type LoginSwitch, type NoEstimateReason, type WeekEstimate, type WeekTokens } from './plan-usage';
 
 export const DAY_S = 24 * 60 * 60;
 /** A weekly window starts this long before its reset. */
 export const WEEK_S = 7 * DAY_S;
 /** Transcripts and requests older than this are never read or kept. */
 export const TOKEN_HORIZON_S = 8 * DAY_S;
-/** A complete count's estimate needs this percent shown, and a rate's this many points of rise (below, it is noise). */
+/** A complete count's estimate needs this percent shown (below, it is noise). */
 export const ESTIMATE_MIN_PCT = 5;
+/** A rate's estimate needs this many points of rise since the count began: percents are whole numbers, so a 5-point rise can be up to about 20% wrong. */
+export const ESTIMATE_MIN_RISE = 10;
 
 /** One login's current week: requests at or after `start` and before `end` (its reset) count. */
 export interface TokenWindow {
@@ -86,20 +88,26 @@ export function scanFloor(switches: readonly LoginSwitch[], windows: readonly To
 }
 
 /** The week's use and allowance, guessed from the count and the percent (`pct`, the week's
- *  percent now). A complete count (the whole week): allowance = tokens ÷ pct × 100 and used =
- *  tokens, from 5% shown. A partial count (from `since`): with `p0` the week's percent at
- *  `since` (seven-day-log.ts pctAt), allowance = tokens ÷ (pct − p0) × 100 and used = pct × the
- *  allowance, once the week rose at least 5 points since. Null with no tokens, no p0 or too
- *  little rise. Not rounded: the words round both figures. */
-export function weekEstimate(t: WeekTokens, pct: number, p0: number | null): WeekEstimate | null {
-  if (!(t.tokens > 0) || !Number.isFinite(pct)) return null;
+ *  percent now), and when there is none, why. A complete count (the whole week): allowance =
+ *  tokens ÷ pct × 100 and used = tokens, from 5% shown. A partial count (from `since`): with `p0`
+ *  the week's percent at `since` (seven-day-log.ts pctAt), allowance = tokens ÷ (pct − p0) × 100
+ *  and used = pct × the allowance, once the week rose at least 10 points since. Not rounded: the
+ *  words round both figures. `why` is null with an estimate (or when `pct` is not a number). */
+export function estimateWeek(t: WeekTokens, pct: number, p0: number | null): { estimate: WeekEstimate | null; why: NoEstimateReason | null } {
+  if (!(t.tokens > 0)) return { estimate: null, why: 'none-counted' };
+  if (!Number.isFinite(pct)) return { estimate: null, why: null };
   if (t.complete) {
-    if (shownPct(pct) < ESTIMATE_MIN_PCT || !(pct > 0)) return null;
-    return { method: 'complete', used: t.tokens, allowance: (t.tokens / pct) * 100, p0: null, pct };
+    if (shownPct(pct) < ESTIMATE_MIN_PCT || !(pct > 0)) return { estimate: null, why: 'low-pct' };
+    return { estimate: { method: 'complete', used: t.tokens, allowance: (t.tokens / pct) * 100, p0: null, pct }, why: null };
   }
-  if (p0 === null || !Number.isFinite(p0)) return null;
+  if (p0 === null || !Number.isFinite(p0)) return { estimate: null, why: 'no-reading' };
   const rise = pct - p0;
-  if (!(rise >= ESTIMATE_MIN_PCT)) return null;
+  if (!(rise >= ESTIMATE_MIN_RISE)) return { estimate: null, why: 'small-rise' };
   const allowance = (t.tokens / rise) * 100;
-  return { method: 'rate', used: (pct / 100) * allowance, allowance, p0, pct };
+  return { estimate: { method: 'rate', used: (pct / 100) * allowance, allowance, p0, pct }, why: null };
+}
+
+/** The estimate alone (null with none). */
+export function weekEstimate(t: WeekTokens, pct: number, p0: number | null): WeekEstimate | null {
+  return estimateWeek(t, pct, p0).estimate;
 }

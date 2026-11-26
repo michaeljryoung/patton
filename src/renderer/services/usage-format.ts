@@ -4,7 +4,7 @@
  * epoch seconds, shown in local time, 24 h.
  */
 import { FULL_PCT, shownPct, type PlanUsage, type UsageWindow, type WeekEstimate, type WeekTokens } from '../../shared/plan-usage';
-import { WEEK_S } from '../../shared/token-credit';
+import { ESTIMATE_MIN_PCT, ESTIMATE_MIN_RISE, WEEK_S } from '../../shared/token-credit';
 
 export { FULL_PCT, shownPct };
 
@@ -130,6 +130,24 @@ export function estimateDetail(t: WeekTokens): string | null {
   return `about ${tokenPair(e.used, e.allowance)} tokens this week, estimated from ${formatTokens(t.tokens)} ${from}`;
 }
 
+/** With no estimate, the reason in plain words (by `t.noEstimate`, which main sets with the estimate). */
+function noEstimateDetail(t: WeekTokens): string {
+  const counted = `${exactTokens(t.tokens)} tokens counted`;
+  const start = t.since !== null ? dayTime(t.since) : 'the record of which login was live began';
+  switch (t.noEstimate) {
+    case 'none-counted':
+      return t.complete ? 'Not used this week, nothing counted' : `Not used since ${start}, nothing counted`;
+    case 'no-reading':
+      return `${counted}, but no reading of this week at or before ${start}, so no rise to estimate from`;
+    case 'small-rise':
+      return `${counted}, but the week has risen under ${ESTIMATE_MIN_RISE} points since ${start}, too little to estimate from`;
+    case 'low-pct':
+      return `${counted}, but under ${ESTIMATE_MIN_PCT}% of the week is used, too little to estimate from`;
+    default:
+      return `${counted}, no estimate of the week yet`;
+  }
+}
+
 /** The count in full, for the tooltip and accessible name: the estimate and what it comes from, or the
  *  count alone when there is too little to estimate from. The count is the tokens Claude Code recorded
  *  while this login was live by the status line's login record, which can be off around a switch (see
@@ -138,8 +156,7 @@ export function tokenDetail(t: WeekTokens): string {
   const counted = t.complete
     ? `from ${dayTime(t.resetsAt - WEEK_S)}`
     : t.since !== null ? `from ${dayTime(t.since)}, when the record of which login was live began` : 'from when the record of which login was live began';
-  const head = estimateDetail(t)
-    ?? `${exactTokens(t.tokens)} tokens counted, too few to estimate the week from`;
+  const head = estimateDetail(t) ?? noEstimateDetail(t);
   const when = t.countedAt != null && Number.isFinite(t.countedAt) ? `; tokens counted at ${clockTime(t.countedAt)}` : '';
   return `${head}; the count is what Claude Code recorded while this login was live (${counted}), approximate around switches, cached re-reads included${when}`;
 }

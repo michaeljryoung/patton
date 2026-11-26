@@ -62,7 +62,13 @@ export interface WeekTokens {
   /** The week's use and allowance guessed from this count (shared/token-credit.ts weekEstimate), set by
    *  main when it joins the count in; null (or absent) when there is too little to guess from. */
   estimate?: WeekEstimate | null;
+  /** Why `estimate` is null, for the hover (set by main with the estimate); null or absent otherwise. */
+  noEstimate?: NoEstimateReason | null;
 }
+
+/** Why a count has no estimate: nothing counted for this login (in this week, or since the login record began), under 5% of the
+ *  week used (complete count), no reading of the week at or before the count's start, or too little rise since it began. */
+export type NoEstimateReason = 'none-counted' | 'low-pct' | 'no-reading' | 'small-rise';
 
 /** A guess at a login's week in tokens, from the count and the percent Anthropic reports. */
 export interface WeekEstimate {
