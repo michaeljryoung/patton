@@ -179,11 +179,24 @@ function refreshIcon(dest, options = {}) {
   const log = options.log || console.log;
   const warn = options.warn || console.warn;
   const exec = options.exec || execFileSync;
+  const env = options.env || process.env;
+  const utimes = options.utimes || fs.utimesSync;
+  // A CI runner has no Dock, and release.yml runs this install path with no timeout-minutes.
+  if (env.CI) {
+    log('ℹ️  CI is set: skipped the icon refresh (a runner has no Dock)');
+    return;
+  }
+  // Separate tries: a failed bump (EPERM) must not stop `lsregister -f`, which registers regardless.
   try {
     const now = new Date();
-    fs.utimesSync(dest, now, now);
-    exec(LSREGISTER, ['-f', dest], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-    log(`🔄 Bumped ${dest}'s modified time and re-registered it with Launch Services (the Dock may need \`killall Dock\` to show a changed icon)`);
+    utimes(dest, now, now);
+  } catch (err) {
+    warn(`⚠️  Could not bump ${dest}'s modified time: ${err && err.message ? err.message : err}`);
+  }
+  try {
+    // timeout: a wedged lsd must not hang the background post-commit build; it lands in the catch.
+    exec(LSREGISTER, ['-f', dest], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30000 });
+    log(`🔄 Re-registered ${dest} with Launch Services and bumped its modified time (the Dock may need \`killall Dock\` to show a changed icon)`);
   } catch (err) {
     warn(`⚠️  Could not refresh the icon registration of ${dest}: ${err && err.message ? err.message : err}`);
   }

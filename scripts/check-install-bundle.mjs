@@ -2,8 +2,8 @@
 // `ditto` overwrites /Applications/Patton.app, files the new build no longer
 // ships must go (they break the code signature), unless Patton is running from
 // the bundle, in which case they are only listed. Drives the REAL helper
-// (scripts/install-prune.cjs) on temp source and dest trees; the running-check
-// and codesign are injected, and nothing outside the temp trees is touched.
+// (scripts/install-prune.cjs) on temp source and dest trees; the running-check,
+// codesign and lsregister are injected, and nothing outside the temp trees is touched.
 // Run: node scripts/check-install-bundle.mjs   (no extra dependencies)
 import { createRequire } from 'node:module';
 import { dirname, join, relative } from 'node:path';
@@ -367,28 +367,38 @@ function realisticCase(name) {
     return c;
   };
   const c = staleBundle('icon');
+  // Sentinel times on the bundle's parent folder and on dest/Contents: the bump must leave both alone.
+  const SENTINEL = new Date('2026-01-02T03:04:05Z');
+  mkdirSync(join(c.dest, 'Contents'));
+  utimesSync(join(c.dest, 'Contents'), SENTINEL, SENTINEL);
+  utimesSync(c.root, SENTINEL, SENTINEL);
   const out = quiet();
   const calls = [];
   const t0 = Date.now();
   let threw = null;
   try {
-    refreshIcon(c.dest, { exec: (cmd, a) => { calls.push({ cmd, a }); return ''; }, log: (m) => out.log(m), warn: (m) => out.warn(m) });
+    refreshIcon(c.dest, { exec: (cmd, a, o) => { calls.push({ cmd, a, o }); return ''; }, env: {}, log: (m) => out.log(m), warn: (m) => out.warn(m) });
   } catch (err) { threw = err; }
   const mtime = lstatSync(c.dest).mtimeMs;
   check('refreshIcon: does not throw', threw === null, threw && threw.message);
+  check("refreshIcon: the bundle's parent folder keeps its mtime", lstatSync(c.root).mtimeMs === SENTINEL.getTime(), lstatSync(c.root).mtimeMs);
+  check('refreshIcon: dest/Contents keeps its mtime', lstatSync(join(c.dest, 'Contents')).mtimeMs === SENTINEL.getTime(), lstatSync(join(c.dest, 'Contents')).mtimeMs);
+  check('refreshIcon: passes lsregister a 30 s timeout', calls.length === 1 && calls[0].o && calls[0].o.timeout === 30000, calls);
   check("refreshIcon: the bundle folder's mtime moves to now", mtime >= t0 - 1000 && mtime <= Date.now() + 1000, { mtime, old: OLD.getTime() });
   check('refreshIcon: runs lsregister -f on dest, and only that',
     calls.length === 1 && calls[0].cmd === LSREGISTER && JSON.stringify(calls[0].a) === JSON.stringify(['-f', c.dest]), calls);
   check("refreshIcon: the lsregister path is Launch Services' own tool",
     LSREGISTER === '/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister', LSREGISTER);
   check('refreshIcon: logs one line and warns nothing', out.lines.length === 1 && out.warnings.length === 0, out);
+  // Limit of this check: it sees only commands that go through the injected exec. A Dock
+  // restart made any other way (fs, a spawn, osascript) would not show up here.
   check('refreshIcon: never restarts the Dock', calls.every((x) => !/Dock/.test(x.cmd) && !x.a.some((y) => /Dock/.test(y))), calls);
 
   const c2 = staleBundle('icon-throws');
   const out2 = quiet();
   let threw2 = null;
   try {
-    refreshIcon(c2.dest, { exec: () => { throw new Error('lsregister exploded'); }, log: (m) => out2.log(m), warn: (m) => out2.warn(m) });
+    refreshIcon(c2.dest, { exec: () => { throw new Error('lsregister exploded'); }, env: {}, log: (m) => out2.log(m), warn: (m) => out2.warn(m) });
   } catch (err) { threw2 = err; }
   check('refreshIcon: an exec that throws does not throw out', threw2 === null, threw2 && threw2.message);
   check('refreshIcon: a throwing exec gives one warning naming the error',
@@ -398,10 +408,34 @@ function realisticCase(name) {
   const out3 = quiet();
   let threw3 = null;
   try {
-    refreshIcon(join(c3.root, 'no-such-app'), { exec: () => '', log: (m) => out3.log(m), warn: (m) => out3.warn(m) });
+    refreshIcon(join(c3.root, 'no-such-app'), { exec: () => '', env: {}, log: (m) => out3.log(m), warn: (m) => out3.warn(m) });
   } catch (err) { threw3 = err; }
   check('refreshIcon: a missing dest does not throw', threw3 === null, threw3 && threw3.message);
   check('refreshIcon: a missing dest is warned about', out3.warnings.length === 1, out3.warnings);
+
+  // A failed bump (missing dest, or an injected utimes that throws) must not stop lsregister -f.
+  for (const [label, extra, dest] of [
+    ['a missing dest', {}, join(c3.root, 'no-such-app')],
+    ['a utimes that throws EPERM', { utimes: () => { throw new Error('EPERM: operation not permitted'); } }, c3.dest],
+  ]) {
+    const calls6 = [];
+    const out6 = quiet();
+    refreshIcon(dest, { exec: (cmd, a) => { calls6.push({ cmd, a }); return ''; }, env: {}, log: (m) => out6.log(m), warn: (m) => out6.warn(m), ...extra });
+    check(`refreshIcon: with ${label}, lsregister -f dest still runs`,
+      calls6.length === 1 && calls6[0].cmd === LSREGISTER && JSON.stringify(calls6[0].a) === JSON.stringify(['-f', dest]), calls6);
+    check(`refreshIcon: with ${label}, the failed bump is one warning`, out6.warnings.length === 1 && /modified time/.test(out6.warnings[0]), out6.warnings);
+  }
+
+  // CI has no Dock: skipped entirely with one log line, no exec, no mtime change.
+  {
+    const c7 = staleBundle('icon-ci');
+    const calls7 = [];
+    const out7 = quiet();
+    refreshIcon(c7.dest, { exec: (cmd, a) => { calls7.push({ cmd, a }); return ''; }, env: { CI: 'true' }, log: (m) => out7.log(m), warn: (m) => out7.warn(m) });
+    check('refreshIcon: CI set runs nothing', calls7.length === 0, calls7);
+    check('refreshIcon: CI set leaves the mtime alone', lstatSync(c7.dest).mtimeMs === OLD.getTime(), lstatSync(c7.dest).mtimeMs);
+    check('refreshIcon: CI set logs one skip line and warns nothing', out7.lines.length === 1 && /CI/.test(out7.lines[0]) && out7.warnings.length === 0, out7);
+  }
 
   // pruneAndVerify calls it, with the injected exec, on a temp tree.
   const c4 = realisticCase('icon-prune');
@@ -411,6 +445,7 @@ function realisticCase(name) {
   const t4 = Date.now();
   pruneAndVerify(c4.source, c4.dest, {
     isRunning: () => false,
+    env: {},
     exec: (cmd, a) => { execCalls.push({ cmd, a }); return ''; },
     log: (m) => out4.log(m), warn: (m) => out4.warn(m),
   });
@@ -424,6 +459,7 @@ function realisticCase(name) {
   try {
     pruneAndVerify(c4.source, c4.dest, {
       isRunning: () => false,
+      env: {},
       exec: (cmd) => { if (cmd === LSREGISTER) throw new Error('no lsregister'); return ''; },
       log: (m) => out5.log(m), warn: (m) => out5.warn(m),
     });
