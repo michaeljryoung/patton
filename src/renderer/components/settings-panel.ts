@@ -120,9 +120,10 @@ export class SettingsPanel {
           <div class="settings-group">
             <label class="settings-label" for="setting-notification-volume">Notification volume</label>
             <div class="settings-range-row">
-              <input class="settings-range" id="setting-notification-volume" type="range" min="0" max="${NOTIFICATION_VOLUME_MAX}" step="5" />
+              <input class="settings-range" id="setting-notification-volume" type="range" min="0" max="${NOTIFICATION_VOLUME_MAX}" step="5" aria-describedby="setting-notification-volume-hint" />
               <span class="settings-range-value" id="setting-notification-volume-value">100%</span>
             </div>
+            <span class="settings-hint" id="setting-notification-volume-hint">Above 100% is a boost, for when a video or music is playing.</span>
           </div>
           <div class="settings-group settings-group-toggle">
             <label class="settings-label" for="setting-copy-on-select">Copy on Select</label>

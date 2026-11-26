@@ -114,7 +114,7 @@ const w = dom.window;
 
 // A recording AudioContext: every oscillator (type, start/stop, frequency
 // automation), every gain's automation, filters, and what reaches destination.
-const log = { ctxs: 0, oscs: [], gains: [], filters: [], shapers: [], lines: [] };
+const log = { ctxs: 0, oscs: [], gains: [], filters: [], shapers: [], lines: [], nodes: [], preOsc: null, timers: [] };
 class FakeParam {
   constructor(rec) { this.rec = rec; this.rec.events = []; }
   setValueAtTime(v, t) { this.rec.events.push(['set', v, t]); this.value = v; }
@@ -122,15 +122,17 @@ class FakeParam {
   exponentialRampToValueAtTime(v, t) { this.rec.events.push(['exp', v, t]); }
 }
 class FakeNode {
-  constructor() { this.to = []; }
+  constructor() { this.to = []; this.disconnects = 0; log.nodes.push(this); }
   connect(n) { this.to.push(n); return n; }
-  disconnect() {}
+  disconnect() { this.disconnects++; }
 }
 class FakeAudioContext {
   constructor() { log.ctxs++; this.currentTime = 0; this.state = 'running'; this.sampleRate = 44100; this.destination = Object.assign(new FakeNode(), { isDestination: true }); }
   resume() { return Promise.resolve(); }
   close() { return Promise.resolve(); }
   createOscillator() {
+    // the nodes the graph was built from, before the first tone exists
+    if (!log.preOsc) log.preOsc = log.nodes.filter((x) => !x.isDestination);
     const n = new FakeNode(); const rec = { kind: 'osc', node: n, type: 'sine', start: null, stop: null };
     n.frequency = new FakeParam(rec); n.rec = rec;
     Object.defineProperty(n, 'type', { get: () => rec.type, set: (v) => { rec.type = v; } });
@@ -144,6 +146,12 @@ class FakeAudioContext {
   createBufferSource() { const n = new FakeNode(); n.start = () => {}; n.stop = () => {}; return n; }
 }
 w.AudioContext = FakeAudioContext;
+// The 1 s clean-up timer is captured, not waited for; any other timer is real.
+const realSetTimeout = w.setTimeout.bind(w);
+w.setTimeout = (fn, ms, ...a) => {
+  if (ms === 1000) { log.timers.push(fn); return 0; }
+  return realSetTimeout(fn, ms, ...a);
+};
 const patton = {
   setCalls: [],
   settings: { set: (s) => { patton.setCalls.push(s); return Promise.resolve(); }, get: () => Promise.resolve({}) },
@@ -155,7 +163,7 @@ const patton = {
 w.patton = patton;
 w.eval(bundle.outputFiles[0].text);
 const { K, NS, SP } = w.SND;
-const reset = () => { log.oscs.length = 0; log.gains.length = 0; log.filters.length = 0; log.shapers.length = 0; log.lines.length = 0; };
+const reset = () => { log.oscs.length = 0; log.gains.length = 0; log.filters.length = 0; log.shapers.length = 0; log.lines.length = 0; log.nodes.length = 0; log.preOsc = null; log.timers.length = 0; };
 const soundLines = () => log.lines.filter((a) => a[0] === '[SOUND] played');
 
 // The peak level a tone reaches: its largest ramp target.
@@ -267,6 +275,9 @@ await group('the limiter after the master gain', async () => {
   }
   // the curve itself, read as the browser does (linear interpolation over [-R, R])
   const curve = NS.softLimitCurve();
+  let evenThrew = false;
+  try { NS.softLimitCurve(8192); } catch { evenThrew = true; }
+  check('softLimitCurve needs an odd point count (an even one throws), and an odd one has an exact zero in the middle', evenThrew && NS.softLimitCurve(9)[4] === 0 && curve[(curve.length - 1) / 2] === 0, { evenThrew });
   const at = (x) => { const p = ((Math.max(-R, Math.min(R, x)) / R + 1) / 2) * (curve.length - 1); const i = Math.min(curve.length - 2, Math.floor(p)); return (curve[i] + (curve[i + 1] - curve[i]) * (p - i)) * R; };
   let worstId = 0;
   for (let x = -LS; x <= LS; x += 0.0007) worstId = Math.max(worstId, Math.abs(at(x) - x));
@@ -289,6 +300,18 @@ await group('the limiter after the master gain', async () => {
   check('marimba at 400% (peak sum x4, 0.64) is still under the knee: untouched', mp <= LS, mp);
 });
 
+await group('the graph is taken apart after the sound', async () => {
+  for (const [vol, want] of [[100, 2], [400, 5]]) {
+    play('marimba', vol);
+    const built = log.preOsc || [];
+    check(`${vol}%: ${want} nodes stand before the first tone (soft, master${want === 5 ? ', pre, limiter, post' : ''})`, built.length === want, built.length);
+    check(`${vol}%: one clean-up timer was set (1 s)`, log.timers.length === 1, log.timers.length);
+    check(`${vol}%: nothing is disconnected before the timer fires`, log.nodes.every((n) => n.disconnects === 0));
+    for (const t of log.timers) t();
+    check(`${vol}%: every one of them is disconnected once the timer fires`, built.every((n) => n.disconnects === 1), built.map((n) => n.disconnects));
+  }
+});
+
 await group('play and preview', async () => {
   const s = play('pop', 100);
   check('the chosen sound is the one played', soundLines().length === 1 && soundLines()[0][1].sound === 'pop' && soundLines()[0][1].reason === 'command-done', soundLines());
@@ -301,6 +324,13 @@ await group('play and preview', async () => {
   check('Preview plays the selected sound at once, logged as a preview', log.oscs.length >= 1 && soundLines()[0]?.[1].sound === 'pop' && soundLines()[0][1].reason === 'preview', soundLines());
   reset(); s.playPreview();
   check('a Preview within 300 ms of the last is skipped', log.oscs.length === 0);
+  play('pop', 400); const l400 = soundLines()[0]?.[1];
+  play('pop', 250, 'playPreview'); const lp = soundLines()[0]?.[1];
+  check('the log line carries the volume as a percent and whether the limiter was built', l400?.volume === 400 && l400.limiter === true && lp?.volume === 250 && lp.limiter === true && lp.reason === 'preview', { l400, lp });
+  play('pop', 100); const l1 = soundLines()[0]?.[1];
+  check('at 100% the log line says volume 100 and limiter false', l1?.volume === 100 && l1.limiter === false, l1);
+  play('pop', 60);
+  check('a 60% play logs volume 60 (a whole percent)', soundLines()[0]?.[1].volume === 60, soundLines());
   s.setType('marimba'); reset(); nowMs.t += 1000; s.playPreview();
   check('Preview follows a change of choice', soundLines()[0]?.[1].sound === 'marimba', soundLines());
 });
@@ -359,6 +389,8 @@ await group('settings panel', async () => {
   check('the choices are Off, soft chime, low marimba, gentle pop and Classic (and the old two)', JSON.stringify([...sel.options].map((o) => o.value)) === '["off","soft","marimba","pop","classic","bugle","bullet"]', [...sel.options].map((o) => o.value));
   check('an old file shows the new default, low marimba', sel.value === 'marimba' && sel.selectedOptions[0]?.textContent === 'Low marimba', sel.value);
   check('the slider goes up to 400, in steps of 5', vol.max === '400' && vol.min === '0' && vol.step === '5', { max: vol.max, min: vol.min, step: vol.step });
+  const hint = q('setting-notification-volume-hint');
+  check('the volume slider has a hint saying what above 100% is, tied to it by aria-describedby', hint?.classList.contains('settings-hint') && /above 100%/i.test(hint.textContent) && vol.getAttribute('aria-describedby') === 'setting-notification-volume-hint', { text: hint?.textContent, d: vol.getAttribute('aria-describedby') });
   check('the slider shows 100% by default', vol.value === '100' && q('setting-notification-volume-value').textContent === '100%');
 
   open({ ...base, notificationSoundName: 'marimba', notificationSoundVolume: 60 });

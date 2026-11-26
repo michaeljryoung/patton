@@ -26,15 +26,19 @@ export const LIMITER_RANGE = NOTIFICATION_VOLUME_MAX / 100;
  * A transparent peak limiter as a WaveShaper curve over [-range, range]
  * (stored as [-1, 1], so the graph scales by 1/range before it and by range
  * after it). Up to `start` the output equals the input, exactly: a sound
- * boosted above 100% but peaking under the knee passes untouched. The graph
- * only contains the limiter above 100%, so nothing at 100% or below goes
- * through it. Above it
+ * boosted above 100% but peaking under the knee passes untouched. Above it
  * the output bends smoothly (tanh, same slope at the join) toward 1.0 and
- * never passes it, so a 400% sound is rounded off, not clipped flat.
+ * never passes it, so a 400% sound is rounded off, not clipped flat. The
+ * graph only contains the limiter above 100%, so nothing at 100% or below
+ * goes through it. `points` must be odd, so the middle point is exactly 0
+ * (silence stays silent); an even count throws.
  * (A DynamicsCompressorNode was not used: Chrome adds an automatic makeup
  * gain to it, which would change today's quiet sounds.)
  */
 export function softLimitCurve(points = 8193, range = LIMITER_RANGE, start = LIMITER_START): Float32Array {
+  if (!Number.isInteger(points) || points < 3 || points % 2 === 0) {
+    throw new RangeError(`softLimitCurve needs an odd point count of 3 or more, got ${points}`);
+  }
   const curve = new Float32Array(points);
   for (let i = 0; i < points; i++) {
     const x = ((i / (points - 1)) * 2 - 1) * range;
@@ -121,7 +125,7 @@ export class NotificationSound {
     if (now - this.lastPlayTime < NotificationSound.COOLDOWN_MS) return;
     this.lastPlayTime = now;
     // The 2 s cooldown above is the log's rate limit.
-    rlog('info', '[SOUND] played', { sound: this.type, reason });
+    rlog('info', '[SOUND] played', { sound: this.type, reason, ...this.levelForLog() });
 
     try {
       if (!this.audioCtx) {
@@ -149,7 +153,7 @@ export class NotificationSound {
     const now = Date.now();
     if (now - this.lastPreviewTime < 300) return;
     this.lastPreviewTime = now;
-    rlog('info', '[SOUND] played', { sound: this.type, reason: 'preview' });
+    rlog('info', '[SOUND] played', { sound: this.type, reason: 'preview', ...this.levelForLog() });
     try {
       if (!this.audioCtx) {
         this.audioCtx = new AudioContext();
@@ -161,6 +165,11 @@ export class NotificationSound {
         this.scheduleSound(ctx);
       }
     } catch { /* Audio not available */ }
+  }
+
+  /** The volume as a whole percent, and whether this play builds the limiter. */
+  private levelForLog(): { volume: number; limiter: boolean } {
+    return { volume: Math.round(this.volume * 100), limiter: this.volume > 1 };
   }
 
   private scheduleSound(ctx: AudioContext): void {
