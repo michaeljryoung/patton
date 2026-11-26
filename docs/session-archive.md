@@ -1029,3 +1029,13 @@ _Earlier entries archived → `docs/session-archive.md` (latest trim 2026-11-25,
 - At his "1 yes": links to his Pages site (`https://mjy-pages.vercel.app/p/<slug>/`, where his pages go since 24 Nov) are Page rows in the session bar, labelled by their markdown text or the slug in words (`src/shared/pages-url.ts`, D6; `6ac0448`, built in a worktree, checks 57/57, release run passed, not installed). Reviewed inline, since the Sonnet reviewer was refused at the weekly limit.
 - D6's click line corrected: a web link opens through `web-open.ts` (`APP_OPEN_EXTERNAL`, http and https only), a file through `link-open-policy` (`95ad1bd`).
 - His "no reason why some things have a hollow circle and some a solid dot; both have agents running": by design, read in main.log and the sessions' records. Foot's turn ended 17:52 over a background job (ring); Defence was mid-turn launching four agents (dot) and turned to the ring at 17:55:34. He kept both marks ("1 ok").
+
+## Decisions (S67 trim 2026-11-26)
+
+- **2026-11-25 (S66) — A dropped tab goes into a slot; a group's right edge joins it, and a chip's left half is the slot before it, outside it** (S65, his Chrome comparison; S66, his Wake drag: "to the left of the low group so that it's outside it but on the far left"). The half of the tab under the pointer picks before or after; the slot after an open group's last tab joins it; a chip's right half joins after the group's last tab. So a group at the strip's start, and two adjacent groups, have an ungrouped slot. Replaces "takes the target tab's group" (`docs/tab-groups.md`).
+
+- **2026-11-25 (S66) — Every tab offers "Rename Tab…", a one-off name, beside the project default** (his "sometimes I just want to know what I'm working on in that project right now rather than renaming the whole thing"): on a project tab directly above "Set Default Tab Name for Project…"; it wins on the strip and palette, survives restarts and a new Claude session, and is cleared by an empty box or by Close and Reload.
+
+- **2026-11-25 (S66) — The selected tab gets the green dot and red circle while its window isn't in front** (his "ok"); they clear when the window comes back, the principle being that a mark clears when he can see it.
+
+- **2026-11-24 (S65) — The usage panel's token count is the raw total, credited by the live-login timeline** (his "3 no" to price-weighting; the raw count on the default): counted from transcripts in a worker, partial ("≥ N since") until the timeline covers a whole week, approximate around switches because a switch is recorded at the next status-line render.
