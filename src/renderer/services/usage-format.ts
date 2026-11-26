@@ -136,7 +136,10 @@ function noEstimateDetail(t: WeekTokens): string {
   const start = t.since !== null ? dayTime(t.since) : 'the record of which login was live began';
   switch (t.noEstimate) {
     case 'none-counted':
-      return t.complete ? 'Not used this week, nothing counted' : `Not used since ${start}, nothing counted`;
+      // A count of 0 says only what this Mac recorded: the login may have been used on claude.ai or another machine.
+      return t.complete ? 'No Claude Code tokens counted on this Mac this week' : `No Claude Code tokens counted on this Mac since ${start}`;
+    case 'log-unusable':
+      return `${counted}, but the status line's usage log can't be read, so no rise to estimate from`;
     case 'no-reading':
       return `${counted}, but no reading of this week at or before ${start}, so no rise to estimate from`;
     case 'small-rise':

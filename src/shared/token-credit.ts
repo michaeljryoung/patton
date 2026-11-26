@@ -87,20 +87,28 @@ export function scanFloor(switches: readonly LoginSwitch[], windows: readonly To
   return Math.max(now - TOKEN_HORIZON_S, switches[0][0], earliestStart);
 }
 
+/** The percent to draw a window's estimate with when a scan ends: the file's percent as it stands then, only while the
+ *  file still shows the week this window counted (the same reset). Another week's percent (the week rolled over mid-scan)
+ *  is never used: null. */
+export function scanPct(week: { pct: number; resetsAt: number } | null | undefined, windowEnd: number): number | null {
+  return week && week.resetsAt === windowEnd ? week.pct : null;
+}
+
 /** The week's use and allowance, guessed from the count and the percent (`pct`, the week's
  *  percent now), and when there is none, why. A complete count (the whole week): allowance =
  *  tokens ÷ pct × 100 and used = tokens, from 5% shown. A partial count (from `since`): with `p0`
  *  the week's percent at `since` (seven-day-log.ts pctAt), allowance = tokens ÷ (pct − p0) × 100
  *  and used = pct × the allowance, once the week rose at least 10 points since. Not rounded: the
- *  words round both figures. `why` is null with an estimate (or when `pct` is not a number). */
-export function estimateWeek(t: WeekTokens, pct: number, p0: number | null): { estimate: WeekEstimate | null; why: NoEstimateReason | null } {
+ *  words round both figures. `logUsable` is false when seven-day.log has never been readable: a partial count
+ *  with no p0 then says so rather than blaming the week. `why` is null with an estimate (or when `pct` is not a number). */
+export function estimateWeek(t: WeekTokens, pct: number, p0: number | null, logUsable = true): { estimate: WeekEstimate | null; why: NoEstimateReason | null } {
   if (!(t.tokens > 0)) return { estimate: null, why: 'none-counted' };
   if (!Number.isFinite(pct)) return { estimate: null, why: null };
   if (t.complete) {
     if (shownPct(pct) < ESTIMATE_MIN_PCT || !(pct > 0)) return { estimate: null, why: 'low-pct' };
     return { estimate: { method: 'complete', used: t.tokens, allowance: (t.tokens / pct) * 100, p0: null, pct }, why: null };
   }
-  if (p0 === null || !Number.isFinite(p0)) return { estimate: null, why: 'no-reading' };
+  if (p0 === null || !Number.isFinite(p0)) return { estimate: null, why: logUsable ? 'no-reading' : 'log-unusable' };
   const rise = pct - p0;
   if (!(rise >= ESTIMATE_MIN_RISE)) return { estimate: null, why: 'small-rise' };
   const allowance = (t.tokens / rise) * 100;

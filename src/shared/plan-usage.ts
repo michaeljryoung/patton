@@ -66,16 +66,16 @@ export interface WeekTokens {
   noEstimate?: NoEstimateReason | null;
 }
 
-/** Why a count has no estimate: nothing counted for this login (in this week, or since the login record began), under 5% of the
- *  week used (complete count), no reading of the week at or before the count's start, or too little rise since it began. */
-export type NoEstimateReason = 'none-counted' | 'low-pct' | 'no-reading' | 'small-rise';
+/** Why a count has no estimate: nothing counted on this Mac for this login (in this week, or since the login record began), under 5% of the
+ *  week used (complete count), no reading of the week at or before the count's start, seven-day.log never readable, or too little rise since it began. */
+export type NoEstimateReason = 'none-counted' | 'low-pct' | 'no-reading' | 'log-unusable' | 'small-rise';
 
 /** A guess at a login's week in tokens, from the count and the percent Anthropic reports. */
 export interface WeekEstimate {
   /** 'complete': the count covers the whole week, so allowance = tokens ÷ percent × 100.
-   *  'rate': the count runs from `since`, so allowance = tokens ÷ (percent now − percent at since) × 100. */
+   *  'rate': the count runs from `since`, so allowance = tokens ÷ (percent at the scan − percent at since) × 100. */
   method: 'complete' | 'rate';
-  /** Tokens used this week (the count itself when complete; percent now × allowance when a rate). */
+  /** Tokens used this week (the count itself when complete; the percent at the scan × allowance when a rate). */
   used: number;
   /** The whole week's tokens. Neither figure is rounded here: the words round them. */
   allowance: number;
