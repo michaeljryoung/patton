@@ -77,12 +77,12 @@ await group('store', async () => {
     store.setSettings({ notificationSoundName: bad });
     check(`refused name ${JSON.stringify(bad)}: marimba stays`, S().notificationSoundName === 'marimba', S().notificationSoundName);
   }
-  for (const v of [0, 35, 100, 42.4]) {
+  for (const v of [0, 35, 100, 42.4, 250, 300, 400]) {
     store.setSettings({ notificationSoundVolume: v });
     check(`volume ${v} persists (whole number)`, S().notificationSoundVolume === Math.round(v), S().notificationSoundVolume);
   }
   store.setSettings({ notificationSoundVolume: 35 });
-  for (const bad of [-1, 101, NaN, Infinity, '50', null, {}]) {
+  for (const bad of [-1, 401, 1000, NaN, Infinity, '50', null, {}]) {
     store.setSettings({ notificationSoundVolume: bad });
     check(`refused volume ${String(bad)}: 35 stays`, S().notificationSoundVolume === 35, S().notificationSoundVolume);
   }
@@ -114,7 +114,7 @@ const w = dom.window;
 
 // A recording AudioContext: every oscillator (type, start/stop, frequency
 // automation), every gain's automation, filters, and what reaches destination.
-const log = { ctxs: 0, oscs: [], gains: [], filters: [], lines: [] };
+const log = { ctxs: 0, oscs: [], gains: [], filters: [], shapers: [], lines: [] };
 class FakeParam {
   constructor(rec) { this.rec = rec; this.rec.events = []; }
   setValueAtTime(v, t) { this.rec.events.push(['set', v, t]); this.value = v; }
@@ -139,6 +139,7 @@ class FakeAudioContext {
   }
   createGain() { const n = new FakeNode(); const rec = { kind: 'gain', node: n }; n.gain = new FakeParam(rec); n.rec = rec; log.gains.push(rec); return n; }
   createBiquadFilter() { const n = new FakeNode(); const rec = { kind: 'filter', node: n, type: 'allpass' }; n.frequency = new FakeParam(rec); n.q = new FakeParam({}); Object.defineProperty(n, 'type', { get: () => rec.type, set: (v) => { rec.type = v; } }); log.filters.push(rec); return n; }
+  createWaveShaper() { const n = new FakeNode(); n.isShaper = true; n.curve = null; n.oversample = 'none'; log.shapers.push(n); return n; }
   createBuffer(_c, len) { return { getChannelData: () => new Float32Array(len) }; }
   createBufferSource() { const n = new FakeNode(); n.start = () => {}; n.stop = () => {}; return n; }
 }
@@ -154,7 +155,7 @@ const patton = {
 w.patton = patton;
 w.eval(bundle.outputFiles[0].text);
 const { K, NS, SP } = w.SND;
-const reset = () => { log.oscs.length = 0; log.gains.length = 0; log.filters.length = 0; log.lines.length = 0; };
+const reset = () => { log.oscs.length = 0; log.gains.length = 0; log.filters.length = 0; log.shapers.length = 0; log.lines.length = 0; };
 const soundLines = () => log.lines.filter((a) => a[0] === '[SOUND] played');
 
 // The peak level a tone reaches: its largest ramp target.
@@ -163,7 +164,8 @@ const peakOf = (osc) => {
   return g ? Math.max(...g.events.filter((e) => e[0] !== 'exp' || e[1] > 0.01).map((e) => e[1])) : null;
 };
 const freqsOf = (osc) => osc.events.filter((e) => e[0] === 'set' || e[0] === 'exp').map((e) => e[1]);
-const masterOf = () => log.gains.find((g) => g.node.to.some((n) => n.isDestination));
+// The master gain is the volume: the gain that feeds the limiter's pre-gain.
+const masterOf = () => log.gains.find((g) => g.node.to.some((n) => n.to.some((m) => m.isShaper)));
 const nowMs = { t: 1_000_000 };
 const realNow = w.Date.now;
 w.Date.now = () => nowMs.t;
@@ -224,9 +226,58 @@ await group('off and the volume', async () => {
   const s = new NS.NotificationSound();
   s.setType('soft'); s.setVolume(250);
   reset(); nowMs.t += 10_000; s.play();
-  check('a volume above 100 is held at 100', masterOf().events[0][1] === 1, masterOf()?.events);
+  check('250%: the master gain is 2.5', masterOf().events[0][1] === 2.5, masterOf()?.events);
+  play('soft', 300);
+  check('300%: the master gain is 3.0', masterOf()?.events[0][1] === 3, masterOf()?.events);
+  play('soft', 400);
+  check('400%: the master gain is 4.0', masterOf()?.events[0][1] === 4, masterOf()?.events);
+  check('the cap is one exported constant, 400', K.NOTIFICATION_VOLUME_MAX === 400);
+  s.setVolume(401);
+  reset(); nowMs.t += 10_000; s.play();
+  check('a volume above 400 is held at 400', masterOf().events[0][1] === 4, masterOf()?.events);
+  s.setVolume(-5);
+  reset(); nowMs.t += 10_000; s.play();
+  check('a negative volume is held at 0', masterOf().events[0][1] === 0, masterOf()?.events);
+  s.setVolume(NaN); s.setVolume(40);
+  check('notificationVolumeOf: 0-400 accepted, 100 reads 100', [0, 100, 250, 300, 400, 42.4].every((v) => K.notificationVolumeOf(v) === Math.round(v)));
+  check('notificationVolumeOf: 401, -1, NaN, Infinity, strings and undefined fall back to 100', [401, -1, NaN, Infinity, '300', null, undefined, {}].every((v) => K.notificationVolumeOf(v) === 100), [401, -1, NaN].map((v) => K.notificationVolumeOf(v)));
   s.setType('LOUD');
   check('an unknown sound name is ignored', s.getType() === 'soft', s.getType());
+});
+
+await group('the limiter after the master gain', async () => {
+  const LS = NS.LIMITER_START, R = NS.LIMITER_RANGE;
+  for (const name of ['classic', 'bugle', 'bullet', 'soft', 'marimba', 'pop']) {
+    play(name, 300);
+    const lim = log.shapers[0];
+    const post = lim?.to[0];
+    const pre = masterOf()?.node.to[0];
+    check(`${name}: a limiter (waveshaper) is in the graph, master -> 1/${R} -> limiter -> x${R} -> speakers`, log.shapers.length === 1 && pre?.to[0] === lim && post?.to[0]?.isDestination && pre.rec.events[0][1] === 1 / R && post.rec.events[0][1] === R, { shapers: log.shapers.length });
+    check(`${name}: the limiter has a curve`, lim?.curve?.constructor.name === 'Float32Array' && lim.curve.length === 8193);
+  }
+  play('soft', 300);
+  check('the master gain still feeds the volume into the limiter, and nothing reaches the speakers except through it', log.gains.filter((g) => g.node.to.some((n) => n.isDestination)).length === 1 && masterOf().node.to.every((n) => !n.isDestination));
+  // the curve itself, read as the browser does (linear interpolation over [-R, R])
+  const curve = NS.softLimitCurve();
+  const at = (x) => { const p = ((Math.max(-R, Math.min(R, x)) / R + 1) / 2) * (curve.length - 1); const i = Math.min(curve.length - 2, Math.floor(p)); return (curve[i] + (curve[i + 1] - curve[i]) * (p - i)) * R; };
+  let worstId = 0;
+  for (let x = -LS; x <= LS; x += 0.0007) worstId = Math.max(worstId, Math.abs(at(x) - x));
+  check('up to -3 dB the limiter changes nothing (largest difference under 1e-6)', worstId < 1e-6, worstId);
+  let bounded = true, mono = true, prev = -Infinity;
+  for (let x = -R; x <= R; x += 0.001) { const y = at(x); if (Math.abs(y) > 1.0001) bounded = false; if (y < prev - 1e-9) mono = false; prev = y; }
+  check('above it the output bends smoothly, rises with the input and never passes full scale', bounded && mono, { bounded, mono });
+  check('a loud peak (4.0, 4.37) is rounded to just under full scale, not clipped at the knee', at(4) > 0.97 && at(4) <= 1 && at(0.9) > 0.85 && at(1.5) < 1, [at(0.9), at(1.5), at(4)]);
+  // Every sound at 100%: its peaks (the plain sum of every tone's peak, an
+  // upper bound) are under the knee, so the limiter does not touch them. Bullet
+  // is the exception, and only because its crack already reaches ~1.1 at 100%.
+  for (const name of ['classic', 'bugle', 'soft', 'marimba', 'pop']) {
+    play(name, 100);
+    const sum = log.oscs.map(peakOf).reduce((a, b) => a + b, 0);
+    check(`${name} at 100%: peak sum ${sum.toFixed(3)} is under the knee ${LS}`, sum <= LS, sum);
+  }
+  play('marimba', 400);
+  const mp = log.oscs.map(peakOf).reduce((a, b) => a + b, 0) * 4;
+  check('marimba at 400% (peak sum x4, 0.64) is still under the knee: untouched', mp <= LS, mp);
 });
 
 await group('play and preview', async () => {
@@ -298,10 +349,21 @@ await group('settings panel', async () => {
   check('the Preview button is a visible, labelled button', prev?.textContent.trim() === 'Preview' && prev.type === 'button');
   check('the choices are Off, soft chime, low marimba, gentle pop and Classic (and the old two)', JSON.stringify([...sel.options].map((o) => o.value)) === '["off","soft","marimba","pop","classic","bugle","bullet"]', [...sel.options].map((o) => o.value));
   check('an old file shows the new default, low marimba', sel.value === 'marimba' && sel.selectedOptions[0]?.textContent === 'Low marimba', sel.value);
+  check('the slider goes up to 400, in steps of 5', vol.max === '400' && vol.min === '0' && vol.step === '5', { max: vol.max, min: vol.min, step: vol.step });
   check('the slider shows 100% by default', vol.value === '100' && q('setting-notification-volume-value').textContent === '100%');
 
   open({ ...base, notificationSoundName: 'marimba', notificationSoundVolume: 60 });
   check('a saved choice and volume are shown', sel.value === 'marimba' && vol.value === '60' && q('setting-notification-volume-value').textContent === '60%', { v: sel.value, vol: vol.value });
+  sound.applySettings({ notificationSoundName: 'marimba', notificationSoundVolume: 60 }, false);
+
+  open({ ...base, notificationSoundName: 'marimba', notificationSoundVolume: 250 });
+  check('a saved 250 is shown as 250 and 250%', vol.value === '250' && q('setting-notification-volume-value').textContent === '250%', { vol: vol.value });
+  sound.applySettings({ notificationSoundName: 'marimba', notificationSoundVolume: 250 }, false);
+  nowMs.t += 10_000; reset(); prev.click();
+  check('Preview plays at 250%', soundLines().length === 1 && masterOf()?.events[0][1] === 2.5, masterOf()?.events);
+  vol.value = '400'; vol.dispatchEvent(new w.Event('input'));
+  check('the label follows the slider to 400%', q('setting-notification-volume-value').textContent === '400%');
+  open({ ...base, notificationSoundName: 'marimba', notificationSoundVolume: 60 });
   sound.applySettings({ notificationSoundName: 'marimba', notificationSoundVolume: 60 }, false);
 
   nowMs.t += 10_000; reset();
