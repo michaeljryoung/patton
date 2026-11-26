@@ -114,3 +114,4 @@ dist/
 # Loose design assets (source icons, etc.)
 patton-icon*.png
 .debug-scan-cache
+__pycache__/
