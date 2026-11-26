@@ -7,6 +7,7 @@
 import {
   DEFAULTS,
   NOTIFICATION_SOUND_NAMES,
+  NOTIFICATION_VOLUME_MAX,
   notificationVolumeOf,
   resolveNotificationSound,
   type NotificationSoundName,
@@ -15,6 +16,33 @@ import type { AppSettings } from '../../shared/types';
 import { rlog } from './renderer-logger';
 
 export type SoundType = NotificationSoundName;
+
+/** Where the limiter starts to bend: 0.708 of full scale, -3 dB. */
+export const LIMITER_START = 0.7079;
+/** The loudest signal the limiter's curve covers: the volume's top, as a gain. */
+export const LIMITER_RANGE = NOTIFICATION_VOLUME_MAX / 100;
+
+/**
+ * A transparent peak limiter as a WaveShaper curve over [-range, range]
+ * (stored as [-1, 1], so the graph scales by 1/range before it and by range
+ * after it). Up to `start` the output equals the input, exactly: a sound at
+ * 100% (every one peaks under 0.16 except Bullet) passes untouched. Above it
+ * the output bends smoothly (tanh, same slope at the join) toward 1.0 and
+ * never passes it, so a 400% sound is rounded off, not clipped flat.
+ * (A DynamicsCompressorNode was not used: Chrome adds an automatic makeup
+ * gain to it, which would change today's quiet sounds.)
+ */
+export function softLimitCurve(points = 8193, range = LIMITER_RANGE, start = LIMITER_START): Float32Array {
+  const curve = new Float32Array(points);
+  for (let i = 0; i < points; i++) {
+    const x = ((i / (points - 1)) * 2 - 1) * range;
+    const a = Math.abs(x);
+    const y = a <= start ? a : start + (1 - start) * Math.tanh((a - start) / (1 - start));
+    curve[i] = (Math.sign(x) * y) / range;
+  }
+  return curve;
+}
+const LIMITER_CURVE = softLimitCurve();
 
 export class NotificationSound {
   private type: SoundType = DEFAULTS.NOTIFICATION_SOUND_NAME;
@@ -70,9 +98,9 @@ export class NotificationSound {
     this.playPreview();
   }
 
-  /** Volume as a percent, 0-100. */
+  /** Volume as a percent, 0-NOTIFICATION_VOLUME_MAX. */
   setVolume(percent: number): void {
-    if (Number.isFinite(percent)) this.volume = Math.min(100, Math.max(0, percent)) / 100;
+    if (Number.isFinite(percent)) this.volume = Math.min(NOTIFICATION_VOLUME_MAX, Math.max(0, percent)) / 100;
   }
 
   getType(): SoundType {
@@ -136,14 +164,25 @@ export class NotificationSound {
   private scheduleSound(ctx: AudioContext): void {
     // Everything goes through one master gain (the volume setting) and,
     // for the calm sounds, a 2 kHz low-pass that rounds off any edge.
+    // After it a limiter (see softLimitCurve) keeps a boosted sound from
+    // clipping: master -> /MAX -> shaper -> xMAX -> speakers.
+    const post = ctx.createGain();
+    post.gain.setValueAtTime(LIMITER_RANGE, ctx.currentTime);
+    post.connect(ctx.destination);
+    const limiter = ctx.createWaveShaper();
+    limiter.curve = LIMITER_CURVE;
+    limiter.connect(post);
+    const pre = ctx.createGain();
+    pre.gain.setValueAtTime(1 / LIMITER_RANGE, ctx.currentTime);
+    pre.connect(limiter);
     const master = ctx.createGain();
     master.gain.setValueAtTime(this.volume, ctx.currentTime);
-    master.connect(ctx.destination);
+    master.connect(pre);
     const soft = ctx.createBiquadFilter();
     soft.type = 'lowpass';
     soft.frequency.setValueAtTime(2000, ctx.currentTime);
     soft.connect(master);
-    setTimeout(() => { soft.disconnect(); master.disconnect(); }, 1000);
+    setTimeout(() => { soft.disconnect(); master.disconnect(); pre.disconnect(); limiter.disconnect(); post.disconnect(); }, 1000);
 
     switch (this.type) {
       case 'soft':
