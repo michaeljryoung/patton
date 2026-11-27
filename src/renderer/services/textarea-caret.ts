@@ -91,14 +91,17 @@ export function scrollCaretIntoView(ta: HTMLTextAreaElement): void {
 }
 
 /** The caret's line is inside the textarea's visible part now. true when
- *  there is nothing to measure (no layout, or nothing to scroll). */
+ *  there is nothing to measure (no layout, or nothing to scroll). Within 1 px
+ *  counts as in view: scrollTop is fractional where scrollHeight is rounded,
+ *  so a draft scrolled to the very bottom can read half a pixel short. */
 export function caretInView(ta: HTMLTextAreaElement): boolean {
   if (ta.scrollHeight <= ta.clientHeight) return true;
   const line = caretLine(ta);
   if (!line) return true;
   const cs = getComputedStyle(ta);
-  return scrollForCaret(
+  const needed = scrollForCaret(
     line.top, line.height, ta.scrollTop, ta.clientHeight,
     parseFloat(cs.paddingTop) || 0, parseFloat(cs.paddingBottom) || 0,
-  ) === ta.scrollTop;
+  );
+  return Math.abs(needed - ta.scrollTop) <= 1;
 }

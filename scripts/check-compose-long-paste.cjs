@@ -318,6 +318,9 @@ async function pageSetup() {
     U.scrollCaretIntoView(ta);
     check('...with the last line in view it leaves the scroll alone', ta.scrollTop === max, { top: ta.scrollTop, max });
     check('...caretInView agrees (in view at the bottom, not at the top)', U.caretInView(ta) === true && (ta.scrollTop = 0, U.caretInView(ta) === false), null);
+    ta.scrollTop = max - 0.5; // half a pixel short of the bottom (scrollTop is fractional, scrollHeight rounded) is still in view
+    const halfPx = U.caretInView(ta);
+    check('...half a pixel short of the bottom still counts as in view (the cap-shrink case in check-compose-over)', halfPx === true, { top: ta.scrollTop, max });
     ta.style.lineHeight = 'normal'; // not a number: the mirror decides (the text's height changes with it)
     const maxNormal = ta.scrollHeight - ta.clientHeight;
     ta.scrollTop = 0;
