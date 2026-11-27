@@ -8,6 +8,7 @@ import { CLOSED_STATE, projectLiveState, type ProjectLiveState } from '../servic
 import { rlog } from '../services/renderer-logger';
 import { disambiguator, displayLabel, fullTarget, newArtifactLabel } from '../services/bookmark-labels';
 import { onPageTitlesChanged } from '../services/page-titles';
+import { onUiTextScaleApplied } from '../services/ui-text-scale';
 import { ConfirmDialog } from './confirm-dialog';
 import { ContextMenu } from './context-menu';
 import { UsagePanel } from './usage-panel';
@@ -16,6 +17,12 @@ import type { Tab } from './tab';
 const WIDTH_STORAGE_KEY = 'patton.bookmarks.width';
 const OPEN_STORAGE_KEY = 'patton.bookmarks.open';
 const REFRESH_DEBOUNCE_MS = 100;
+
+/** Row density, roomiest first (rules in main.css under "Row density"). The sidebar
+ *  uses the first one at which the whole list fits its height; if not even the last
+ *  fits, the last is used and the list scrolls. */
+const DENSITIES = ['roomy', 'tight', 'compact'] as const;
+type Density = (typeof DENSITIES)[number];
 // A private drag type: a bookmark dropped on the terminal or another app
 // carries no text, so nothing gets typed or opened by accident.
 const DRAG_TYPE = 'application/x-patton-bookmark';
@@ -124,6 +131,11 @@ export class BookmarksPanel {
   // works and each change refreshes the panel, so an unchanged list is left
   // alone rather than rebuilt (which would also drop hover and an open row menu).
   private lastRendered = '';
+  // Row density (see updateDensity). Held back while a rename or drag is in
+  // progress and settled when it ends, so rows never change height under a pointer.
+  private density: Density = 'roomy';
+  private densityPending = false;
+  private densityTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(container: HTMLElement, host: BookmarksHost) {
     this.host = host;
@@ -132,6 +144,7 @@ export class BookmarksPanel {
     this.panel = document.createElement('nav');
     this.panel.id = 'bookmarks-panel';
     this.panel.className = 'collapsed';
+    this.panel.dataset.density = this.density;
     this.panel.setAttribute('aria-label', 'Bookmarks');
     this.panel.innerHTML = `
       <div class="bookmarks-header">
@@ -217,7 +230,17 @@ export class BookmarksPanel {
       }),
       // A page's title learned or changed: automatic names show it.
       onPageTitlesChanged(() => this.render()),
+      // Bigger or smaller text changes every row's height at once.
+      onUiTextScaleApplied(() => this.updateDensity()),
     );
+
+    // The list's own height changes with the window and with the usage panel
+    // at the foot (a login's reading appearing, a reset passing).
+    if (typeof ResizeObserver === 'function') {
+      const ro = new ResizeObserver(() => this.scheduleDensity());
+      ro.observe(this.listEl);
+      this.disposables.push(() => ro.disconnect());
+    }
 
     // Saved open: keep the strip out of the way while the list loads, so the
     // terminal is resized once (to the panel) rather than twice.
@@ -311,7 +334,7 @@ export class BookmarksPanel {
     this.rail.hidden = true;
     localStorage.setItem(OPEN_STORAGE_KEY, '1');
     this.refreshMissing();
-    this.render();
+    this.render(); // hide() cleared lastRendered, so this always rebuilds and so decides the density
     if (focus) {
       announce('Bookmarks opened', 'polite');
       requestAnimationFrame(() => {
@@ -423,7 +446,12 @@ export class BookmarksPanel {
 
   private render(): void {
     if (this.renamingId || this.dragId || !this.isOpen) return;
+    // Rows rebuilt, or a density decision held back during a rename or drag: decide it now.
+    if (this.renderRows() || this.densityPending) this.updateDensity();
+  }
 
+  /** Rebuild the rows if what they show changed. Returns whether it did. */
+  private renderRows(): boolean {
     const snapshot = { tabs: this.host.getTabs(), active: this.host.getActiveTab(), sessions: this.host.listSessions() };
     const states = new Map<string, RowState>();
     for (const bookmark of this.bookmarks) {
@@ -432,7 +460,7 @@ export class BookmarksPanel {
     }
     // The shown names are in it: a page title learned later changes them, not the bookmarks.
     const signature = JSON.stringify([this.bookmarks, this.bookmarks.map(displayLabel), [...states.entries()]]);
-    if (signature === this.lastRendered) return;
+    if (signature === this.lastRendered) return false;
     this.lastRendered = signature;
 
     const hadFocusId = (document.activeElement as HTMLElement | null)?.dataset?.bookmarkId ?? null;
@@ -442,7 +470,7 @@ export class BookmarksPanel {
       empty.className = 'bookmarks-empty';
       empty.textContent = 'No bookmarks yet. Use + to bookmark the current project or an artifact link.';
       this.listEl.appendChild(empty);
-      return;
+      return true;
     }
 
     const groups: { kind: Bookmark['kind']; title: string }[] = [
@@ -488,6 +516,72 @@ export class BookmarksPanel {
       const row = this.listEl.querySelector<HTMLElement>(`.bookmark-row[data-bookmark-id="${CSS.escape(this.menuRowId)}"]`);
       if (row) this.contextMenu.retargetFocus(row);
     }
+    return true;
+  }
+
+  // ── Row density ──
+
+  private scheduleDensity(): void {
+    if (this.densityTimer) clearTimeout(this.densityTimer);
+    this.densityTimer = setTimeout(() => {
+      this.densityTimer = null;
+      this.updateDensity();
+    }, REFRESH_DEBOUNCE_MS);
+  }
+
+  /** Pick the roomiest density at which the whole list fits its height, trying
+   *  roomy, then tight, then compact in one synchronous pass (nothing paints
+   *  in between); compact stays when even it does not fit, and the list scrolls.
+   *  The answer depends only on the list's height and contents, so it never
+   *  flaps: growing the window back gives roomy again. Nothing is measured while
+   *  the sidebar is hidden; a rename or drag holds it until render() settles it. */
+  private updateDensity(): void {
+    if (!this.isOpen) return;
+    if (this.renamingId || this.dragId) {
+      this.densityPending = true;
+      return;
+    }
+    const listPx = this.listEl.clientHeight;
+    if (listPx === 0) return; // not laid out: the observer calls again when it is
+    this.densityPending = false;
+    // No rows (the empty message, which wraps): nothing to tighten, whatever the height.
+    let chosen: Density = DENSITIES[0];
+    if (this.listEl.querySelector('.bookmark-row')) {
+      chosen = DENSITIES[DENSITIES.length - 1];
+      for (const candidate of DENSITIES) {
+        this.panel.dataset.density = candidate;
+        if (this.listFits()) {
+          chosen = candidate;
+          break;
+        }
+      }
+    }
+    this.panel.dataset.density = chosen;
+    if (chosen !== this.density) {
+      rlog('info', '[BOOKMARK] density', {
+        from: this.density,
+        to: chosen,
+        listPx: this.listEl.clientHeight,
+        rows: this.listEl.querySelectorAll('.bookmark-row').length,
+      });
+      this.density = chosen;
+    }
+  }
+
+  /** Whether the whole list fits its height, which is whether Chromium gives it a
+   *  scrollbar: asked of the browser, not worked out. scrollHeight and clientHeight are
+   *  whole pixels while rows are fractional at most UI scales (x1.1: 37.4 px), and
+   *  Chromium snaps content and box to pixels its own way, so the two integers (and a
+   *  fractional sum of the rows) disagree with it by up to a pixel at the boundary.
+   *  Scrolling as far as it will go and reading where it stopped is exact; the offset is
+   *  put back at once, so nothing paints and the list does not move. */
+  private listFits(): boolean {
+    const list = this.listEl;
+    const offset = list.scrollTop;
+    list.scrollTop = 1e6;
+    const furthest = list.scrollTop;
+    list.scrollTop = offset;
+    return furthest <= 0;
   }
 
   private renderRow(bookmark: Bookmark, rowState: RowState, canDrag: boolean, group: readonly Bookmark[]): HTMLElement {
@@ -996,6 +1090,7 @@ export class BookmarksPanel {
 
   dispose(): void {
     if (this.refreshTimer) clearTimeout(this.refreshTimer);
+    if (this.densityTimer) clearTimeout(this.densityTimer);
     for (const d of this.disposables) d();
     this.contextMenu.dispose();
     this.confirmDialog.dispose();

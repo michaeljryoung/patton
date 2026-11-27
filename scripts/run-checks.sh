@@ -4,7 +4,7 @@
 #   JSDOM_DIR=<folder whose node_modules has jsdom >= 30>   enables the jsdom checks
 #   CC_LAUNCHER=<path to the cc launcher script>            adds the board's launcher round trip
 # Checks that need JSDOM_DIR are skipped (with the reason) when it is unset.
-# check-fonts, check-close-electron, check-ui-text-scale, check-compose-over and
+# check-fonts, check-close-electron, check-ui-text-scale, check-bookmarks-density, check-compose-over and
 # check-compose-room-live, check-compose-long-paste, check-session-bar-layout, check-copy-clipboard-electron
 # start Electron hidden (no window is ever shown) and need `npx install-electron --no` once.
 set -u

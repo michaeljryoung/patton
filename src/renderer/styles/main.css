@@ -512,6 +512,40 @@ html, body {
   display: none;
 }
 
+/* Row density (bookmarks-panel.ts updateDensity sets data-density on the panel).
+ * His words, 27 Nov: "can we make it so it starts as today, then becomes A, then
+ * becomes B, and then, once it hits B, it just becomes scroll?" The sidebar uses the
+ * roomiest density at which the whole list fits its height, and scrolls only when
+ * even compact does not fit. roomy is the rules above, unchanged. tight (A): one-line
+ * rows as tall as a row token, a row with a second line keeps both lines on 3 px of
+ * padding, group titles tighter. compact (B): one-line rows 22 px, the rest as tight. */
+#bookmarks-panel:is([data-density="tight"], [data-density="compact"]) .bookmark-row:has(.bookmark-subtitle) {
+  height: auto;
+  padding-block: calc(3px * var(--ui-scale));
+}
+
+#bookmarks-panel:is([data-density="tight"], [data-density="compact"]) .bookmarks-group-title {
+  padding: 6px 12px 4px;
+}
+
+#bookmarks-panel[data-density="tight"] .bookmark-row:not(:has(.bookmark-subtitle)) {
+  height: var(--row);
+}
+
+#bookmarks-panel[data-density="compact"] .bookmark-row:not(:has(.bookmark-subtitle)) {
+  height: calc(22px * var(--ui-scale));
+}
+
+/* The rename field takes a row's place while its row is hidden. Its roomy height
+ * (text, 4 px padding, border) is taller than a compact row, which would push a
+ * just-fitting list into a scrollbar for the whole rename, so in compact it is the
+ * row's height: the text (line-height normal, about 1.2) still has room at every scale. */
+#bookmarks-panel[data-density="compact"] .bookmark-rename {
+  box-sizing: border-box;
+  height: calc(22px * var(--ui-scale));
+  padding-block: 0;
+}
+
 .bookmark-row:hover {
   background: var(--surface-hover);
   color: var(--ink);
