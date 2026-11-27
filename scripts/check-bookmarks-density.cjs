@@ -299,6 +299,26 @@ async function pageRun() {
   // A resize inside one density's range changes nothing and logs nothing.
   await step('a resize that keeps the density', async () => setListHeight(Math.floor(cCompact) - 40), 'compact');
 
+  // The list's resizes are debounced (100 ms): a burst of three decides once, after the last one.
+  setListHeight(900);
+  await sleep(DEBOUNCE_MS + 150);
+  check('debounce: starts roomy', density() === 'roomy', { d: density() });
+  {
+    const logsBefore = densityLogs().length;
+    const t0 = performance.now();
+    setListHeight(460);
+    await sleep(40);
+    check('debounce: 40 ms after a resize nothing has been decided yet', density() === 'roomy', { d: density() });
+    setListHeight(380);
+    await sleep(40);
+    setListHeight(460);
+    const took = await landed('tight', t0);
+    await sleep(DEBOUNCE_MS + 150);
+    const got = densityLogs().slice(logsBefore);
+    check(`debounce: a burst of three resizes decides once, after the last (${r1(took)} ms from the first, last at about 80)`,
+      took >= 150 && took <= 80 + LAND_MS && got.length === 1 && got[0].args[1].from === 'roomy' && got[0].args[1].to === 'tight', { took, logs: got.map((l) => l.args) });
+  }
+
   // --- 3. a fixed list height: the bookmarks change under it (the broadcast other windows and this one hear)
   const extraProjects = [P('Hotel', 20), P('India', 21), P('Juliet', 22)];
   const fixed = async (px, fn) => {
