@@ -194,19 +194,26 @@ await section('1. Placement and look', 12, async () => {
     return (css.match(re) || [])[2] || '';
   };
   const chipRule = rule('.tab-bar-group-chip');
-  check('chip CSS: its shade (--g-chip, --grey without one) as ground, --ink text, bold, 10.5px x scale, uppercase, 0.06em, 2px top line in its shade (--g-line, ink without one)',
+  check('chip CSS: its shade (--g-chip, --grey without one) as ground, --ink text, bold, 10.5px x scale, uppercase, 0.06em, a --group-line-w (6px) top line in its shade (--g-line, ink without one)',
     /background:\s*var\(--g-chip, var\(--grey\)\)/.test(chipRule) && /(^|;)\s*color:\s*var\(--ink\)/.test(chipRule) && /font-weight:\s*(700|bold)/.test(chipRule)
     && /font-size:\s*calc\(10\.5px \* var\(--ui-scale\)\)/.test(chipRule) && /text-transform:\s*uppercase/.test(chipRule)
-    && /letter-spacing:\s*0\.06em/.test(chipRule) && /inset 0 2px 0 var\(--g-line, var\(--ink\)\)/.test(chipRule) && /flex:\s*0 0 auto/.test(chipRule), chipRule);
+    && /letter-spacing:\s*0\.06em/.test(chipRule) && /inset 0 var\(--group-line-w\) 0 var\(--g-line, var\(--ink\)\)/.test(chipRule) && /flex:\s*0 0 auto/.test(chipRule), chipRule);
   check('chip CSS: hover moves the shade toward its line (grey-hover without a shade); the name caps at 140px x scale with an ellipsis; unnamed in --muted',
     /color-mix\(in srgb, var\(--g-line\) 25%, var\(--g-chip/.test(rule('.tab-bar-group-chip:hover'))
     && /background:\s*var\(--grey-hover\)/.test(rule('.tab-bar-group-chip:not([class*="group-shade-"]):hover'))
     && /max-width:\s*calc\(140px \* var\(--ui-scale\)\)/.test(rule('.tab-bar-group-name')) && /text-overflow:\s*ellipsis/.test(rule('.tab-bar-group-name'))
     && /color:\s*var\(--chip-muted\)/.test(rule('.tab-bar-group-name.unnamed')) && /--chip-muted:\s*color-mix\(in srgb, var\(--ink\) 50%, var\(--muted\)\)/.test(chipRule));
-  check('member tab CSS: its shade as ground and a 2px line in its shade on top; the selected one keeps --bg, its group\'s line and its 3px ink bottom bar',
-    /background:\s*var\(--g-tab\)/.test(rule('.tab-bar-tab.in-group')) && /inset 0 2px 0 var\(--g-line\)/.test(rule('.tab-bar-tab.in-group'))
+  check('member tab CSS: its shade as ground and a --group-line-w line in its shade on top; the selected one keeps --bg, its group\'s line and its 3px ink bottom bar',
+    /background:\s*var\(--g-tab\)/.test(rule('.tab-bar-tab.in-group')) && /inset 0 var\(--group-line-w\) 0 var\(--g-line\)/.test(rule('.tab-bar-tab.in-group'))
     && /background:\s*var\(--bg\)/.test(rule('.tab-bar-tab.in-group.active'))
-    && /inset 0 2px 0 var\(--g-line\)/.test(rule('.tab-bar-tab.in-group.active')) && /inset 0 -3px 0 var\(--ink\)/.test(rule('.tab-bar-tab.in-group.active')));
+    && /inset 0 var\(--group-line-w\) 0 var\(--g-line\)/.test(rule('.tab-bar-tab.in-group.active')) && /inset 0 -3px 0 var\(--ink\)/.test(rule('.tab-bar-tab.in-group.active')));
+  // 27 Nov 2026 (his pick B): the group line is 6 px, defined once; every rule that draws a group's top line reads it, none hard-codes 2px.
+  {
+    const tcss = readFileSync(join(repo, 'src/renderer/styles/tabs.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    const lineRules = tcss.match(/inset 0 [^,;]*? 0 var\(--g-line[^)]*\)?\)?/g) || [];
+    check('group line CSS: --group-line-w is defined once as 6px, and all 8 group-line shadows (chip, drop target, tab, selected, closes, multi) use it, none a fixed px',
+      (tcss.match(/--group-line-w:\s*6px/g) || []).length === 1 && lineRules.length === 8 && lineRules.every((r) => r.startsWith('inset 0 var(--group-line-w) 0 ')) && !/inset 0 \d+px 0 var\(--g-line/.test(tcss), lineRules);
+  }
   const mainCss = readFileSync(join(repo, 'src/renderer/styles/main.css'), 'utf8');
   check('main.css defines --grey-hover in both light and dark', (mainCss.match(/--grey-hover:/g) || []).length >= 2);
 });

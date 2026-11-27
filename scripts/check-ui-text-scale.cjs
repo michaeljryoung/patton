@@ -24,7 +24,7 @@
 //  - the selected tab sits on the terminal's ground with a 3 px ink bar under it, and
 //    a flagged or plain tab has neither (light scheme only: the hidden window's);
 //  - tab groups: at x1, x1.1 and x1.5 an open group's chip sits left of its first tab at the strip's height, its
-//    label whole (60 characters stop at 140px x scale), the drop slot line (2 px, the tab's height, --focus joining / --ink not), a 2 px top line in the group's shade on chip and member tabs (the selected one keeps its
+//    label whole (60 characters stop at 140px x scale), the drop slot line (2 px, the tab's height, --focus joining / --ink not), a 6 px top line (--group-line-w, 27 Nov 2026, was 2 px) in the group's shade on chip and member tabs (the selected one keeps its
 //    3 px bar); shades (22 Nov): three groups three fills, a fourth repeats the first, an ungrouped tab between stays plain, the selected member keeps --bg; the chip never grows; a folded chip fits name, count and indicator and the other tabs widen (light only);
 //  - the collapsed bookmarks rail's mark is centred on the header row it stood in;
 //  - every text box taller than its text grew with the text (a fixed height shows up as no growth);
@@ -1281,7 +1281,7 @@ async function pageRun(BIG) {
   // --- tab groups (19 Nov 2026, the approved "ink" look): the chip beside its tabs, at x1, x1.1
   // and x1.5, light scheme (the hidden window's; it has no dark emulation). An open group's chip
   // sits immediately left of its first tab at the strip's height, its label whole (a 60-character
-  // name stops at 140px x scale with an ellipsis), a 2 px ink line along the top of the chip and
+  // name stops at 140px x scale with an ellipsis), a 6 px line in the group's shade along the top of the chip and
   // of every member tab (a plain tab has none; the selected member keeps its 3 px bottom bar too).
   // A folded chip carries its name, the count and one indicator without clipping, its tabs leave
   // the strip and the others widen into the room. The chip never grows with spare room.
@@ -1289,7 +1289,7 @@ async function pageRun(BIG) {
     const colourOf = (v) => { const d = document.createElement('div'); d.style.background = `var(${v})`; document.body.appendChild(d); const c = getComputedStyle(d).backgroundColor; d.remove(); return c; };
     // 22 Nov 2026: the line is the group's shade line, not ink; this group is the first on the strip, so shade 1.
     const GREY = colourOf('--group1-chip');
-    const TOP = `${colourOf('--group1-line')} 0px 2px 0px 0px inset`;
+    const TOP = `${colourOf('--group1-line')} 0px 6px 0px 0px inset`;
     const TOP_AND_BAR = `${TOP}, ${inkColour} 0px -3px 0px 0px inset`;
     // Secondary lettering on a chip (count, chevron): half way from --muted to ink (--muted alone fell under 4.5:1 on the dark chips).
     const MUTED = (() => { const d = document.createElement('div'); d.style.color = 'color-mix(in srgb, var(--ink) 50%, var(--muted))'; document.body.appendChild(d); const c = getComputedStyle(d).color; d.remove(); return c; })();
@@ -1411,10 +1411,25 @@ async function pageRun(BIG) {
         chipCs && Math.abs(parseFloat(nameCs.fontSize) - 10.5 * s) <= 0.05 && nameCs.textTransform === 'uppercase' && Number(nameCs.fontWeight) >= 700 && chipCs.flexGrow === '0' && chipCs.flexShrink === '0'
           && chipCs.backgroundColor === GREY && nameCs.color === inkColour && look.padLeft >= 8 && look.padRight >= 10 && look.gap >= 5 * s - 0.5, look);
       const sh = Object.fromEntries(['p1', 'g1', 'g2', 'p2'].map((id) => [id, getComputedStyle(strip.querySelector(`.tab-bar-tab[data-tab-id="${id}"]`)).boxShadow]));
-      check(`${tag}: a 2px line in the group's shade along the top of the chip and of each member tab; the selected member keeps its 3px bottom bar too; a plain tab has neither`,
+      check(`${tag}: a 6px line in the group's shade along the top of the chip and of each member tab; the selected member keeps its 3px bottom bar too; a plain tab has neither`,
         chipCs && chipCs.boxShadow === TOP && sh.g2 === TOP && sh.g1 === TOP_AND_BAR && sh.p1 === 'none' && sh.p2 === 'none', { chip: chipCs && chipCs.boxShadow, ...sh });
       const closeShadow = getComputedStyle(members[1].querySelector('.tab-bar-tab-close')).boxShadow;
       check(`${tag}: a member tab's close button carries the top line too (its own paint would cut the line)`, closeShadow === TOP, { closeShadow });
+
+      // 27 Nov 2026: the top line is 6 px (--group-line-w), fixed, not scaled; the label stays clear of it and centred.
+      const g2el = members[1];
+      const nr = nameEl.getBoundingClientRect();
+      const tr = g2el.querySelector('.tab-bar-tab-title').getBoundingClientRect();
+      const g2r = g2el.getBoundingClientRect();
+      const labelsInfo = { nameTop: nr.top - cr.top, nameMid: nr.top + nr.height / 2 - (cr.top + cr.height / 2), titleTop: tr.top - g2r.top, titleMid: tr.top + tr.height / 2 - (g2r.top + g2r.height / 2) };
+      const labelsClear = labelsInfo.nameTop >= 6 && labelsInfo.titleTop >= 6 && Math.abs(labelsInfo.nameMid) <= 1.5 && Math.abs(labelsInfo.titleMid) <= 1.5;
+      g2el.classList.add('multi');
+      const multiShadow = getComputedStyle(g2el).boxShadow;
+      g2el.classList.remove('multi');
+      check(`${tag}: a multi-selected group tab draws the 6px line in the group's colour, then its 1px --tab-sel outline`,
+        multiShadow.startsWith(`${TOP}, `) && /0px 0px 0px 1px inset$/.test(multiShadow), { multiShadow });
+      check(`${tag}: the variable --group-line-w is 6px, the chip's label sits clear below the line, and is centred on the chip`,
+        getComputedStyle(document.documentElement).getPropertyValue('--group-line-w').trim() === '6px' && labelsClear, labelsInfo);
 
       // Open, 60-character name: the label stops at 140px x scale with an ellipsis.
       const sixty = LONG.slice(0, 60);
@@ -1457,6 +1472,8 @@ async function pageRun(BIG) {
           && fc.scrollWidth <= fc.clientWidth + 0.5 && outside === 0 && indicators.length === 1 && indicators[0].classList.contains('checkpoint-done')
           && fcr.height <= strip.clientHeight + 1 && fname.getBoundingClientRect().height < 2 * parseFloat(getComputedStyle(fname).fontSize)
           && getComputedStyle(count).color === MUTED && kids.slice(1).every((k, i) => k.getBoundingClientRect().left - kids[i].getBoundingClientRect().right >= 5 * s - 0.5), foldInfo);
+      check(`${tag}: a folded chip draws the 6px line in its group's colour, and its label sits clear below it`,
+        fc && getComputedStyle(fc).boxShadow === TOP && fname.getBoundingClientRect().top - fcr.top >= 6, { shadow: fc && getComputedStyle(fc).boxShadow, nameTop: fname.getBoundingClientRect().top - fcr.top });
       const gone = !strip.querySelector('.tab-bar-tab[data-tab-id="g1"]') && !strip.querySelector('.tab-bar-tab[data-tab-id="g2"]');
       const foldP1 = widthOf('p1');
       const foldP2 = widthOf('p2');
@@ -1517,9 +1534,9 @@ async function pageRun(BIG) {
       check(`group shades (${mode}): an ungrouped tab between two groups keeps the plain fill (not any group's) and has no shadow`,
         !SHADE.some((x) => x.tab === PLAIN || x.chip === PLAIN) && lineOf(tabOf('u1')) === 'none', { PLAIN, shadow: lineOf(tabOf('u1')) });
       check(`group shades (${mode}): the selected grouped tab keeps the terminal ground (--bg), its group's line on top and the 3px ink bar`,
-        tabBg.s3 === bgNow && lineOf(tabOf('s3')) === `${SHADE[1].line} 0px 2px 0px 0px inset, ${inkNow} 0px -3px 0px 0px inset`, { bg: tabBg.s3, bgNow, shadow: lineOf(tabOf('s3')) });
-      check(`group shades (${mode}): each chip and tab carries its own group's 2px line (chip of group 1, tab of group 2, chip of group 4 = line 1)`,
-        lineOf(chipFor('gS1')) === `${SHADE[0].line} 0px 2px 0px 0px inset` && lineOf(tabOf('s4')) === `${SHADE[1].line} 0px 2px 0px 0px inset` && lineOf(chipFor('gS4')) === `${SHADE[0].line} 0px 2px 0px 0px inset`,
+        tabBg.s3 === bgNow && lineOf(tabOf('s3')) === `${SHADE[1].line} 0px 6px 0px 0px inset, ${inkNow} 0px -3px 0px 0px inset`, { bg: tabBg.s3, bgNow, shadow: lineOf(tabOf('s3')) });
+      check(`group shades (${mode}): each chip and tab carries its own group's 6px line (chip of group 1, tab of group 2, chip of group 4 = line 1)`,
+        lineOf(chipFor('gS1')) === `${SHADE[0].line} 0px 6px 0px 0px inset` && lineOf(tabOf('s4')) === `${SHADE[1].line} 0px 6px 0px 0px inset` && lineOf(chipFor('gS4')) === `${SHADE[0].line} 0px 6px 0px 0px inset`,
         { chip1: lineOf(chipFor('gS1')), tab4: lineOf(tabOf('s4')), chip4: lineOf(chipFor('gS4')) });
       // Hover is real: a grouped tab and a chip move toward their line colour and stay readable; the selected member keeps --bg.
       const centre = (el) => { const r = el.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; };

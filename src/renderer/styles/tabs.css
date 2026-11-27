@@ -224,7 +224,7 @@
  * [Patton] begins ... very mild, very light coloring". So each group takes a
  * shade in turn (blue, green, sand; the group's place on the strip, a fourth
  * repeats the first; tab-bar.ts adds .group-shade-N): the chip's fill, its
- * inactive tabs' fill and the 2 px line on top of both, from --groupN-tab /
+ * inactive tabs' fill and the 6 px line (--group-line-w) on top of both, from --groupN-tab /
  * -chip / -line in main.css (light and dark). Ungrouped tabs stay plain; the
  * selected tab keeps --bg and its 3 px ink bar and takes only its group's
  * line. The lines are inset shadows, so nothing moves. Colour is a cue, not the
@@ -232,6 +232,9 @@
  * The chip never grows (the tabs share the strip as before); its name stops at
  * 140 px x scale with an ellipsis. Without a shade class, a chip is the old
  * grey with an ink line. */
+/* The width of the line along the top of a group's chip and tabs: one place, so the next change is one line.
+   Fixed, not scaled by --ui-scale (6 px, his pick B of 27 Nov 2026). */
+:root { --group-line-w: 6px; }
 .group-shade-1 { --g-tab: var(--group1-tab); --g-chip: var(--group1-chip); --g-line: var(--group1-line); }
 .group-shade-2 { --g-tab: var(--group2-tab); --g-chip: var(--group2-chip); --g-line: var(--group2-line); }
 .group-shade-3 { --g-tab: var(--group3-tab); --g-chip: var(--group3-chip); --g-line: var(--group3-line); }
@@ -248,7 +251,7 @@
   padding: 0 11px 0 9px;
   background: var(--g-chip, var(--grey));
   color: var(--ink);
-  box-shadow: inset 0 2px 0 var(--g-line, var(--ink));
+  box-shadow: inset 0 var(--group-line-w) 0 var(--g-line, var(--ink));
   font-family: var(--font-ui);
   font-size: calc(10.5px * var(--ui-scale));
   font-weight: 700;
@@ -310,7 +313,7 @@
    No line in the chip's left column: that column is where the chip's left half draws the ink "before the group" line
    (.drop-before), and at the strip's start the two would differ only by colour (25 Nov review). */
 .tab-bar-group-chip.drag-over {
-  box-shadow: inset 0 2px 0 var(--g-line, var(--ink)), inset 0 -2px 0 var(--focus);
+  box-shadow: inset 0 var(--group-line-w) 0 var(--g-line, var(--ink)), inset 0 -2px 0 var(--focus);
 }
 
 /* The name box on a chip: the chip's own lettering, ink on the terminal ground. */
@@ -335,7 +338,7 @@
 .tab-bar-tab.in-group {
   --tab-bg: var(--g-tab);
   background: var(--g-tab);
-  box-shadow: inset 0 2px 0 var(--g-line);
+  box-shadow: inset 0 var(--group-line-w) 0 var(--g-line);
 }
 
 /* Hover: the tab's shade moved 18% of the way to its line colour (after the
@@ -350,15 +353,15 @@
 .tab-bar-tab.in-group.active {
   --tab-bg: var(--bg);
   background: var(--bg);
-  box-shadow: inset 0 2px 0 var(--g-line), inset 0 -3px 0 var(--ink);
+  box-shadow: inset 0 var(--group-line-w) 0 var(--g-line), inset 0 -3px 0 var(--ink);
 }
 
 .tab-bar-tab.in-group .tab-bar-tab-close {
-  box-shadow: inset 0 2px 0 var(--g-line);
+  box-shadow: inset 0 var(--group-line-w) 0 var(--g-line);
 }
 
 .tab-bar-tab.in-group.active .tab-bar-tab-close {
-  box-shadow: inset 0 2px 0 var(--g-line), inset 0 -3px 0 var(--ink);
+  box-shadow: inset 0 var(--group-line-w) 0 var(--g-line), inset 0 -3px 0 var(--ink);
 }
 
 /* Multi-select, look S1 (his pick on the S63 try-out page, docs/tab-select.md
@@ -377,7 +380,7 @@
 
 .tab-bar-tab.multi.in-group {
   --sel-base: var(--g-tab);
-  box-shadow: inset 0 2px 0 var(--g-line), inset 0 0 0 1px var(--tab-sel);
+  box-shadow: inset 0 var(--group-line-w) 0 var(--g-line), inset 0 0 0 1px var(--tab-sel);
 }
 
 .tab-bar-tab.multi:hover {
@@ -389,7 +392,7 @@
 }
 
 .tab-bar-tab.multi.in-group .tab-bar-tab-close {
-  box-shadow: inset 0 2px 0 var(--g-line), inset -1px 0 0 var(--tab-sel), inset 0 -1px 0 var(--tab-sel);
+  box-shadow: inset 0 var(--group-line-w) 0 var(--g-line), inset -1px 0 0 var(--tab-sel), inset 0 -1px 0 var(--tab-sel);
 }
 
 /* A drag over the empty strip, + or the drag space: a line at the strip's
