@@ -1302,7 +1302,7 @@ async function pageRun(BIG) {
     ];
     const chipOf = () => strip.querySelector('.tab-bar-group-chip');
     const widthOf = (id) => strip.querySelector(`.tab-bar-tab[data-tab-id="${id}"]`)?.getBoundingClientRect().width;
-    for (const s of [1, 1.1, BIG]) {
+    for (const s of [0.9, 1, 1.1, 1.25, BIG]) {
       const tag = `group chip x${s}`;
       await setScale(s);
       barEl.style.width = '1000px';
@@ -1416,12 +1416,13 @@ async function pageRun(BIG) {
       const closeShadow = getComputedStyle(members[1].querySelector('.tab-bar-tab-close')).boxShadow;
       check(`${tag}: a member tab's close button carries the top line too (its own paint would cut the line)`, closeShadow === TOP, { closeShadow });
 
-      // 27 Nov 2026: the top line is 6 px (--group-line-w), fixed, not scaled; the label stays clear of it and centred.
+      // 27 Nov 2026: the top line is 6 px (--group-line-w), fixed, not scaled; the label stays clear of it and centred
+      // (a tab title's line box has half-leading at the top, so its clearance is measured from the em box's top, where the glyphs start).
       const g2el = members[1];
       const nr = nameEl.getBoundingClientRect();
       const tr = g2el.querySelector('.tab-bar-tab-title').getBoundingClientRect();
       const g2r = g2el.getBoundingClientRect();
-      const labelsInfo = { nameTop: nr.top - cr.top, nameMid: nr.top + nr.height / 2 - (cr.top + cr.height / 2), titleTop: tr.top - g2r.top, titleMid: tr.top + tr.height / 2 - (g2r.top + g2r.height / 2) };
+      const labelsInfo = { nameTop: nr.top - cr.top, nameMid: nr.top + nr.height / 2 - (cr.top + cr.height / 2), titleTop: tr.top + tr.height / 2 - parseFloat(getComputedStyle(g2el.querySelector('.tab-bar-tab-title')).fontSize) / 2 - g2r.top, titleMid: tr.top + tr.height / 2 - (g2r.top + g2r.height / 2) };
       const labelsClear = labelsInfo.nameTop >= 6 && labelsInfo.titleTop >= 6 && Math.abs(labelsInfo.nameMid) <= 1.5 && Math.abs(labelsInfo.titleMid) <= 1.5;
       g2el.classList.add('multi');
       const multiShadow = getComputedStyle(g2el).boxShadow;
