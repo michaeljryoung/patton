@@ -1351,6 +1351,115 @@ const ptyWrites = () => writes.filter(([, d]) => typeof d === 'string');
   delete doc.execCommand;
 }
 
+// ── 10. A long paste goes in as one edit (D19) ──
+// The stand-in editing command keeps an undo stack and raises one `input` event per line, as Chromium does.
+{
+  const undoStack = [];
+  let commandCalls = 0;
+  doc.execCommand = (cmd, _ui, val) => {
+    const t = doc.activeElement;
+    if (!(t instanceof w.HTMLTextAreaElement)) return false;
+    if (cmd === 'undo') {
+      const prev = undoStack.pop();
+      if (!prev) return false;
+      t.value = prev.value;
+      t.setSelectionRange(prev.start, prev.end);
+      return true;
+    }
+    if (cmd !== 'insertText') return false;
+    commandCalls++;
+    undoStack.push({ value: t.value, start: t.selectionStart, end: t.selectionEnd });
+    t.setRangeText(val, t.selectionStart, t.selectionEnd, 'end');
+    for (let i = 0; i < val.split('\n').length; i++) t.dispatchEvent(new w.Event('input', { bubbles: true }));
+    return true;
+  };
+  const p = await engagedPane();
+  const ta = boxEl(p);
+  ta.focus();
+  let resizes = 0;
+  ta.getClientRects = () => { resizes++; return []; }; // autoResize starts with this
+  const pasteText = (text) => {
+    const e = new w.Event('paste', { bubbles: true, cancelable: true });
+    Object.defineProperty(e, 'clipboardData', { value: { getData: () => text } });
+    ta.dispatchEvent(e);
+    return e;
+  };
+  const insertLogs = () => ofTag('insert');
+  const reset = () => { ta.value = ''; undoStack.length = 0; commandCalls = 0; resizes = 0; logs.length = 0; ta.focus(); };
+  const lines = (n) => Array.from({ length: n }, (_, i) => `line ${i}`).join('\n');
+
+  reset();
+  const small = lines(5);
+  const e1 = pasteText(small);
+  check('a 5-line paste: taken, in the box whole, through the editing command',
+    e1.defaultPrevented && ta.value === small && commandCalls === 1, { value: ta.value, commandCalls });
+  check('...its input events (one per line) cost one resize, not five', resizes === 1, resizes);
+  check('...logged [COMPOSE] insert {source: paste, chars: 29, lines: 5, route: edit}',
+    insertLogs().length === 1 && insertLogs()[0].source === 'paste' && insertLogs()[0].chars === small.length
+    && insertLogs()[0].lines === 5 && insertLogs()[0].route === 'edit' && typeof insertLogs()[0].ms === 'number', insertLogs());
+  doc.execCommand('undo');
+  check('...⌘Z removes it', ta.value === '', ta.value);
+
+  reset();
+  const edge = lines(201); // 200 line breaks: the last that still goes through the command
+  pasteText(edge);
+  check('200 line breaks still go through the editing command', commandCalls === 1 && insertLogs()[0].route === 'edit', { commandCalls, logs: insertLogs() });
+  reset();
+  const big = lines(202); // 201 line breaks
+  pasteText(big);
+  check('201 line breaks go in as one edit: no editing command, the text whole, the caret at its end',
+    commandCalls === 0 && ta.value === big && ta.selectionStart === big.length && ta.selectionEnd === big.length, { commandCalls, caret: ta.selectionStart });
+  check('...one resize, logged route: replace', resizes === 1 && insertLogs().length === 1 && insertLogs()[0].route === 'replace' && insertLogs()[0].lines === 202, { resizes, logs: insertLogs() });
+  doc.execCommand('undo');
+  check('...no ⌘Z step (the undo stack is empty; the text stays)', ta.value === big, ta.value.length);
+
+  reset();
+  ta.value = 'AB';
+  ta.setSelectionRange(1, 1);
+  const wide = 'w'.repeat(50001);
+  pasteText(wide);
+  check('50,001 characters in one line: one edit, placed at the caret',
+    commandCalls === 0 && ta.value === 'A' + wide + 'B' && ta.selectionStart === 1 + wide.length, { commandCalls, caret: ta.selectionStart });
+  reset();
+  pasteText('w'.repeat(50000));
+  check('50,000 characters still go through the editing command', commandCalls === 1, commandCalls);
+
+  reset();
+  ta.value = 'keep SEL keep';
+  ta.setSelectionRange(5, 8);
+  pasteText(lines(250));
+  check('a long paste over a selection replaces just the selection',
+    ta.value === 'keep ' + lines(250) + ' keep', ta.value.slice(0, 40));
+
+  reset();
+  ta.dispatchEvent(new w.Event('compositionstart', { bubbles: true }));
+  pasteText(lines(250));
+  check('while an IME composition is open a long paste goes through the editing command', commandCalls === 1 && insertLogs()[0].route === 'edit', { commandCalls, logs: insertLogs() });
+  ta.dispatchEvent(new w.Event('compositionend', { bubbles: true }));
+  reset();
+  pasteText(lines(250));
+  check('...after compositionend it is one edit again', commandCalls === 0 && insertLogs()[0].route === 'replace', { commandCalls, logs: insertLogs() });
+
+  reset();
+  pasteText('a\x1b[201~b\n' + lines(250));
+  check('a paste carrying ESC[201~ is stripped on the one-edit route too', !ta.value.includes('\x1b') && ta.value.startsWith('a[201~b\nline 0'), JSON.stringify(ta.value.slice(0, 20)));
+
+  reset();
+  p.editorInput.insertText(lines(250));
+  check('insertText() of a long text is one edit, logged source: call', commandCalls === 0 && insertLogs()[0].source === 'call' && insertLogs()[0].route === 'replace', insertLogs());
+  reset();
+  p.editorInput.insertText('hi');
+  check('insertText() of a short text goes through the command', commandCalls === 1 && ta.value === 'hi' && insertLogs()[0].route === 'edit', { commandCalls, logs: insertLogs() });
+  reset();
+  ta.blur();
+  p.editorInput.insertText('quiet', { focus: false });
+  check('insertText(…, {focus: false}) with the box unfocused: one edit without the command, the keyboard stays away',
+    commandCalls === 0 && ta.value === 'quiet' && doc.activeElement !== ta && insertLogs()[0].route === 'replace', { commandCalls, value: ta.value });
+
+  drop(p);
+  delete doc.execCommand;
+}
+
 finished = true;
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
