@@ -453,7 +453,6 @@ export class BookmarksPanel {
 
   /** Rebuild the rows if what they show changed. Returns whether it did. */
   private renderRows(): boolean {
-
     const snapshot = { tabs: this.host.getTabs(), active: this.host.getActiveTab(), sessions: this.host.listSessions() };
     const states = new Map<string, RowState>();
     for (const bookmark of this.bookmarks) {
@@ -546,12 +545,16 @@ export class BookmarksPanel {
     const listPx = this.listEl.clientHeight;
     if (listPx === 0) return; // not laid out: the observer calls again when it is
     this.densityPending = false;
-    let chosen: Density = DENSITIES[DENSITIES.length - 1];
-    for (const candidate of DENSITIES) {
-      this.panel.dataset.density = candidate;
-      if (this.listEl.scrollHeight <= this.listEl.clientHeight) {
-        chosen = candidate;
-        break;
+    // No rows (the empty message, which wraps): nothing to tighten, whatever the height.
+    let chosen: Density = DENSITIES[0];
+    if (this.listEl.querySelector('.bookmark-row')) {
+      chosen = DENSITIES[DENSITIES.length - 1];
+      for (const candidate of DENSITIES) {
+        this.panel.dataset.density = candidate;
+        if (this.listFits()) {
+          chosen = candidate;
+          break;
+        }
       }
     }
     this.panel.dataset.density = chosen;
@@ -564,6 +567,22 @@ export class BookmarksPanel {
       });
       this.density = chosen;
     }
+  }
+
+  /** Whether the whole list fits its height, which is whether Chromium gives it a
+   *  scrollbar: asked of the browser, not worked out. scrollHeight and clientHeight are
+   *  whole pixels while rows are fractional at most UI scales (x1.1: 37.4 px), and
+   *  Chromium snaps content and box to pixels its own way, so the two integers (and a
+   *  fractional sum of the rows) disagree with it by up to a pixel at the boundary.
+   *  Scrolling as far as it will go and reading where it stopped is exact; the offset is
+   *  put back at once, so nothing paints and the list does not move. */
+  private listFits(): boolean {
+    const list = this.listEl;
+    const offset = list.scrollTop;
+    list.scrollTop = 1e6;
+    const furthest = list.scrollTop;
+    list.scrollTop = offset;
+    return furthest <= 0;
   }
 
   private renderRow(bookmark: Bookmark, rowState: RowState, canDrag: boolean, group: readonly Bookmark[]): HTMLElement {

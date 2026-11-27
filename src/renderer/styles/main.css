@@ -536,6 +536,16 @@ html, body {
   height: calc(22px * var(--ui-scale));
 }
 
+/* The rename field takes a row's place while its row is hidden. Its roomy height
+ * (text, 4 px padding, border) is taller than a compact row, which would push a
+ * just-fitting list into a scrollbar for the whole rename, so in compact it is the
+ * row's height: the text (line-height normal, about 1.2) still has room at every scale. */
+#bookmarks-panel[data-density="compact"] .bookmark-rename {
+  box-sizing: border-box;
+  height: calc(22px * var(--ui-scale));
+  padding-block: 0;
+}
+
 .bookmark-row:hover {
   background: var(--surface-hover);
   color: var(--ink);

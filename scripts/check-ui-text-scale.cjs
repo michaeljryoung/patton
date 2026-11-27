@@ -560,14 +560,33 @@ async function pageRun(BIG) {
     check('no bookmark row shows a path', [...document.querySelectorAll('.bookmark-row')].every((r) => !r.textContent.includes('/') && !r.textContent.includes('~')), [...document.querySelectorAll('.bookmark-row')].map((r) => r.textContent));
     check('the tooltip holds the full path or address', rowOf('b2').title.includes('/tmp/pb/beta') && rowOf('b3').title.includes('https://example.com/page'), [rowOf('b2').title, rowOf('b3').title]);
     check('the accessible name holds it too', rowOf('b2').getAttribute('aria-label').includes('~/pb/beta') && rowOf('b3').getAttribute('aria-label').includes('https://example.com/page'), [rowOf('b2').getAttribute('aria-label'), rowOf('b3').getAttribute('aria-label')]);
+    // Row heights depend on the sidebar's density (data-density, chosen by BookmarksPanel.updateDensity from
+    // the list's height: roomy, tight, compact). Each density is forced here, so what holds in each is tested
+    // whatever the window's height: roomy rows are one height whether or not they have a second line (34 x
+    // scale); in tight (28 x scale) and compact (22 x scale) a one-line row is that tall and a row with a
+    // second line is taller (about 33.6 x scale, both lines kept), the two such rows alike.
+    const bm = document.getElementById('bookmarks-panel');
+    const keepDensity = bm.dataset.density;
+    const oneLineIds = ['b2', 'b3'];
+    const twoLineIds = ['b1', 'b4'];
+    const hOf = (id) => rowOf(id).getBoundingClientRect().height;
     for (const s of [1, BIG]) {
       await setScale(s);
-      const ids = ['b1', 'b2', 'b3', 'b4'];
-      const rows = ids.map((id) => rowOf(id));
-      const heights = rows.map((r) => Math.round(r.getBoundingClientRect().height));
-      check(`bookmark rows are one height whether or not they have a second line, at x${s}`, new Set(heights).size === 1, heights);
-      check(`every bookmark row's text fits its row at x${s}`, rows.every((r) => r.scrollHeight <= r.clientHeight + 1), rows.map((r) => [r.scrollHeight, r.clientHeight]));
+      for (const [d, oneLine] of [['roomy', 34 * s], ['tight', 28 * s], ['compact', 22 * s]]) {
+        bm.dataset.density = d;
+        const one = oneLineIds.map(hOf);
+        const two = twoLineIds.map(hOf);
+        if (d === 'roomy') {
+          check(`bookmark rows are one height (${(34 * s).toFixed(1)}px) whether or not they have a second line, in roomy at x${s}`, [...one, ...two].every((h) => Math.abs(h - oneLine) <= 0.5), { one, two });
+        } else {
+          check(`in ${d} at x${s}, a one-line row is ${oneLine.toFixed(1)}px and a row with a second line is taller (about ${(33.6 * s).toFixed(1)}px), the two alike`,
+            one.every((h) => Math.abs(h - oneLine) <= 0.5) && two.every((h) => Math.abs(h - 33.6 * s) <= 1.5 && h > oneLine + 3) && Math.abs(two[0] - two[1]) <= 0.5, { one, two });
+        }
+        const rows = [...oneLineIds, ...twoLineIds].map(rowOf);
+        check(`every bookmark row's text fits its row, in ${d} at x${s}`, rows.every((r) => r.scrollHeight <= r.clientHeight + 1), rows.map((r) => [r.scrollHeight, r.clientHeight]));
+      }
     }
+    bm.dataset.density = keepDensity;
   }
 
   // --- bookmarks rail: the collapsed sidebar's mark sits level with the header row it stood in
