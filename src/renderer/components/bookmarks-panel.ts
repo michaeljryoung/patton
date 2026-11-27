@@ -334,8 +334,7 @@ export class BookmarksPanel {
     this.rail.hidden = true;
     localStorage.setItem(OPEN_STORAGE_KEY, '1');
     this.refreshMissing();
-    this.render();
-    this.updateDensity(); // the list has a height now, whatever render found to rebuild
+    this.render(); // hide() cleared lastRendered, so this always rebuilds and so decides the density
     if (focus) {
       announce('Bookmarks opened', 'polite');
       requestAnimationFrame(() => {
