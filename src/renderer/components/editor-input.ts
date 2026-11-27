@@ -34,6 +34,28 @@ export interface EditorInputCallbacks {
   onKillLine?: (lines: number) => void;
 }
 
+/**
+ * D19: text over either limit goes into the box as ONE edit (`setRangeText`), not through
+ * `execCommand('insertText')`. Chromium splits a multi-line `insertText` into one edit and one `input`
+ * event per line (5,111 for a 3,397-line, 413,762-character article), and the box's handler ran a
+ * whole-text mirror layout for each: 119 s of frozen renderer (425 lines 1.5 s, 850 lines 7.2 s, 1,700
+ * lines 32.8 s, quadratic). `execCommand` alone takes 2.9 s for that article, `setRangeText` plus one
+ * layout 23 ms. The price: a one-edit paste can't be undone with ⌘Z (below the limits it still can).
+ */
+export const ONE_EDIT_MIN_LINE_BREAKS = 200;
+export const ONE_EDIT_MIN_CHARS = 50000;
+
+/** How many line breaks `text` holds. */
+function lineBreaks(text: string): number {
+  let n = 0;
+  let at = text.indexOf('\n');
+  while (at !== -1) {
+    n++;
+    at = text.indexOf('\n', at + 1);
+  }
+  return n;
+}
+
 export const DEFAULT_COMPOSE_PLACEHOLDER = 'Enter to send, Shift+Enter for newline, Esc to dismiss';
 
 /** The box stepped aside: a short label in Send's place, and the full words
@@ -62,6 +84,11 @@ export class EditorInput {
   private disposables: (() => void)[] = [];
   // The textarea's last natural height (scrollHeight, uncapped), px.
   private naturalTextHeight = 0;
+  // Patton itself is inserting text (insertAtCaret): the input events that
+  // raises are not handled one by one, the insertion resizes once at its end.
+  private inserting = false;
+  // An IME composition is open on the textarea (compositionstart..end).
+  private composing = false;
 
   constructor(container: HTMLElement, callbacks: EditorInputCallbacks, fontSize?: number) {
     this.container = container;
@@ -124,9 +151,21 @@ export class EditorInput {
     });
 
     // Auto-resize textarea to content
-    const inputHandler = () => this.autoResize(true);
+    const inputHandler = () => {
+      if (this.inserting) return; // insertAtCaret resizes once, after the whole insertion
+      this.autoResize(true);
+    };
     this.textarea.addEventListener('input', inputHandler);
     this.disposables.push(() => this.textarea.removeEventListener('input', inputHandler));
+
+    const compositionStart = () => { this.composing = true; };
+    const compositionEnd = () => { this.composing = false; };
+    this.textarea.addEventListener('compositionstart', compositionStart);
+    this.textarea.addEventListener('compositionend', compositionEnd);
+    this.disposables.push(() => {
+      this.textarea.removeEventListener('compositionstart', compositionStart);
+      this.textarea.removeEventListener('compositionend', compositionEnd);
+    });
 
     // Intercept paste to bypass macOS IME composition state.
     // Direct textarea.value assignment bypasses Chromium's input state machine,
@@ -144,9 +183,7 @@ export class EditorInput {
       // bracketed paste that sends a multi-line draft, and run the rest as keys.
       const text = stripPasteControls(raw);
       if (!text) return;
-      this.textarea.focus();
-      document.execCommand('insertText', false, text);
-      this.autoResize(true);
+      this.insertAtCaret(text, 'paste', true);
     };
     this.textarea.addEventListener('paste', pasteHandler as EventListener);
     this.disposables.push(() => this.textarea.removeEventListener('paste', pasteHandler as EventListener));
@@ -402,18 +439,41 @@ export class EditorInput {
     this.textarea.focus();
   }
 
-  /** Insert text at the caret (keeps undo history), as if typed. With
-   *  `focus: false` the keyboard stays where it is: the text goes in at the
-   *  box's caret without the editing command (no undo step). */
+  /** Insert text at the caret (keeps undo history, up to the one-edit limits
+   *  of D19), as if typed. With `focus: false` the keyboard stays where it
+   *  is: the text goes in at the box's caret without the editing command (no
+   *  undo step). */
   insertText(text: string, opts: { focus?: boolean } = {}): void {
-    if (opts.focus === false && document.activeElement !== this.textarea) {
-      const { selectionStart, selectionEnd } = this.textarea;
-      this.textarea.setRangeText(text, selectionStart, selectionEnd, 'end');
-    } else {
-      this.textarea.focus();
-      document.execCommand('insertText', false, text);
+    this.insertAtCaret(text, 'call', opts.focus !== false);
+  }
+
+  /**
+   * The one routine behind a paste and insertText (D19). Short text goes
+   * through the editing command (⌘Z undoes it; it also ends an IME
+   * composition cleanly, which a plain value write does not: the phantom
+   * composition swallows the next Enter). Text over the one-edit limits goes
+   * in as a single `setRangeText`, except while an IME composition is open.
+   * `input` events raised by the insertion are skipped; one resize follows.
+   */
+  private insertAtCaret(text: string, source: 'paste' | 'call', focus: boolean): void {
+    const ta = this.textarea;
+    const t0 = performance.now();
+    const breaks = lineBreaks(text);
+    const keepKeyboard = !focus && document.activeElement !== ta;
+    const big = breaks > ONE_EDIT_MIN_LINE_BREAKS || text.length > ONE_EDIT_MIN_CHARS;
+    const replace = keepKeyboard || (big && !this.composing);
+    this.inserting = true;
+    try {
+      if (!keepKeyboard) ta.focus();
+      if (replace) ta.setRangeText(text, ta.selectionStart, ta.selectionEnd, 'end');
+      else document.execCommand('insertText', false, text);
+    } finally {
+      this.inserting = false;
     }
     this.autoResize(true);
+    rlog('info', '[COMPOSE] insert', {
+      source, chars: text.length, lines: breaks + 1, route: replace ? 'replace' : 'edit', ms: Math.round(performance.now() - t0),
+    });
   }
 
   /** Every label Send's slot may show: the slot takes the widest, so it keeps

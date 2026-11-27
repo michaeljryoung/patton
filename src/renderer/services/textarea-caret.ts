@@ -57,10 +57,30 @@ export function caretLineTop(ta: HTMLTextAreaElement): { top: number; height: nu
   return out;
 }
 
+/** Where the caret's line sits when the caret is at the very end of the text:
+ *  the last line is the bottom of the scrollable content, one line-height
+ *  tall, so no mirror is needed (a mirror of a 413,000-character draft costs
+ *  31 ms, on every key typed at its end; D19). null when the caret is
+ *  elsewhere or the line-height isn't a number (`normal`). */
+function caretLineAtEnd(ta: HTMLTextAreaElement): { top: number; height: number } | null {
+  const caret = ta.selectionDirection === 'backward' ? ta.selectionStart : ta.selectionEnd;
+  if (caret !== ta.value.length) return null;
+  const cs = getComputedStyle(ta);
+  const height = parseFloat(cs.lineHeight);
+  if (!(height > 0)) return null;
+  return { top: ta.scrollHeight - (parseFloat(cs.paddingBottom) || 0) - height, height };
+}
+
+/** The caret's line: from the end of the content when the caret is there,
+ *  else measured in the mirror. */
+function caretLine(ta: HTMLTextAreaElement): { top: number; height: number } | null {
+  return caretLineAtEnd(ta) ?? caretLineTop(ta);
+}
+
 /** Scroll the textarea so the caret's line is visible. */
 export function scrollCaretIntoView(ta: HTMLTextAreaElement): void {
   if (ta.scrollHeight <= ta.clientHeight) return;
-  const line = caretLineTop(ta);
+  const line = caretLine(ta);
   if (!line) return;
   const cs = getComputedStyle(ta);
   const next = scrollForCaret(
@@ -74,7 +94,7 @@ export function scrollCaretIntoView(ta: HTMLTextAreaElement): void {
  *  there is nothing to measure (no layout, or nothing to scroll). */
 export function caretInView(ta: HTMLTextAreaElement): boolean {
   if (ta.scrollHeight <= ta.clientHeight) return true;
-  const line = caretLineTop(ta);
+  const line = caretLine(ta);
   if (!line) return true;
   const cs = getComputedStyle(ta);
   return scrollForCaret(
