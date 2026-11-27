@@ -40,8 +40,8 @@ async function nodeRunner() {
       contents: `
         import { Pane } from './src/renderer/components/pane';
         import { stripPasteControls } from './src/renderer/services/paste-sanitize';
-        import { scrollCaretIntoView, caretInView } from './src/renderer/services/textarea-caret';
-        (window as any).__co = { Pane, stripPasteControls, scrollCaretIntoView, caretInView };
+        import { scrollCaretIntoView, caretInView, caretLineTop, scrollForCaret } from './src/renderer/services/textarea-caret';
+        (window as any).__co = { Pane, stripPasteControls, scrollCaretIntoView, caretInView, caretLineTop, scrollForCaret };
       `,
     },
     bundle: true, platform: 'browser', format: 'iife', outfile: path.join(outDir, 'page.js'),
@@ -53,6 +53,9 @@ async function nodeRunner() {
     fs.readFileSync(path.join(REPO, 'node_modules/@xterm/xterm/css/xterm.css'), 'utf8') + '\n' + styles.join('\n'));
   const fixture = fs.readFileSync(path.join(REPO, 'scripts/fixtures/claude-bar-screens.json'), 'utf8');
   fs.writeFileSync(path.join(outDir, 'fixture.js'), `window.__fixture = ${fixture};`);
+  // Real Chromium editing commands (the Edit menu's Undo, typed text) come from the main process, not execCommand in the page.
+  fs.writeFileSync(path.join(outDir, 'preload.cjs'),
+    "const { ipcRenderer } = require('electron'); window.__op = (n, a) => ipcRenderer.invoke('op', n, a);");
   fs.writeFileSync(path.join(outDir, 'page.html'),
     '<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="page.css"></head><body>' +
     '<div id="app"><div id="main"><div id="content"></div></div></div>' +
@@ -82,7 +85,7 @@ async function nodeRunner() {
 }
 
 function electronMain() {
-  const { app, BrowserWindow, nativeTheme } = require('electron');
+  const { app, BrowserWindow, nativeTheme, ipcMain } = require('electron');
   const outDir = process.env.COMPOSE_LONGPASTE_CHECK_DIR;
   const resultFile = path.join(outDir, 'result.json');
   const write = (obj) => fs.writeFileSync(resultFile, JSON.stringify(obj, null, 1));
@@ -94,7 +97,13 @@ function electronMain() {
       nativeTheme.themeSource = 'light';
       const win = new BrowserWindow({
         show: false, width: 1400, height: 1000,
-        webPreferences: { backgroundThrottling: false, contextIsolation: false, nodeIntegration: false },
+        webPreferences: { backgroundThrottling: false, contextIsolation: false, nodeIntegration: false, preload: path.join(outDir, 'preload.cjs') },
+      });
+      ipcMain.handle('op', async (_e, name, arg) => {
+        const wc = win.webContents;
+        if (name === 'undo') { wc.undo(); return true; }
+        if (name === 'insertText') { wc.insertText(arg); return true; }
+        throw new Error('unknown op ' + name);
       });
       await win.loadFile(path.join(outDir, 'page.html'));
       win.webContents.focus();
@@ -274,7 +283,7 @@ async function pageSetup() {
       ta.value === long && ta.selectionStart === long.length && ta.selectionEnd === long.length,
       { len: ta.value.length, start: ta.selectionStart, end: ta.selectionEnd });
     check('...finished in under 1.5 s (119 s before the fix)', p1.ms < 1500, p1.ms);
-    check('...no input event (the one-edit route), at most 2 resize runs', p1.inputs === 0 && p1.resizes <= 2, p1);
+    check('...exactly one (synthetic) input event for other listeners, at most 2 resize runs: this class\'s own handler skipped it', p1.inputs === 1 && p1.resizes <= 2, p1);
     check('...no mirror layout (the caret is at the end)', p1.mirrors === 0, p1.mirrors);
     await settle(3000);
     check('...the caret\'s line is in view: scrolled to the bottom', atBottom(ta), { top: ta.scrollTop, client: ta.clientHeight, scroll: ta.scrollHeight });
@@ -418,6 +427,172 @@ async function pageSetup() {
     ta.value = '';
     pane.editorInput.insertText('typed');
     check('insertText() of a small text takes the editing command and the keyboard', ta.value === 'typed' && document.activeElement === ta && tags('[COMPOSE] insert').pop().data.route === 'edit', ta.value);
+    // 10. Undo in real Chromium (the Edit menu's Undo, `webContents.undo()`, typed text by `webContents.insertText`).
+    // D19: a one-edit paste clears the box's whole undo history (typed text before it included); the edit route
+    // below the limits keeps ⌘Z. Pinned so a Chromium change shows up.
+    const op = (n, a) => window.__op(n, a);
+    const BIG = Array.from({ length: 250 }, (_, i) => `B${i}`).join('\n');
+    const SMALL = 'S0\nS1\nS2\nS3\nS4';
+    await fresh();
+    ta = textarea();
+    ta.focus();
+    await sleep(50);
+    await op('insertText', 'hello ');
+    await op('insertText', 'world');
+    await sleep(30);
+    const typed = ta.value;
+    await paste(ta, BIG);
+    const afterBig = ta.value;
+    await op('undo'); await sleep(30);
+    check('after typed text and a one-edit paste, ⌘Z leaves the value unchanged (the history is gone)',
+      typed === 'hello world' && afterBig === typed + BIG && ta.value === afterBig, { typed, afterLen: afterBig.length, nowLen: ta.value.length });
+    await op('undo'); await sleep(30);
+    check('...and it stays unchanged on the next ⌘Z (the typed text before the paste can not be undone either)', ta.value === afterBig, { len: ta.value.length });
+    await op('insertText', 'x'); await sleep(30);
+    check('...typing after the paste adds to the box', ta.value === afterBig + 'x', { len: ta.value.length });
+    await op('undo'); await sleep(30);
+    check('...and ⌘Z undoes that typing, nothing more', ta.value === afterBig, { len: ta.value.length, tail: ta.value.slice(-8) });
+    // A big paste over a selection: the selected text is gone for good.
+    await fresh();
+    ta = textarea();
+    ta.focus();
+    await sleep(50);
+    await op('insertText', 'abc'); await sleep(30);
+    ta.setSelectionRange(0, 3);
+    await paste(ta, BIG);
+    await op('undo'); await sleep(30);
+    check('a one-edit paste over a selection: ⌘Z does not bring the selected text back', ta.value === BIG, { len: ta.value.length, head: ta.value.slice(0, 8) });
+    // Below the limits the edit route keeps ⌘Z through the real command.
+    await fresh();
+    ta = textarea();
+    ta.focus();
+    await sleep(50);
+    await op('insertText', 'abc'); await sleep(30);
+    await paste(ta, SMALL);
+    check('a 5-line paste after typed text goes in', ta.value === 'abc' + SMALL, ta.value);
+    await op('undo'); await sleep(30);
+    check('...real ⌘Z removes the paste and leaves the typed text', ta.value === 'abc', ta.value);
+
+    // 11. The aside's "Draft kept" note follows the draft typed during an aside's typing grace; other listeners on the
+    // box need an `input` event from a one-edit paste (the pane's syncComposeAsideLook listens for it).
+    for (const [label, text] of [['a one-edit paste', BIG], ['an edit-route paste', SMALL]]) {
+      await fresh();
+      ta = textarea();
+      ta.focus();
+      await sleep(50);
+      ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', bubbles: true })); // a keydown: the typing grace applies
+      await sleep(50);
+      await write('\x1b]7501;state=working:app=claude-code\x07');
+      await write('\x1b]7501;state=blocked:kind=question:app=claude-code\x07');
+      await sleep(330); // past the 250 ms hold, inside the typing grace (1 s from the keydown)
+      const inGrace = pane.composeAside === 'blocked' && pane.composeKeyboardTimer !== null && pane.composePlacement !== 'under';
+      const noteBefore = pane.draftNote.hidden;
+      await paste(ta, text);
+      const noteAfter = pane.draftNote.hidden;
+      check(`${label} during an aside's typing grace shows "Draft kept" at once (the pane hears an input event)`,
+        inGrace && noteBefore === true && noteAfter === false, { inGrace, noteBefore, noteAfter, aside: pane.composeAside, placement: pane.composePlacement });
+      await write('\x1b]7501;state=idle:app=claude-code\x07');
+      await settle(300);
+    }
+
+    // 12. Focus: the one-edit route takes the keyboard when asked, and leaves it where it is with {focus: false}.
+    await fresh();
+    ta = textarea();
+    const bigText = BIG;
+    ta.blur();
+    await paste(ta, bigText);
+    check('a one-edit paste into an unfocused box takes the keyboard (the paste handler asks for focus)', ta.value === bigText && document.activeElement === ta, { active: document.activeElement && document.activeElement.tagName });
+    ta.value = '';
+    ta.blur();
+    pane.editorInput.insertText(bigText);
+    check('insertText() of a long text into an unfocused box takes the keyboard', ta.value === bigText && document.activeElement === ta, { active: document.activeElement && document.activeElement.tagName });
+    ta.value = '';
+    const other = document.createElement('input');
+    host.appendChild(other);
+    other.focus();
+    pane.editorInput.insertText(bigText, { focus: false });
+    check('insertText(long, {focus: false}) from a box that is not focused leaves the keyboard where it is, the text in the box',
+      ta.value === bigText && document.activeElement === other, { len: ta.value.length, active: document.activeElement && document.activeElement.tagName });
+    other.remove();
+    ta.value = '';
+
+    // 13. The `inserting` guard resets after a throw inside the insertion.
+    ta = instrument();
+    ta.focus();
+    const origRange = ta.setRangeText;
+    ta.setRangeText = () => { throw new Error('boom'); };
+    let thrown = null;
+    try { pane.editorInput.insertText(bigText); } catch (e) { thrown = String(e && e.message); }
+    ta.setRangeText = origRange;
+    check('(setup) a throw inside the insertion reaches the caller', thrown === 'boom', thrown);
+    resizeCalls = 0;
+    ta.value = '';
+    document.execCommand('insertText', false, 'k');
+    check('...the box\'s input handler works again after it (the guard was reset): the next key resizes', resizeCalls >= 1 && ta.value === 'k', { resizeCalls, value: ta.value });
+    ta.value = '';
+
+    // 14. A paste over a selection in the middle of a long draft, on both routes: the right place, the selection replaced,
+    // the caret brought into view through the mirror (checked against the mirror itself, not the fast path).
+    const mirrorSaysInView = () => {
+      const m = U.caretLineTop(ta);
+      const cs = getComputedStyle(ta);
+      const need = U.scrollForCaret(m.top, m.height, ta.scrollTop, ta.clientHeight, parseFloat(cs.paddingTop) || 0, parseFloat(cs.paddingBottom) || 0);
+      return Math.abs(need - ta.scrollTop) <= 1;
+    };
+    for (const [label, text, route] of [['edit route', SMALL, 'edit'], ['one-edit route', BIG, 'replace']]) {
+      await fresh();
+      ta = textarea();
+      pane.editorInput.setValue(synth(300, 8));
+      ta.focus();
+      const before = ta.value;
+      const s0 = before.indexOf('\n', before.length >> 1) + 1;
+      const e0 = s0 + 25;
+      ta.setSelectionRange(s0, e0);
+      ta.scrollTop = 0; // the caret will be far below the visible part
+      logFrom = logs.length;
+      mirrorCount();
+      await paste(ta, text);
+      const expected = before.slice(0, s0) + text + before.slice(e0);
+      const ins = tags('[COMPOSE] insert', logFrom);
+      check(`mid-text paste over a selection (${label}): replaces the selection, lands at its place, the caret after the pasted text`,
+        ta.value === expected && ta.selectionStart === s0 + text.length && ta.selectionEnd === s0 + text.length && ins.length === 1 && ins[0].data.route === route,
+        { ok: ta.value === expected, caret: ta.selectionStart, want: s0 + text.length, route: ins[0] && ins[0].data.route });
+      check(`...(${label}) the caret's line is scrolled into view, by the mirror's own measure`, ta.scrollTop > 0 && mirrorSaysInView(), { top: ta.scrollTop, scroll: ta.scrollHeight, client: ta.clientHeight });
+    }
+
+    // 15. A one-line draft: the box is 2 px short of its content (the textarea's borders); nothing to scroll.
+    await fresh();
+    ta = textarea();
+    pane.editorInput.setValue('one line');
+    ta.focus();
+    ta.setSelectionRange(8, 8);
+    await settle(200);
+    ta.scrollTop = ta.scrollHeight; // the true bottom, whatever the browser allows
+    check('a one-line draft in a box a few px short of its content: caretInView is true at the true bottom and at the top',
+      U.caretInView(ta) === true && (ta.scrollTop = 0, U.caretInView(ta) === true), { sh: ta.scrollHeight, ch: ta.clientHeight, oh: ta.offsetHeight, top: ta.scrollTop });
+    ta.scrollTop = 0;
+    U.scrollCaretIntoView(ta);
+    check('...and scrollCaretIntoView leaves it unscrolled', ta.scrollTop === 0, { top: ta.scrollTop });
+
+    // 16. (measured) the insertion's own cost at the limits, through the real edit route (the `inserting` guard on).
+    await fresh();
+    ta = textarea();
+    ta.focus();
+    const limitLines = Array.from({ length: 201 }, () => 'abcdefg '.repeat(40).slice(0, 247)).join('\n'); // 200 breaks, 49,847 chars
+    const limitChars = 'w'.repeat(50000);
+    for (const [name, text] of [['200 line breaks of ~250 characters', limitLines], ['50,000 characters on one line', limitChars]]) {
+      ta.value = '';
+      ta.focus();
+      const logAt = logs.length;
+      const tStart = performance.now();
+      await paste(ta, text);
+      await frame(); // with the layout and paint that follow
+      const toFrame = Math.round(performance.now() - tStart);
+      const ins = tags('[COMPOSE] insert', logAt);
+      measured.push(`edit route at the limit, ${name}: ${ins[0] && ins[0].data.ms} ms in insertAtCaret, ${toFrame} ms to the next frame (route ${ins[0] && ins[0].data.route}, ${ta.value.length} chars)`);
+      check(`${name} through the edit route: under 100 ms in insertAtCaret and 150 ms to the next frame (measured 23-36 and 34-41 on the M-series Mac; D19)`, ins[0] && ins[0].data.ms < 100 && toFrame < 150, { insert: ins[0] && ins[0].data.ms, toFrame });
+      check(`(setup) ${name}: still under both limits, so the edit route`, ins.length === 1 && ins[0].data.route === 'edit' && ta.value === text, ins.map((l) => l.data));
+    }
     return { checks, measured };
   };
   return true;

@@ -1413,6 +1413,33 @@ const ptyWrites = () => writes.filter(([, d]) => typeof d === 'string');
   doc.execCommand('undo');
   check('...no ⌘Z step (the undo stack is empty; the text stays)', ta.value === big, ta.value.length);
 
+  // A lone \r is a line break too (stripPasteControls keeps it); \r\n counts once.
+  reset();
+  pasteText(lines(201).replaceAll('\n', '\r')); // 200 lone CRs
+  check('200 lone \\r still go through the editing command', commandCalls === 1 && insertLogs()[0].route === 'edit', { commandCalls, logs: insertLogs() });
+  reset();
+  pasteText(lines(202).replaceAll('\n', '\r')); // 201 lone CRs
+  check('201 lone \\r go in as one edit', commandCalls === 0 && insertLogs()[0].route === 'replace' && insertLogs()[0].lines === 202, { commandCalls, logs: insertLogs() });
+  reset();
+  pasteText(lines(121).replaceAll('\n', '\r\n')); // 120 CRLF pairs: 120 breaks, not 240
+  check('120 \\r\\n pairs count 120 line breaks, not 240: the editing command', commandCalls === 1 && insertLogs()[0].route === 'edit' && insertLogs()[0].lines === 121, { commandCalls, logs: insertLogs() });
+  reset();
+  pasteText(lines(202).replaceAll('\n', '\r\n')); // 201 CRLF pairs
+  check('201 \\r\\n pairs: one edit', commandCalls === 0 && insertLogs()[0].route === 'replace' && insertLogs()[0].lines === 202, { commandCalls, logs: insertLogs() });
+
+  // Other listeners on the box see the one-edit insertion as one `input` event; this class's own handler does not (one resize).
+  reset();
+  let seen = 0;
+  const onInput = () => { seen++; };
+  ta.addEventListener('input', onInput);
+  pasteText(lines(250));
+  check('a one-edit paste raises exactly one input event for other listeners, and one resize', seen === 1 && resizes === 1 && commandCalls === 0, { seen, resizes });
+  reset();
+  seen = 0;
+  p.editorInput.insertText(lines(250));
+  check('...the same for insertText()', seen === 1 && resizes === 1, { seen, resizes });
+  ta.removeEventListener('input', onInput);
+
   reset();
   ta.value = 'AB';
   ta.setSelectionRange(1, 1);

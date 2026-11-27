@@ -77,9 +77,18 @@ function caretLine(ta: HTMLTextAreaElement): { top: number; height: number } | n
   return caretLineAtEnd(ta) ?? caretLineTop(ta);
 }
 
+/** Nothing to scroll: the content fits the box. The box sets its height to the
+ *  content's (EditorInput.autoResize), which leaves `clientHeight` short of
+ *  `scrollHeight` by the textarea's own borders (2 px), so a one-line draft
+ *  "overflows" by 2 px and scrolling to the true bottom put its line above the
+ *  top padding: the border-box height (`offsetHeight`) is the measure. */
+function fits(ta: HTMLTextAreaElement): boolean {
+  return ta.scrollHeight <= Math.max(ta.clientHeight, ta.offsetHeight);
+}
+
 /** Scroll the textarea so the caret's line is visible. */
 export function scrollCaretIntoView(ta: HTMLTextAreaElement): void {
-  if (ta.scrollHeight <= ta.clientHeight) return;
+  if (fits(ta)) return;
   const line = caretLine(ta);
   if (!line) return;
   const cs = getComputedStyle(ta);
@@ -95,7 +104,7 @@ export function scrollCaretIntoView(ta: HTMLTextAreaElement): void {
  *  counts as in view: scrollTop is fractional where scrollHeight is rounded,
  *  so a draft scrolled to the very bottom can read half a pixel short. */
 export function caretInView(ta: HTMLTextAreaElement): boolean {
-  if (ta.scrollHeight <= ta.clientHeight) return true;
+  if (fits(ta)) return true;
   const line = caretLine(ta);
   if (!line) return true;
   const cs = getComputedStyle(ta);

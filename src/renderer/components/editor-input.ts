@@ -45,13 +45,14 @@ export interface EditorInputCallbacks {
 export const ONE_EDIT_MIN_LINE_BREAKS = 200;
 export const ONE_EDIT_MIN_CHARS = 50000;
 
-/** How many line breaks `text` holds. */
-function lineBreaks(text: string): number {
+/** How many line breaks `text` holds: `\n`, and a `\r` that is not the first half of `\r\n`
+ *  (stripPasteControls keeps `\r`; `\r\n` counts once). */
+export function lineBreaks(text: string): number {
   let n = 0;
-  let at = text.indexOf('\n');
-  while (at !== -1) {
-    n++;
-    at = text.indexOf('\n', at + 1);
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    if (c === 10) n++;
+    else if (c === 13 && text.charCodeAt(i + 1) !== 10) n++;
   }
   return n;
 }
@@ -465,8 +466,12 @@ export class EditorInput {
     this.inserting = true;
     try {
       if (!keepKeyboard) ta.focus();
-      if (replace) ta.setRangeText(text, ta.selectionStart, ta.selectionEnd, 'end');
-      else document.execCommand('insertText', false, text);
+      if (replace) {
+        ta.setRangeText(text, ta.selectionStart, ta.selectionEnd, 'end');
+        // setRangeText raises no `input` event, and other listeners (the pane's "Draft kept" note) rely on
+        // one: send it once, here, where this class's own handler skips it (the single resize follows).
+        ta.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: source === 'paste' ? 'insertFromPaste' : 'insertText' }));
+      } else document.execCommand('insertText', false, text);
     } finally {
       this.inserting = false;
     }
