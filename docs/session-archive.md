@@ -1039,3 +1039,7 @@ _Earlier entries archived → `docs/session-archive.md` (latest trim 2026-11-25,
 - **2026-11-25 (S66) — The selected tab gets the green dot and red circle while its window isn't in front** (his "ok"); they clear when the window comes back, the principle being that a mark clears when he can see it.
 
 - **2026-11-24 (S65) — The usage panel's token count is the raw total, credited by the live-login timeline** (his "3 no" to price-weighting; the raw count on the default): counted from transcripts in a worker, partial ("≥ N since") until the timeline covers a whole week, approximate around switches because a switch is recorded at the next status-line render.
+
+## Decisions (S68 trim 2026-11-27)
+
+- **2026-11-26 (S67) — App icon K1** (his "k1", round 8 on https://mjy-pages.vercel.app/p/patton-icon-studies/): F3's face drawn by falling digits, lit by a glow on a dark green ground, every digit about a sixth bigger; F3 "just looks black" in the Dock. **Notification volume goes to 400%** (his "cant hear marimba if watching a video"), with a limiter only above 100% so nothing at 100% or below changed.
