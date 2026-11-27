@@ -195,6 +195,9 @@
   bottom: 0;
   width: 2px;
   background: var(--drop-line, var(--ink));
+  /* A 1 px edge in the terminal's ground on both sides: the cue crosses a group's 6 px line, and --focus on the line colours
+     is 2.0 to 2.7:1 (27 Nov 2026), so the cue is held off the line by an edge it is 4.5:1 (light) / 7.5:1 (dark) against. */
+  box-shadow: 0 0 0 1px var(--bg);
   pointer-events: none;
   z-index: 3;
 }
@@ -224,7 +227,7 @@
  * [Patton] begins ... very mild, very light coloring". So each group takes a
  * shade in turn (blue, green, sand; the group's place on the strip, a fourth
  * repeats the first; tab-bar.ts adds .group-shade-N): the chip's fill, its
- * inactive tabs' fill and the 6 px line (--group-line-w) on top of both, from --groupN-tab /
+ * inactive tabs' fill and the line (--group-line-w, 6 px, defined in main.css) on top of both, from --groupN-tab /
  * -chip / -line in main.css (light and dark). Ungrouped tabs stay plain; the
  * selected tab keeps --bg and its 3 px ink bar and takes only its group's
  * line. The lines are inset shadows, so nothing moves. Colour is a cue, not the
@@ -232,9 +235,6 @@
  * The chip never grows (the tabs share the strip as before); its name stops at
  * 140 px x scale with an ellipsis. Without a shade class, a chip is the old
  * grey with an ink line. */
-/* The width of the line along the top of a group's chip and tabs: one place, so the next change is one line.
-   Fixed, not scaled by --ui-scale (6 px, his pick B of 27 Nov 2026). */
-:root { --group-line-w: 6px; }
 .group-shade-1 { --g-tab: var(--group1-tab); --g-chip: var(--group1-chip); --g-line: var(--group1-line); }
 .group-shade-2 { --g-tab: var(--group2-tab); --g-chip: var(--group2-chip); --g-line: var(--group2-line); }
 .group-shade-3 { --g-tab: var(--group3-tab); --g-chip: var(--group3-chip); --g-line: var(--group3-line); }
@@ -329,6 +329,24 @@
   padding: 2px 4px;
 }
 
+/* An open name box lies below the group's line, not over it (27 Nov 2026: at 0.9 to 1.25 its centred box reached into the
+   line's lower 0.2 to 2.8 px). The line's width is taken off the top of the box's room, which centres the box in what is
+   left; the box keeps its own height, so no text is cut. */
+.tab-bar-group-chip:has(.tab-bar-tab-rename),
+.tab-bar-tab.in-group:has(.tab-bar-tab-rename) {
+  padding-top: var(--group-line-w);
+}
+/* The selected tab's 3 px ink bar is at the bottom: the box clears that too, as it did when it was centred in the whole tab. */
+.tab-bar-tab.in-group.active:has(.tab-bar-tab-rename) {
+  padding-bottom: 3px;
+}
+/* At 0.9 that leaves 15.2 px between the line and the bar and the box is 16 px with its 1 px padding: no vertical padding
+   there, so it is 14 px and its text (the line box is 12 px inside the border) is not cut. */
+.tab-bar-tab.in-group.active .tab-bar-tab-rename {
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
 .tab-bar-group-chip .tab-bar-tab-rename::placeholder {
   text-transform: none;
   letter-spacing: 0;
@@ -378,9 +396,11 @@
   box-shadow: inset 0 0 0 1px var(--tab-sel);
 }
 
+/* The first shadow paints on top: the 1 px outline is listed before the group's line so it shows all round, over the line's
+   top row and the top 6 px of its sides (the close button, over the tab's right end, repeats the outline's top, right and bottom). */
 .tab-bar-tab.multi.in-group {
   --sel-base: var(--g-tab);
-  box-shadow: inset 0 var(--group-line-w) 0 var(--g-line), inset 0 0 0 1px var(--tab-sel);
+  box-shadow: inset 0 0 0 1px var(--tab-sel), inset 0 var(--group-line-w) 0 var(--g-line);
 }
 
 .tab-bar-tab.multi:hover {
@@ -392,7 +412,7 @@
 }
 
 .tab-bar-tab.multi.in-group .tab-bar-tab-close {
-  box-shadow: inset 0 var(--group-line-w) 0 var(--g-line), inset -1px 0 0 var(--tab-sel), inset 0 -1px 0 var(--tab-sel);
+  box-shadow: inset 0 1px 0 var(--tab-sel), inset -1px 0 0 var(--tab-sel), inset 0 -1px 0 var(--tab-sel), inset 0 var(--group-line-w) 0 var(--g-line);
 }
 
 /* A drag over the empty strip, + or the drag space: a line at the strip's

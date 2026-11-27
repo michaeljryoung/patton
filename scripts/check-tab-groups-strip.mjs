@@ -207,12 +207,29 @@ await section('1. Placement and look', 12, async () => {
     /background:\s*var\(--g-tab\)/.test(rule('.tab-bar-tab.in-group')) && /inset 0 var\(--group-line-w\) 0 var\(--g-line\)/.test(rule('.tab-bar-tab.in-group'))
     && /background:\s*var\(--bg\)/.test(rule('.tab-bar-tab.in-group.active'))
     && /inset 0 var\(--group-line-w\) 0 var\(--g-line\)/.test(rule('.tab-bar-tab.in-group.active')) && /inset 0 -3px 0 var\(--ink\)/.test(rule('.tab-bar-tab.in-group.active')));
-  // 27 Nov 2026 (his pick B): the group line is 6 px, defined once; every rule that draws a group's top line reads it, none hard-codes 2px.
+  // 27 Nov 2026 (his pick B): the group line is 6 px, defined once, in main.css's :root block beside the group tokens (where the
+  // project keeps its tokens), never in tabs.css; every rule that draws a group's top line reads it, none hard-codes a px.
   {
     const tcss = readFileSync(join(repo, 'src/renderer/styles/tabs.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
     const lineRules = tcss.match(/inset 0 [^,;]*? 0 var\(--g-line[^)]*\)?\)?/g) || [];
-    check('group line CSS: --group-line-w is defined once as 6px, and all 8 group-line shadows (chip, drop target, tab, selected, closes, multi) use it, none a fixed px',
-      (tcss.match(/--group-line-w:\s*6px/g) || []).length === 1 && lineRules.length === 8 && lineRules.every((r) => r.startsWith('inset 0 var(--group-line-w) 0 ')) && !/inset 0 \d+px 0 var\(--g-line/.test(tcss), lineRules);
+    const mcss = readFileSync(join(repo, 'src/renderer/styles/main.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    const rootStart = mcss.indexOf(':root');
+    const rootBlock = mcss.slice(rootStart, mcss.indexOf('\n}\n', rootStart)); // the light :root block, up to the dark media query
+    const defs = mcss.match(/--group-line-w:\s*[^;]+;/g) || [];
+    check('group line CSS: --group-line-w is defined once, as 6px, in main.css\'s first :root block beside --group3-line, and not in tabs.css',
+      defs.length === 1 && /--group-line-w:\s*6px;/.test(rootBlock) && rootBlock.indexOf('--group3-line') >= 0 && rootBlock.indexOf('--group3-line') < rootBlock.indexOf('--group-line-w')
+        && rootBlock.indexOf('--group-line-w') - rootBlock.indexOf('--group3-line') < 200 && !/--group-line-w\s*:/.test(tcss) && mcss.indexOf('--group-line-w') < mcss.indexOf('prefers-color-scheme: dark'), { defs, inRoot: /--group-line-w:/.test(rootBlock) });
+    check('group line CSS: all 8 group-line shadows (chip, drop target, tab, selected, closes, multi) use --group-line-w, none a fixed px',
+      lineRules.length === 8 && lineRules.every((r) => r.startsWith('inset 0 var(--group-line-w) 0 ')) && !/inset 0 \d+px 0 var\(--g-line/.test(tcss), lineRules);
+    // A multi-selected group tab: the 1 px outline is listed before the line (the first shadow paints on top), so it shows all round.
+    const shadowOf = (sel) => (tcss.match(new RegExp(`${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{[^}]*box-shadow:\\s*([^;]+);`)) || [])[1] || '';
+    const multiTab = shadowOf('.tab-bar-tab.multi.in-group');
+    const multiClose = shadowOf('.tab-bar-tab.multi.in-group .tab-bar-tab-close');
+    check('group line CSS: on a multi-selected group tab and its close button the --tab-sel outline is listed before the line, so it paints over it',
+      multiTab.indexOf('--tab-sel') >= 0 && multiTab.indexOf('--tab-sel') < multiTab.indexOf('--group-line-w') && multiClose.indexOf('inset 0 1px 0 var(--tab-sel)') === 0 && multiClose.indexOf('--group-line-w') > multiClose.lastIndexOf('--tab-sel'), { multiTab, multiClose });
+    check('group line CSS: an open name box (chip, grouped tab) is pushed below the line by padding-top of --group-line-w, and the selected tab keeps room for its 3px bar',
+      /\.tab-bar-group-chip:has\(\.tab-bar-tab-rename\),\s*\.tab-bar-tab\.in-group:has\(\.tab-bar-tab-rename\)\s*\{\s*padding-top:\s*var\(--group-line-w\);/.test(tcss)
+        && /\.tab-bar-tab\.in-group\.active:has\(\.tab-bar-tab-rename\)\s*\{\s*padding-bottom:\s*3px;/.test(tcss));
   }
   const mainCss = readFileSync(join(repo, 'src/renderer/styles/main.css'), 'utf8');
   check('main.css defines --grey-hover in both light and dark', (mainCss.match(/--grey-hover:/g) || []).length >= 2);
@@ -975,6 +992,10 @@ await section('12. The folded chip\'s list stays inside the window\'s right edge
   const drops = { chip: dropVar('.tab-bar-group-chip.drag-over') };
   const slotLine = /\.tab-bar-tab\.drop-before::after,\s*\.tab-bar-tab\.drop-after::after,\s*\.tab-bar-group-chip\.drop-before::after\s*\{[^}]*background:\s*var\(--drop-line, var\(--ink\)\)/.test(tabsCss.replace(/\/\*[\s\S]*?\*\//g, ''));
   check('shades: the chip\'s drop line names a colour token, and the slot line is --drop-line falling back to ink', !!drops.chip && slotLine, { drops, slotLine });
+  // The slot line crosses a group's 6px line (27 Nov 2026). Its own colours (--focus joining, --ink not) are under 3:1 against some line
+  // colours, so it carries a 1px edge in a token (--bg) that each cue reaches 3:1 against; read from the rule, both schemes.
+  const slotEdge = tabsCss.replace(/\/\*[\s\S]*?\*\//g, '').match(/\.tab-bar-group-chip\.drop-before::after\s*\{[^}]*box-shadow:\s*0 0 0 1px var\(--([a-z-]+)\);/)?.[1];
+  check('shades: the slot line (tab and chip) has a 1px edge in a colour token, read from the rule', !!slotEdge, slotEdge);
   for (const mode of ['light', 'dark']) {
     const T = (n) => colourIn(mode, n);
     const ink = T('ink');
@@ -1009,6 +1030,15 @@ await section('12. The folded chip\'s list stays inside the window\'s right edge
     check(`shades: ${mode}, status dots, flags and the parked ring reach 3:1 on every fill, counting a dot's edge as its outline (lowest ${low(rows.status)})`, under(rows.status, 3).length === 0, under(rows.status, 3).slice(0, 6));
     check(`shades: ${mode}, the chip's drop line and the ink slot line reach 3:1 on every fill (lowest ${low(rows.drop)})`, rows.drop.length > 0 && under(rows.drop, 3).length === 0, under(rows.drop, 3));
     check(`shades: ${mode}, the joining slot line (--focus) reaches 3:1 on every group's tab fills (lowest ${low(rows.join)})`, rows.join.length > 0 && under(rows.join, 3).length === 0, under(rows.join, 3));
+    // Where the slot line crosses a group's top line: bare, --focus and --ink are measured against each line colour; the edge is measured
+    // against both cues. The cue needs 3:1 against what touches it, so an edge is required wherever a bare cue falls short.
+    const crossing = { bare: [], edge: [] };
+    for (const [, , line] of want[mode]) for (const cue of ['focus', 'ink']) {
+      crossing.bare.push([`${cue} on line ${line}`, +ratio(T(cue), hex(line)).toFixed(2)]);
+    }
+    for (const cue of ['focus', 'ink']) if (slotEdge) crossing.edge.push([`${cue} against its --${slotEdge} edge`, +ratio(T(cue), T(slotEdge)).toFixed(2)]);
+    check(`shades: ${mode}, where the slot line crosses a group's top line it has an edge it reaches 3:1 against (bare cue on a line colour: lowest ${low(crossing.bare)}; against the edge: lowest ${crossing.edge.length ? low(crossing.edge) : 'none'})`,
+      under(crossing.bare, 3).length === 0 || (crossing.edge.length === 2 && under(crossing.edge, 3).length === 0), { bare: under(crossing.bare, 3), edge: crossing.edge });
   }
 }
 

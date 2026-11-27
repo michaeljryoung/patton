@@ -18,11 +18,14 @@
   --grey-hover: #d5d9e1; /* a tab group's chip under the pointer */
   /* Tab groups' shades (22 Nov 2026, look B of the shades sketch): a very light
      blue, green and sand in turn, by the group's order on the strip. tab = its
-     inactive tabs' fill, chip = its name chip's fill, line = the 2 px line along
-     the top of both. Ink on every fill is 4.5:1 or better (tabs.css). */
+     inactive tabs' fill, chip = its name chip's fill, line = the line along
+     the top of both, --group-line-w wide. Ink on every fill is 4.5:1 or better (tabs.css). */
   --group1-tab: #edf3fc; --group1-chip: #d9e6f8; --group1-line: #8fb0e3;
   --group2-tab: #ecf6f0; --group2-chip: #d4ecdf; --group2-line: #86c3a2;
   --group3-tab: #fcf5e6; --group3-chip: #f4e3bf; --group3-line: #e0bd6e;
+  /* The width of that line, on a group's chip and tabs: one place, so the next change is one line. Fixed, not scaled
+     by --ui-scale (6 px, his pick B of 27 Nov 2026; 2 px before). */
+  --group-line-w: 6px;
   --thumb: #848b97;
   --hairline: var(--ink);
   --focus: #2f6bff;

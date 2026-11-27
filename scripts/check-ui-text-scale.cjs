@@ -23,7 +23,7 @@
 //    label renames it;
 //  - the selected tab sits on the terminal's ground with a 3 px ink bar under it, and
 //    a flagged or plain tab has neither (light scheme only: the hidden window's);
-//  - tab groups: at x1, x1.1 and x1.5 an open group's chip sits left of its first tab at the strip's height, its
+//  - tab groups: at x0.9, x1, x1.1, x1.25 and x1.5 an open group's chip sits left of its first tab at the strip's height, its
 //    label whole (60 characters stop at 140px x scale), the drop slot line (2 px, the tab's height, --focus joining / --ink not), a 6 px top line (--group-line-w, 27 Nov 2026, was 2 px) in the group's shade on chip and member tabs (the selected one keeps its
 //    3 px bar); shades (22 Nov): three groups three fills, a fourth repeats the first, an ungrouped tab between stays plain, the selected member keeps --bg; the chip never grows; a folded chip fits name, count and indicator and the other tabs widen (light only);
 //  - the collapsed bookmarks rail's mark is centred on the header row it stood in;
@@ -1278,8 +1278,8 @@ async function pageRun(BIG) {
   tabEl('t1').classList.remove('drop-after');
   tabEl('t1').style.removeProperty('--drop-line');
 
-  // --- tab groups (19 Nov 2026, the approved "ink" look): the chip beside its tabs, at x1, x1.1
-  // and x1.5, light scheme (the hidden window's; it has no dark emulation). An open group's chip
+  // --- tab groups (19 Nov 2026, the approved "ink" look): the chip beside its tabs, at x0.9, x1, x1.1,
+  // x1.25 and x1.5, light scheme (the hidden window's; it has no dark emulation). An open group's chip
   // sits immediately left of its first tab at the strip's height, its label whole (a 60-character
   // name stops at 140px x scale with an ellipsis), a 6 px line in the group's shade along the top of the chip and
   // of every member tab (a plain tab has none; the selected member keeps its 3 px bottom bar too).
@@ -1289,6 +1289,7 @@ async function pageRun(BIG) {
     const colourOf = (v) => { const d = document.createElement('div'); d.style.background = `var(${v})`; document.body.appendChild(d); const c = getComputedStyle(d).backgroundColor; d.remove(); return c; };
     // 22 Nov 2026: the line is the group's shade line, not ink; this group is the first on the strip, so shade 1.
     const GREY = colourOf('--group1-chip');
+    const BG_COLOUR = colourOf('--bg');
     const TOP = `${colourOf('--group1-line')} 0px 6px 0px 0px inset`;
     const TOP_AND_BAR = `${TOP}, ${inkColour} 0px -3px 0px 0px inset`;
     // Secondary lettering on a chip (count, chevron): half way from --muted to ink (--muted alone fell under 4.5:1 on the dark chips).
@@ -1338,6 +1339,8 @@ async function pageRun(BIG) {
           const seen = { width: ls.width, left: ls.left, height: ls.height, chipH: r.height, bg: ls.backgroundColor, ink: inkColour, x0: +x0.toFixed(2), chipLeft: r.left, stripLeft: sr.left, want, content: ls.content };
           check(`${tag}: the chip-left slot line (${title}) is painted, 2 px wide, the chip's full height, in ink`,
             ls.content !== 'none' && ls.width === '2px' && Math.abs(parseFloat(ls.height) - r.height) < 0.5 && ls.backgroundColor === inkColour, seen);
+          check(`${tag}: the chip-left slot line (${title}) has a 1 px --bg edge on both sides (it crosses the group's line, where --focus alone is 2.0 to 2.7:1)`,
+            ls.boxShadow === `${BG_COLOUR} 0px 0px 0px 1px`, { boxShadow: ls.boxShadow, bg: BG_COLOUR });
           check(`${tag}: ...${before ? 'the same two pixels as the drop-after line of the tab before the chip' : 'wholly inside the strip, flush at the chip\'s left edge'}`,
             before ? want && Math.abs(x0 - want[0]) < 0.01 && Math.abs(x0 + width - want[1]) < 0.01 : ls.left === '0px' && x0 >= sr.left - 0.01 && Math.abs(x0 - r.left) < 0.01, seen);
           c.classList.remove('drop-before');
@@ -1364,6 +1367,8 @@ async function pageRun(BIG) {
         const ls = getComputedStyle(el, '::after');
         check(`${tag}: the ${cls} slot line on ${el.dataset.tabId} is 2 px wide, the tab's full height, straddles its ${side} edge (the border-left's pixel counted), and is ${varName}`,
           ls.width === '2px' && ls[side] === (cls === 'drop-before' ? '-2px' : '-1px') && Math.abs(parseFloat(ls.height) - el.getBoundingClientRect().height) < 0.5 && ls.backgroundColor === colourOf(varName), { width: ls.width, edge: ls[side], height: ls.height, tabH: el.getBoundingClientRect().height, bg: ls.backgroundColor, want: colourOf(varName) });
+        check(`${tag}: the ${cls} slot line on ${el.dataset.tabId} has a 1 px --bg edge on both sides (it crosses the group's 6px line, where --focus alone is 2.0 to 2.7:1)`,
+          ls.boxShadow === `${BG_COLOUR} 0px 0px 0px 1px`, { boxShadow: ls.boxShadow, bg: BG_COLOUR });
         el.classList.remove(cls);
         el.style.removeProperty('--drop-line');
       }
@@ -1416,21 +1421,72 @@ async function pageRun(BIG) {
       const closeShadow = getComputedStyle(members[1].querySelector('.tab-bar-tab-close')).boxShadow;
       check(`${tag}: a member tab's close button carries the top line too (its own paint would cut the line)`, closeShadow === TOP, { closeShadow });
 
-      // 27 Nov 2026: the top line is 6 px (--group-line-w), fixed, not scaled; the label stays clear of it and centred
-      // (a tab title's line box has half-leading at the top, so its clearance is measured from the em box's top, where the glyphs start).
+      // 27 Nov 2026: the top line is 6 px (--group-line-w), fixed, not scaled; every label stays clear of it and centred. A label's
+      // line box has half-leading above its glyphs, so clearance is measured from the em box's top (box centre less half the font
+      // size), which is where the glyphs start: the cap tops sit lower still. An honest margin is asked for (1 px), not a hair.
+      const LINE_PX = 6;
+      const MARGIN = 1;
+      const emTop = (el, owner) => { const r = el.getBoundingClientRect(); return r.top + r.height / 2 - parseFloat(getComputedStyle(el).fontSize) / 2 - owner.getBoundingClientRect().top; };
+      const midOff = (el, owner) => { const r = el.getBoundingClientRect(); const o = owner.getBoundingClientRect(); return r.top + r.height / 2 - (o.top + o.height / 2); };
       const g2el = members[1];
-      const nr = nameEl.getBoundingClientRect();
-      const tr = g2el.querySelector('.tab-bar-tab-title').getBoundingClientRect();
-      const g2r = g2el.getBoundingClientRect();
-      const labelsInfo = { nameTop: nr.top - cr.top, nameMid: nr.top + nr.height / 2 - (cr.top + cr.height / 2), titleTop: tr.top + tr.height / 2 - parseFloat(getComputedStyle(g2el.querySelector('.tab-bar-tab-title')).fontSize) / 2 - g2r.top, titleMid: tr.top + tr.height / 2 - (g2r.top + g2r.height / 2) };
-      const labelsClear = labelsInfo.nameTop >= 6 && labelsInfo.titleTop >= 6 && Math.abs(labelsInfo.nameMid) <= 1.5 && Math.abs(labelsInfo.titleMid) <= 1.5;
+      const g2title = g2el.querySelector('.tab-bar-tab-title');
+      const g2dot = g2el.querySelector('.tab-bar-tab-indicator');
+      const labelsInfo = {
+        nameEmTop: nameEl && chip ? +emTop(nameEl, chip).toFixed(2) : null, nameMid: nameEl && chip ? +midOff(nameEl, chip).toFixed(2) : null,
+        titleEmTop: g2title ? +emTop(g2title, g2el).toFixed(2) : null, titleMid: g2title ? +midOff(g2title, g2el).toFixed(2) : null,
+        dotTop: g2dot ? +(g2dot.getBoundingClientRect().top - g2el.getBoundingClientRect().top).toFixed(2) : null,
+      };
+      const labelsClear = !!nameEl && !!g2title && labelsInfo.nameEmTop >= LINE_PX + MARGIN && labelsInfo.titleEmTop >= LINE_PX + MARGIN
+        && Math.abs(labelsInfo.nameMid) <= 1.5 && Math.abs(labelsInfo.titleMid) <= 1.5;
+      check(`${tag}: the variable --group-line-w is 6px, the chip's and a member tab's label (em box) sit at least ${MARGIN} px below the line, and are centred`,
+        getComputedStyle(document.documentElement).getPropertyValue('--group-line-w').trim() === '6px' && labelsClear, labelsInfo);
+      // The status dot's own box (its glow is a shadow and may tint the line's lower pixels) clears the line.
+      check(`${tag}: a member tab's status dot (its box) sits below the 6px line`, !!g2dot && labelsInfo.dotTop >= LINE_PX, labelsInfo);
+
+      // A multi-selected group tab: the 1 px --tab-sel outline is listed first, so it paints on top of the line all round; the
+      // close button over the tab's right end repeats the outline's top, right and bottom the same way.
+      const SEL = colourOf('--tab-sel');
+      const OUTLINE = `${SEL} 0px 0px 0px 1px inset`;
       g2el.classList.add('multi');
       const multiShadow = getComputedStyle(g2el).boxShadow;
+      const multiClose = getComputedStyle(g2el.querySelector('.tab-bar-tab-close')).boxShadow;
       g2el.classList.remove('multi');
-      check(`${tag}: a multi-selected group tab draws the 6px line in the group's colour, then its 1px --tab-sel outline`,
-        multiShadow.startsWith(`${TOP}, `) && /0px 0px 0px 1px inset$/.test(multiShadow), { multiShadow });
-      check(`${tag}: the variable --group-line-w is 6px, the chip's label sits clear below the line, and is centred on the chip`,
-        getComputedStyle(document.documentElement).getPropertyValue('--group-line-w').trim() === '6px' && labelsClear, labelsInfo);
+      check(`${tag}: a multi-selected group tab shows its 1px --tab-sel outline over the 6px line in the group's colour (the outline is painted first)`,
+        multiShadow === `${OUTLINE}, ${TOP}`, { multiShadow });
+      check(`${tag}: its close button repeats the outline's top, right and bottom over the line, and keeps the line`,
+        multiClose === `${SEL} 0px 1px 0px 0px inset, ${SEL} -1px 0px 0px 0px inset, ${SEL} 0px -1px 0px 0px inset, ${TOP}`, { multiClose });
+
+      // The two group-line rules the other checks do not reach: the active member's close button (line plus its 3px bar) and the
+      // chip as a drop target (line plus a --focus bar along its bottom).
+      const activeClose = getComputedStyle(members[0].querySelector('.tab-bar-tab-close')).boxShadow;
+      check(`${tag}: the selected member's close button carries the 6px line and the 3px ink bar`, activeClose === TOP_AND_BAR, { activeClose });
+      chip.classList.add('drag-over');
+      const dragOverShadow = getComputedStyle(chip).boxShadow;
+      chip.classList.remove('drag-over');
+      check(`${tag}: a chip marked as a drop target keeps its 6px line and adds a 2px --focus bar along its bottom`,
+        dragOverShadow === `${TOP}, ${colourOf('--focus')} 0px -2px 0px 0px inset`, { dragOverShadow });
+
+      // An open name box (the chip's, and a member tab's, selected or not) lies wholly below the line and inside its owner, its text
+      // not cut (its scroll height fits), and the owner keeps its height and its line.
+      {
+        const probeBox = async (what, owner, open, barPx = 0) => {
+          open();
+          await frame();
+          const input = owner.querySelector('.tab-bar-tab-rename');
+          const or = owner.getBoundingClientRect();
+          const ir = input ? input.getBoundingClientRect() : null;
+          const info = input ? { top: +(ir.top - or.top).toFixed(2), bottomGap: +(or.bottom - ir.bottom).toFixed(2), scrollH: input.scrollHeight, clientH: input.clientHeight, ownerH: +or.height.toFixed(2), stripH: strip.clientHeight, shadow: getComputedStyle(owner).boxShadow } : { open: false };
+          if (input) input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+          await frame();
+          check(`${tag}: ${what}'s open name box lies below the 6px line (at least 6 px from its top), above the selected tab's 3px bar when it has one, inside it, its text not cut, and the line is still painted`,
+            !!input && info.top >= LINE_PX - 0.01 && info.bottomGap >= barPx - 0.01 && info.scrollH <= info.clientH && Math.abs(info.ownerH - strip.clientHeight) <= 1 && info.shadow.includes('0px 6px 0px 0px inset'), info);
+        };
+        await probeBox('the chip', chipOf(), () => tabBar.startGroupRename('gA'));
+        const tabNow = (id) => strip.querySelector(`.tab-bar-tab[data-tab-id="${id}"]`);
+        for (const id of ['g2', 'g1']) {
+          await probeBox(`group tab ${id}`, tabNow(id), () => tabNow(id).querySelector('.tab-bar-tab-title').dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true })), id === 'g1' ? 3 : 0);
+        }
+      }
 
       // Open, 60-character name: the label stops at 140px x scale with an ellipsis.
       const sixty = LONG.slice(0, 60);
