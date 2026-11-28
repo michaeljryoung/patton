@@ -1043,3 +1043,9 @@ _Earlier entries archived → `docs/session-archive.md` (latest trim 2026-11-25,
 ## Decisions (S68 trim 2026-11-27)
 
 - **2026-11-26 (S67) — App icon K1** (his "k1", round 8 on https://mjy-pages.vercel.app/p/patton-icon-studies/): F3's face drawn by falling digits, lit by a glow on a dark green ground, every digit about a sixth bigger; F3 "just looks black" in the Dock. **Notification volume goes to 400%** (his "cant hear marimba if watching a video"), with a limiter only above 100% so nothing at 100% or below changed.
+
+## Decisions (S69 trim 2026-11-28)
+
+- **2026-11-26 (S67) — One install, once every pending update is ready** (his "we don't need to just install both straight away ... Let's get all of our updates ready first"; S68: "don't install it now. Just have it ready to install next time we install Patton"): changes are released as they land; /Applications is installed once, with Patton quit, when nothing more is in flight and he says so.
+
+- **2026-11-26 (S67) — An install re-registers the app but never restarts the Dock**: the post-commit hook installs too, and a Dock restart shows on his screen; a changed icon may still need `killall Dock`, run by hand after an install he asked for.
